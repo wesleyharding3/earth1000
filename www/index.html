@@ -13590,16 +13590,14 @@ window.__arcCtxSegmented = (function() {
       </div>
     </div>
     <div class="iconBtn" id="flowModeBtn">
-      <!-- Two nodes connected by arcs = news flows between regions -->
+      <!-- Globe — flow arcs LIVE on the globe, so a globe icon
+           reads as "show on globe." Replaces an earlier dots-and-
+           arcs glyph that looked too similar to the share icon. -->
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
            stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="5" cy="12" r="2.2" fill="currentColor" stroke="none" opacity="0.7"/>
-        <circle cx="19" cy="7"  r="1.8" fill="currentColor" stroke="none" opacity="0.7"/>
-        <circle cx="19" cy="17" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/>
-        <path d="M7 11.2 C11 8.5 14 7.5 17.2 7.4" stroke-width="1.6"/>
-        <path d="M7 12.8 C11 15.5 14 16.5 17.2 16.6" stroke-width="1.6"/>
-        <polyline points="15.5,6 17.2,7.4 15.8,9" stroke-width="1.4"/>
-        <polyline points="15.8,15 17.2,16.6 15.5,18" stroke-width="1.4"/>
+        <circle cx="12" cy="12" r="9"/>
+        <line x1="3" y1="12" x2="21" y2="12"/>
+        <ellipse cx="12" cy="12" rx="4" ry="9"/>
       </svg>
     </div>
     <div id="viewToggleWrapper">
@@ -13631,14 +13629,19 @@ window.__arcCtxSegmented = (function() {
          button is dimmed via CSS and a tap surfaces a toast hint
          (see __semHeatToggleBtnClick). -->
     <div class="iconBtn" id="semHeatToggleBtn" onclick="window.__semHeatToggleBtnClick?.()" style="display:none;">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-        <circle cx="12" cy="12" r="9"/>
-        <path d="M3 12h18"/>
-        <path d="M12 3c3 3.5 3 14.5 0 18"/>
-        <path d="M12 3c-3 3.5-3 14.5 0 18"/>
-        <circle cx="8" cy="9" r="1.2" fill="currentColor"/>
-        <circle cx="16" cy="14" r="1.2" fill="currentColor"/>
-        <circle cx="10" cy="16" r="1.0" fill="currentColor"/>
+      <!-- 3×3 gradient grid — universal heatmap symbol. Replaces an
+           earlier globe-with-dots glyph that conflicted with the new
+           flow-arcs globe icon. -->
+      <svg viewBox="0 0 24 24">
+        <rect x="3"  y="3"  width="5" height="5" rx="1" fill="rgba(255,200,80,0.95)"/>
+        <rect x="9"  y="3"  width="5" height="5" rx="1" fill="rgba(220,140,60,0.85)"/>
+        <rect x="15" y="3"  width="5" height="5" rx="1" fill="rgba(120,90,80,0.6)"/>
+        <rect x="3"  y="9"  width="5" height="5" rx="1" fill="rgba(220,140,60,0.85)"/>
+        <rect x="9"  y="9"  width="5" height="5" rx="1" fill="rgba(255,210,90,1)"/>
+        <rect x="15" y="9"  width="5" height="5" rx="1" fill="rgba(180,120,70,0.75)"/>
+        <rect x="3"  y="15" width="5" height="5" rx="1" fill="rgba(120,90,80,0.6)"/>
+        <rect x="9"  y="15" width="5" height="5" rx="1" fill="rgba(180,120,70,0.75)"/>
+        <rect x="15" y="15" width="5" height="5" rx="1" fill="rgba(80,80,90,0.45)"/>
       </svg>
     </div>
     <div class="iconBtn" id="briefingBtn">
@@ -19477,7 +19480,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const _cpSaved = !!(window.__libraryIsSaved && window.__libraryIsSaved(article.id));
           return `
             <div style="position:relative">
-              <button class="cardFlowArcBtn" onclick="showArticleFlows(${article.id},event)" title="Show flow arcs on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2.2" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="7" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="17" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><path d="M7 11.2 C11 8.5 14 7.5 17.2 7.4" stroke-width="1.6"/><path d="M7 12.8 C11 15.5 14 16.5 17.2 16.6" stroke-width="1.6"/><polyline points="15.5,6 17.2,7.4 15.8,9" stroke-width="1.4"/><polyline points="15.8,15 17.2,16.6 15.5,18" stroke-width="1.4"/></svg></button>
+              <button class="cardFlowArcBtn" onclick="showArticleFlows(${article.id},event)" title="Show flow arcs on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/><ellipse cx="12" cy="12" rx="4" ry="9"/></svg></button>
               <button class="cardSaveBtn${_cpSaved ? ' saved' : ''}" data-saved-article-id="${article.id}" onclick="toggleBookmark(event,this,${article.id})" title="${_cpSaved ? 'Remove from saved' : 'Save'}"><svg viewBox="0 0 24 24" fill="${_cpSaved ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></button>
               <div class="articleCard fadeInCard" onclick="openPanelArticle(this)" data-article='${JSON.stringify(article).replace(/'/g,"&#39;")}' style="cursor:pointer;">
                 ${imageField}
@@ -21175,7 +21178,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
               : "";
             const _ctySaved = !!(window.__libraryIsSaved && window.__libraryIsSaved(a.id));
             return `<div style="position:relative">
-              <button class="cardFlowArcBtn" onclick="showArticleFlows(${a.id},event)" title="Show flow arcs on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2.2" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="7" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="17" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><path d="M7 11.2 C11 8.5 14 7.5 17.2 7.4" stroke-width="1.6"/><path d="M7 12.8 C11 15.5 14 16.5 17.2 16.6" stroke-width="1.6"/><polyline points="15.5,6 17.2,7.4 15.8,9" stroke-width="1.4"/><polyline points="15.8,15 17.2,16.6 15.5,18" stroke-width="1.4"/></svg></button>
+              <button class="cardFlowArcBtn" onclick="showArticleFlows(${a.id},event)" title="Show flow arcs on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/><ellipse cx="12" cy="12" rx="4" ry="9"/></svg></button>
               <button class="cardSaveBtn${_ctySaved ? ' saved' : ''}" data-saved-article-id="${a.id}" onclick="toggleBookmark(event,this,${a.id})" title="${_ctySaved ? 'Remove from saved' : 'Save'}"><svg viewBox="0 0 24 24" fill="${_ctySaved ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></button>
               <div class="articleCard fadeInCard" onclick="openRegionArticle(this)" data-article='${JSON.stringify(a).replace(/'/g,"&#39;")}' style="cursor:pointer;">
               ${img}
@@ -26107,7 +26110,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         
         return `
           <div style="position:relative">
-            <button class="cardFlowArcBtn" onclick="showArticleFlows(${f.id},event)" title="Show flow arcs on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2.2" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="7" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="17" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><path d="M7 11.2 C11 8.5 14 7.5 17.2 7.4" stroke-width="1.6"/><path d="M7 12.8 C11 15.5 14 16.5 17.2 16.6" stroke-width="1.6"/><polyline points="15.5,6 17.2,7.4 15.8,9" stroke-width="1.4"/><polyline points="15.8,15 17.2,16.6 15.5,18" stroke-width="1.4"/></svg></button>
+            <button class="cardFlowArcBtn" onclick="showArticleFlows(${f.id},event)" title="Show flow arcs on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/><ellipse cx="12" cy="12" rx="4" ry="9"/></svg></button>
             <div class="articleCard" onclick="openPanelArticle(this)" data-article='${JSON.stringify(article).replace(/'/g,"&#39;")}' style="cursor:pointer;">
               ${imageField}
               <div class="articleCardBody">
@@ -28974,7 +28977,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const videoPrefix = isVideo ? `<span style="font-size:8px;opacity:0.6;margin-right:2px;">▶</span>` : "";
       const origin = parts.length ? `<div class="nfCardOrigin">${videoPrefix}${esc(parts.join(", "))}</div>` : "";
       const date = a.published_at ? fmtDate(a.published_at) : "";
-      const flowArcBtn = `<button class="cardFlowArcBtn" onclick="showArticleFlows(${a.id},event)" title="Show flow arcs on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2.2" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="7" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="17" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><path d="M7 11.2 C11 8.5 14 7.5 17.2 7.4" stroke-width="1.6"/><path d="M7 12.8 C11 15.5 14 16.5 17.2 16.6" stroke-width="1.6"/><polyline points="15.5,6 17.2,7.4 15.8,9" stroke-width="1.4"/><polyline points="15.8,15 17.2,16.6 15.5,18" stroke-width="1.4"/></svg></button>`;
+      const flowArcBtn = `<button class="cardFlowArcBtn" onclick="showArticleFlows(${a.id},event)" title="Show flow arcs on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/><ellipse cx="12" cy="12" rx="4" ry="9"/></svg></button>`;
       const _isSaved = window.__libraryIsSaved && window.__libraryIsSaved(a.id);
       // .nfBookmarkBtn (footer-right next to translate) was removed —
       // .cardSaveBtn (top-right corner overlay, sibling of cardFlowArcBtn)
@@ -29358,7 +29361,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const entityId = t.thread_id ?? t.timeline_id ?? t.id;
         const saveKind = isTimeline ? 'timeline' : 'thread';
         const isSavedNow = !!(window.__libraryIsSaved && window.__libraryIsSaved(entityId, saveKind));
-        const threadFlowBtn = `<button class="cardFlowArcBtn" onclick="${flowFn}(${entityId},event)" title="Show flow arcs on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2.2" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="7" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="17" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><path d="M7 11.2 C11 8.5 14 7.5 17.2 7.4" stroke-width="1.6"/><path d="M7 12.8 C11 15.5 14 16.5 17.2 16.6" stroke-width="1.6"/><polyline points="15.5,6 17.2,7.4 15.8,9" stroke-width="1.4"/><polyline points="15.8,15 17.2,16.6 15.5,18" stroke-width="1.4"/></svg></button>`;
+        const threadFlowBtn = `<button class="cardFlowArcBtn" onclick="${flowFn}(${entityId},event)" title="Show flow arcs on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/><ellipse cx="12" cy="12" rx="4" ry="9"/></svg></button>`;
         const threadSaveBtn = `<button class="cardSaveBtn${isSavedNow ? ' saved' : ''}" data-save-id="${entityId}" data-save-kind="${saveKind}" title="${isSavedNow ? 'Remove from saved' : 'Save'}"><svg viewBox="0 0 24 24" fill="${isSavedNow ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></button>`;
         // Share button — kind ('thread' | 'line') routes to the correct
         // /share/* URL via __shareEntity. Title is forwarded so the
@@ -43894,7 +43897,7 @@ body.ticker-active .gTickerLabel {
     const date = a.published_at ? fmtDate(a.published_at) : "";
     const title = esc(a.translated_title || a.title || "");
     const dataAttr = JSON.stringify(a).replace(/'/g, "&#39;");
-    return `<div style="position:relative"><button class="cardFlowArcBtn" onclick="showArticleFlows(${a.id},event)" title="Show flow arcs on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="5" cy="12" r="2.2" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="7" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><circle cx="19" cy="17" r="1.8" fill="currentColor" stroke="none" opacity="0.7"/><path d="M7 11.2 C11 8.5 14 7.5 17.2 7.4" stroke-width="1.6"/><path d="M7 12.8 C11 15.5 14 16.5 17.2 16.6" stroke-width="1.6"/><polyline points="15.5,6 17.2,7.4 15.8,9" stroke-width="1.4"/><polyline points="15.8,15 17.2,16.6 15.5,18" stroke-width="1.4"/></svg></button><div class="cdCard" onclick="openThreadPanelArticle(this,event)" data-article='${dataAttr}' style="cursor:pointer">
+    return `<div style="position:relative"><button class="cardFlowArcBtn" onclick="showArticleFlows(${a.id},event)" title="Show flow arcs on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/><ellipse cx="12" cy="12" rx="4" ry="9"/></svg></button><div class="cdCard" onclick="openThreadPanelArticle(this,event)" data-article='${dataAttr}' style="cursor:pointer">
       ${src ? `<img class="cdCardImg" src="${src}" alt="" loading="lazy" onerror="this.style.display='none'">` : `<div class="cdCardImgNone"></div>`}
       <div class="cdCardBody">
         ${isVideo ? `<span class="cdCardVideo">▶ Video</span>` : ""}
@@ -50146,6 +50149,25 @@ body.ticker-active .gTickerLabel {
       // Climate Change" instead. The original question is preserved
       // for the share-sheet text and the canonical URL.
       const titleQuestion = window.__snapTitleCase?.(question) || question;
+      // Read the live heatmap legend from the DOM so the snapshot's
+      // gradient strip reflects whatever palette the user is currently
+      // looking at (coverage, sentiment, percent, rank, binary, etc.).
+      // Auto-falls back to null if the legend bar isn't present, in
+      // which case the composite skips the gradient strip entirely.
+      const _readLegend = () => {
+        try {
+          const bar = document.getElementById('semHeatLegendBar');
+          if (!bar) return null;
+          const left  = document.getElementById('semHeatLegendLeft')?.textContent?.trim() || 'low';
+          const right = document.getElementById('semHeatLegendRight')?.textContent?.trim() || 'high';
+          const cs = window.getComputedStyle(bar);
+          const bg = cs.backgroundImage || '';
+          const matches = bg.match(/rgba?\([^)]+\)|#[a-fA-F0-9]{3,8}/g);
+          const colors = matches ? matches.map(s => s.trim()) : [];
+          if (colors.length < 2) return null;
+          return { colors, leftLabel: left, rightLabel: right };
+        } catch (_) { return null; }
+      };
       window.__shareSnapshot({
         title:    titleQuestion,
         subtitle: `MAP THIS · ${String(mode).toUpperCase()} · ${projectionTag}`,
@@ -50153,6 +50175,7 @@ body.ticker-active .gTickerLabel {
         url:      `${SHARE_HOST}/share/heatmap?${qs}`,
         shareTitle: 'Earth00 · Map This',
         shareText:  `${question} — Map This view on Earth00`,
+        legend:   _readLegend(),
       });
     });
     closeBtn.parentElement.insertBefore(btn, closeBtn);
@@ -50280,46 +50303,54 @@ body.ticker-active .gTickerLabel {
   //   y=910 …  945   subtitle (mode + date / country count)
   //   y=970 … 1010   country flag chips
   //   y=1040           EARTH00.COM watermark
-  // Layout per aspect — picker dispatches one of these. Square is the
-  // default (best for cross-platform reposting). Story is 9:16 vertical
-  // for Instagram Stories, with content positioned in the safe area
-  // (top ~17%, bottom ~13% are obscured by Instagram UI overlays).
+  // Layout per aspect. The captured view fills the ENTIRE canvas now
+  // (full-bleed image), with text chrome overlaid at top and bottom.
+  // A pair of vertical dark-gradient bands ensure legibility wherever
+  // the text lands on top of image content (gradient is invisible
+  // over already-dark letterbox regions and softens visible content
+  // bands).
+  //
+  // Story (9:16): kept inside Instagram's safe area for chrome
+  // (above ~y=200 is obscured by avatar/time, below ~y=1700 by send
+  // controls). The image still fills the full 1920 — Instagram's UI
+  // sits on top of it transparently.
   function _snapLayoutFor(aspect) {
     if (aspect === 'story') {
       return {
         aspect: 'story',
         W: 1080, H: 1920,
-        // Top chrome — kept inside Instagram's safe area (above y≈320
-        // is obscured by the user avatar / story name / time).
-        logoX: 56, logoY: 320,
-        badgeY: 326,
-        accentTopY: 400,
-        // Captured view — bigger absolute size since Story has more
-        // vertical real estate. Width unchanged (1080-2*56=968).
-        viewX: 56, viewY: 420, viewW: 968, viewH: 800,
-        accentBotY: 1245,
-        titleY: 1305,
-        titleSize: 44,
-        titleLineH: 52,
-        subtitleY: 1395,
-        chipsY: 1445,
-        footerY: 1620,
+        viewX: 0, viewY: 0, viewW: 1080, viewH: 1920,
+        topGradientH: 360,
+        botGradientH: 380,
+        badgeY: 220,
+        titleY: 320,
+        titleSize: 50,
+        titleLineH: 60,
+        // Chips + footer pushed deeper into the most-opaque part of
+        // the bottom gradient so map continents (or any bright image
+        // content poking up from below) don't bleed through behind
+        // the chrome.
+        subtitleY: 1530,
+        scopeY:    1580,
+        chipsY:    1640,
+        footerY:   1710,
       };
     }
     return {
       aspect: 'square',
       W: 1080, H: 1080,
-      logoX: 56, logoY: 54,
+      viewX: 0, viewY: 0, viewW: 1080, viewH: 1080,
+      topGradientH: 220,
+      botGradientH: 240,
       badgeY: 60,
-      accentTopY: 130,
-      viewX: 56, viewY: 150, viewW: 968, viewH: 640,
-      accentBotY: 805,
-      titleY: 858,
-      titleSize: 38,
-      titleLineH: 46,
-      subtitleY: 935,
-      chipsY: 970,
-      footerY: 1040,
+      titleY: 110,
+      titleSize: 42,
+      titleLineH: 52,
+      // See note above on chips/footer placement.
+      subtitleY: 900,
+      scopeY:    945,
+      chipsY:    1000,
+      footerY:   1055,
     };
   }
   const SNAPSHOT_W = 1080;
@@ -50369,34 +50400,55 @@ body.ticker-active .gTickerLabel {
     ctx.restore();
   }
 
-  // Full logo (globe glyph + italic Georgia "e" + "arth00") used as a
-  // watermark anchored to the captured view. Drawn at lower opacity
-  // and scaled down so it reads as a brand stamp without competing
-  // with the underlying map/globe content. The opts.scale lets the
-  // caller tune the size for different surfaces.
-  function _snapDrawFullLogo(ctx, x, y, opts = {}) {
+  // Cached loader for the actual app icon — same image users see on
+  // their iOS Home Screen. Loaded once per page life from the bundled
+  // apple-touch-icon.png (Capacitor) / earth00.com favicon (web), with
+  // favicon-512.png as a higher-res fallback. Promise stays resolved
+  // for the rest of the session so subsequent share invocations skip
+  // the network/file fetch entirely.
+  let _snapAppIconPromise = null;
+  function _snapLoadAppIcon() {
+    if (_snapAppIconPromise) return _snapAppIconPromise;
+    _snapAppIconPromise = _snapLoadImage('./apple-touch-icon.png')
+      .catch(() => _snapLoadImage('./favicon-512.png'))
+      .catch(() => null);
+    return _snapAppIconPromise;
+  }
+
+  // Watermark — draws the actual Earth00 app icon (gold wireframe
+  // globe + italic "e" + comet streak) onto the captured view. Loads
+  // the bundled PNG so the brand stamp on shared snapshots is byte-
+  // identical to the iOS Home Screen icon. Falls back to a
+  // programmatic wireframe glyph if the icon fails to load (offline,
+  // file missing) — graceful degradation rather than a missing
+  // watermark on the share.
+  async function _snapDrawFullLogo(ctx, x, y, opts = {}) {
     const scale = Number(opts.scale) || 1;
-    const alpha = Number(opts.alpha) || 0.55;
+    const alpha = Number(opts.alpha) || 0.85;
+    const baseSize = Number(opts.size) || 88;
+    const px = baseSize * scale;
+    const icon = await _snapLoadAppIcon();
     ctx.save();
-    ctx.translate(x, y);
-    ctx.scale(scale, scale);
     ctx.globalAlpha = alpha;
-    // Globe wireframe — outer + horizontal-squashed + vertical-squashed + equator line
-    ctx.strokeStyle = SNAPSHOT_BRAND.gold;
-    ctx.lineWidth = 1.6;
-    const cx = 22, cy = 22;
-    ctx.beginPath(); ctx.ellipse(cx, cy, 20, 20, 0, 0, Math.PI * 2); ctx.stroke();
-    ctx.beginPath(); ctx.ellipse(cx, cy, 20,  8, 0, 0, Math.PI * 2); ctx.stroke();
-    ctx.beginPath(); ctx.ellipse(cx, cy,  8, 20, 0, 0, Math.PI * 2); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(2, cy); ctx.lineTo(42, cy); ctx.stroke();
-    // Italic "e" + "arth00"
-    ctx.fillStyle = SNAPSHOT_BRAND.cream;
-    ctx.font = 'italic 700 38px Georgia, "Times New Roman", serif';
-    ctx.textBaseline = 'alphabetic';
-    ctx.fillText('e', 56, 34);
-    ctx.fillStyle = SNAPSHOT_BRAND.ink;
-    ctx.font = '700 22px -apple-system, system-ui, "Segoe UI", sans-serif';
-    ctx.fillText('arth00', 76, 34);
+    if (icon) {
+      ctx.drawImage(icon, x, y, px, px);
+    } else {
+      // Wireframe fallback — only fires if the bundled PNG can't load
+      ctx.translate(x, y);
+      const fallbackScale = px / 44;
+      ctx.scale(fallbackScale, fallbackScale);
+      ctx.strokeStyle = SNAPSHOT_BRAND.gold;
+      ctx.lineWidth = 1.6;
+      const cx = 22, cy = 22;
+      ctx.beginPath(); ctx.ellipse(cx, cy, 20, 20, 0, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.ellipse(cx, cy, 20,  8, 0, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.ellipse(cx, cy,  8, 20, 0, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(2, cy); ctx.lineTo(42, cy); ctx.stroke();
+      ctx.fillStyle = SNAPSHOT_BRAND.cream;
+      ctx.font = 'italic 700 38px Georgia, "Times New Roman", serif';
+      ctx.textBaseline = 'alphabetic';
+      ctx.fillText('e', 8, 34);
+    }
     ctx.restore();
   }
 
@@ -50707,90 +50759,79 @@ body.ticker-active .gTickerLabel {
     canvas.height = L.H;
     const ctx = canvas.getContext('2d');
 
-    // Background gradient + subtle gold radial glow (matches OG card)
+    // Base background (visible behind any letterbox regions of the
+    // captured image). Same dark-gradient that used to back the chrome
+    // — now only shows through where the contain-fit image doesn't
+    // reach the canvas edge.
     const bg = ctx.createLinearGradient(0, 0, 0, L.H);
     bg.addColorStop(0, SNAPSHOT_BRAND.bgTop);
     bg.addColorStop(1, SNAPSHOT_BRAND.bgBot);
     ctx.fillStyle = bg;
     ctx.fillRect(0, 0, L.W, L.H);
-    const glow = ctx.createRadialGradient(L.W * 0.85, L.H * 0.15, 50, L.W * 0.85, L.H * 0.15, 600);
-    glow.addColorStop(0, 'rgba(212,168,67,0.18)');
-    glow.addColorStop(1, 'rgba(212,168,67,0)');
-    ctx.fillStyle = glow;
-    ctx.fillRect(0, 0, L.W, L.H);
 
-    // Top chrome — plain "earth00" wordmark only.
-    _snapDrawLogo(ctx, L.logoX, L.logoY);
-
-    // Optional badge in the top-right (e.g. HEATMAP, NEWS FLOWS)
-    if (badge) {
-      ctx.font = '800 13px -apple-system, system-ui, "Segoe UI", sans-serif';
-      ctx.textBaseline = 'middle';
-      const bw = Math.max(160, ctx.measureText(badge).width + 36);
-      const bh = 36;
-      const bx = L.W - 56 - bw;
-      const by = L.badgeY;
-      ctx.fillStyle = 'rgba(212,168,67,0.10)';
-      ctx.strokeStyle = SNAPSHOT_BRAND.gold;
-      ctx.lineWidth = 1.4;
-      _snapRoundRect(ctx, bx, by, bw, bh, bh / 2);
-      ctx.fill(); ctx.stroke();
-      ctx.fillStyle = SNAPSHOT_BRAND.gold;
-      ctx.textAlign = 'center';
-      ctx.fillText(badge, bx + bw / 2, by + bh / 2 + 1);
-      ctx.textAlign = 'start';
-    }
-
-    // Top accent line
-    _snapDrawAccent(ctx, 56, L.accentTopY, L.W - 112);
-
-    // Captured view — _snapDrawGlobeImage returns the actual rect the
-    // image landed in (after contain-fit letterboxing) so we can anchor
-    // overlays (watermark, label cards) to the visible content.
+    // Captured view — full-bleed (entire canvas). Returns the actual
+    // rect of visible image content (which equals canvas bounds when
+    // the source aspect matches; smaller centered rect when
+    // letterboxed). Watermark + labels still anchor to that rect.
     const drawn = _snapDrawGlobeImage(ctx, globeImg, L.viewX, L.viewY, L.viewW, L.viewH);
 
-    // Re-draw flow-arc node label cards from the live DOM, but only
-    // when they're toggled on. The function bails out early if the
-    // #flowNodeLabels container is hidden (opacity 0 / display none),
-    // so a snapshot taken with labels OFF stays clean.
+    // Re-draw flow-arc node label cards from the live DOM (no-op when
+    // labels are toggled off).
     await _snapDrawNodeLabels(ctx, drawn, captureRect);
 
-    // Watermark anchored to the captured view: south-pacific area for
-    // 2D map, bottom-left dark space for 3D globe.
+    // Top + bottom dark-gradient overlays. Bottom is taller and ramps
+    // to opacity earlier than the top — most of the chrome lives at
+    // the bottom, so the slab needs to be a more substantial dark
+    // surface (the top only carries the title + badge).
     {
-      const isMap = (projection === 'map');
-      const watermarkScale = isMap ? 0.85 : 1.0;
-      const watermarkAlpha = isMap ? 0.55 : 0.72;
-      const wx = isMap
-        ? drawn.dx + drawn.drawW * 0.04
-        : drawn.dx + 18;
-      const wy = isMap
-        ? drawn.dy + drawn.drawH * 0.62
-        : drawn.dy + drawn.drawH - 56;
-      _snapDrawFullLogo(ctx, wx, wy, { scale: watermarkScale, alpha: watermarkAlpha });
+      const topGrad = ctx.createLinearGradient(0, 0, 0, L.topGradientH);
+      topGrad.addColorStop(0,   'rgba(6,10,20,0.85)');
+      topGrad.addColorStop(0.55,'rgba(6,10,20,0.45)');
+      topGrad.addColorStop(1,   'rgba(6,10,20,0)');
+      ctx.fillStyle = topGrad;
+      ctx.fillRect(0, 0, L.W, L.topGradientH);
+
+      const botStart = L.H - L.botGradientH;
+      const botGrad = ctx.createLinearGradient(0, botStart, 0, L.H);
+      botGrad.addColorStop(0,   'rgba(6,10,20,0)');
+      botGrad.addColorStop(0.30,'rgba(6,10,20,0.70)');
+      botGrad.addColorStop(1,   'rgba(6,10,20,0.96)');
+      ctx.fillStyle = botGrad;
+      ctx.fillRect(0, botStart, L.W, L.botGradientH);
     }
+    // Watermark moved into the bottom-left footer row (drawn with the
+    // EARTH00.COM text below) — the previous projection-aware anchor
+    // (bottom-left of view for globe, south-pacific for map) created
+    // a dual-corner brand collision with the footer. Single inline
+    // brand row reads cleaner.
 
-    // Bottom accent line
-    _snapDrawAccent(ctx, 56, L.accentBotY, L.W - 112);
+    // Top-right badge intentionally omitted — used to repeat info that
+    // the bottom subtitle already carries (entity type · view), so
+    // dropping it removes redundancy and makes the title-image
+    // hierarchy cleaner.
 
-    // Title (theme / question / keyword) — matches .cdTitle weight
-    // (700) and tightish letter-spacing (-0.01em). canvas2d doesn't
-    // honor letter-spacing in font-shorthand on every browser; we
-    // emulate the tightening by setting the experimental
-    // CanvasRenderingContext2D.letterSpacing attribute (Safari + recent
-    // Chrome; older browsers ignore it harmlessly).
+    // Title at the TOP — sits in the top-gradient zone. Two lines max.
+    // Weight 750 (heavier than .cdTitle's 700) so it lands with more
+    // poster-like punch at 42px / 50px against the larger snapshot
+    // canvas — 700 reads slightly thin at this scale.
     if (title) {
+      ctx.save();
+      ctx.shadowColor = 'rgba(0,0,0,0.65)';
+      ctx.shadowBlur = 14;
       ctx.fillStyle = SNAPSHOT_BRAND.cream;
-      ctx.font = `700 ${L.titleSize}px -apple-system, system-ui, "Segoe UI", sans-serif`;
+      ctx.font = `750 ${L.titleSize}px -apple-system, system-ui, "Segoe UI", sans-serif`;
       ctx.textBaseline = 'alphabetic';
       try { ctx.letterSpacing = '-0.01em'; } catch (_) {}
       const titleLines = _snapWrapText(ctx, title, L.W - 112, 2);
       titleLines.forEach((line, i) => ctx.fillText(line, 56, L.titleY + i * L.titleLineH));
       try { ctx.letterSpacing = '0px'; } catch (_) {}
+      ctx.restore();
     }
 
-    // Subtitle (mode badge text, date range, etc.) — matches .cdType
-    // eyebrow aesthetic: small caps, weight 700, wide letter-spacing.
+    // Bottom chrome stack — subtitle + chips + inline footer row
+    // (watermark icon + EARTH00.COM text). Scope line was retired
+    // here per UX feedback (the snapshot is the visual; the OG card
+    // for link-shares carries the coverage stats instead).
     if (subtitle) {
       ctx.fillStyle = SNAPSHOT_BRAND.gold;
       ctx.font = '700 13px -apple-system, system-ui, "Segoe UI", sans-serif';
@@ -50798,31 +50839,75 @@ body.ticker-active .gTickerLabel {
       ctx.fillText(subtitle, 56, L.subtitleY);
       try { ctx.letterSpacing = '0px'; } catch (_) {}
     }
-
-    // Scope line — "COVERAGE IN 51 LANGUAGES · 107 COUNTRIES · 1,338
-    // ARTICLES" style summary that captures the entire concept of a
-    // thread or timeline. Rendered with the .cdMetaLabel aesthetic
-    // (weight 600, wide letter-spacing 0.14em, low-key opacity) so it
-    // reads as supporting metadata, not competing with the title.
-    if (scopeLine) {
-      ctx.fillStyle = 'rgba(255,255,255,0.55)';
-      ctx.font = '600 12px -apple-system, system-ui, "Segoe UI", sans-serif';
-      try { ctx.letterSpacing = '0.14em'; } catch (_) {}
-      // Sits ~28px above the chips row
-      ctx.fillText(scopeLine, 56, L.chipsY - 18);
-      try { ctx.letterSpacing = '0px'; } catch (_) {}
-    }
-
-    // Country flag chips
     if (Array.isArray(isos) && isos.length) {
       const chips = await _snapFlagImages(isos);
       _snapDrawFlagChips(ctx, chips, 56, L.chipsY);
     }
+    // Optional gradient legend — rendered in the chips slot when the
+    // caller passes legend data (e.g. heatmap snapshots, where the
+    // chip row is empty anyway). Gives recipients a low → high color
+    // reference so they can decode the painted view at a glance.
+    if (legend && Array.isArray(legend.colors) && legend.colors.length >= 2) {
+      const barX = 56;
+      const barW = Math.min(L.W - 112, 560);
+      const barH = 10;
+      // Sits in the scope-line slot — that row is unused on snapshots
+      // so it's free real estate, and keeping the bar above the chips
+      // row prevents the LOW label below it from overlapping the
+      // app icon in the inline footer.
+      const barY = L.scopeY;
+      const grad = ctx.createLinearGradient(barX, 0, barX + barW, 0);
+      legend.colors.forEach((c, i) => {
+        grad.addColorStop(i / (legend.colors.length - 1), c);
+      });
+      ctx.save();
+      ctx.shadowColor = 'rgba(0,0,0,0.45)';
+      ctx.shadowBlur = 6;
+      ctx.fillStyle = grad;
+      _snapRoundRect(ctx, barX, barY, barW, barH, barH / 2);
+      ctx.fill();
+      ctx.restore();
+      // LOW / HIGH endpoint labels under the bar
+      ctx.fillStyle = 'rgba(255,255,255,0.62)';
+      ctx.font = '700 11px -apple-system, system-ui, "Segoe UI", sans-serif';
+      try { ctx.letterSpacing = '0.16em'; } catch (_) {}
+      ctx.textBaseline = 'top';
+      ctx.fillText(String(legend.leftLabel || 'LOW').toUpperCase(), barX, barY + barH + 8);
+      ctx.textAlign = 'end';
+      ctx.fillText(String(legend.rightLabel || 'HIGH').toUpperCase(), barX + barW, barY + barH + 8);
+      ctx.textAlign = 'start';
+      ctx.textBaseline = 'alphabetic';
+      try { ctx.letterSpacing = '0px'; } catch (_) {}
+    }
+    // Inline footer row: app icon + earth00.com text on the same
+    // baseline. Single brand anchor in the bottom-left, datestamp
+    // mirroring it in the bottom-right so the slab balances visually
+    // and recipients can tell when the snapshot was captured (helps
+    // weeks-later viewers know the data isn't stale).
+    {
+      const iconSize = 44;
+      const iconY = L.footerY - 32; // visual center of icon ~= text middle
+      await _snapDrawFullLogo(ctx, 56, iconY, {
+        size:  iconSize,
+        scale: 1.0,
+        alpha: 0.95,
+      });
+      ctx.fillStyle = SNAPSHOT_BRAND.goldSoft;
+      ctx.font = '700 16px -apple-system, system-ui, "Segoe UI", sans-serif';
+      ctx.fillText('EARTH00.COM', 56 + iconSize + 12, L.footerY);
 
-    // EARTH00.COM footer text
-    ctx.fillStyle = SNAPSHOT_BRAND.goldSoft;
-    ctx.font = '700 16px -apple-system, system-ui, "Segoe UI", sans-serif';
-    ctx.fillText('EARTH00.COM', 56, L.footerY);
+      // Datestamp — bottom-right, paired with the brand row.
+      const stamp = new Date().toLocaleDateString('en-US', {
+        month: 'short', day: 'numeric', year: 'numeric',
+      }).toUpperCase();
+      ctx.fillStyle = 'rgba(255,255,255,0.55)';
+      ctx.font = '600 13px -apple-system, system-ui, "Segoe UI", sans-serif';
+      try { ctx.letterSpacing = '0.14em'; } catch (_) {}
+      ctx.textAlign = 'right';
+      ctx.fillText(`AS OF ${stamp}`, L.W - 56, L.footerY);
+      ctx.textAlign = 'start';
+      try { ctx.letterSpacing = '0px'; } catch (_) {}
+    }
 
     return new Promise(resolve => canvas.toBlob(resolve, 'image/png', 0.95));
   }
@@ -51005,6 +51090,7 @@ body.ticker-active .gTickerLabel {
         aspect,                              // 'square' | 'story'
         captureRect,                         // for re-projecting DOM label cards
         scopeLine: opts.scopeLine || '',     // "X LANGUAGES · Y COUNTRIES · Z ARTICLES"
+        legend:    opts.legend  || null,     // { colors:[], leftLabel, rightLabel }
       });
       await _snapDispatch(blob, {
         url:        opts.url || undefined,

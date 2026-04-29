@@ -24,6 +24,43 @@
 
 const { Resvg } = require('@resvg/resvg-js');
 const https     = require('https');
+const fs        = require('fs');
+const path      = require('path');
+
+// ─── App icon (load once at module init) ──────────────────────────────
+// Embed the same icon users see on their iOS Home Screen — the gold
+// wireframe globe + italic "e" + comet streak — into every share card.
+// Reads from www/apple-touch-icon.png (180×180), encodes as base64
+// data URI, splices into the SVG via <image href="data:...">. Falls
+// back gracefully if the file isn't there at boot.
+let _appIconDataUri = null;
+try {
+  const iconPath = path.join(__dirname, 'www', 'apple-touch-icon.png');
+  const buf = fs.readFileSync(iconPath);
+  _appIconDataUri = `data:image/png;base64,${buf.toString('base64')}`;
+} catch (err) {
+  console.warn('[shareImg] app icon not loaded:', err.message);
+}
+
+// ─── Font files (load once if present) ────────────────────────────────
+// resvg-js needs explicit font files to render anything other than
+// the host OS's default. Render's container has Liberation/DejaVu but
+// not the system-ui family our app uses, so without a bundled font
+// the headlines render in a typewriter-ish fallback. To get clean
+// sans typography on the OG card, drop Inter (or any sans TTF/OTF)
+// into a `fonts/` folder at the repo root — files are picked up
+// automatically by resvg via fontFiles option below.
+const _fontFiles = [];
+try {
+  const fontsDir = path.join(__dirname, 'fonts');
+  if (fs.existsSync(fontsDir)) {
+    for (const entry of fs.readdirSync(fontsDir)) {
+      if (/\.(ttf|otf)$/i.test(entry)) _fontFiles.push(path.join(fontsDir, entry));
+    }
+  }
+} catch (err) {
+  console.warn('[shareImg] font load:', err.message);
+}
 
 // ─── Brand tokens ─────────────────────────────────────────────────────
 // Match the in-app palette. If we change the brand, only this block.
@@ -77,6 +114,49 @@ function _fetchBuf(url, redirects = 3) {
       res.on('error', reject);
     }).on('error', reject);
   });
+}
+
+// Wider-protocol image fetch — handles BOTH http and https plus
+// redirects + an 8s timeout. Used by the hero-image right panel
+// since publisher-hosted images come from arbitrary CDNs (some
+// behind CloudFront, some on plain http for legacy sites).
+const _http = require('http');
+function _fetchImageBufAny(url, redirects = 4) {
+  return new Promise((resolve, reject) => {
+    if (!url) return reject(new Error('no url'));
+    const lib = url.startsWith('http://') ? _http : https;
+    const req = lib.get(url, { timeout: 8000 }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && redirects > 0) {
+        res.resume();
+        const next = res.headers.location.startsWith('http')
+          ? res.headers.location
+          : new URL(res.headers.location, url).toString();
+        return _fetchImageBufAny(next, redirects - 1).then(resolve, reject);
+      }
+      if (res.statusCode !== 200) {
+        res.resume();
+        return reject(new Error(`hero fetch ${res.statusCode}`));
+      }
+      const chunks = [];
+      res.on('data', c => chunks.push(c));
+      res.on('end', () => resolve(Buffer.concat(chunks)));
+      res.on('error', reject);
+    });
+    req.on('error', reject);
+    req.on('timeout', () => req.destroy(new Error('hero fetch timeout')));
+  });
+}
+
+// Sniff the image format from the buffer's magic bytes so we can
+// build a correct data URI (resvg renders JPEG and PNG natively;
+// WebP/GIF best-effort).
+function _detectImageMime(buf) {
+  if (!buf || buf.length < 4) return 'image/png';
+  if (buf[0] === 0xFF && buf[1] === 0xD8) return 'image/jpeg';
+  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47) return 'image/png';
+  if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) return 'image/gif';
+  if (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46) return 'image/webp';
+  return 'image/jpeg';
 }
 
 async function _flagDataUri(iso) {
@@ -134,38 +214,113 @@ function _wrapLines(text, maxChars, maxLines) {
   return lines;
 }
 
-// ─── Common chrome (logo, footer) ─────────────────────────────────────
-// Single source of truth for the wordmark + globe glyph that runs
-// across the top and the small footer at the bottom.
-function _chrome() {
-  return `
-    <!-- Top-left: Earth00 wordmark + globe glyph -->
-    <g transform="translate(56, 54)">
-      <!-- Globe wireframe glyph (matches the in-app loader globe) -->
-      <g transform="translate(0, 0)" stroke="${BRAND.gold}" fill="none" stroke-width="1.6" opacity="0.92">
-        <ellipse cx="22" cy="22" rx="20" ry="20"/>
-        <ellipse cx="22" cy="22" rx="20" ry="8" />
-        <ellipse cx="22" cy="22" rx="8"  ry="20"/>
-        <line x1="2"  y1="22" x2="42" y2="22"/>
-      </g>
-      <!-- Italic "e" — using inline SVG path so we don't depend on a
-           specific font being installed on the Render box. -->
-      <text x="56" y="34"
-            font-family="Georgia, 'Times New Roman', serif"
-            font-style="italic" font-weight="700" font-size="38"
-            fill="${BRAND.cream}" letter-spacing="-1">e</text>
-      <text x="76" y="34"
-            font-family="-apple-system, system-ui, 'Segoe UI', sans-serif"
-            font-weight="700" font-size="22" fill="${BRAND.ink}"
-            letter-spacing="-0.5">arth00</text>
-    </g>
+// Font-family chain used by every text element in every template.
+// Inter is the brand match if a TTF is dropped into `fonts/`; otherwise
+// DejaVu Sans is the next best widely-installed Linux sans-serif (on
+// the Render container's Debian base). Earlier the chain was
+// `-apple-system, system-ui, ...` which exists on macOS/iOS but NOT
+// on the Linux server, so resvg-js fell through to its default
+// fallback (Liberation Mono on most images) — explaining the blocky
+// typewriter look in the original OG cards. Forcing a known-installed
+// sans up front fixes the regression.
+const FONT_FAMILY = "'Inter', 'DejaVu Sans', 'Liberation Sans', 'Noto Sans', sans-serif";
 
+// ─── Common chrome (app icon + footer) ────────────────────────────────
+// Single source of truth for the brand mark up top + earth00.com
+// footer at the bottom. Renders the actual app icon (same image users
+// see on their iOS Home Screen) at 64×64 in the top-left so the OG
+// card stays brand-consistent with the in-app snapshot share.
+function _chrome() {
+  const ICON_SIZE = 64;
+  const iconBlock = _appIconDataUri
+    ? `<image x="56" y="42" width="${ICON_SIZE}" height="${ICON_SIZE}"
+              href="${_appIconDataUri}" preserveAspectRatio="xMidYMid"/>`
+    : `
+      <!-- Fallback wireframe + e if the bundled icon failed to load. -->
+      <g transform="translate(56, 54)">
+        <g stroke="${BRAND.gold}" fill="none" stroke-width="1.6" opacity="0.92">
+          <ellipse cx="22" cy="22" rx="20" ry="20"/>
+          <ellipse cx="22" cy="22" rx="20" ry="8"/>
+          <ellipse cx="22" cy="22" rx="8"  ry="20"/>
+          <line x1="2"  y1="22" x2="42" y2="22"/>
+        </g>
+        <text x="22" y="32" text-anchor="middle"
+              font-family="Georgia, 'Times New Roman', serif"
+              font-style="italic" font-weight="700" font-size="32"
+              fill="${BRAND.gold}">e</text>
+      </g>
+    `;
+  return `
+    ${iconBlock}
     <!-- Bottom-left: domain footer -->
     <text x="56" y="${H - 44}"
-          font-family="-apple-system, system-ui, 'Segoe UI', sans-serif"
-          font-weight="600" font-size="16" letter-spacing="0.1em"
+          font-family="${FONT_FAMILY}"
+          font-weight="600" font-size="16" letter-spacing="2"
           fill="${BRAND.goldSoft}">EARTH00.COM</text>
   `;
+}
+
+// Hero image right-panel — fetches the thread/line's hero image and
+// embeds it as a soft-faded right-side panel taking up ~55% of the
+// canvas. Tries `heroUrl` first, falls back to `heroCatalogUrl` (the
+// catalog/bucket image) on failure. Returns an empty string if both
+// fail — caller's left-aligned chrome takes the full canvas in that
+// case (graceful degradation rather than empty placeholder boxes).
+//
+// Visual treatment: cover-fit the image into the right ~55% (so it
+// fills the panel, edges may crop), then overlay a left-edge dark-
+// to-transparent gradient that fades the image into the left chrome
+// zone. The fade prevents a hard vertical seam between hero and
+// chrome and lets the title bleed slightly into the hero area
+// without losing legibility.
+async function _heroPanel(heroUrl, heroCatalogUrl) {
+  const candidates = [heroUrl, heroCatalogUrl].filter(s => typeof s === 'string' && s.trim());
+  for (const u of candidates) {
+    try {
+      const buf = await _fetchImageBufAny(u);
+      if (!buf || buf.length < 64) continue;
+      const mime = _detectImageMime(buf);
+      const dataUri = `data:${mime};base64,${buf.toString('base64')}`;
+      // Right ~55% of canvas with a 200px left-edge fade zone.
+      const heroX     = Math.round(W * 0.45); // 540
+      const fadeEndX  = Math.round(W * 0.62); // 744
+      const heroW     = W - heroX;
+      return `
+        <defs>
+          <linearGradient id="heroFade" x1="${heroX}" y1="0"
+                          x2="${fadeEndX}" y2="0"
+                          gradientUnits="userSpaceOnUse">
+            <stop offset="0%"   stop-color="${BRAND.bgTop}" stop-opacity="1"/>
+            <stop offset="100%" stop-color="${BRAND.bgTop}" stop-opacity="0"/>
+          </linearGradient>
+        </defs>
+        <image x="${heroX}" y="0" width="${heroW}" height="${H}"
+               href="${dataUri}"
+               preserveAspectRatio="xMidYMid slice"
+               opacity="0.92"/>
+        <rect x="${heroX}" y="0" width="${fadeEndX - heroX}" height="${H}"
+              fill="url(#heroFade)"/>
+      `;
+    } catch (_) {
+      // try next candidate
+    }
+  }
+  return '';
+}
+
+// Coverage scope line — same format as the in-app snapshot share so
+// the two artifacts (server OG card + client snapshot PNG) read as a
+// matched pair. Pluralizes correctly. Returns an empty string if any
+// of the three counts is missing or zero so the caller can omit the
+// row entirely (half-data looks worse than no-data).
+function _coverageLine({ articleCount, languageCount, countryCount }) {
+  if (!Number.isFinite(articleCount) || articleCount <= 0) return '';
+  if (!Number.isFinite(languageCount) || !Number.isFinite(countryCount)) return '';
+  const fmt = (n) => Number(n).toLocaleString('en-US');
+  const lc = `${fmt(languageCount)} LANGUAGE${languageCount === 1 ? '' : 'S'}`;
+  const cc = `${fmt(countryCount)} COUNTR${countryCount === 1 ? 'Y' : 'IES'}`;
+  const ac = `${fmt(articleCount)} ARTICLE${articleCount === 1 ? '' : 'S'}`;
+  return `COVERAGE IN ${lc} · ${cc} · ${ac}`;
 }
 
 function _background() {
@@ -215,8 +370,8 @@ async function _flagChips(isos, x, y) {
                             width="${FLAG_W_INNER}" height="${FLAG_H_INNER}"
                             href="${dataUri}" preserveAspectRatio="xMidYMid slice"/>` : ''}
         <text x="${PAD + FLAG_W_INNER + 8}" y="${CHIP_H/2 + 5}"
-              font-family="-apple-system, system-ui, 'Segoe UI', sans-serif"
-              font-weight="700" font-size="14" letter-spacing="0.06em"
+              font-family="${FONT_FAMILY}"
+              font-weight="700" font-size="14" letter-spacing="1"
               fill="${BRAND.cream}">${_esc(iso)}</text>
       </g>
     `);
@@ -244,81 +399,109 @@ function _importanceBadge(score, x, y) {
 
 // ─── Templates per entity type ────────────────────────────────────────
 
-async function _renderThreadSvg({ title, isos, importance, category }) {
-  const lines = _wrapLines(title || 'Untitled story', 28, 3);
+async function _renderThreadSvg({ title, isos, category, articleCount, languageCount, countryCount, heroImageUrl, heroCatalogImageUrl }) {
+  // Hero image right-panel (async — may fetch a remote CDN image).
+  // Fetched once per CDN cache miss; subsequent share-image requests
+  // for the same thread come from the in-process LRU below.
+  const heroSvg = await _heroPanel(heroImageUrl, heroCatalogImageUrl);
+  const hasHero = !!heroSvg;
+
+  // Title wraps tighter (22 chars × 3 lines, 56px) when a hero panel
+  // is present so the headline doesn't crash into the hero panel's
+  // fade zone. Without a hero, the title can use the wider 28-char
+  // wrap at 62px (the original layout).
+  const lines = hasHero
+    ? _wrapLines(title || 'Untitled story', 22, 3)
+    : _wrapLines(title || 'Untitled story', 28, 3);
+  const titleSize = hasHero ? 56 : 62;
+  const titleLineH = hasHero ? 70 : 78;
   const titleSvg = lines.map((line, i) => {
-    const y = 240 + i * 78;
+    const y = 240 + i * titleLineH;
     return `<text x="56" y="${y}"
-                  font-family="-apple-system, system-ui, 'Segoe UI', sans-serif"
-                  font-weight="800" font-size="62" letter-spacing="-1.2"
+                  font-family="${FONT_FAMILY}"
+                  font-weight="700" font-size="${titleSize}" letter-spacing="-1.5"
                   fill="${BRAND.cream}">${_esc(line)}</text>`;
   }).join('\n');
 
   const chipsY = H - 140;
+  const coverageText = _coverageLine({ articleCount, languageCount, countryCount });
+  const coverageSvg = coverageText ? `
+    <text x="56" y="${chipsY - 18}"
+          font-family="${FONT_FAMILY}"
+          font-weight="600" font-size="13" letter-spacing="2"
+          fill="rgba(255,255,255,0.62)">${_esc(coverageText)}</text>
+  ` : '';
   const chipsSvg = await _flagChips(isos, 56, chipsY);
 
   const catLabel = (category || 'Story').toUpperCase();
   const catSvg = `
     <text x="56" y="180"
-          font-family="-apple-system, system-ui, 'Segoe UI', sans-serif"
-          font-weight="700" font-size="13" letter-spacing="0.22em"
+          font-family="${FONT_FAMILY}"
+          font-weight="700" font-size="13" letter-spacing="3"
           fill="${BRAND.gold}">${_esc(catLabel)} · STORY THREAD</text>
   `;
 
+  // Layer order: bg → hero panel → chrome (logo/footer) → category
+  // → title → coverage → chips. Hero sits BELOW chrome so the icon
+  // and footer text always read on the dark background, not on the
+  // hero image.
   return `<?xml version="1.0" encoding="UTF-8"?>
     <svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
       ${_background()}
+      ${heroSvg}
       ${_chrome()}
       ${catSvg}
       ${titleSvg}
+      ${coverageSvg}
       ${chipsSvg}
-      ${_importanceBadge(importance, W - 226, H - 100)}
     </svg>
   `;
 }
 
-async function _renderLineSvg({ title, isos, threadCount, category }) {
-  const lines = _wrapLines(title || 'Untitled timeline', 28, 3);
+async function _renderLineSvg({ title, isos, category, articleCount, languageCount, countryCount, heroImageUrl, heroCatalogImageUrl }) {
+  const heroSvg = await _heroPanel(heroImageUrl, heroCatalogImageUrl);
+  const hasHero = !!heroSvg;
+
+  const lines = hasHero
+    ? _wrapLines(title || 'Untitled timeline', 22, 3)
+    : _wrapLines(title || 'Untitled timeline', 28, 3);
+  const titleSize = hasHero ? 56 : 62;
+  const titleLineH = hasHero ? 70 : 78;
   const titleSvg = lines.map((line, i) => {
-    const y = 240 + i * 78;
+    const y = 240 + i * titleLineH;
     return `<text x="56" y="${y}"
-                  font-family="-apple-system, system-ui, 'Segoe UI', sans-serif"
-                  font-weight="800" font-size="62" letter-spacing="-1.2"
+                  font-family="${FONT_FAMILY}"
+                  font-weight="700" font-size="${titleSize}" letter-spacing="-1.5"
                   fill="${BRAND.cream}">${_esc(line)}</text>`;
   }).join('\n');
 
   const chipsY = H - 140;
+  const coverageText = _coverageLine({ articleCount, languageCount, countryCount });
+  const coverageSvg = coverageText ? `
+    <text x="56" y="${chipsY - 18}"
+          font-family="${FONT_FAMILY}"
+          font-weight="600" font-size="13" letter-spacing="2"
+          fill="rgba(255,255,255,0.62)">${_esc(coverageText)}</text>
+  ` : '';
   const chipsSvg = await _flagChips(isos, 56, chipsY);
 
   const catLabel = (category || 'Story').toUpperCase();
   const catSvg = `
     <text x="56" y="180"
-          font-family="-apple-system, system-ui, 'Segoe UI', sans-serif"
-          font-weight="700" font-size="13" letter-spacing="0.22em"
+          font-family="${FONT_FAMILY}"
+          font-weight="700" font-size="13" letter-spacing="3"
           fill="${BRAND.gold}">${_esc(catLabel)} · STORY LINE</text>
   `;
-
-  // Replace "importance" badge with thread count for lines.
-  const countLabel = threadCount != null ? `${threadCount} THREAD${threadCount === 1 ? '' : 'S'}` : '';
-  const countSvg = countLabel ? `
-    <g transform="translate(${W - 226}, ${H - 100})">
-      <rect width="170" height="36" rx="18"
-            fill="rgba(212,168,67,0.10)" stroke="${BRAND.gold}" stroke-width="1.4"/>
-      <text x="85" y="24" text-anchor="middle"
-            font-family="-apple-system, system-ui, 'Segoe UI', sans-serif"
-            font-weight="800" font-size="13" letter-spacing="0.18em"
-            fill="${BRAND.gold}">${_esc(countLabel)}</text>
-    </g>
-  ` : '';
 
   return `<?xml version="1.0" encoding="UTF-8"?>
     <svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
       ${_background()}
+      ${heroSvg}
       ${_chrome()}
       ${catSvg}
       ${titleSvg}
+      ${coverageSvg}
       ${chipsSvg}
-      ${countSvg}
     </svg>
   `;
 }
@@ -529,11 +712,11 @@ async function _toPng(svg) {
     background: BRAND.bgTop,
     fitTo: { mode: 'width', value: W },
     font: {
-      // resvg uses the system font fallback chain; we accept whatever's
-      // available on the host. Render's container has Liberation Sans
-      // which is a Helvetica-ish stand-in — close enough to system-ui
-      // for OG cards.
+      // Load any TTF/OTF dropped into ./fonts/ (Inter is the brand
+      // match — see top of file). System fonts as backup so DejaVu
+      // Sans / Liberation Sans are still found if no bundle is present.
       loadSystemFonts: true,
+      ...(_fontFiles.length ? { fontFiles: _fontFiles } : {}),
     },
   });
   return resvg.render().asPng();
