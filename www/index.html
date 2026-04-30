@@ -6040,17 +6040,16 @@ button.arcCtxSegDot,
   overflow: hidden;
   text-overflow: ellipsis;
 }
-/* :not(.flowCtxMinimized) — when the user clicks [—] while in routes
-   (view-arcs) view, the unified minimize CSS fades the eyebrow via
-   opacity:0 + pointer-events:none, but the element stays display:flex
-   so it still holds horizontal LAYOUT space. With the card shrunk to
-   width:max-content via the minimize rule, that ghost layout pushed
-   the pill bar to the right side of the card — the user reported the
-   pill ending up on the right edge of the screen on routes view but
-   on the left on info/article view. Excluding the minimized state
-   collapses the title back to its default display:none, so the card
-   shrinks to just the pill width and the pill sits flush left. */
-#flowCtxCard.view-arcs:not(.flowCtxMinimized) .flowCtxLiveArcsTitle { display: flex; }
+/* "Routes" eyebrow removed (20260430). On the noInfoOrigin / mobile
+   card width (~220px) there was never enough room for the eyebrow +
+   the pill bar of buttons; even after shrinking font + letter-spacing,
+   the eyebrow truncated with "..." and the count chip got squeezed.
+   Decision: just drop it. .flowCtxLiveArcsTitle keeps its default
+   display:none baseline, so the eyebrow markup in the DOM is inert.
+   To restore: re-add `#flowCtxCard.view-arcs:not(.flowCtxMinimized)
+   .flowCtxLiveArcsTitle { display: flex; }` here. The :not() is what
+   kept the minimized pill flush-left in routes view; without the
+   eyebrow visible at all, that constraint no longer matters. */
 .flowCtxLiveArcsDot {
   width: 6px; height: 6px; border-radius: 50%;
   background: rgba(255,210,140,0.9);
