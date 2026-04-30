@@ -27390,6 +27390,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
       "Italian outlets are driving the volume; the framing in French and German press is markedly more critical of EU border enforcement.",
       "Russia and Turkey both surface in the routing — covering the migration story as leverage in their own foreign-policy narratives.",
     ];
+    const MOCK_KEYWORD_ANALYSIS = [
+      "Mentions doubled in the last 24 hours — the spike clusters tightly in business-section coverage across European outlets.",
+      "Three named actors recur: a regulator, a CEO, and a sovereign wealth fund. The framing flips between regulatory pressure and market opportunity.",
+      "Watch for spillover into adjacent keywords: same set of country chips, broader lateral reach over the next 48 hours likely.",
+    ];
 
     // ── Chapter list ──────────────────────────────────────────────
     // Each chapter:
@@ -27444,22 +27449,22 @@ const settingsToggle     = document.getElementById("settingsToggle");
           clearSpotlight();
         },
         beats: [
-          // 0–3s: globe spinning into view (no spotlight, just stun).
-          // 3s: camera lands on Egypt — invoke the same focus path
-          //     a real country tap would use, so the panel opens.
+          // 3s: camera lands on Egypt — match the full real-tap path
+          //     so we get the ring pulse + polygon illumination, not
+          //     just the bare camera move. See www/index.html for
+          //     full rationale.
           { at: 3000, do: () => {
               try {
-                // Find Egypt in the loaded country dataset and focus
-                // its lat/lon. Fallback gracefully if the dataset
-                // isn't ready (cold launch).
                 const c = (window.__globeCountries || []).find(
                   c => c && (c.iso_code || '').toUpperCase() === 'EG'
                 );
                 if (c && c.lat != null) {
-                  window.startFocus?.(parseFloat(c.lat), parseFloat(c.lon));
-                  // Open the country panel for Egypt by simulating the
-                  // same path a tap takes — __openNodePanel is the
-                  // canonical entry point.
+                  if (window.focusCountry) window.focusCountry(c);
+                  else window.startFocus?.(parseFloat(c.lat), parseFloat(c.lon));
+                  const iso = (c.iso_code || '').toString().toUpperCase().trim();
+                  if (iso && window.__polygonLayer?.selectCountry) {
+                    window.__polygonLayer.selectCountry(iso);
+                  }
                   setTimeout(() => {
                     try { window.__openNodePanel?.(c, 'country'); } catch (_) {}
                   }, 800);
@@ -27528,18 +27533,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
               } catch (_) {}
             }
           },
-          // 3s: focus Cairo + open its city panel.
+          // 3s: focus Cairo + open its city panel. focusCity gives
+          //     the ring pulse for free (matches real-tap path);
+          //     the bare startFocus we replaced skipped it.
           { at: 3500, do: () => {
               try {
                 const cairo = (window.__globeCities || []).find(
                   c => c && /cairo/i.test(c.name || '')
                 );
                 if (cairo && cairo.lat != null) {
-                  window.startFocus?.(parseFloat(cairo.lat), parseFloat(cairo.lon));
+                  if (window.focusCity) window.focusCity(cairo);
+                  else window.startFocus?.(parseFloat(cairo.lat), parseFloat(cairo.lon));
                   setTimeout(() => { try { window.__openNodePanel?.(cairo, 'city'); } catch (_) {} }, 600);
-                  // Full-screen dim with the city panel elevated in
-                  // front of it (z-index 5075). Cleaner than the
-                  // cutout approach which left a seam during slide-up.
                   setTimeout(() => dimAndElevatePanel(), 1100);
                 }
               } catch (_) {}
@@ -28000,29 +28005,57 @@ const settingsToggle     = document.getElementById("settingsToggle");
       },
 
       // ── 11. Keyword Intelligence (~9s) ───────────────────────────
+      // Halfway switch from Trend → Rising mode, then mock-stream a
+      // keyword analysis. See www/index.html for full rationale.
       {
         id: 'keywords',
         title: 'Keyword Intelligence',
         caption: 'What the world is talking about — rising and trending keywords.',
         audio: AUDIO_BASE + '11_keywords.mp3',
         fallbackMs: 9000,
-        onEnter: () => {
+        onEnter: function () {
           try { window.__goToPage?.(0); } catch (_) {}
           clearSpotlight();
+          this._mockCleanup = null;
         },
         beats: [
-          { at: 2500, do: () => spotlight('#kwiTrendingList, #kwiBars') },
-          { at: 5500, do: () => {
+          { at: 1500, do: () => pulse('#kwiTrendingList, #kwiBars') },
+          { at: 4500, do: () => {
               try {
-                const firstBar = document.querySelector('#kwiTrendingList .kwi-trend-row, #kwiBars .kwi-bar-row');
-                if (firstBar) firstBar.click();
+                const tab = document.querySelector('.kwi-mode-tab[data-mode="rising"]');
+                if (tab) { pulse(tab); tab.click(); }
               } catch (_) {}
             }
           },
-          { at: 6500, do: () => spotlight('.aiAnalysisCtaBadge, #adpAnalysisBody') },
+          { at: 5500, do: async function () {
+              try {
+                const row = await waitForElement('#kwiTrendingList .kwi-trending-row', { timeout: 2500 });
+                if (!row) return;
+                pulse(row);
+                const ctx = row.querySelector('.kwi-row-ctx');
+                if (ctx) {
+                  ctx.innerHTML = '';
+                  ctx.classList.add('open');
+                  this._mockCleanup = streamMockAnalysis(ctx, MOCK_KEYWORD_ANALYSIS, 800);
+                  const ctxBtn = row.querySelector('.kwi-row-ctx-btn');
+                  if (ctxBtn) ctxBtn.classList.add('active');
+                }
+              } catch (_) {}
+            }
+          },
         ],
-        onExit: () => {
+        onExit: function () {
           clearSpotlight();
+          if (this._mockCleanup) { try { this._mockCleanup(); } catch (_) {} this._mockCleanup = null; }
+          try {
+            document.querySelectorAll('.kwi-row-ctx.open').forEach(el => {
+              el.classList.remove('open');
+              el.innerHTML = '';
+            });
+            document.querySelectorAll('.kwi-row-ctx-btn.active').forEach(el => el.classList.remove('active'));
+            const trendTab = document.querySelector('.kwi-mode-tab[data-mode="trending"]');
+            if (trendTab && !trendTab.classList.contains('active')) trendTab.click();
+          } catch (_) {}
         },
       },
 
@@ -38738,9 +38771,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
   }
   .bDataPanel {
     width: 100%;
-    max-width: none;
+    max-width: 100%;
+    box-sizing: border-box;
+    overflow: hidden;
   }
-  .bDataPanelChart { height: 60px; }
+  .bDataPanelChart {
+    height: 60px;
+    overflow: hidden;
+  }
+  .bDataPanelChart svg { overflow: hidden; }
 }
 
 /* ── Left article panel ── */
@@ -43508,13 +43547,16 @@ body.ticker-active .gTickerLabel {
             </button>
           </div>
         </div>
-        <!-- View on Globe CTA — placed AFTER the Analysis section so users
-             read the context first, then get propelled back to the globe
-             with the relevant flow arcs triggered. Banner-style badge
-             with shimmer + breath pulse to read as the panel's hero
-             secondary action. Shared handler resolves thread vs timeline
-             from data-is-timeline before dispatching to the correct
-             flow function. -->
+        <!-- Timeline / Events — directly below Analysis. See www/index.html. -->
+        <div class="cdSection" id="cdTimelineSection">
+          <div class="cdSectionLabel">
+            <svg class="cdSectionIcon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M8 2v12M4 5h8M4 8h8M4 11h8" stroke-linecap="round"/></svg>
+            Thread Timeline
+          </div>
+          <div id="cdTimelineBody">
+            <div class="cdLoadingRow"><span style="font-size:16px;opacity:0.2">\u25C8</span><span>Loading timeline...</span></div>
+          </div>
+        </div>
         <div class="cdSection" id="cdViewOnGlobeSection">
           <button class="viewOnGlobeCta"
                   data-thread-id="${threadId}"
@@ -43535,15 +43577,6 @@ body.ticker-active .gTickerLabel {
             Data
           </div>
           <div id="cdDataBody" class="cdDataPanels"></div>
-        </div>
-        <div class="cdSection" id="cdTimelineSection">
-          <div class="cdSectionLabel">
-            <svg class="cdSectionIcon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M8 2v12M4 5h8M4 8h8M4 11h8" stroke-linecap="round"/></svg>
-            Thread Timeline
-          </div>
-          <div id="cdTimelineBody">
-            <div class="cdLoadingRow"><span style="font-size:16px;opacity:0.2">\u25C8</span><span>Loading timeline...</span></div>
-          </div>
         </div>
         <div class="cdSection" id="cdArticlesSection">
           <div class="cdSectionLabel">
