@@ -2116,7 +2116,12 @@ body.ticker-active #flowControls {
   gap: 3px;
   position: relative;
   min-width: 0;
-  overflow: hidden;
+  /* overflow:visible — was hidden, which was clipping the .flowAC
+     country-suggestion dropdown to the field's own ~40px height,
+     making the list invisible. The chip + input handle their own
+     overflow internally (text-overflow:ellipsis on .chipName, the
+     <input> truncates natively), so removing the clip here is safe. */
+  overflow: visible;
 }
 
 .flowFilterLabel {
@@ -2152,13 +2157,22 @@ body.ticker-active #flowControls {
   background: rgba(0,180,100,0.08);
 }
 
-/* Autocomplete dropdown */
+/* Autocomplete dropdown
+   Mobile: drops UP (bottom:100%) so the suggestions list appears
+   ABOVE the input instead of below it. The News Flows panel is
+   anchored at the bottom of the viewport on mobile and the on-screen
+   keyboard takes the lower half — a downward dropdown would render
+   behind the keyboard and be invisible. Drop-up keeps the list in
+   the visible portion of the screen above the field.
+   (Desktop has its own .flowAC declaration in /index.html with
+   top:100% — the desktop panel sits at the top-right of the globe
+   and there's plenty of room below.) */
 .flowAC {
   position: absolute;
-  top: 100%;
+  bottom: 100%;
   left: 0;
   right: 0;
-  margin-top: 4px;
+  margin-bottom: 4px;
   background: rgba(5,7,10,0.98);
   border: 1px solid rgba(0,220,130,0.25);
   border-radius: 10px;
@@ -2166,7 +2180,7 @@ body.ticker-active #flowControls {
   overflow-y: auto;
   z-index: 300;
   display: none;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  box-shadow: 0 -8px 32px rgba(0,0,0,0.5);
 }
 .flowAC.open { display: block; }
 .flowAC-item {
@@ -4647,10 +4661,19 @@ button.arcCtxSegDot,
        screen, out of the way of any panel anchored at the bottom (news
        flows panel, briefing launcher, article-detail panel, etc.).
        Skip button stays at top-right and clears the scale bar at
-       top:86px, so it doesn't collide with the centered top stack. */
+       top:86px, so it doesn't collide with the centered top stack.
+
+       Padding-top reduced 140 → 100 so the chrome panel sits clear of
+       the cluster detail panel's top edge in chapters 4 + 5. The
+       cluster panel slides up to ~70vh, which on a typical phone puts
+       its top edge around 200–220px from the viewport top — at the
+       old 140px chrome offset, the chrome's caption + controls (~120px
+       block) ran right into the panel's top. 100px gives ~40px of
+       breathing room. Scale bar at top:86px right:20px stays clear
+       horizontally because the chrome is centered. */
     #tutOverlay.tut-chrome-top {
       justify-content: flex-start;
-      padding: calc(env(safe-area-inset-top, 0px) + 140px) 0 0;
+      padding: calc(env(safe-area-inset-top, 0px) + 100px) 0 0;
     }
     #tutOverlay.active { opacity: 1; }
     #tutOverlay > * { pointer-events: auto; }
@@ -6086,22 +6109,28 @@ button.arcCtxSegDot,
   pointer-events: none;
 }
 /* In noInfoOrigin mode, tighten the overall card and match the
-   transparency of the "% Global Coverage" inspector panel. */
-#flowCtxCard.view-arcs.noInfoOrigin {
+   transparency of the "% Global Coverage" inspector panel.
+
+   :not(.flowCtxMinimized) — without this, news-flows mode (view-arcs +
+   noInfoOrigin = 2 classes) outweighed the unified .flowCtxMinimized
+   rule (1 class) on specificity. Result: clicking [—] collapsed the
+   pill bar but left the card frame at 220×~240 with its dim background
+   intact — the "shadowy shape" the user reported. Excluding the
+   minimized state restores the unified minimize behavior. */
+#flowCtxCard.view-arcs.noInfoOrigin:not(.flowCtxMinimized) {
   width: 220px;
   max-width: calc(100vw - 32px);
   background: rgba(6, 10, 20, 0.30);
   padding: 8px;
-  /* 24px header row + 188px arc-list slot + 28px buffer. Down from the
-     prior 210px slot — saves the 22px the "Routes" eyebrow used to add
-     INSIDE the slot, now that the title shares the header row with
-     the pill bar instead. */
+  /* 24px header row + 188px arc-list slot + 28px buffer. */
   max-height: calc(24px + 188px + 28px);
   transition:
     max-height 0.42s cubic-bezier(0.32, 0.72, 0, 1),
     background 0.25s ease;
 }
-#flowCtxCard.view-arcs.noInfoOrigin.liveArcsPrePlay {
+/* Same specificity fix for the pre-play state — three classes outweighed
+   .flowCtxMinimized's one, locking max-height: 52px even when minimized. */
+#flowCtxCard.view-arcs.noInfoOrigin.liveArcsPrePlay:not(.flowCtxMinimized) {
   max-height: 52px;
 }
 /* (The old per-view-arcs minimize rules — slot max-height:0 + card
@@ -29196,6 +29225,31 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }
     }
 
+    // ── Scroll a panel section into view ──────────────────────────
+    // Used during chapters that surface the cluster / article detail
+    // panel — when the narrator says "analysis" or "timeline" we want
+    // the panel scrolled to that section so the viewer sees what she's
+    // talking about. Wraps scrollIntoView in a try/catch + smooth
+    // fallback for older WebViews and silently no-ops if the target
+    // doesn't exist (e.g. panel hasn't opened yet because of a slow
+    // network / cold cache). block:'start' aligns the section's top
+    // with the scroll container's top, plus we let CSS scroll-margin
+    // do any per-section breathing room. behavior:'smooth' kicks in
+    // because .cdSections already declares scroll-behavior:smooth at
+    // the container level, but we pass it to scrollIntoView too so
+    // the smoothness applies even if the parent override gets dropped.
+    function scrollPanelTo(selectorOrEl) {
+      let target = null;
+      if (typeof selectorOrEl === 'string') target = document.querySelector(selectorOrEl);
+      else if (selectorOrEl && selectorOrEl.scrollIntoView) target = selectorOrEl;
+      if (!target || !target.scrollIntoView) return;
+      try {
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } catch (_) {
+        try { target.scrollIntoView(); } catch (_) {}
+      }
+    }
+
     // ── Legacy: dimAndElevatePanel ─────────────────────────────────
     // Kept as a thin wrapper so any code still calling it doesn't
     // explode — it now just pulses the panel border instead of dim+
@@ -29446,15 +29500,29 @@ const settingsToggle     = document.getElementById("settingsToggle");
               } catch (_) {}
             }
           },
-          // 4s: spotlight the analysis section.
-          { at: 4500, do: () => spotlight('#cdSummarySection, #cdSummaryBody') },
-          // 7s: spotlight the country chips row (closest visual
+          // 4s: scroll panel to + pulse the analysis section.
+          //      Narrator says "analysis" here; the panel scrolls to
+          //      bring it into view at the same moment.
+          { at: 4500, do: () => {
+              scrollPanelTo('#cdSummarySection');
+              pulse('#cdSummarySection, #cdSummaryBody');
+            }
+          },
+          // 7s: scroll + pulse the country chips row (closest visual
           // analog to a "country pie graph" in the current cluster
           // panel — exists today, the pie/distribution chart is
           // queued for v1.1).
-          { at: 7500, do: () => spotlight('#cdCountriesRow, .cdCountriesRow') },
-          // 10s: spotlight the timeline section.
-          { at: 10000, do: () => spotlight('#cdTimelineSection') },
+          { at: 7500, do: () => {
+              scrollPanelTo('#cdCountriesRow, .cdCountriesRow');
+              pulse('#cdCountriesRow, .cdCountriesRow');
+            }
+          },
+          // 10s: scroll + pulse the timeline section.
+          { at: 10000, do: () => {
+              scrollPanelTo('#cdTimelineSection');
+              pulse('#cdTimelineSection');
+            }
+          },
         ],
         onExit: () => {
           clearSpotlight();
@@ -29491,20 +29559,24 @@ const settingsToggle     = document.getElementById("settingsToggle");
               } catch (_) {}
             }
           },
-          // 7s: spotlight the Deep Read button + simulate a tap by
-          // directly streaming the mock analysis into the body. This
-          // sidesteps the real Claude call (which would cost credits +
-          // could fail / take 5–10s) and gives us deterministic
-          // visuals for the tutorial.
+          // 7s: scroll + spotlight the Deep Read body + simulate a tap
+          // by streaming the mock analysis into it. Sidesteps the real
+          // Claude call (cost + 5–10s latency) and gives deterministic
+          // visuals.
           { at: 7000, do: function () {
               const body = document.getElementById('cdSummaryBody');
               if (body) {
+                scrollPanelTo('#cdSummarySection');
                 this._mockCleanup = streamMockAnalysis(body, MOCK_LINES_ANALYSIS, 1500);
-                spotlight(body);
+                pulse(body);
               }
             }
           },
-          { at: 14000, do: () => spotlight('#cdTimelineSection') },
+          { at: 14000, do: () => {
+              scrollPanelTo('#cdTimelineSection');
+              pulse('#cdTimelineSection');
+            }
+          },
         ],
         onExit: function () {
           clearSpotlight();

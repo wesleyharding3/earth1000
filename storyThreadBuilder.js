@@ -1194,6 +1194,29 @@ async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()
            WHERE thread_id = $1 AND article_id = ANY($2::int[])
         `, [threadId, ejectIds]);
         if (result.rowCount > 0) {
+          // Tombstone the ejected pairs so the next builder run cannot
+          // re-cluster them back into THIS thread. Without this row,
+          // Claude in a future batch would see the article in the
+          // unthreaded pool, see thread X among candidates, and could
+          // extend X with the article — undoing the eject we just made.
+          // ON CONFLICT keeps the insert idempotent if Claude ejects
+          // the same article twice across runs. Reason capped at
+          // 200 char so a verbose Claude justification doesn't bloat
+          // the table.
+          const ejectReason = (def.reason || '').slice(0, 200) || null;
+          for (const aid of ejectIds) {
+            try {
+              await pool.query(
+                `INSERT INTO story_thread_article_ejections
+                       (thread_id, article_id, source, reason)
+                  VALUES ($1, $2, 'eject_action', $3)
+                  ON CONFLICT (thread_id, article_id) DO NOTHING`,
+                [threadId, aid, ejectReason]
+              );
+            } catch (err) {
+              console.warn(`   ⚠ tombstone insert failed (thread=${threadId} article=${aid}): ${err.message}`);
+            }
+          }
           // Eject = remove article(s) from a thread. NOT an article-add,
           // so we don't bump last_updated_at (which would falsely keep
           // the thread "fresh"). article_count is recomputed from the
@@ -1373,6 +1396,31 @@ async function insertArticles(threadId, articleIds, anchorId, importance, validI
     .filter(id => !validIdSet || validIdSet.has(id));
   if (!filteredIds.length) return;
 
+  // Tombstone gate — skip any (threadId, articleId) pair that was
+  // previously ejected via the audit cron OR via the in-prompt
+  // EJECT action below. Without this, articles freshly detached by
+  // auditThreadArticles.js go back into the unthreaded pool and can
+  // re-cluster into the same thread on the next 30-min builder cycle,
+  // turning the audit into a Haiku-billed treadmill. Schema:
+  // migrations/20260430_story_thread_article_ejections.sql
+  let tombstonedSet = new Set();
+  try {
+    const { rows: ej } = await pool.query(
+      `SELECT article_id FROM story_thread_article_ejections
+        WHERE thread_id = $1 AND article_id = ANY($2::int[])`,
+      [threadId, filteredIds]
+    );
+    tombstonedSet = new Set(ej.map(r => Number(r.article_id)));
+    if (tombstonedSet.size) {
+      console.log(`   🪦 thread=${threadId} skipping ${tombstonedSet.size} tombstoned article(s) at attach time`);
+    }
+  } catch (err) {
+    // Tombstone lookup failure shouldn't block thread building. Worst
+    // case: a previously-ejected article re-attaches; the next audit
+    // run will catch + re-tombstone it. Log and proceed.
+    console.warn(`   ⚠ tombstone lookup failed (thread=${threadId}): ${err.message}`);
+  }
+
   const { rows } = await pool.query(`
     SELECT id, published_at
     FROM news_articles
@@ -1383,6 +1431,7 @@ async function insertArticles(threadId, articleIds, anchorId, importance, validI
   for (const articleId of articleIds) {
     const numericId = Number(articleId);
     if (validIdSet && !validIdSet.has(numericId)) continue;
+    if (tombstonedSet.has(numericId)) continue;
     const publishedAt = publishedAtMap.get(numericId);
     const score = computeArticleRelevanceScore(importance, publishedAt);
     await pool.query(`
@@ -1727,12 +1776,21 @@ async function dedupSimilarThreads() {
         // Merge keywords into winner
         const mergedKeywords = mergeKeywords(winner.keywords || [], loser.keywords || []);
 
-        // Reassign articles (skip rows that already exist on winner)
+        // Reassign articles (skip rows that already exist on winner,
+        // and skip any (winner, article) pair that's tombstoned —
+        // an article previously ejected from the WINNER must not
+        // sneak back in via a merge from a LOSER). The ON CONFLICT
+        // handles the already-on-winner case; the NOT EXISTS handles
+        // the previously-ejected case.
         await pool.query(`
           INSERT INTO story_thread_articles (thread_id, article_id, relevance_score, is_anchor)
           SELECT $1, sta.article_id, sta.relevance_score, FALSE
           FROM story_thread_articles sta
           WHERE sta.thread_id = $2
+            AND NOT EXISTS (
+              SELECT 1 FROM story_thread_article_ejections e
+              WHERE e.thread_id = $1 AND e.article_id = sta.article_id
+            )
           ON CONFLICT DO NOTHING
         `, [winner.id, loser.id]);
 

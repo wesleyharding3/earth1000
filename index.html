@@ -4276,10 +4276,12 @@ button.arcCtxSegDot,
         + 18px
       );
     }
-    /* Per-chapter chrome flip — see www/index.html. */
+    /* Per-chapter chrome flip — see www/index.html. Padding-top
+       reduced 140 → 100 to clear the cluster detail panel's top edge
+       in chapters 4 + 5. */
     #tutOverlay.tut-chrome-top {
       justify-content: flex-start;
-      padding: calc(env(safe-area-inset-top, 0px) + 140px) 0 0;
+      padding: calc(env(safe-area-inset-top, 0px) + 100px) 0 0;
     }
     #tutOverlay.active { opacity: 1; }
     #tutOverlay > * { pointer-events: auto; }
@@ -27299,6 +27301,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }
     }
 
+    // Scroll a panel section into view. See www/index.html.
+    function scrollPanelTo(selectorOrEl) {
+      let target = null;
+      if (typeof selectorOrEl === 'string') target = document.querySelector(selectorOrEl);
+      else if (selectorOrEl && selectorOrEl.scrollIntoView) target = selectorOrEl;
+      if (!target || !target.scrollIntoView) return;
+      try {
+        target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } catch (_) {
+        try { target.scrollIntoView(); } catch (_) {}
+      }
+    }
+
     // ── Legacy: dimAndElevatePanel ─────────────────────────────────
     // Now just pulses the panel border. See www/index.html.
     function dimAndElevatePanel() {
@@ -27541,15 +27556,24 @@ const settingsToggle     = document.getElementById("settingsToggle");
               } catch (_) {}
             }
           },
-          // 4s: spotlight the analysis section.
-          { at: 4500, do: () => spotlight('#cdSummarySection, #cdSummaryBody') },
-          // 7s: spotlight the country chips row (closest visual
-          // analog to a "country pie graph" in the current cluster
-          // panel — exists today, the pie/distribution chart is
-          // queued for v1.1).
-          { at: 7500, do: () => spotlight('#cdCountriesRow, .cdCountriesRow') },
-          // 10s: spotlight the timeline section.
-          { at: 10000, do: () => spotlight('#cdTimelineSection') },
+          // 4s: scroll panel + pulse analysis section.
+          { at: 4500, do: () => {
+              scrollPanelTo('#cdSummarySection');
+              pulse('#cdSummarySection, #cdSummaryBody');
+            }
+          },
+          // 7s: scroll panel + pulse country chips row.
+          { at: 7500, do: () => {
+              scrollPanelTo('#cdCountriesRow, .cdCountriesRow');
+              pulse('#cdCountriesRow, .cdCountriesRow');
+            }
+          },
+          // 10s: scroll panel + pulse timeline section.
+          { at: 10000, do: () => {
+              scrollPanelTo('#cdTimelineSection');
+              pulse('#cdTimelineSection');
+            }
+          },
         ],
         onExit: () => {
           clearSpotlight();
@@ -27594,12 +27618,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
           { at: 7000, do: function () {
               const body = document.getElementById('cdSummaryBody');
               if (body) {
+                scrollPanelTo('#cdSummarySection');
                 this._mockCleanup = streamMockAnalysis(body, MOCK_LINES_ANALYSIS, 1500);
-                spotlight(body);
+                pulse(body);
               }
             }
           },
-          { at: 14000, do: () => spotlight('#cdTimelineSection') },
+          { at: 14000, do: () => {
+              scrollPanelTo('#cdTimelineSection');
+              pulse('#cdTimelineSection');
+            }
+          },
         ],
         onExit: function () {
           clearSpotlight();

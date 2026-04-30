@@ -92,6 +92,33 @@ async function main() {
             [t.id, ids]
           );
           detachedCount += rowCount;
+          // Tombstone — record the (thread, article) pair as ejected so
+          // storyThreadBuilder's next pass won't re-cluster the article
+          // back into THIS thread. ON CONFLICT DO NOTHING because the
+          // PK is (thread_id, article_id); re-running the audit on the
+          // same article (e.g. after a builder bug temporarily attached
+          // it again) is a no-op insert. Reasons truncated to 200 char.
+          // Schema: migrations/20260430_story_thread_article_ejections.sql
+          const reasons = outliers.reduce((m, o) => {
+            m[o.article_id] = String(o.reason || '').slice(0, 200);
+            return m;
+          }, {});
+          for (const aid of ids) {
+            try {
+              await pool.query(
+                `INSERT INTO story_thread_article_ejections
+                       (thread_id, article_id, source, reason)
+                  VALUES ($1, $2, 'audit', $3)
+                  ON CONFLICT (thread_id, article_id) DO NOTHING`,
+                [t.id, aid, reasons[aid] || null]
+              );
+            } catch (err) {
+              // Don't let a tombstone insert failure break the audit
+              // pass — the join row is already deleted, and missing a
+              // tombstone is recoverable on the next audit cycle.
+              console.warn(`   ⚠ tombstone insert failed (thread=${t.id} article=${aid}): ${err.message}`);
+            }
+          }
           // Recompute article_count so the thread's badge stays truthful.
           await pool.query(
             `UPDATE story_threads
