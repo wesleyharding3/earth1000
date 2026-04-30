@@ -4674,6 +4674,172 @@ button.arcCtxSegDot,
       #tutOverlay, #tutCaption, .tutDot { transition: none; }
     }
 
+    /* ──────────────────────────────────────────────────────────────────
+       Tutorial — welcome prompt
+       Pinned above safe-area + global ticker. Two-button choice:
+       "Take the tour" plays the narrated walk-through; "Skip"
+       dismisses and sets the seen-flag so it never auto-prompts again.
+       ────────────────────────────────────────────────────────────── */
+    #tutWelcome {
+      position: fixed;
+      top: max(env(safe-area-inset-top, 0px), 16px);
+      left: 50%;
+      transform: translateX(-50%) translateY(-12px);
+      width: min(420px, calc(100vw - 32px));
+      z-index: 5200;
+      padding: 18px 22px 20px;
+      border-radius: 18px;
+      background: linear-gradient(135deg, rgba(6,10,20,0.96), rgba(13,21,37,0.96));
+      border: 1px solid rgba(255, 190, 80, 0.45);
+      box-shadow: 0 18px 48px rgba(0,0,0,0.65), 0 0 32px rgba(255,190,80,0.18);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      color: rgba(255, 235, 200, 0.96);
+      font-family: -apple-system, system-ui, "Segoe UI", sans-serif;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.4s ease, transform 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+    }
+    #tutWelcome.show {
+      opacity: 1;
+      pointer-events: auto;
+      transform: translateX(-50%) translateY(0);
+    }
+    #tutWelcome .tutWelcomeEyebrow {
+      font-size: 10px; font-weight: 800; letter-spacing: 0.24em;
+      text-transform: uppercase;
+      color: rgba(255, 190, 80, 0.95);
+      margin-bottom: 6px;
+    }
+    #tutWelcome .tutWelcomeTitle {
+      font-size: 19px; font-weight: 750; line-height: 1.25;
+      letter-spacing: -0.01em;
+      margin-bottom: 4px;
+      color: rgba(255, 240, 210, 0.98);
+    }
+    #tutWelcome .tutWelcomeSub {
+      font-size: 13px; font-weight: 500;
+      color: rgba(255, 235, 200, 0.7);
+      margin-bottom: 14px;
+    }
+    #tutWelcome .tutWelcomeBtns {
+      display: flex; gap: 10px;
+    }
+    #tutWelcome button {
+      flex: 1;
+      padding: 11px 14px;
+      border-radius: 10px;
+      font-size: 13px; font-weight: 700;
+      letter-spacing: 0.02em;
+      cursor: pointer;
+      transition: background 0.15s, transform 0.12s;
+      font-family: inherit;
+    }
+    #tutWelcome .tutTakeTour {
+      background: linear-gradient(135deg, rgba(255,170,60,0.92), rgba(255,200,90,0.92));
+      color: #1a1207;
+      border: 1px solid rgba(255, 200, 90, 1);
+    }
+    #tutWelcome .tutTakeTour:hover  { transform: translateY(-1px); }
+    #tutWelcome .tutTakeTour:active { transform: scale(0.97); }
+    #tutWelcome .tutSkipChoice {
+      background: rgba(255,255,255,0.04);
+      color: rgba(255, 235, 200, 0.78);
+      border: 1px solid rgba(255,255,255,0.12);
+    }
+    #tutWelcome .tutSkipChoice:hover { background: rgba(255,255,255,0.08); }
+    #tutWelcome .tutSkipChoice:active { transform: scale(0.97); }
+
+    /* ──────────────────────────────────────────────────────────────────
+       Tutorial — spotlight overlay
+       Full-viewport dim with a punched-out rounded-rect over the
+       focal element. Implemented via SVG mask so the cutout edges
+       stay crisp through repositioning + animations. The focal element
+       itself is NOT lifted — the dim layer just has a hole, so it
+       stays interactive (or non-interactive, depending on whether
+       pointer-events on the overlay is on/off).
+       ────────────────────────────────────────────────────────────── */
+    #tutSpotlight {
+      position: fixed;
+      inset: 0;
+      z-index: 5050;          /* above app, below tutCaption(5000)? — actually below tutOverlay; we put captions ABOVE spotlight */
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.35s ease;
+    }
+    #tutSpotlight.show { opacity: 1; }
+    #tutSpotlight svg {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+    }
+    /* Captions/dots/skip should always paint ABOVE the spotlight dim. */
+    #tutOverlay { z-index: 5100; }
+
+    /* ──────────────────────────────────────────────────────────────────
+       Tutorial — chapter controls (Next / Prev / Pause)
+       Sit above the dot row inside the existing #tutOverlay container.
+       ────────────────────────────────────────────────────────────── */
+    #tutControls {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 12px;
+      pointer-events: auto;
+    }
+    .tutCtrlBtn {
+      width: 38px; height: 38px;
+      border-radius: 50%;
+      background: rgba(8, 8, 8, 0.72);
+      border: 1px solid rgba(255, 190, 80, 0.32);
+      color: rgba(255, 220, 180, 0.94);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      transition: background 0.15s, transform 0.12s;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+    }
+    .tutCtrlBtn:hover  { background: rgba(8, 8, 8, 0.88); }
+    .tutCtrlBtn:active { transform: scale(0.94); }
+    .tutCtrlBtn svg {
+      width: 14px; height: 14px;
+      fill: currentColor;
+    }
+    .tutCtrlBtn.tutCtrlPlay svg { width: 16px; height: 16px; }
+    .tutCtrlBtn[disabled] {
+      opacity: 0.35; cursor: default;
+    }
+
+    /* ──────────────────────────────────────────────────────────────────
+       Tutorial — mock analysis stream
+       Pre-rendered analysis paragraphs that fade in line-by-line so
+       the demo doesn't depend on a live Claude call. Used in Ch 5
+       (Lines deep read) and Ch 7 (Flow arcs Context). Each paragraph
+       starts opacity:0 + translateY(6px) and animates to opacity:1.
+       The IIFE schedules them at fixed offsets within the chapter.
+       ────────────────────────────────────────────────────────────── */
+    .tutMockAnalysis p {
+      opacity: 0;
+      transform: translateY(6px);
+      transition: opacity 0.5s ease, transform 0.5s ease;
+      margin: 0 0 10px;
+      font-size: 13px;
+      line-height: 1.55;
+      color: rgba(255, 240, 210, 0.92);
+    }
+    .tutMockAnalysis p.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    @media (prefers-reduced-motion: reduce) {
+      #tutWelcome, #tutSpotlight, .tutMockAnalysis p { transition: none; }
+    }
+
     /* Snapshot stand-in — corner-pinned card that slides in during
        the final beat. Hints at the share artifact without firing the
        real share-picker modal (which would block the tutorial flow).
@@ -28784,276 +28950,823 @@ const settingsToggle     = document.getElementById("settingsToggle");
      ══════════════════════════════════════════════════════════════════ */
   (function setupTutorial() {
     const STORAGE_KEY = 'earth00:tutorialSeen';
-    const BEAT_MS     = 2000;
+    const AUDIO_BASE  = './audio/tutorial/';
 
-    // 8 beats × 2s = 16s.
-    // run() is a stub for now (Phase 1). Phase 2+ wires real UI.
-    const BEATS = [
-      // 0–2s: globe arrival. No caption — let the visual stun land.
-      // Silent navigate so the reel always starts on the globe
-      // regardless of where the user was when it fired (e.g. they
-      // were on the briefing page from a deep link).
-      { caption: '', run: () => { try { window.__goToPage?.(1); } catch (_) {} } },
-      // 2–4s: threads page. Use the app's REAL page transition + tab
-      // pill click so the user sees the actual swipe gesture and
-      // setView() runs through its proper hydrate-from-preload path.
-      // Card cascade happens automatically via the existing
-      // IntersectionObserver + .fadeInCard CSS — no extra wiring.
-      // The tiny 220ms delay between page-nav and pill-click lets the
-      // page-transition animation start before the threads view is
-      // forced active, giving "swipe lands on threads" feel rather
-      // than a snap.
+    // ── Spotlight overlay ──────────────────────────────────────────
+    // Full-viewport dim with a punched-out rounded-rect over the
+    // focal element. Implemented via SVG mask so the cutout edges
+    // stay crisp through repositioning. Built lazily on first focus()
+    // call. Re-positions on resize + every 200ms (cheap RAF guard)
+    // so the cutout tracks if the focal element animates or scrolls.
+    let _spotlightEl    = null;
+    let _spotlightRect  = null;       // last drawn rect
+    let _spotlightTrack = null;       // setInterval id for tracking moves
+    function ensureSpotlight() {
+      if (_spotlightEl && document.body.contains(_spotlightEl)) return _spotlightEl;
+      const el = document.createElement('div');
+      el.id = 'tutSpotlight';
+      el.innerHTML =
+        '<svg xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="none">' +
+          '<defs>' +
+            '<mask id="tutSpotlightMask">' +
+              '<rect x="0" y="0" width="100%" height="100%" fill="white"/>' +
+              '<rect class="tutSpotlightHole" x="-100" y="-100" width="0" height="0" rx="14" ry="14" fill="black"/>' +
+            '</mask>' +
+          '</defs>' +
+          '<rect x="0" y="0" width="100%" height="100%" fill="rgba(6,10,20,0.78)" mask="url(#tutSpotlightMask)"/>' +
+        '</svg>';
+      document.body.appendChild(el);
+      _spotlightEl = el;
+      return el;
+    }
+    function _setSpotlightHole(rect) {
+      const el = ensureSpotlight();
+      const hole = el.querySelector('.tutSpotlightHole');
+      if (!hole) return;
+      if (!rect) {
+        // No focal element — collapse the hole to a 0×0 off-screen
+        // square so the dim covers the whole viewport.
+        hole.setAttribute('x', '-100');
+        hole.setAttribute('y', '-100');
+        hole.setAttribute('width', '0');
+        hole.setAttribute('height', '0');
+        return;
+      }
+      const PAD = 10;
+      hole.setAttribute('x', String(rect.left - PAD));
+      hole.setAttribute('y', String(rect.top  - PAD));
+      hole.setAttribute('width',  String(rect.width  + PAD * 2));
+      hole.setAttribute('height', String(rect.height + PAD * 2));
+    }
+    function spotlight(selectorOrEl) {
+      const el = ensureSpotlight();
+      let target = null;
+      if (typeof selectorOrEl === 'string') target = document.querySelector(selectorOrEl);
+      else if (selectorOrEl && selectorOrEl.getBoundingClientRect) target = selectorOrEl;
+      if (!target) {
+        clearSpotlight();
+        return;
+      }
+      el.classList.add('show');
+      const update = () => {
+        if (!document.body.contains(target)) { clearSpotlight(); return; }
+        const r = target.getBoundingClientRect();
+        if (!_spotlightRect ||
+            r.left !== _spotlightRect.left || r.top    !== _spotlightRect.top ||
+            r.width !== _spotlightRect.width || r.height !== _spotlightRect.height) {
+          _spotlightRect = r;
+          _setSpotlightHole(r);
+        }
+      };
+      update();
+      if (_spotlightTrack) clearInterval(_spotlightTrack);
+      // 200ms tracking interval — fast enough that the cutout follows
+      // a subtle camera/UI animation without juddering, slow enough
+      // that we don't burn cycles for static elements.
+      _spotlightTrack = setInterval(update, 200);
+    }
+    function clearSpotlight() {
+      if (_spotlightTrack) { clearInterval(_spotlightTrack); _spotlightTrack = null; }
+      _spotlightRect = null;
+      const el = ensureSpotlight();
+      el.classList.remove('show');
+      _setSpotlightHole(null);
+    }
+
+    // ── Mock analysis stream ──────────────────────────────────────
+    // Fades in pre-rendered analysis paragraphs line-by-line into
+    // the supplied target element so the demo doesn't depend on a
+    // live Claude call. Used in Ch 5 (Lines deep read) and Ch 7
+    // (Flow arcs Context). Returns a function that cleans up the
+    // injected DOM when the chapter ends.
+    function streamMockAnalysis(targetEl, paragraphs, intervalMs = 800) {
+      if (!targetEl) return () => {};
+      const wrap = document.createElement('div');
+      wrap.className = 'tutMockAnalysis';
+      paragraphs.forEach((text) => {
+        const p = document.createElement('p');
+        p.textContent = text;
+        wrap.appendChild(p);
+      });
+      // Wipe any existing content so the mock takes over the panel
+      // body cleanly. Caller should pass a body-only element, not
+      // the panel root.
+      targetEl.innerHTML = '';
+      targetEl.appendChild(wrap);
+      const ps = wrap.querySelectorAll('p');
+      ps.forEach((p, i) => {
+        setTimeout(() => p.classList.add('show'), 50 + i * intervalMs);
+      });
+      return function cleanup() {
+        try { wrap.remove(); } catch (_) {}
+      };
+    }
+
+    // Stock copy reused across both AI-context demo chapters. The
+    // text is intentionally line-style "newsroom analysis" so the
+    // typewriter effect feels like real generation.
+    const MOCK_LINES_ANALYSIS = [
+      "The flow north has accelerated since spring. Italian ports report record arrivals from Tunisia and Libya, with Greek and Maltese routes filling the gap as enforcement tightens.",
+      "European policymakers are split. Brussels is quietly pushing a new readmission framework; member states want bilateral deals.",
+      "Watch the southern corridor next — drought patterns and grain prices are pushing inland populations toward coastal launch points faster than the policy response can keep up.",
+    ];
+    const MOCK_FLOWS_CONTEXT = [
+      "The story is moving along three corridors at once: Tunisia → Italy, Libya → Malta, and Egypt → Greece.",
+      "Italian outlets are driving the volume; the framing in French and German press is markedly more critical of EU border enforcement.",
+      "Russia and Turkey both surface in the routing — covering the migration story as leverage in their own foreign-policy narratives.",
+    ];
+
+    // ── Chapter list ──────────────────────────────────────────────
+    // Each chapter:
+    //   id              — short slug, used for DOM ids.
+    //   audio           — relative URL of the chapter's MP3.
+    //   fallbackMs      — used when audio fails to load (network /
+    //                     CORS / file missing) so the reel can still
+    //                     advance via timer.
+    //   onEnter         — sync setup at chapter start (page nav,
+    //                     panel open, etc.). Runs at audio-play time.
+    //   beats           — [{ atMs, do }] visual beats fired at offsets
+    //                     within the chapter's audio. atMs:0 fires
+    //                     when audio starts; further atMs values fire
+    //                     via setTimeout.
+    //   onExit          — sync teardown before the next chapter's
+    //                     onEnter runs. Cleans up panels / overlays
+    //                     opened by this chapter.
+    //
+    // Captions still drive the bottom-of-screen text — they're
+    // duplicate of the audio narration so deaf/muted users can
+    // follow. Caption fades in when chapter starts, out at chapter
+    // end. Spotlight cleanup happens automatically in onExit.
+    const CHAPTERS = [
+      // ── 1. Welcome (~4s) ─────────────────────────────────────────
       {
-        caption: 'Threads — every story, geo-rooted',
-        run: () => {
+        id: 'welcome',
+        title: '',
+        caption: '',
+        audio: AUDIO_BASE + '01_welcome.mp3',
+        fallbackMs: 4000,
+        onEnter: () => {
+          try { window.__goToPage?.(1); } catch (_) {}
+          clearSpotlight();
+        },
+        beats: [],
+        onExit: () => {},
+      },
+
+      // ── 2. Globe + Egypt + Global tab (~15s) ─────────────────────
+      {
+        id: 'globe',
+        title: 'The globe',
+        caption: 'Tap any country — every story we track from there.',
+        audio: AUDIO_BASE + '02_globe.mp3',
+        fallbackMs: 15000,
+        onEnter: () => {
+          try { window.__goToPage?.(1); } catch (_) {}
+          clearSpotlight();
+        },
+        beats: [
+          // 0–3s: globe spinning into view (no spotlight, just stun).
+          // 3s: camera lands on Egypt — invoke the same focus path
+          //     a real country tap would use, so the panel opens.
+          { at: 3000, do: () => {
+              try {
+                // Find Egypt in the loaded country dataset and focus
+                // its lat/lon. Fallback gracefully if the dataset
+                // isn't ready (cold launch).
+                const c = (window.__globeCountries || []).find(
+                  c => c && (c.iso_code || '').toUpperCase() === 'EG'
+                );
+                if (c && c.lat != null) {
+                  window.startFocus?.(parseFloat(c.lat), parseFloat(c.lon));
+                  // Open the country panel for Egypt by simulating the
+                  // same path a tap takes — __openNodePanel is the
+                  // canonical entry point.
+                  setTimeout(() => {
+                    try { window.__openNodePanel?.(c, 'country'); } catch (_) {}
+                  }, 800);
+                }
+              } catch (_) {}
+            }
+          },
+          // 5–9s: spotlight the country panel.
+          { at: 5500, do: () => spotlight('#infoPanel.active, #infoPanel') },
+          // 10–14s: switch to / spotlight the Global tab inside the
+          // panel (if it exists). Falls back to no-op if not found.
+          { at: 10000, do: () => {
+              try {
+                // Country panel typically uses a tab strip with
+                // [data-tab="local"] / [data-tab="global"] children.
+                const globalTab = document.querySelector('#infoPanel [data-tab="global"], #infoPanel .panelTab.global, #infoPanel [data-panel-tab="global"]');
+                if (globalTab) {
+                  globalTab.click();
+                  setTimeout(() => spotlight(globalTab), 100);
+                }
+              } catch (_) {}
+            }
+          },
+        ],
+        onExit: () => {
+          clearSpotlight();
+          try {
+            const p = document.getElementById('infoPanel');
+            if (p?.classList.contains('active')) p.querySelector('.closePanel')?.click();
+          } catch (_) {}
+        },
+      },
+
+      // ── 3. City + Cairo (~8s) ────────────────────────────────────
+      {
+        id: 'city',
+        title: 'City view',
+        caption: 'Switch to city view — same precision, block by block.',
+        audio: AUDIO_BASE + '03_city.mp3',
+        fallbackMs: 8000,
+        onEnter: () => {
+          try { window.__goToPage?.(1); } catch (_) {}
+          clearSpotlight();
+        },
+        beats: [
+          // 0s: spotlight + click the view-toggle pill.
+          { at: 0, do: () => {
+              const toggle = document.querySelector('#viewToggle, [data-view-toggle]');
+              if (toggle) spotlight(toggle);
+            }
+          },
+          { at: 1500, do: () => {
+              try {
+                const cityOpt = document.querySelector('.viewOption[data-mode="city"]');
+                if (cityOpt) cityOpt.click();
+              } catch (_) {}
+            }
+          },
+          // 3s: focus Cairo + open its city panel.
+          { at: 3500, do: () => {
+              try {
+                const cairo = (window.__globeCities || []).find(
+                  c => c && /cairo/i.test(c.name || '')
+                );
+                if (cairo && cairo.lat != null) {
+                  window.startFocus?.(parseFloat(cairo.lat), parseFloat(cairo.lon));
+                  setTimeout(() => { try { window.__openNodePanel?.(cairo, 'city'); } catch (_) {} }, 600);
+                  setTimeout(() => spotlight('#infoPanel'), 1100);
+                }
+              } catch (_) {}
+            }
+          },
+        ],
+        onExit: () => {
+          clearSpotlight();
+          try {
+            const p = document.getElementById('infoPanel');
+            if (p?.classList.contains('active')) p.querySelector('.closePanel')?.click();
+            // Snap the view back to country so subsequent chapters
+            // start from a familiar baseline.
+            document.querySelector('.viewOption[data-mode="country"]')?.click();
+          } catch (_) {}
+        },
+      },
+
+      // ── 4. Threads + thread panel (~13s) ─────────────────────────
+      {
+        id: 'threads',
+        title: 'Threads',
+        caption: 'Stories that span dozens of articles, often across borders.',
+        audio: AUDIO_BASE + '04_threads.mp3',
+        fallbackMs: 13000,
+        onEnter: () => {
           try { window.__goToPage?.(2); } catch (_) {}
           setTimeout(() => {
             try { document.getElementById('nfViewThreads')?.click(); } catch (_) {}
           }, 220);
+          clearSpotlight();
         },
-      },
-      // 4–6s: lines / timelines. Already on page 2 from the threads
-      // beat — just flip the tab pill. setView('timelines') triggers
-      // its own load (loadTimelines fetches if !timelinesLoaded, else
-      // re-renders) and the same .fadeInCard cascade fires for the
-      // line cards. No page-nav needed.
-      {
-        caption: 'Lines — stories as they unfold',
-        run: () => {
-          try { document.getElementById('nfViewTimelines')?.click(); } catch (_) {}
-        },
-      },
-      // 6–8s: keyword intelligence (search + cooccurrence).
-      // Navigates to page 0 (stats), waits for the page transition,
-      // then types a flagship query into #kwiInput character-by-
-      // character at ~55ms/char and fires kwiSearch() once the word
-      // is fully typed. The 'input' event is dispatched on each char
-      // so the autocomplete dropdown lights up too — gives the user
-      // a sense of "the input is alive". Total wall-clock: ~280ms
-      // page-transition grace + ~330ms typing = ~610ms; the
-      // remaining ~1.4s of the 2s beat lets the search results
-      // (top cooccurrence bars) render before the next beat starts.
-      {
-        caption: "Search the world\u2019s coverage",
-        run: () => {
-          try { window.__goToPage?.(0); } catch (_) {}
-          setTimeout(() => {
-            const input = document.getElementById('kwiInput');
-            if (!input) return;
-            const query = 'Russia';
-            input.value = '';
-            try { input.focus({ preventScroll: true }); } catch (_) { try { input.focus(); } catch (_) {} }
-            let idx = 0;
-            const TYPE_MS = 55;
-            const tick = () => {
-              if (idx >= query.length) {
-                try { window.kwiSearch?.(); } catch (_) {}
-                return;
-              }
-              input.value += query[idx++];
-              try { input.dispatchEvent(new Event('input', { bubbles: true })); } catch (_) {}
-              setTimeout(tick, TYPE_MS);
-            };
-            tick();
-          }, 280);
-        },
-      },
-      // 8–10s: today's briefing. Slide the bLauncher panel in over the
-      // globe page so the user sees the briefing surface — today's
-      // headline, past episodes, and the custom-briefing form. We
-      // bypass openBriefingLauncher() (which gates on Pro tier and
-      // would block free-tier viewers from seeing the panel at all)
-      // and just toggle .open directly. No audio playback — this is
-      // a visual-only demo per product call.
-      // Pre-emptively close the panel ~250ms before the beat ends so
-      // the close transition runs into beat 5's setup instead of
-      // overlapping it.
-      {
-        caption: "Today\u2019s Briefing",
-        run: () => {
-          try { window.__goToPage?.(1); } catch (_) {}
-          setTimeout(() => {
-            try { document.getElementById('bLauncher')?.classList.add('open'); } catch (_) {}
-          }, 250);
-          setTimeout(() => {
-            try { document.getElementById('bLauncher')?.classList.remove('open'); } catch (_) {}
-          }, 1750);
-        },
-      },
-      // 10–12s: globe + flow arcs. Hardcoded synthetic flow set so
-      // the demo never breaks on a slow network or stale thread; the
-      // shape is "U.S. cooperation" hub-and-spoke — neutral topic,
-      // visually impressive arcs spanning the globe (Atlantic and
-      // Pacific). We bypass _renderSynthesizedFlows (locally scoped
-      // helper) and invoke the same window.__flow* primitives it
-      // uses, so the tutorial is decoupled from internal helpers.
-      // Camera position is left wherever the user was — simpler and
-      // matches user instruction. Arcs are cleared 150ms before the
-      // beat ends so they don't bleed into the heatmap beat.
-      {
-        caption: 'See how news travels',
-        run: () => {
-          try { window.__goToPage?.(1); } catch (_) {}
-          setTimeout(() => {
-            try {
-              const hub = { type: 'country', iso: 'US', id: 'US', place: 'United States', lat: 39.83, lon: -98.58 };
-              const dests = [
-                { type: 'country', iso: 'GB', id: 'GB', place: 'United Kingdom', lat:  54.00, lon:  -2.00 },
-                { type: 'country', iso: 'DE', id: 'DE', place: 'Germany',        lat:  51.16, lon:  10.45 },
-                { type: 'country', iso: 'JP', id: 'JP', place: 'Japan',          lat:  36.20, lon: 138.25 },
-                { type: 'country', iso: 'BR', id: 'BR', place: 'Brazil',         lat: -14.24, lon: -51.93 },
-                { type: 'country', iso: 'IN', id: 'IN', place: 'India',          lat:  20.59, lon:  78.96 },
-              ];
-              const flows = dests.map(dst => ({
-                src: hub, dst, count: 1,
-                _cardTriggered: true, _sourceType: 'thread',
-              }));
-              window.__flowSetOpen?.(true);
-              window.__flowAssignLaneOffsets?.(flows);
-              flows.forEach((flow) => {
-                const arc = window.__flowCreateArc?.(flow, 1);
-                if (arc) window.__flowPushArc?.(arc);
-              });
-              // Highlight the hub + every destination country polygon
-              // so the routes read as "from here, to all of these".
-              const isos = new Set([hub.iso, ...dests.map(d => d.iso)]);
-              window.__flowHighlightCountries?.(isos);
-              window.__flowShowLabelsForCardTrigger?.(flows);
-            } catch (err) {
-              console.warn('[tutorial] flow arcs spawn failed:', err && err.message);
+        beats: [
+          // 3s: tap the first thread card to open the cluster panel.
+          { at: 3000, do: () => {
+              try {
+                const card = document.querySelector('.nfThreadCard');
+                if (card) card.click();
+              } catch (_) {}
             }
-          }, 220);
-          setTimeout(() => {
-            try {
-              window.__flowClearArcs?.();
-              window.clearFlowNodeLabels?.();
-              window.__flowClearHighlights?.();
-              window.__flowSetOpen?.(false);
-            } catch (_) {}
-          }, 1850);
+          },
+          // 4s: spotlight the analysis section.
+          { at: 4500, do: () => spotlight('#cdSummarySection, #cdSummaryBody') },
+          // 7s: spotlight the country chips row (closest visual
+          // analog to a "country pie graph" in the current cluster
+          // panel — exists today, the pie/distribution chart is
+          // queued for v1.1).
+          { at: 7500, do: () => spotlight('#cdCountriesRow, .cdCountriesRow') },
+          // 10s: spotlight the timeline section.
+          { at: 10000, do: () => spotlight('#cdTimelineSection') },
+        ],
+        onExit: () => {
+          clearSpotlight();
+          try { window.__clusterCloseNodePanel?.(); } catch (_) {}
         },
       },
-      // 12–14s: heatmap. Open the panel, type a neutral demo query
-      // ("GDP per capita") into the Ask-AI input character-by-
-      // character at 40ms/char, then click Map IF the user is signed
-      // in. Anon users see the typed query in the box but no submit
-      // is fired (the real submit handler 401s for anon and pops the
-      // auth modal — disruptive mid-tutorial). Heatmap stays open
-      // through the end of this beat into beat 7 so the painted
-      // colors have time to render and serve as the backdrop for the
-      // snapshot composition demo. Beat 7 owns cleanup.
-      // __semHeatOpen auto-closes flow arcs (mutex) so the arcs from
-      // beat 5 are torn down even if their own cleanup hasn't fired.
-      {
-        caption: 'Coverage at a glance',
-        run: () => {
-          try { window.__goToPage?.(1); } catch (_) {}
-          setTimeout(() => {
-            try { window.__semHeatOpen?.(); } catch (_) {}
-          }, 200);
-          setTimeout(() => {
-            const input = document.getElementById('semHeatAskInput');
-            if (!input) return;
-            const query = 'GDP per capita';
-            input.value = '';
-            let idx = 0;
-            const TYPE_MS = 40;
-            const tick = () => {
-              if (idx >= query.length) {
-                if (window.__authToken) {
-                  try { document.getElementById('semHeatAskGoBtn')?.click(); } catch (_) {}
-                }
-                return;
-              }
-              input.value += query[idx++];
-              try { input.dispatchEvent(new Event('input', { bubbles: true })); } catch (_) {}
-              setTimeout(tick, TYPE_MS);
-            };
-            tick();
-          }, 500);
-        },
-      },
-      // 14–16s: snapshot composition. Visual stand-in only — we do
-      // NOT fire the real __shareSnapshot picker because that's a
-      // modal requiring user interaction (Story / Post / Other) and
-      // would block the tutorial's auto-advance. The stand-in card
-      // is built dynamically and slides in from the right corner,
-      // showing a stylized share artifact (badge + title carried
-      // over from the heatmap beat + gradient bar + brand footer)
-      // so the user grasps "your view becomes a shareable image".
-      // This beat also owns the heatmap cleanup (beat 6 deliberately
-      // left the heatmap open so its painted colors backdropped the
-      // share-card moment).
-      {
-        caption: 'Make it yours. Share it.',
-        run: () => {
-          const card = document.createElement('div');
-          card.id = 'tutSnapStandin';
-          card.innerHTML = ''
-            + '<div class="tutSnapBadge">Earth00 \u00B7 Share</div>'
-            + '<div class="tutSnapTitle">GDP per capita</div>'
-            + '<div class="tutSnapSub">Map This \u00B7 Globe</div>'
-            + '<div class="tutSnapBar"></div>'
-            + '<div class="tutSnapFoot">EARTH00.COM</div>';
-          document.body.appendChild(card);
-          // Defer .show one frame so the slide-in transition catches
-          // the off-screen → on-screen ramp instead of snapping.
-          requestAnimationFrame(() => card.classList.add('show'));
 
-          // Tear-down sequence:
-          //   1500ms: close heatmap (beat 6 left it open as backdrop).
-          //   1700ms: slide the card back out.
-          //   1950ms: remove the card from the DOM entirely.
+      // ── 5. Lines + Analysis demo (~18s) ──────────────────────────
+      // onEnter / onExit are regular `function`s (not arrows) so play()
+      // can `.call(ch)` to bind `this` to the chapter object — used
+      // here to stash the mock-analysis cleanup callback so onExit
+      // can tear it down.
+      {
+        id: 'lines',
+        title: 'Lines',
+        caption: 'Lines unfold over weeks or months — open the deep read for the analysis.',
+        audio: AUDIO_BASE + '05_lines.mp3',
+        fallbackMs: 18000,
+        onEnter: function () {
+          try { window.__goToPage?.(2); } catch (_) {}
           setTimeout(() => {
-            try { window.__semHeatClose?.(); } catch (_) {}
-          }, 1500);
-          setTimeout(() => {
-            try { card.classList.remove('show'); } catch (_) {}
-          }, 1700);
-          setTimeout(() => {
-            try { card.remove(); } catch (_) {}
-          }, 1950);
+            try { document.getElementById('nfViewTimelines')?.click(); } catch (_) {}
+          }, 220);
+          clearSpotlight();
+          this._mockCleanup = null;
         },
+        beats: [
+          { at: 3000, do: function () {
+              try {
+                const card = document.querySelector('.nfThreadCard');
+                if (card) card.click();
+              } catch (_) {}
+            }
+          },
+          // 7s: spotlight the Deep Read button + simulate a tap by
+          // directly streaming the mock analysis into the body. This
+          // sidesteps the real Claude call (which would cost credits +
+          // could fail / take 5–10s) and gives us deterministic
+          // visuals for the tutorial.
+          { at: 7000, do: function () {
+              const body = document.getElementById('cdSummaryBody');
+              if (body) {
+                this._mockCleanup = streamMockAnalysis(body, MOCK_LINES_ANALYSIS, 1500);
+                spotlight(body);
+              }
+            }
+          },
+          { at: 14000, do: () => spotlight('#cdTimelineSection') },
+        ],
+        onExit: function () {
+          clearSpotlight();
+          if (this._mockCleanup) { try { this._mockCleanup(); } catch (_) {} this._mockCleanup = null; }
+          try { window.__clusterCloseNodePanel?.(); } catch (_) {}
+        },
+      },
+
+      // ── 6. Feed (~10s) ────────────────────────────────────────────
+      {
+        id: 'feed',
+        title: 'Feed',
+        caption: 'Raw articles — analysis, source profile, one-tap to read.',
+        audio: AUDIO_BASE + '06_feed.mp3',
+        fallbackMs: 10000,
+        onEnter: () => {
+          try { window.__goToPage?.(2); } catch (_) {}
+          setTimeout(() => {
+            try { document.getElementById('nfViewFeed')?.click(); } catch (_) {}
+          }, 220);
+          clearSpotlight();
+        },
+        beats: [
+          { at: 3000, do: () => {
+              try {
+                const card = document.querySelector('.nfCard');
+                if (card) card.click();
+              } catch (_) {}
+            }
+          },
+          { at: 4500, do: () => spotlight('#articleDetailPanel .adpAnalysis, #adpAnalysisBody') },
+          { at: 7000, do: () => spotlight('#articleDetailPanel .adpSourceSummary, .adpSourceSummary') },
+        ],
+        onExit: () => {
+          clearSpotlight();
+          try { window.closeArticleDetail?.(); } catch (_) {}
+        },
+      },
+
+      // ── 7. Flow arcs + Context demo (~19s) ───────────────────────
+      {
+        id: 'flow_arcs',
+        title: 'Flow arcs',
+        caption: 'See the relationships between every entity the story connects.',
+        audio: AUDIO_BASE + '07_flow_arcs.mp3',
+        fallbackMs: 19000,
+        onEnter: function () {
+          try { window.__goToPage?.(1); } catch (_) {}
+          clearSpotlight();
+          this._mockCleanup = null;
+        },
+        beats: [
+          // 1s: spawn the synthetic flow set on the globe.
+          { at: 1000, do: () => {
+              try {
+                const hub = { type: 'country', iso: 'US', id: 'US', place: 'United States', lat: 39.83, lon: -98.58 };
+                const dests = [
+                  { type: 'country', iso: 'GB', id: 'GB', place: 'United Kingdom', lat:  54.00, lon:  -2.00 },
+                  { type: 'country', iso: 'DE', id: 'DE', place: 'Germany',        lat:  51.16, lon:  10.45 },
+                  { type: 'country', iso: 'JP', id: 'JP', place: 'Japan',          lat:  36.20, lon: 138.25 },
+                  { type: 'country', iso: 'BR', id: 'BR', place: 'Brazil',         lat: -14.24, lon: -51.93 },
+                  { type: 'country', iso: 'IN', id: 'IN', place: 'India',          lat:  20.59, lon:  78.96 },
+                ];
+                const flows = dests.map(dst => ({ src: hub, dst, count: 1, _cardTriggered: true, _sourceType: 'thread' }));
+                window.__flowSetOpen?.(true);
+                window.__flowAssignLaneOffsets?.(flows);
+                flows.forEach(flow => { const a = window.__flowCreateArc?.(flow, 1); if (a) window.__flowPushArc?.(a); });
+                const isos = new Set([hub.iso, ...dests.map(d => d.iso)]);
+                window.__flowHighlightCountries?.(isos);
+                window.__flowShowLabelsForCardTrigger?.(flows);
+              } catch (_) {}
+            }
+          },
+          // 7s: spotlight Articles tab (live arcs panel).
+          { at: 7000, do: () => spotlight('#flowArcList .arcCtxTab[data-view="articles"], #flowArcList .arcCtxTab.articles, #flowArcList') },
+          // 10s: spotlight Routes tab.
+          { at: 10000, do: () => spotlight('#flowArcList .arcCtxTab[data-view="routes"], #flowArcList .arcCtxTab.routes, #flowArcList') },
+          // 13s: spotlight Context badge + stream mock analysis.
+          { at: 13000, do: function () {
+              const badge = document.querySelector('#arcListAiBtn, .aiAnalysisCtaBadge');
+              if (badge) spotlight(badge);
+            }
+          },
+          { at: 15000, do: function () {
+              const body = document.getElementById('arcCtxBody');
+              if (body) {
+                this._mockCleanup = streamMockAnalysis(body, MOCK_FLOWS_CONTEXT, 1300);
+                spotlight(body);
+              }
+            }
+          },
+        ],
+        onExit: function () {
+          clearSpotlight();
+          if (this._mockCleanup) { try { this._mockCleanup(); } catch (_) {} this._mockCleanup = null; }
+          try {
+            window.__flowClearArcs?.();
+            window.clearFlowNodeLabels?.();
+            window.__flowClearHighlights?.();
+            window.__flowSetOpen?.(false);
+          } catch (_) {}
+        },
+      },
+
+      // ── 8. News Flows panel (~13s) ───────────────────────────────
+      {
+        id: 'news_flows',
+        title: 'News Flows',
+        caption: 'Filter by keyword, watch coverage flow out of any country.',
+        audio: AUDIO_BASE + '08_news_flows.mp3',
+        fallbackMs: 13000,
+        onEnter: () => {
+          try { window.__goToPage?.(1); } catch (_) {}
+          clearSpotlight();
+        },
+        beats: [
+          { at: 0, do: () => spotlight('#flowModeBtn') },
+          { at: 1500, do: () => {
+              try { document.getElementById('flowModeBtn')?.click(); } catch (_) {}
+            }
+          },
+          // 3s: type "climate" into the keyword input.
+          { at: 3000, do: () => {
+              const input = document.getElementById('flowKeyword');
+              if (!input) return;
+              input.value = 'climate';
+              try { input.dispatchEvent(new Event('input', { bubbles: true })); } catch (_) {}
+              spotlight(input);
+            }
+          },
+          { at: 6000, do: () => {
+              const pill = document.querySelector('.flowModePill[data-fmode="aggregate"]');
+              if (pill) { pill.click(); spotlight(pill); }
+            }
+          },
+          { at: 9500, do: () => {
+              const pill = document.querySelector('.flowModePill[data-fmode="individual"]');
+              if (pill) { pill.click(); spotlight(pill); }
+            }
+          },
+        ],
+        onExit: () => {
+          clearSpotlight();
+          try {
+            window.__flowClearArcs?.();
+            window.__flowSetOpen?.(false);
+            // Close the news-flows panel if it ended up open.
+            document.getElementById('flowControls')?.classList.remove('visible');
+          } catch (_) {}
+        },
+      },
+
+      // ── 9. Heatmap (~14s) ────────────────────────────────────────
+      {
+        id: 'heatmap',
+        title: 'Heatmap',
+        caption: 'Ask any question — see it painted across countries.',
+        audio: AUDIO_BASE + '09_heatmap.mp3',
+        fallbackMs: 14000,
+        onEnter: () => {
+          try { window.__goToPage?.(1); } catch (_) {}
+          clearSpotlight();
+        },
+        beats: [
+          { at: 0,    do: () => spotlight('#semHeatToggleBtn') },
+          { at: 1000, do: () => { try { window.__semHeatOpen?.(); } catch (_) {} } },
+          // 2s: type "GDP per capita" into Map This.
+          { at: 2000, do: () => {
+              const input = document.getElementById('semHeatAskInput');
+              if (!input) return;
+              input.value = 'GDP per capita';
+              try { input.dispatchEvent(new Event('input', { bubbles: true })); } catch (_) {}
+              spotlight(input);
+              // Only fire the actual submit if the user is signed in
+              // — anon submission would 401 + open the auth modal,
+              // which would derail the tutorial.
+              if (window.__authToken) {
+                setTimeout(() => {
+                  try { document.getElementById('semHeatAskGoBtn')?.click(); } catch (_) {}
+                }, 600);
+              }
+            }
+          },
+          { at: 7000, do: () => {
+              const tab = document.querySelector('.semHeatCtlTab[data-ctl="keyword"]');
+              if (tab) { tab.click(); spotlight(tab); }
+            }
+          },
+          { at: 10000, do: () => {
+              const tab = document.querySelector('.semHeatCtlTab[data-ctl="timeseries"]');
+              if (tab) { tab.click(); spotlight(tab); }
+            }
+          },
+        ],
+        onExit: () => {
+          clearSpotlight();
+          try { window.__semHeatClose?.(); } catch (_) {}
+        },
+      },
+
+      // ── 10. Briefing (~9s) ───────────────────────────────────────
+      {
+        id: 'briefing',
+        title: 'Briefing',
+        caption: "A curated deep dive into the day's top breaking stories.",
+        audio: AUDIO_BASE + '10_briefing.mp3',
+        fallbackMs: 9000,
+        onEnter: () => {
+          try { window.__goToPage?.(1); } catch (_) {}
+          clearSpotlight();
+        },
+        beats: [
+          { at: 0,    do: () => spotlight('#briefingBtn') },
+          { at: 1000, do: () => {
+              // Open bLauncher directly (bypasses the Pro tier gate
+              // so free-tier viewers see the panel during the demo).
+              try { document.getElementById('bLauncher')?.classList.add('open'); } catch (_) {}
+            }
+          },
+          { at: 3000, do: () => spotlight('#bLauncherTodaySection') },
+          { at: 6000, do: () => spotlight('#bLauncherStartToday') },
+        ],
+        onExit: () => {
+          clearSpotlight();
+          try { document.getElementById('bLauncher')?.classList.remove('open'); } catch (_) {}
+        },
+      },
+
+      // ── 11. Keyword Intelligence (~9s) ───────────────────────────
+      {
+        id: 'keywords',
+        title: 'Keyword Intelligence',
+        caption: 'What the world is talking about — rising and trending keywords.',
+        audio: AUDIO_BASE + '11_keywords.mp3',
+        fallbackMs: 9000,
+        onEnter: () => {
+          try { window.__goToPage?.(0); } catch (_) {}
+          clearSpotlight();
+        },
+        beats: [
+          { at: 2500, do: () => spotlight('#kwiTrendingList, #kwiBars') },
+          { at: 5500, do: () => {
+              try {
+                const firstBar = document.querySelector('#kwiTrendingList .kwi-trend-row, #kwiBars .kwi-bar-row');
+                if (firstBar) firstBar.click();
+              } catch (_) {}
+            }
+          },
+          { at: 6500, do: () => spotlight('.aiAnalysisCtaBadge, #adpAnalysisBody') },
+        ],
+        onExit: () => {
+          clearSpotlight();
+        },
+      },
+
+      // ── 12. Outro (~5s) ──────────────────────────────────────────
+      {
+        id: 'outro',
+        title: '',
+        caption: '',
+        audio: AUDIO_BASE + '12_outro.mp3',
+        fallbackMs: 5000,
+        onEnter: () => {
+          try { window.__goToPage?.(1); } catch (_) {}
+          clearSpotlight();
+        },
+        beats: [],
+        onExit: () => { clearSpotlight(); },
       },
     ];
 
-    let active = false;
+    // ── State ──────────────────────────────────────────────────────
+    let active        = false;
+    let currentIdx    = 0;
+    let currentAudio  = null;
+    let currentBeats  = [];        // [setTimeout id]
+    let currentFallback = null;    // setTimeout id for fallbackMs
     let skipRequested = false;
+    let _escHandler   = null;
 
-    function noop() {}
-    function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+    function escapeHtml(s) {
+      return String(s || '').replace(/[&<>"']/g, c => ({
+        '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+      }[c]));
+    }
 
-    // Lazy-build the overlay DOM on first start. Removed entirely
-    // when the reel ends so we leave no trace in the DOM after the
-    // user has seen it (or skipped). Subsequent replay calls
-    // re-create from scratch — cheap, ~5 elements.
-    function ensureDom() {
+    // ── Overlay DOM (caption + dots + skip + Next/Prev) ────────────
+    function ensureOverlay() {
       if (document.getElementById('tutOverlay')) return;
       const overlay = document.createElement('div');
       overlay.id = 'tutOverlay';
       overlay.innerHTML =
         '<div id="tutSkip" role="button" tabindex="0" aria-label="Skip tutorial">Skip</div>' +
         '<div id="tutCaption" aria-live="polite"></div>' +
+        '<div id="tutControls">' +
+          '<button class="tutCtrlBtn tutCtrlPrev" aria-label="Previous chapter" title="Previous">' +
+            '<svg viewBox="0 0 16 16"><polygon points="11,2 11,14 4,8"/></svg>' +
+          '</button>' +
+          '<button class="tutCtrlBtn tutCtrlPlay" aria-label="Pause" title="Pause">' +
+            '<svg class="tutCtrlPauseIcon" viewBox="0 0 16 16"><rect x="4" y="3" width="3" height="10"/><rect x="9" y="3" width="3" height="10"/></svg>' +
+            '<svg class="tutCtrlPlayIcon"  viewBox="0 0 16 16" style="display:none"><polygon points="4,2 4,14 14,8"/></svg>' +
+          '</button>' +
+          '<button class="tutCtrlBtn tutCtrlNext" aria-label="Next chapter" title="Next">' +
+            '<svg viewBox="0 0 16 16"><polygon points="5,2 5,14 12,8"/></svg>' +
+          '</button>' +
+        '</div>' +
         '<div id="tutDots"></div>';
       document.body.appendChild(overlay);
 
       const dots = overlay.querySelector('#tutDots');
-      for (let i = 0; i < BEATS.length; i++) {
+      for (let i = 0; i < CHAPTERS.length; i++) {
         const d = document.createElement('div');
         d.className = 'tutDot';
         dots.appendChild(d);
       }
 
-      const skipBtn = overlay.querySelector('#tutSkip');
-      skipBtn.addEventListener('click', requestSkip);
-      skipBtn.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); requestSkip(); }
-      });
+      overlay.querySelector('#tutSkip')      .addEventListener('click', requestSkip);
+      overlay.querySelector('.tutCtrlPrev')  .addEventListener('click', () => previous());
+      overlay.querySelector('.tutCtrlNext')  .addEventListener('click', () => advance());
+      overlay.querySelector('.tutCtrlPlay')  .addEventListener('click', () => togglePause());
     }
 
-    // Esc-to-skip lives at the document level so it fires regardless of
-    // focus. Re-bound on every start; cleaned up in end().
-    let _escHandler = null;
+    function setChapterIndex(i) {
+      const overlay = document.getElementById('tutOverlay');
+      if (!overlay) return;
+      const dots = overlay.querySelectorAll('.tutDot');
+      dots.forEach((d, j) => {
+        d.classList.toggle('done',   j <  i);
+        d.classList.toggle('active', j === i);
+      });
+      const cap = overlay.querySelector('#tutCaption');
+      cap.classList.remove('show');
+      const text = (CHAPTERS[i] && CHAPTERS[i].caption) || '';
+      setTimeout(() => {
+        cap.textContent = text;
+        if (text) cap.classList.add('show');
+      }, 120);
+      // Disable Prev on first chapter, Next on last (visual only;
+      // skip is always available).
+      const prev = overlay.querySelector('.tutCtrlPrev');
+      const next = overlay.querySelector('.tutCtrlNext');
+      if (prev) prev.toggleAttribute('disabled', i === 0);
+      if (next) next.toggleAttribute('disabled', i >= CHAPTERS.length - 1);
+    }
+
+    function _setPlayIcon(paused) {
+      const overlay = document.getElementById('tutOverlay');
+      if (!overlay) return;
+      const pauseIcon = overlay.querySelector('.tutCtrlPauseIcon');
+      const playIcon  = overlay.querySelector('.tutCtrlPlayIcon');
+      if (pauseIcon) pauseIcon.style.display = paused ? 'none' : '';
+      if (playIcon)  playIcon.style.display  = paused ? '' : 'none';
+    }
+
+    function clearChapterTimers() {
+      currentBeats.forEach(id => clearTimeout(id));
+      currentBeats = [];
+      if (currentFallback) { clearTimeout(currentFallback); currentFallback = null; }
+    }
+
+    function stopCurrentAudio() {
+      if (currentAudio) {
+        try { currentAudio.pause(); } catch (_) {}
+        try { currentAudio.src = ''; } catch (_) {}
+        currentAudio = null;
+      }
+    }
+
+    // Play chapter at index i. Wires audio, schedules visual beats
+    // relative to audio play start, advances on audio.ended (or
+    // fallbackMs timer if audio fails to load).
+    async function play(i) {
+      if (!active || i < 0 || i >= CHAPTERS.length) return;
+      // Run the prior chapter's onExit before this one's onEnter so
+      // surface cleanup (panel close, etc.) lands first.
+      if (currentIdx !== i && CHAPTERS[currentIdx]) {
+        try { CHAPTERS[currentIdx].onExit?.call(CHAPTERS[currentIdx]); } catch (e) {
+          console.warn('[tutorial] onExit', currentIdx, e && e.message);
+        }
+      }
+      currentIdx = i;
+      const ch   = CHAPTERS[i];
+      setChapterIndex(i);
+      clearChapterTimers();
+      stopCurrentAudio();
+
+      try { ch.onEnter?.call(ch); } catch (e) {
+        console.warn('[tutorial] onEnter', i, e && e.message);
+      }
+
+      // Schedule visual beats. They fire RELATIVE to play start —
+      // small drift is fine since the audio is the source of truth.
+      (ch.beats || []).forEach((beat) => {
+        const id = setTimeout(() => {
+          try { beat.do.call(ch); } catch (e) {
+            console.warn('[tutorial] beat', i, beat.at, e && e.message);
+          }
+        }, beat.at || 0);
+        currentBeats.push(id);
+      });
+
+      // Try to play the chapter audio. On any failure (404, CORS,
+      // blocked autoplay) fall back to a fixed-duration timer so
+      // the reel still advances.
+      const advanceWhenDone = () => {
+        if (!active || currentIdx !== i) return;
+        if (i < CHAPTERS.length - 1) play(i + 1);
+        else end();
+      };
+      try {
+        const audio = new Audio(ch.audio);
+        audio.preload = 'auto';
+        audio.addEventListener('ended', advanceWhenDone);
+        audio.addEventListener('error', () => {
+          console.warn('[tutorial] audio error', ch.audio);
+          // Schedule a fallback advance via timer.
+          currentFallback = setTimeout(advanceWhenDone, ch.fallbackMs || 5000);
+        });
+        currentAudio = audio;
+        const p = audio.play();
+        if (p && typeof p.catch === 'function') {
+          p.catch((err) => {
+            // Autoplay blocked or other play() rejection — fall back
+            // to the timer so the reel still flows.
+            console.warn('[tutorial] play() rejected:', err && err.message);
+            currentFallback = setTimeout(advanceWhenDone, ch.fallbackMs || 5000);
+          });
+        }
+      } catch (e) {
+        console.warn('[tutorial] audio setup failed:', e && e.message);
+        currentFallback = setTimeout(advanceWhenDone, ch.fallbackMs || 5000);
+      }
+      _setPlayIcon(false);
+    }
+
+    function advance() {
+      if (!active) return;
+      if (currentIdx < CHAPTERS.length - 1) play(currentIdx + 1);
+      else end();
+    }
+    function previous() {
+      if (!active || currentIdx <= 0) return;
+      play(currentIdx - 1);
+    }
+    function togglePause() {
+      if (!currentAudio) return;
+      if (currentAudio.paused) {
+        currentAudio.play().catch(() => {});
+        _setPlayIcon(false);
+      } else {
+        currentAudio.pause();
+        _setPlayIcon(true);
+      }
+    }
+
+    function requestSkip() {
+      if (!active) return;
+      skipRequested = true;
+      end();
+    }
+
     function bindEsc() {
       _escHandler = (e) => { if (active && e.key === 'Escape') requestSkip(); };
       document.addEventListener('keydown', _escHandler);
@@ -29065,115 +29778,121 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }
     }
 
-    function setBeat(i) {
-      const overlay = document.getElementById('tutOverlay');
-      if (!overlay) return;
-      const dots = overlay.querySelectorAll('.tutDot');
-      dots.forEach((d, j) => {
-        d.classList.toggle('done',   j <  i);
-        d.classList.toggle('active', j === i);
+    // ── Welcome prompt — first-launch chooser ─────────────────────
+    function ensureWelcome() {
+      if (document.getElementById('tutWelcome')) return;
+      const w = document.createElement('div');
+      w.id = 'tutWelcome';
+      w.innerHTML =
+        '<div class="tutWelcomeEyebrow">Earth00 \u00B7 First Look</div>' +
+        '<div class="tutWelcomeTitle">Take a quick tour?</div>' +
+        '<div class="tutWelcomeSub">A two-minute narrated walk-through of the globe, threads, flow arcs, and more.</div>' +
+        '<div class="tutWelcomeBtns">' +
+          '<button class="tutSkipChoice" type="button">Skip — I\u2019ll explore</button>' +
+          '<button class="tutTakeTour"  type="button">Take the tour</button>' +
+        '</div>';
+      document.body.appendChild(w);
+      w.querySelector('.tutTakeTour').addEventListener('click', () => {
+        hideWelcome();
+        startReel();
       });
-      const cap = overlay.querySelector('#tutCaption');
-      // Fade caption out, swap text, fade back in. The 120ms gap
-      // between hide → show is intentional — gives the eye a beat
-      // of empty before the next message lands so the transition
-      // reads as deliberate rather than a flicker.
-      cap.classList.remove('show');
-      setTimeout(() => {
-        cap.textContent = BEATS[i].caption || '';
-        if (BEATS[i].caption) cap.classList.add('show');
-      }, 120);
+      w.querySelector('.tutSkipChoice').addEventListener('click', () => {
+        hideWelcome();
+        try { localStorage.setItem(STORAGE_KEY, '1'); } catch (_) {}
+      });
+    }
+    function showWelcome() {
+      ensureWelcome();
+      const w = document.getElementById('tutWelcome');
+      requestAnimationFrame(() => w.classList.add('show'));
+    }
+    function hideWelcome() {
+      const w = document.getElementById('tutWelcome');
+      if (!w) return;
+      w.classList.remove('show');
+      setTimeout(() => { try { w.remove(); } catch (_) {} }, 500);
     }
 
-    function requestSkip() {
-      if (!active) return;
-      skipRequested = true;
-    }
-
-    async function start() {
+    // ── Lifecycle ──────────────────────────────────────────────────
+    function startReel() {
       if (active) return;
       active = true;
       skipRequested = false;
-      ensureDom();
+      currentIdx = 0;
+      ensureOverlay();
       bindEsc();
       const overlay = document.getElementById('tutOverlay');
-      // Defer the .active class one frame so the opacity transition
-      // catches the 0 → 1 ramp instead of snapping.
       requestAnimationFrame(() => overlay.classList.add('active'));
-
-      for (let i = 0; i < BEATS.length; i++) {
-        if (skipRequested) break;
-        setBeat(i);
-        try { await BEATS[i].run(); } catch (err) {
-          console.warn('[tutorial] beat ' + i + ' run() threw:', err && err.message);
-        }
-        await sleep(BEAT_MS);
-      }
-
-      end();
+      // Make sure the spotlight overlay exists so beats can flip it on.
+      ensureSpotlight();
+      play(0);
     }
-
     function end() {
+      if (!active) return;
+      const ch = CHAPTERS[currentIdx];
+      if (ch) { try { ch.onExit?.call(ch); } catch (_) {} }
+      clearChapterTimers();
+      stopCurrentAudio();
+      clearSpotlight();
       const overlay = document.getElementById('tutOverlay');
       if (overlay) {
         overlay.classList.remove('active');
-        // Wait for the opacity transition (350ms in CSS) before
-        // tearing the DOM down so the fade-out doesn't snap.
         setTimeout(() => { try { overlay.remove(); } catch (_) {} }, 600);
+      }
+      const sl = document.getElementById('tutSpotlight');
+      if (sl) {
+        sl.classList.remove('show');
+        setTimeout(() => { try { sl.remove(); } catch (_) {} }, 600);
+        _spotlightEl = null;
       }
       unbindEsc();
       active = false;
       try { localStorage.setItem(STORAGE_KEY, '1'); } catch (_) {}
     }
 
-    // ── Public API ──────────────────────────────────────────────────
-    window.__startTutorial = start;
+    // ── Public API ─────────────────────────────────────────────────
+    // __startTutorial() — fire the welcome prompt (default behavior
+    //                    on first launch). Honors the seen flag.
+    // __startTutorialReel() — bypass the welcome prompt, jump straight
+    //                    into the narrated walk-through. Used by the
+    //                    "Replay tour" button in account dropdown.
+    // __resetTutorial() — clear the seen flag (handy in dev).
+    window.__startTutorial = function () {
+      let seen = false;
+      try { seen = !!localStorage.getItem(STORAGE_KEY); } catch (_) {}
+      if (seen) { startReel(); return; }
+      showWelcome();
+    };
+    window.__startTutorialReel = startReel;
     window.__resetTutorial = function () {
       try { localStorage.removeItem(STORAGE_KEY); } catch (_) {}
     };
-
-    // ── Public replay entry point ─────────────────────────────────
-    // Called inline from the Replay Tour button in the account
-    // dropdown's Settings sub-view. Wraps the cleanup (close dropdown,
-    // reset sub-view back to main, drop the seen flag if it lingered)
-    // + start() so the reel fires from a clean canvas.
-    //
-    // We can't use a document-level click delegate here: the account
-    // dropdown's pointer/click listeners stopPropagation, so a global
-    // listener never sees clicks fired inside it. Inline onclick on
-    // the button calls this function directly — no bubbling required.
     window.__replayTutorial = function () {
       try {
         document.getElementById('accountDropdown')?.classList.remove('open');
-        // Reset the Settings sub-view back to the main account list
-        // so the next dropdown open lands on the familiar surface.
         const main = document.getElementById('acctDpMain');
         const sub  = document.getElementById('acctDpSettings');
         if (main) main.style.display = '';
         if (sub)  sub.style.display  = 'none';
       } catch (_) {}
-      // Small grace so the dropdown fade-out doesn't visually overlap
-      // the reel fade-in.
-      setTimeout(() => { try { start(); } catch (_) {} }, 280);
+      // Replay always plays the full reel (no prompt).
+      setTimeout(() => { try { startReel(); } catch (_) {} }, 280);
     };
 
-    // ── Auto-fire on first launch ──────────────────────────────────
-    // Wait for preload (or its 4s ceiling) before firing so the user
-    // lands on a populated app, then add a half-second grace for the
-    // globe to stabilize (camera settling, textures attaching). The
-    // localStorage flag ensures the reel only auto-fires once per
-    // device; replay is always available via the settings entry.
+    // ── Auto-fire on first launch ─────────────────────────────────
+    // Wait for preload (or its 4s ceiling) so the user lands on a
+    // populated app, then a half-second grace, then show the welcome
+    // prompt. Skips if the seen flag is already set or if a critical
+    // modal is up.
     (async () => {
       try {
         let seen = false;
         try { seen = !!localStorage.getItem(STORAGE_KEY); } catch (_) {}
         if (seen) return;
         try { await (window.__preloadReady || Promise.resolve()); } catch (_) {}
-        await sleep(500);
-        // Only auto-fire if no critical modal is up (auth, e.g.) —
-        // those should take precedence over the tutorial.
+        await new Promise(r => setTimeout(r, 500));
         if (document.body.classList.contains('auth-modal-open')) return;
-        start();
+        showWelcome();
       } catch (err) {
         console.warn('[tutorial] auto-start skipped:', err && err.message);
       }
