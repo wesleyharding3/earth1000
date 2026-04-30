@@ -1660,12 +1660,12 @@ body.news-flows-active #semHeatToggleBtn:hover {
               max-width 0.4s cubic-bezier(0.32, 0.72, 0, 1),
               visibility 0s linear 0s;
 }
-/* Minimized: slide to top-left + shrink to pill's intrinsic width. */
+/* Minimized: anchor stays at the bottom (above the ticker) — slide
+   to the right corner + shrink. See www/index.html for full rationale. */
 #flowControls.visible.minimized {
-  top: calc(env(safe-area-inset-top, 0px) + 12px);
-  bottom: auto;
-  left: 12px;
-  transform: translateY(0);
+  left: auto;
+  right: 12px;
+  transform: translateX(0) translateY(0);
   min-width: 0;
   max-width: 320px;
 }
@@ -23938,21 +23938,25 @@ const settingsToggle     = document.getElementById("settingsToggle");
   /* ── Keyword autocomplete (shared logic) ── */
   (function initKwAutocomplete() {
     const API_BASE = 'https://earth-wjr6.onrender.com';
+    // Both inputs are TOPIC keyword fields — countries/cities live in
+    // separate From/About inputs. Pass types=keyword so the dropdown
+    // doesn't suggest places when the user wants article topics.
     const pairs = [
-      { input: document.getElementById('flowKeyword'), list: document.getElementById('flowKwAutoList') },
-      { input: document.getElementById('semHeatKw'),    list: document.getElementById('heatKwAutoList') },
+      { input: document.getElementById('flowKeyword'), list: document.getElementById('flowKwAutoList'), types: 'keyword' },
+      { input: document.getElementById('semHeatKw'),    list: document.getElementById('heatKwAutoList'), types: 'keyword' },
     ];
 
     let _kwAbort = null;
     let _kwActiveIdx = -1;
     let _kwLastResults = [];  // cache last fetched suggestions for validation
 
-    async function fetchSuggestions(q, listEl) {
+    async function fetchSuggestions(q, listEl, types) {
       if (_kwAbort) _kwAbort.abort();
       if (q.length < 1) { listEl.classList.remove('visible'); _kwLastResults = []; return; }
       _kwAbort = new AbortController();
       try {
-        const r = await fetch(`${API_BASE}/api/keyword-suggestions?q=${encodeURIComponent(q)}&limit=15`, { signal: _kwAbort.signal });
+        const typesParam = types ? `&types=${encodeURIComponent(types)}` : '';
+        const r = await fetch(`${API_BASE}/api/keyword-suggestions?q=${encodeURIComponent(q)}&limit=15${typesParam}`, { signal: _kwAbort.signal });
         const data = await r.json();
         _kwLastResults = data;
         renderList(data, listEl, q);
@@ -23988,7 +23992,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       inputEl._kwValid = true;
     }
 
-    pairs.forEach(({ input, list }) => {
+    pairs.forEach(({ input, list, types }) => {
       if (!input || !list) return;
       let debounce = null;
       input._kwValid = false;
@@ -23996,7 +24000,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       input.addEventListener('input', () => {
         input._kwValid = false;
         clearTimeout(debounce);
-        debounce = setTimeout(() => fetchSuggestions(input.value.trim(), list), 200);
+        debounce = setTimeout(() => fetchSuggestions(input.value.trim(), list, types), 200);
       });
 
       input.addEventListener('keydown', (e) => {
@@ -24031,7 +24035,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         setTimeout(() => list.classList.remove('visible'), 150);
       });
       input.addEventListener('focus', () => {
-        if (input.value.trim().length >= 1) fetchSuggestions(input.value.trim(), list);
+        if (input.value.trim().length >= 1) fetchSuggestions(input.value.trim(), list, types);
       });
 
       // Prevent wheel/touch scroll from propagating to globe
@@ -45107,14 +45111,48 @@ body.ticker-active .gTickerLabel {
       state.qaModeAtSubmit = mode;
       try {
         const apiBase = window.__API || 'https://earth-wjr6.onrender.com';
-        const headers = { 'Content-Type': 'application/json' };
-        const tok = window.__authToken;
-        if (tok) headers['Authorization'] = `Bearer ${tok}`;
-        const res = await fetch(`${apiBase}/api/heatmap/ask`, {
-          method: 'POST', headers, body: JSON.stringify({ question: q, mode }),
-          signal: _ac.signal,
-        });
+        // See www/index.html for full rationale on the iOS background→
+        // foreground token-refresh race + retry-on-401.
+        async function _resolveToken() {
+          let t = window.__authToken || null;
+          if (!t && window.__earthSupabase?.auth?.getSession) {
+            try {
+              const { data } = await window.__earthSupabase.auth.getSession();
+              t = data?.session?.access_token || null;
+              if (t) window.__authToken = t;
+            } catch (_) {}
+          }
+          return t;
+        }
+        async function _refreshToken() {
+          if (!window.__earthSupabase?.auth?.refreshSession) return null;
+          try {
+            const { data, error } = await window.__earthSupabase.auth.refreshSession();
+            if (error) return null;
+            const t = data?.session?.access_token || null;
+            if (t) window.__authToken = t;
+            return t;
+          } catch (_) { return null; }
+        }
+        async function _doRequest(token) {
+          const headers = { 'Content-Type': 'application/json' };
+          if (token) headers['Authorization'] = `Bearer ${token}`;
+          return fetch(`${apiBase}/api/heatmap/ask`, {
+            method: 'POST', headers, body: JSON.stringify({ question: q, mode }),
+            signal: _ac.signal,
+          });
+        }
+        let tok = await _resolveToken();
+        let res = await _doRequest(tok);
         if (_isQaSessionStale(_myToken)) return;
+        if (res.status === 401) {
+          const fresh = await _refreshToken();
+          if (_isQaSessionStale(_myToken)) return;
+          if (fresh && fresh !== tok) {
+            res = await _doRequest(fresh);
+            if (_isQaSessionStale(_myToken)) return;
+          }
+        }
         const data = await res.json().catch(() => ({}));
         if (_isQaSessionStale(_myToken)) return;
         if (!res.ok) {

@@ -2506,20 +2506,38 @@ app.get("/api/keyword-suggestions", searchLimiter, async (req, res) => {
     const limit = Math.min(parseInt(req.query.limit) || 15, 30);
     if (q.length < 1) return res.json([]);
 
+    // Optional `types` filter: comma-separated list from
+    //   { keyword, country, city }
+    // When present, restricts results to those types. Used by the News
+    // Flows keyword input (which wants ONLY keywords — countries belong
+    // in the From/About fields) and the heatmap keyword tab. Default
+    // behavior (no `types` param) is unchanged: returns all three
+    // sources merged, for legacy callers.
+    const typesRaw = String(req.query.types || '').trim().toLowerCase();
+    const allowed = typesRaw
+      ? new Set(typesRaw.split(',').map(s => s.trim()).filter(Boolean))
+      : null; // null = "no filter, return everything"
+    const wantKeyword = !allowed || allowed.has('keyword');
+    const wantCountry = !allowed || allowed.has('country');
+    const wantCity    = !allowed || allowed.has('city');
+
     // Range bounds for prefix lookup. Keywords are already stored lowercase
     // (see keywordExtractor.js:80), so we don't need LOWER() — and dropping it
     // is what lets the existing btree indexes on `keyword` actually serve this
     // query. Prefix LIKE on default-collation text does NOT use a btree index,
     // but a range comparison `keyword >= lo AND keyword < hi` does.
     const qHi = q + '\uFFFF'; // last BMP code unit; sorts after any practical keyword
-    const results = await ttlCached(`kw-suggest:${q}:${limit}`, 120_000, async () => {
-      // Three sources, run in parallel
+    // Cache key includes the types filter so distinct callers don't
+    // accidentally serve each other's narrower / wider result sets.
+    const cacheKey = `kw-suggest:${q}:${limit}:${typesRaw || 'all'}`;
+    const results = await ttlCached(cacheKey, 120_000, async () => {
+      // Three sources, run in parallel. Each is gated on the caller's
+      // `types` filter so we don't burn a query for a result the caller
+      // told us to drop. `noop` returns an empty rows shape so the
+      // merge step downstream can stay one-shape.
+      const noop = Promise.resolve({ rows: [] });
       const [kwRows, countryRows, cityRows] = await Promise.all([
-        // 1) Keywords from keyword_daily_stats (recent 30 days, excludes stopwords).
-        // Uses range comparison so the partial index
-        // idx_kds_global_date_keyword_cover (date DESC, keyword)
-        // WHERE source_country_id IS NULL AND about_country_id IS NULL can serve it.
-        pool.query(`
+        wantKeyword ? pool.query(`
           SELECT keyword AS name, SUM(total_count)::bigint AS weight, 'keyword' AS type
           FROM keyword_daily_stats
           WHERE date >= CURRENT_DATE - INTERVAL '30 days'
@@ -2529,19 +2547,17 @@ app.get("/api/keyword-suggestions", searchLimiter, async (req, res) => {
           GROUP BY keyword
           ORDER BY weight DESC
           LIMIT $3
-        `, [q, qHi, limit]).catch(e => { console.error("kw-suggest keyword query err:", e.message, e.stack); return { rows: [] }; }),
-        // 2) Country names
-        pool.query(`
+        `, [q, qHi, limit]).catch(e => { console.error("kw-suggest keyword query err:", e.message, e.stack); return { rows: [] }; }) : noop,
+        wantCountry ? pool.query(`
           SELECT name, population::int AS weight, 'country' AS type
           FROM countries WHERE LOWER(name) LIKE $1 || '%'
           ORDER BY population DESC LIMIT $2
-        `, [q, limit]).catch(e => { console.error("kw-suggest country query err:", e.message); return { rows: [] }; }),
-        // 3) City names
-        pool.query(`
+        `, [q, limit]).catch(e => { console.error("kw-suggest country query err:", e.message); return { rows: [] }; }) : noop,
+        wantCity ? pool.query(`
           SELECT name, COALESCE(population,0)::int AS weight, 'city' AS type
           FROM cities WHERE is_active = true AND LOWER(name) LIKE $1 || '%'
           ORDER BY population DESC NULLS LAST LIMIT $2
-        `, [q, limit]).catch(e => { console.error("kw-suggest city query err:", e.message); return { rows: [] }; }),
+        `, [q, limit]).catch(e => { console.error("kw-suggest city query err:", e.message); return { rows: [] }; }) : noop,
       ]);
 
       // Merge, dedup by lowercase name, sort by weight desc.

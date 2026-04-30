@@ -941,20 +941,35 @@ async function runEventExtractionPhase(metrics, elapsed) {
   // Find active/cooling timelines that have fresh articles since their
   // last event extraction. Use GREATEST(latest_event_created_at,
   // first_seen_at) to include timelines that have never been extracted.
-  const { rows: dirtyTimelines } = await pool.query(`
-    SELECT t.id, t.title,
-           MAX(ste.created_at) AS last_event_at,
-           MAX(a.published_at) AS latest_article_at
-    FROM story_timelines t
-    JOIN story_timeline_articles sta ON sta.timeline_id = t.id
-    JOIN news_articles a ON a.id = sta.article_id
-    LEFT JOIN story_timeline_events ste ON ste.timeline_id = t.id
-    WHERE t.status IN ('active','cooling')
-    GROUP BY t.id, t.title
-    HAVING MAX(a.published_at) > COALESCE(MAX(ste.created_at), t.first_seen_at)
-    ORDER BY MAX(a.published_at) DESC
-    LIMIT 80
-  `);
+  // Wrapped in try/catch because if the umbrella phase exhausted DB
+  // connections (53300), this initial query would otherwise FATAL out
+  // and exit the whole cron with status 1 — better to log and skip
+  // the phase, letting the next run pick it up when the cluster has
+  // headroom.
+  let dirtyTimelines;
+  try {
+    const r = await pool.query(`
+      SELECT t.id, t.title,
+             MAX(ste.created_at) AS last_event_at,
+             MAX(a.published_at) AS latest_article_at
+      FROM story_timelines t
+      JOIN story_timeline_articles sta ON sta.timeline_id = t.id
+      JOIN news_articles a ON a.id = sta.article_id
+      LEFT JOIN story_timeline_events ste ON ste.timeline_id = t.id
+      WHERE t.status IN ('active','cooling')
+      GROUP BY t.id, t.title
+      HAVING MAX(a.published_at) > COALESCE(MAX(ste.created_at), t.first_seen_at)
+      ORDER BY MAX(a.published_at) DESC
+      LIMIT 80
+    `);
+    dirtyTimelines = r.rows;
+  } catch (err) {
+    if (_isConnectionExhausted(err)) {
+      console.warn(`   ⚠ event-extraction phase skipped — DB cluster saturated (${err.code || 'conn'}). Next run will pick up.`);
+      return;
+    }
+    throw err;
+  }
   console.log(`   [${elapsed()}] ${dirtyTimelines.length} timeline(s) have fresh articles since last extraction`);
 
   let daysProcessed = 0;
@@ -1179,6 +1194,22 @@ async function runCooldownPhase() {
 //  to 'active'. Dormant Lines are intentionally skipped (per product
 //  decision: dormant stays thread-only for reawakening).
 // ═════════════════════════════════════════════════════════════════════════════
+// Heuristic: is this an error from the DB SERVER hitting max_connections
+// (53300) or our pool failing to connect at all? These mean OTHER
+// processes have saturated the cluster — there's nothing we can do
+// about it from inside this cron, so we bail the current phase
+// gracefully instead of hammering 30+ more queries that will all
+// fail the same way.
+function _isConnectionExhausted(err) {
+  if (!err) return false;
+  if (err.code === '53300' || err.code === '53400') return true;
+  const m = String(err.message || '').toLowerCase();
+  return m.includes('remaining connection slots') ||
+         m.includes('too many clients') ||
+         m.includes('connection terminated') ||
+         m.includes('connect econnrefused');
+}
+
 async function runArticleUmbrellaPhase(metrics, elapsed) {
   // 1. Load active + cooling Lines
   const { rows: lines } = await pool.query(`
@@ -1199,9 +1230,21 @@ async function runArticleUmbrellaPhase(metrics, elapsed) {
   //    articles + nations + keywords + title tokens)
   const featureMap = await buildTimelineFeatures(lines);
 
+  // Track consecutive connection-exhaustion errors so we can bail the
+  // phase early when the DB cluster is saturated by other processes.
+  // A single timeout is fine; 3 in a row means the cluster is genuinely
+  // out of slots and we should release ours rather than fight for them.
+  let _consecutiveConnErrs = 0;
+  const _CONN_ERR_BAIL_THRESHOLD = 3;
+
   // 3. For each Line, pre-filter candidate articles via SQL (by nation OR
   //    keyword overlap), then score + attach the ones that clear threshold.
   for (const tl of lines) {
+    if (_consecutiveConnErrs >= _CONN_ERR_BAIL_THRESHOLD) {
+      console.warn(`   ⚠ umbrella phase bailing early — ${_consecutiveConnErrs} consecutive connection-exhausted errors. ` +
+                   `DB cluster is full; remaining ${lines.length - lines.indexOf(tl)} Line(s) skipped this run.`);
+      break;
+    }
     try {
       const feat = featureMap.get(tl.id);
       if (!feat) continue;
@@ -1353,6 +1396,11 @@ async function runArticleUmbrellaPhase(metrics, elapsed) {
       metrics.umbrellaLinesRefreshed += 1;
       if (wasCooling) metrics.umbrellaCoolingRestored += 1;
 
+      // Successful Line iteration — reset the connection-error counter
+      // so a single transient blip earlier doesn't trigger an early
+      // bail when the cluster actually recovered.
+      _consecutiveConnErrs = 0;
+
       if (toAttach.length >= 5 || wasCooling) {
         console.log(
           `   ↳ umbrella: +${toAttach.length} articles → "${(tl.title||'').slice(0,55)}"` +
@@ -1361,6 +1409,16 @@ async function runArticleUmbrellaPhase(metrics, elapsed) {
       }
     } catch (err) {
       console.warn(`   ⚠ umbrella failed for Line ${tl.id} "${(tl.title||'').slice(0,40)}": ${err.message}`);
+      if (_isConnectionExhausted(err)) {
+        _consecutiveConnErrs += 1;
+        // Brief sleep when the cluster is saturated — give other
+        // processes a chance to release before we try the next Line.
+        await sleep(500);
+      } else {
+        // Statement timeouts and other per-query failures don't count
+        // against the bail threshold (the connection itself is fine).
+        _consecutiveConnErrs = 0;
+      }
     }
   }
 
