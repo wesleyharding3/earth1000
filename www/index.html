@@ -4683,14 +4683,20 @@ button.arcCtxSegDot,
        the chrome reads as a single unit instead of floating pieces
        over the spotlight dim. position:relative so #tutSkip can be
        absolutely-positioned in the panel's top-right corner. */
+    /* Shrunken: was max-width: calc(100vw - 32px) which spanned the
+       whole screen and hid the globe / panels behind it. Now caps at
+       240px (about half the typical phone width) so the chrome reads
+       as a discrete control widget rather than a screen-blocking
+       banner. Tightened padding + gap + font + buttons in lockstep
+       so the panel still looks balanced at the smaller size. */
     #tutChromePanel {
       position: relative;
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 12px;
-      padding: 32px 22px 16px;
-      border-radius: 22px;
+      gap: 8px;
+      padding: 22px 14px 12px;
+      border-radius: 18px;
       background: rgba(10, 10, 14, 0.62);
       border: 1px solid rgba(255, 190, 80, 0.22);
       backdrop-filter: blur(20px);
@@ -4699,22 +4705,21 @@ button.arcCtxSegDot,
         0 8px 32px rgba(0, 0, 0, 0.55),
         inset 0 1px 0 rgba(255, 255, 255, 0.06);
       pointer-events: auto;
-      max-width: calc(100vw - 32px);
+      max-width: min(240px, calc(100vw - 32px));
     }
-    /* Skip — small chip in the panel's top-right corner, like a
-       modal close button. Used to live at top:130px viewport-fixed,
-       but pulling it into the panel keeps all chrome in one place. */
+    /* Skip — small chip in the panel's top-right corner. Tightened
+       in lockstep with the panel shrink. */
     #tutSkip {
       position: absolute;
-      top: 8px;
-      right: 10px;
-      padding: 4px 10px;
+      top: 6px;
+      right: 8px;
+      padding: 3px 8px;
       border-radius: 999px;
       background: rgba(0, 0, 0, 0.35);
       border: 1px solid rgba(255, 190, 80, 0.30);
       color: rgba(255, 220, 180, 0.85);
-      font-size: 10px;
-      letter-spacing: 0.18em;
+      font-size: 9px;
+      letter-spacing: 0.16em;
       font-weight: 700;
       text-transform: uppercase;
       cursor: pointer;
@@ -4725,14 +4730,16 @@ button.arcCtxSegDot,
     #tutSkip:active { transform: scale(0.94); }
     #tutCaption {
       margin: 0;
-      padding: 0 4px;
+      padding: 0 2px;
       text-align: center;
-      font-size: 17px;
+      /* 17px → 14px so a 60-char caption wraps to ~3 lines inside the
+         narrower panel instead of spilling past it. */
+      font-size: 14px;
       font-weight: 600;
+      line-height: 1.35;
       color: rgba(255, 235, 200, 0.96);
       text-shadow: 0 2px 12px rgba(0, 0, 0, 0.7);
       letter-spacing: 0.005em;
-      max-width: 520px;
       opacity: 0;
       transform: translateY(8px);
       transition: opacity 0.45s ease, transform 0.45s ease;
@@ -4741,12 +4748,12 @@ button.arcCtxSegDot,
     #tutCaption.show { opacity: 1; transform: translateY(0); }
     #tutDots {
       display: flex;
-      gap: 8px;
+      gap: 6px;
       pointer-events: none;
     }
     .tutDot {
-      width: 6px;
-      height: 6px;
+      width: 5px;
+      height: 5px;
       border-radius: 50%;
       background: rgba(255, 255, 255, 0.18);
       transition: background 0.25s ease, transform 0.25s ease;
@@ -4913,20 +4920,18 @@ button.arcCtxSegDot,
        ────────────────────────────────────────────────────────────── */
     #tutControls {
       display: flex;
-      gap: 10px;
+      gap: 8px;
       align-items: center;
       justify-content: center;
       margin: 0; /* panel's gap controls vertical spacing now */
       pointer-events: auto;
     }
     .tutCtrlBtn {
-      /* flex: 0 0 38px locks the button's main-axis size so the
-         flex container can't shrink it horizontally and turn the
-         circle into an ellipse on narrow viewports. The default
-         flex-shrink:1 was the culprit on iPhone — once the controls
-         row got pushed near a tight edge, the buttons compressed. */
-      flex: 0 0 38px;
-      width: 38px; height: 38px;
+      /* 38 → 32px in lockstep with the panel shrink. Apple HIG min
+         tap target is 32×32, so this is the floor; flex-shrink stays
+         locked to 0 to keep them perfectly circular at any width. */
+      flex: 0 0 32px;
+      width: 32px; height: 32px;
       border-radius: 50%;
       background: rgba(8, 8, 8, 0.72);
       border: 1px solid rgba(255, 190, 80, 0.32);
@@ -4942,10 +4947,10 @@ button.arcCtxSegDot,
     .tutCtrlBtn:hover  { background: rgba(8, 8, 8, 0.88); }
     .tutCtrlBtn:active { transform: scale(0.94); }
     .tutCtrlBtn svg {
-      width: 14px; height: 14px;
+      width: 12px; height: 12px;
       fill: currentColor;
     }
-    .tutCtrlBtn.tutCtrlPlay svg { width: 16px; height: 16px; }
+    .tutCtrlBtn.tutCtrlPlay svg { width: 14px; height: 14px; }
     .tutCtrlBtn[disabled] {
       opacity: 0.35; cursor: default;
     }
@@ -29493,9 +29498,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
         },
         beats: [
           // 3s: tap the first thread card to open the cluster panel.
-          { at: 3000, do: () => {
+          //      waitForElement covers the cold-start case where the
+          //      card hasn't rendered yet (slow network on first
+          //      launch). Polls up to 8s; subsequent beats no-op
+          //      gracefully via pulse/scrollPanelTo if the panel
+          //      still hasn't opened.
+          { at: 3000, do: async () => {
               try {
-                const card = document.querySelector('.nfThreadCard');
+                const card = await waitForElement('.nfThreadCard', { timeout: 8000 });
                 if (card) card.click();
               } catch (_) {}
             }
@@ -29552,9 +29562,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
           this._mockCleanup = null;
         },
         beats: [
-          { at: 3000, do: function () {
+          { at: 3000, do: async function () {
               try {
-                const card = document.querySelector('.nfThreadCard');
+                const card = await waitForElement('.nfThreadCard', { timeout: 8000 });
                 if (card) card.click();
               } catch (_) {}
             }
@@ -29604,9 +29614,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
           clearSpotlight();
         },
         beats: [
-          { at: 3000, do: () => {
+          { at: 3000, do: async () => {
               try {
-                const card = document.querySelector('.nfCard');
+                const card = await waitForElement('.nfCard', { timeout: 8000 });
                 if (card) card.click();
               } catch (_) {}
             }
@@ -30157,6 +30167,52 @@ const settingsToggle     = document.getElementById("settingsToggle");
       try { window.__dismissAmbientHeadline?.(); } catch (_) {}
     }
 
+    // ── Pre-warm API endpoints used by chapters 4 / 5 / 6 ──────────
+    // On a cold-start tour the user lands on page 1 (globe). Chapters
+    // 4 / 5 / 6 navigate to page 2 (news flows) and immediately try to
+    // tap a thread / timeline / article card. If the network is slow,
+    // the cards haven't rendered by the 3s beat and the chapter falls
+    // through with no panel open — the user just sees a loading
+    // spinner during the narration. Firing these GETs at reel start
+    // seeds the browser cache so by the time the panel actually
+    // opens, the same fetch returns instantly. Failures are silent —
+    // the fallback is `waitForElement` below, which polls for the
+    // card to appear before clicking.
+    function prewarmTutorialData() {
+      const API = window.__API || 'https://earth-wjr6.onrender.com';
+      const urls = [
+        `${API}/api/threads/latest?limit=30`,
+        `${API}/api/timelines/latest?limit=30`,
+        `${API}/api/news/search?limit=25&offset=0`,
+      ];
+      for (const url of urls) {
+        try { fetch(url).catch(() => {}); } catch (_) {}
+      }
+    }
+
+    // ── Wait for an element to appear in the DOM ───────────────────
+    // Bounded poll (default 6s, 200ms interval). Resolves with the
+    // element when it shows up, or null on timeout. Used in chapters
+    // 4 / 5 / 6 to avoid the card-tap beat firing before the cards
+    // have rendered. Async-friendly: since play() invokes beat.do
+    // without awaiting, an async `do` runs in the background while
+    // subsequent beats fire on schedule. Subsequent beats target
+    // panel-internal elements which silently no-op via pulse() /
+    // scrollPanelTo() if the panel hasn't opened yet — not perfect,
+    // but better than the current "click into a void" failure.
+    function waitForElement(selector, { timeout = 6000, pollInterval = 200 } = {}) {
+      return new Promise(resolve => {
+        const start = Date.now();
+        const check = () => {
+          const el = document.querySelector(selector);
+          if (el) return resolve(el);
+          if (Date.now() - start >= timeout) return resolve(null);
+          setTimeout(check, pollInterval);
+        };
+        check();
+      });
+    }
+
     // ── Lifecycle ──────────────────────────────────────────────────
     function startReel() {
       if (active) return;
@@ -30166,6 +30222,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // Hard-reset everything that might be on the globe / in panels
       // so the user enters chapter 1 against a known-clean baseline.
       resetWorldForTutorial();
+      // Fire pre-warm fetches in parallel so chapters 4-6 have a
+      // populated cache by the time they navigate to page 2.
+      prewarmTutorialData();
       ensureOverlay();
       bindEsc();
       const overlay = document.getElementById('tutOverlay');

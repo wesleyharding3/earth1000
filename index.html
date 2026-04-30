@@ -4287,14 +4287,16 @@ button.arcCtxSegDot,
     #tutOverlay > * { pointer-events: auto; }
     /* Chrome panel — caption + controls + dots + skip in one glass
        card. See www/index.html for full rationale. */
+    /* Shrunk to ~240px max so the chrome doesn't span the screen.
+       See www/index.html for full rationale. */
     #tutChromePanel {
       position: relative;
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 12px;
-      padding: 32px 22px 16px;
-      border-radius: 22px;
+      gap: 8px;
+      padding: 22px 14px 12px;
+      border-radius: 18px;
       background: rgba(10, 10, 14, 0.62);
       border: 1px solid rgba(255, 190, 80, 0.22);
       backdrop-filter: blur(20px);
@@ -4303,20 +4305,20 @@ button.arcCtxSegDot,
         0 8px 32px rgba(0, 0, 0, 0.55),
         inset 0 1px 0 rgba(255, 255, 255, 0.06);
       pointer-events: auto;
-      max-width: calc(100vw - 32px);
+      max-width: min(240px, calc(100vw - 32px));
     }
     /* Skip — top-right of the chrome panel. */
     #tutSkip {
       position: absolute;
-      top: 8px;
-      right: 10px;
-      padding: 4px 10px;
+      top: 6px;
+      right: 8px;
+      padding: 3px 8px;
       border-radius: 999px;
       background: rgba(0, 0, 0, 0.35);
       border: 1px solid rgba(255, 190, 80, 0.30);
       color: rgba(255, 220, 180, 0.85);
-      font-size: 10px;
-      letter-spacing: 0.18em;
+      font-size: 9px;
+      letter-spacing: 0.16em;
       font-weight: 700;
       text-transform: uppercase;
       cursor: pointer;
@@ -4327,14 +4329,14 @@ button.arcCtxSegDot,
     #tutSkip:active { transform: scale(0.94); }
     #tutCaption {
       margin: 0;
-      padding: 0 4px;
+      padding: 0 2px;
       text-align: center;
-      font-size: 17px;
+      font-size: 14px;
       font-weight: 600;
+      line-height: 1.35;
       color: rgba(255, 235, 200, 0.96);
       text-shadow: 0 2px 12px rgba(0, 0, 0, 0.7);
       letter-spacing: 0.005em;
-      max-width: 520px;
       opacity: 0;
       transform: translateY(8px);
       transition: opacity 0.45s ease, transform 0.45s ease;
@@ -4343,12 +4345,12 @@ button.arcCtxSegDot,
     #tutCaption.show { opacity: 1; transform: translateY(0); }
     #tutDots {
       display: flex;
-      gap: 8px;
+      gap: 6px;
       pointer-events: none;
     }
     .tutDot {
-      width: 6px;
-      height: 6px;
+      width: 5px;
+      height: 5px;
       border-radius: 50%;
       background: rgba(255, 255, 255, 0.18);
       transition: background 0.25s ease, transform 0.25s ease;
@@ -4482,17 +4484,16 @@ button.arcCtxSegDot,
 
     #tutControls {
       display: flex;
-      gap: 10px;
+      gap: 8px;
       align-items: center;
       justify-content: center;
       margin: 0; /* panel's gap controls vertical spacing now */
       pointer-events: auto;
     }
     .tutCtrlBtn {
-      /* See www/index.html — flex-shrink lock so the round button
-         doesn't compress to an ellipse on tight viewports. */
-      flex: 0 0 38px;
-      width: 38px; height: 38px;
+      /* 38 → 32px in lockstep with chrome shrink. See www/index.html. */
+      flex: 0 0 32px;
+      width: 32px; height: 32px;
       border-radius: 50%;
       background: rgba(8, 8, 8, 0.72);
       border: 1px solid rgba(255, 190, 80, 0.32);
@@ -4508,10 +4509,10 @@ button.arcCtxSegDot,
     .tutCtrlBtn:hover  { background: rgba(8, 8, 8, 0.88); }
     .tutCtrlBtn:active { transform: scale(0.94); }
     .tutCtrlBtn svg {
-      width: 14px; height: 14px;
+      width: 12px; height: 12px;
       fill: currentColor;
     }
-    .tutCtrlBtn.tutCtrlPlay svg { width: 16px; height: 16px; }
+    .tutCtrlBtn.tutCtrlPlay svg { width: 14px; height: 14px; }
     .tutCtrlBtn[disabled] {
       opacity: 0.35; cursor: default;
     }
@@ -27548,10 +27549,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
           clearSpotlight();
         },
         beats: [
-          // 3s: tap the first thread card to open the cluster panel.
-          { at: 3000, do: () => {
+          // 3s: tap the first thread card. Polls up to 8s for cold
+          //      start. See www/index.html.
+          { at: 3000, do: async () => {
               try {
-                const card = document.querySelector('.nfThreadCard');
+                const card = await waitForElement('.nfThreadCard', { timeout: 8000 });
                 if (card) card.click();
               } catch (_) {}
             }
@@ -27603,9 +27605,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
           this._mockCleanup = null;
         },
         beats: [
-          { at: 3000, do: function () {
+          { at: 3000, do: async function () {
               try {
-                const card = document.querySelector('.nfThreadCard');
+                const card = await waitForElement('.nfThreadCard', { timeout: 8000 });
                 if (card) card.click();
               } catch (_) {}
             }
@@ -27654,9 +27656,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
           clearSpotlight();
         },
         beats: [
-          { at: 3000, do: () => {
+          { at: 3000, do: async () => {
               try {
-                const card = document.querySelector('.nfCard');
+                const card = await waitForElement('.nfCard', { timeout: 8000 });
                 if (card) card.click();
               } catch (_) {}
             }
@@ -28183,6 +28185,31 @@ const settingsToggle     = document.getElementById("settingsToggle");
       try { window.__dismissAmbientHeadline?.(); } catch (_) {}
     }
 
+    // Pre-warm + waitForElement helpers — see www/index.html.
+    function prewarmTutorialData() {
+      const API = window.__API || 'https://earth-wjr6.onrender.com';
+      const urls = [
+        `${API}/api/threads/latest?limit=30`,
+        `${API}/api/timelines/latest?limit=30`,
+        `${API}/api/news/search?limit=25&offset=0`,
+      ];
+      for (const url of urls) {
+        try { fetch(url).catch(() => {}); } catch (_) {}
+      }
+    }
+    function waitForElement(selector, { timeout = 6000, pollInterval = 200 } = {}) {
+      return new Promise(resolve => {
+        const start = Date.now();
+        const check = () => {
+          const el = document.querySelector(selector);
+          if (el) return resolve(el);
+          if (Date.now() - start >= timeout) return resolve(null);
+          setTimeout(check, pollInterval);
+        };
+        check();
+      });
+    }
+
     // ── Lifecycle ──────────────────────────────────────────────────
     function startReel() {
       if (active) return;
@@ -28192,6 +28219,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // Hard-reset everything on the globe / in panels so chapter 1
       // always opens against a known-clean baseline.
       resetWorldForTutorial();
+      prewarmTutorialData();
       ensureOverlay();
       bindEsc();
       const overlay = document.getElementById('tutOverlay');
