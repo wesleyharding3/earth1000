@@ -1402,7 +1402,14 @@
       background: rgba(8, 8, 8, 0.88);
       border: 1px solid rgba(255, 255, 255, 0.12);
       color: white;
-      z-index: 35;
+      /* Sits above .flowNodeLabel cards (90), #flowCtxCard (820),
+         cluster panel chrome, and other in-globe overlays so the user
+         can read / interact with settings without label cards or
+         floating panels poking through. Stays below #authOverlay
+         (10000), hover tooltips (99999), and briefing-forced labels
+         (100005) — those are critical or transient and should remain
+         on top. */
+      z-index: 1500;
       padding: 16px 14px 20px;
       box-sizing: border-box;
       box-shadow: 8px 0 30px rgba(0, 0, 0, 0.55);
@@ -4586,6 +4593,314 @@ button.arcCtxSegDot,
     @media (prefers-reduced-motion: reduce) {
       .ptr-indicator svg, .ptr-indicator { transition: none; }
       .ptr-indicator.refreshing svg { animation: none; }
+    }
+
+    /* ──────────────────────────────────────────────────────────────────
+       Tutorial reel — first-launch demo overlay.
+       Sits above the live UI so each beat can show the user what an
+       app feature LOOKS like in real time. Caption + dot-progress at
+       the bottom; Skip button top-right; everything else transparent
+       so the live globe / page transitions / panels are visible
+       through the overlay. The overlay does NOT block input — taps
+       on app surfaces still register; only the Skip button
+       intercepts. ────────────────────────────────────────────────── */
+    #tutOverlay {
+      position: fixed;
+      inset: 0;
+      z-index: 5000;        /* above .flowCtxCard (820) and #settingsSidebar (1500), below #authOverlay (10000) */
+      pointer-events: none; /* let app interactions pass through; Skip + dots re-enable below */
+      opacity: 0;
+      transition: opacity 0.35s ease;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      align-items: center;
+      padding: 0 0 max(env(safe-area-inset-bottom, 0px), 28px);
+    }
+    #tutOverlay.active { opacity: 1; }
+    #tutOverlay > * { pointer-events: auto; }
+    #tutSkip {
+      position: absolute;
+      top: max(env(safe-area-inset-top, 0px), 14px);
+      right: 14px;
+      padding: 8px 14px;
+      border-radius: 999px;
+      background: rgba(8, 8, 8, 0.72);
+      border: 1px solid rgba(255, 190, 80, 0.38);
+      color: rgba(255, 220, 180, 0.94);
+      font-size: 11px;
+      letter-spacing: 0.20em;
+      font-weight: 700;
+      text-transform: uppercase;
+      cursor: pointer;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      user-select: none;
+      transition: background 0.18s ease, transform 0.12s ease;
+    }
+    #tutSkip:hover  { background: rgba(8, 8, 8, 0.88); }
+    #tutSkip:active { transform: scale(0.96); }
+    #tutCaption {
+      margin-bottom: 16px;
+      padding: 0 24px;
+      text-align: center;
+      font-size: 17px;
+      font-weight: 600;
+      color: rgba(255, 235, 200, 0.96);
+      text-shadow: 0 2px 12px rgba(0, 0, 0, 0.7);
+      letter-spacing: 0.005em;
+      max-width: 560px;
+      opacity: 0;
+      transform: translateY(8px);
+      transition: opacity 0.45s ease, transform 0.45s ease;
+      pointer-events: none; /* caption is decorative; let taps pass through */
+    }
+    #tutCaption.show { opacity: 1; transform: translateY(0); }
+    #tutDots {
+      display: flex;
+      gap: 8px;
+      pointer-events: none;
+    }
+    .tutDot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.18);
+      transition: background 0.25s ease, transform 0.25s ease;
+    }
+    .tutDot.done   { background: rgba(255, 190, 80, 0.45); }
+    .tutDot.active { background: rgba(255, 190, 80, 1); transform: scale(1.45); }
+    @media (prefers-reduced-motion: reduce) {
+      #tutOverlay, #tutCaption, .tutDot { transition: none; }
+    }
+
+    /* Snapshot stand-in — corner-pinned card that slides in during
+       the final beat. Hints at the share artifact without firing the
+       real share-picker modal (which would block the tutorial flow).
+       Sits above #tutOverlay (5000) but below #authOverlay (10000). */
+    #tutSnapStandin {
+      position: fixed;
+      bottom: max(env(safe-area-inset-bottom, 0px), 80px);
+      right: 16px;
+      width: 220px;
+      border-radius: 14px;
+      background: linear-gradient(135deg, rgba(6,10,20,0.96), rgba(13,21,37,0.96));
+      border: 1px solid rgba(255, 190, 80, 0.38);
+      box-shadow: 0 12px 40px rgba(0,0,0,0.6), 0 0 24px rgba(255,190,80,0.14);
+      padding: 14px 16px 16px;
+      color: rgba(255, 235, 200, 0.95);
+      z-index: 5100;
+      pointer-events: none;
+      opacity: 0;
+      transform: translateX(60px) scale(0.92);
+      transition: opacity 0.4s ease, transform 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+      font-family: -apple-system, system-ui, sans-serif;
+    }
+    #tutSnapStandin.show {
+      opacity: 1;
+      transform: translateX(0) scale(1);
+    }
+    .tutSnapBadge {
+      font-size: 9px;
+      font-weight: 800;
+      letter-spacing: 0.22em;
+      color: rgba(255, 190, 80, 0.95);
+      margin-bottom: 8px;
+      text-transform: uppercase;
+    }
+    .tutSnapTitle {
+      font-size: 17px;
+      font-weight: 750;
+      line-height: 1.22;
+      letter-spacing: -0.005em;
+      margin-bottom: 6px;
+      color: rgba(255, 235, 200, 0.98);
+    }
+    .tutSnapSub {
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.22em;
+      color: rgba(255, 190, 80, 0.85);
+      text-transform: uppercase;
+      margin-bottom: 10px;
+    }
+    .tutSnapBar {
+      height: 8px;
+      border-radius: 4px;
+      background: linear-gradient(90deg,
+        rgba(80, 80, 90, 0.5) 0%,
+        rgba(180, 120, 70, 0.7) 35%,
+        rgba(220, 140, 60, 0.85) 65%,
+        rgba(255, 200, 80, 0.95) 100%);
+      margin-bottom: 10px;
+    }
+    .tutSnapFoot {
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.18em;
+      color: rgba(255, 190, 80, 0.6);
+    }
+    @media (prefers-reduced-motion: reduce) {
+      #tutSnapStandin { transition: none; }
+    }
+
+    /* ──────────────────────────────────────────────────────────────────
+       Hold-down tooltip — shared system.
+       Any button (or interactive element) carrying `data-hold-tip="..."`
+       gets a long-press tooltip: 500ms hold reveals a small floating
+       card with the description; release dismisses it. Tap-and-release
+       under 500ms passes through as a normal click. Drift > 8px during
+       the hold cancels (treats it as a scroll gesture). The button's
+       click handler is suppressed for ~50ms after the tooltip showed
+       so a long-press doesn't double-trigger the action.
+
+       Use cases:
+         • Top-nav icon buttons that have no label by default
+         • Mode pills / tabs whose meaning isn't obvious from the label
+         • Card-overlay action buttons (flow / save / share)
+
+       Optional `data-hold-tip-title="..."` adds an uppercase eyebrow
+       above the body text — useful when the body needs a short noun-
+       phrase header to anchor it ("MAP THIS", "TIME SERIES").
+       ────────────────────────────────────────────────────────────── */
+    .holdTip {
+      position: fixed;
+      z-index: 4500;        /* above flow ctx card (820), settings sidebar (1500); below auth modal (10000), tutorial (5000) */
+      background: rgba(8, 8, 8, 0.92);
+      color: rgba(255, 235, 200, 0.96);
+      border: 1px solid rgba(255, 190, 80, 0.32);
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-size: 12px;
+      line-height: 1.42;
+      letter-spacing: 0.005em;
+      max-width: 240px;
+      pointer-events: none;
+      opacity: 0;
+      transform: translateY(4px);
+      transition: opacity 0.18s ease, transform 0.18s ease;
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      box-shadow: 0 10px 32px rgba(0,0,0,0.6), 0 0 18px rgba(255,190,80,0.06);
+      user-select: none;
+      font-family: -apple-system, system-ui, "Segoe UI", sans-serif;
+    }
+    .holdTip.show { opacity: 1; transform: translateY(0); }
+    .holdTipTitle {
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: rgba(255, 190, 80, 0.95);
+      margin-bottom: 5px;
+    }
+    .holdTipBody {
+      font-weight: 500;
+      color: rgba(255, 235, 200, 0.92);
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .holdTip { transition: none; }
+    }
+
+    /* ──────────────────────────────────────────────────────────────────
+       Daily streak box — sits inside the account dropdown beneath the
+       AI credit box. Tasteful, opt-in placement (only visible when
+       the user opens their account panel) rather than a constantly-on
+       top-bar pill that would feel like nagging.
+
+       Visual mirrors .acctDpCreditBox (same paddings + border-radius +
+       compact stat row) but in a warm amber palette so the two stats
+       read as a coordinated pair: cyan = consumption, amber = habit.
+
+       Brief glow + scale animation fires the moment the streak GROWS
+       (server returns gained:true) — turns a routine app-open into a
+       small, satisfying reward without ever being loud.
+       ────────────────────────────────────────────────────────────── */
+    .acctDpStreakBox {
+      margin: 8px 12px 8px;
+      padding: 10px 12px;
+      background: rgba(255, 160, 60, 0.06);
+      border: 1px solid rgba(255, 180, 80, 0.28);
+      border-radius: 10px;
+      cursor: default;
+      transition: box-shadow 0.4s ease, transform 0.18s ease;
+    }
+    .acctDpStreakHeader {
+      display: flex; align-items: baseline; justify-content: space-between;
+      margin-bottom: 4px;
+    }
+    .acctDpStreakLabel {
+      font-size: 10px; font-weight: 700; letter-spacing: 0.12em;
+      text-transform: uppercase; color: rgba(255, 200, 140, 0.92);
+      display: inline-flex; align-items: center; gap: 6px;
+    }
+    .acctDpStreakLabel .streakIcon {
+      font-size: 14px; line-height: 1; filter: saturate(1.2);
+    }
+    .acctDpStreakValue {
+      font-size: 16px; font-weight: 800; color: rgba(255, 230, 200, 0.98);
+      font-variant-numeric: tabular-nums;
+    }
+    .acctDpStreakValue .acctDpStreakUnit {
+      font-size: 10px; font-weight: 500; color: rgba(255,255,255,0.42);
+      margin-left: 3px;
+    }
+    .acctDpStreakSub {
+      font-size: 10px; color: rgba(255,255,255,0.48);
+      letter-spacing: 0.02em;
+    }
+    .acctDpStreakBox.grew {
+      animation: streakGrew 1.1s cubic-bezier(0.22, 1, 0.36, 1);
+      box-shadow: 0 0 22px rgba(255, 160, 60, 0.45);
+    }
+    @keyframes streakGrew {
+      0%   { transform: scale(1);    box-shadow: 0 0 0  rgba(255,160,60,0); }
+      40%  { transform: scale(1.04); box-shadow: 0 0 28px rgba(255,160,60,0.6); }
+      100% { transform: scale(1);    box-shadow: 0 0 0  rgba(255,160,60,0); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .acctDpStreakBox, .acctDpStreakBox.grew {
+        transition: none; animation: none; box-shadow: none;
+      }
+    }
+
+    /* ──────────────────────────────────────────────────────────────────
+       Tab badge — small amber dot or count on the threads/lines pills
+       indicating "N new since you last visited." Pinned to the top-
+       right corner of the pill button. Clears (display:none) when the
+       user enters that tab.
+       ────────────────────────────────────────────────────────────── */
+    .tabBadge {
+      position: absolute;
+      top: -3px;
+      right: -3px;
+      min-width: 16px;
+      height: 16px;
+      padding: 0 4px;
+      border-radius: 999px;
+      background: rgba(255, 140, 50, 0.95);
+      border: 1.5px solid rgba(6, 10, 20, 1);
+      color: #fff;
+      font-size: 9px;
+      font-weight: 800;
+      letter-spacing: 0.02em;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: none;
+      box-shadow: 0 2px 8px rgba(255, 140, 50, 0.45);
+      animation: tabBadgePulse 2.4s ease-in-out infinite;
+    }
+    @keyframes tabBadgePulse {
+      0%, 100% { box-shadow: 0 2px 8px  rgba(255, 140, 50, 0.45); }
+      50%      { box-shadow: 0 2px 14px rgba(255, 140, 50, 0.75); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .tabBadge { animation: none; }
+    }
+    /* Pills need position:relative for the badge to anchor correctly. */
+    #nfViewThreads, #nfViewTimelines, #nfViewFeed {
+      position: relative;
     }
 
     .articleCard {
@@ -13475,6 +13790,24 @@ window.__arcCtxSegmented = (function() {
             </div>
             <div class="acctDpCreditSub" id="acctDpCreditSub">—</div>
           </div>
+          <!-- Daily streak — hidden until the user has at least a 1-day
+               streak. Shares the visual language of the credit box but
+               with a warm amber palette to read as the "habit" stat
+               vs the credit box's "consumption" stat. -->
+          <div class="acctDpStreakBox" id="streakPill" style="display:none;"
+               data-hold-tip-title="Daily Streak"
+               data-hold-tip="Open the app every day to keep your streak alive — one missed day per week is on the house.">
+            <div class="acctDpStreakHeader">
+              <span class="acctDpStreakLabel">
+                <span class="streakIcon">🔥</span> Daily streak
+              </span>
+              <span class="acctDpStreakValue">
+                <span class="streakDay">0</span>
+                <span class="acctDpStreakUnit">days</span>
+              </span>
+            </div>
+            <div class="acctDpStreakSub" id="acctDpStreakSub">—</div>
+          </div>
           <div class="acctDpBtn" id="acctDpUpgrade" onclick="window.__openPricing()" style="color:rgba(212,168,67,0.9)">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <polyline points="17 11 12 6 7 11"/><line x1="12" y1="6" x2="12" y2="18"/>
@@ -13593,7 +13926,9 @@ window.__arcCtxSegmented = (function() {
         </div>
       </div>
     </div>
-    <div class="iconBtn" id="flowModeBtn">
+    <div class="iconBtn" id="flowModeBtn"
+         data-hold-tip-title="News Flows"
+         data-hold-tip="Animate how stories travel between source and subject countries — see who's covering what, where it's landing.">
       <!-- Globe — flow arcs LIVE on the globe, so a globe icon
            reads as "show on globe." Replaces an earlier dots-and-
            arcs glyph that looked too similar to the share icon. -->
@@ -13632,7 +13967,9 @@ window.__arcCtxSegmented = (function() {
          Mutex'd against #flowModeBtn: when news-flows is active this
          button is dimmed via CSS and a tap surfaces a toast hint
          (see __semHeatToggleBtnClick). -->
-    <div class="iconBtn" id="semHeatToggleBtn" onclick="window.__semHeatToggleBtnClick?.()" style="display:none;">
+    <div class="iconBtn" id="semHeatToggleBtn" onclick="window.__semHeatToggleBtnClick?.()" style="display:none;"
+         data-hold-tip-title="Heatmap"
+         data-hold-tip="Paint any question across the globe — coverage volume, sentiment, GDP, tariffs, anything you can ask in plain English.">
       <!-- 3×3 gradient grid — universal heatmap symbol. Replaces an
            earlier globe-with-dots glyph that conflicted with the new
            flow-arcs globe icon. -->
@@ -13952,6 +14289,20 @@ window.__arcCtxSegmented = (function() {
         </div>
       </div>
 
+      <!-- Global section pinned to the bottom of every panel — replays
+           the first-launch tutorial reel for the curious. Wired in the
+           tutorial-reel module further down: clears the localStorage
+           "seen" flag and re-fires the orchestrator. -->
+      <div class="sidebarDivider"></div>
+      <div class="sidebarSection sidebarSectionGlobal">
+        <div class="layerList">
+          <div class="layerOpt" id="replayTutorialBtn" style="cursor:pointer;">
+            <div class="layerDot" style="background:rgba(255,190,80,0.92);"></div>
+            <span class="layerLabel">Replay Tour</span>
+          </div>
+        </div>
+      </div>
+
     </div>
   </div>
   <!-- Flow articles list panel -->
@@ -14031,8 +14382,12 @@ window.__arcCtxSegmented = (function() {
       <div class="flowPanelRow">
         <span class="flowLabel">Mode</span>
         <div class="flowModeToggle" style="flex:1;">
-          <div class="flowModePill active" data-fmode="individual">Time Series</div>
-          <div class="flowModePill" data-fmode="aggregate">Aggregate</div>
+          <div class="flowModePill active" data-fmode="individual"
+               data-hold-tip-title="Time Series"
+               data-hold-tip="Watch each story flow as a separate animation — see how the news spreads minute by minute over the window.">Time Series</div>
+          <div class="flowModePill" data-fmode="aggregate"
+               data-hold-tip-title="Aggregate"
+               data-hold-tip="Render every flow over the full window as a single composite — heaviest routes draw thickest, lighter ones softer.">Aggregate</div>
         </div>
       </div>
 
@@ -14069,18 +14424,26 @@ window.__arcCtxSegmented = (function() {
       <!-- Keyword + Load -->
       <div class="flowPanelRow">
         <div class="kwAutoWrap">
-          <input type="text" class="flowFilterInput" id="flowKeyword" placeholder="Keyword…" autocomplete="off" />
+          <input type="text" class="flowFilterInput" id="flowKeyword" placeholder="Keyword…" autocomplete="off"
+                 data-hold-tip-title="Keyword Filter"
+                 data-hold-tip="Restrict flows to articles that mention a specific topic — election, tariffs, climate, etc." />
           <div class="kwAutoList" id="flowKwAutoList"></div>
         </div>
-        <button class="flowBtn primary" id="flowLoadBtn">Load</button>
+        <button class="flowBtn primary" id="flowLoadBtn"
+                data-hold-tip-title="Load Flows"
+                data-hold-tip="Apply the current filters and redraw the arcs.">Load</button>
       </div>
 
       <!-- Color mode -->
       <div class="flowPanelRow">
         <span class="flowLabel">Color</span>
         <div class="flowModeRow" style="flex:1;">
-          <div class="flowModePill active" data-cmode="routing">By routing</div>
-          <div class="flowModePill" data-cmode="sentiment">Sentiment</div>
+          <div class="flowModePill active" data-cmode="routing"
+               data-hold-tip-title="Color by Routing"
+               data-hold-tip="Color each arc by its source/destination pair — routes between the same two countries share a hue.">By routing</div>
+          <div class="flowModePill" data-cmode="sentiment"
+               data-hold-tip-title="Color by Sentiment"
+               data-hold-tip="Color each arc by the tone of its articles — green for positive, red for negative, gray for neutral.">Sentiment</div>
         </div>
       </div>
 
@@ -14088,7 +14451,9 @@ window.__arcCtxSegmented = (function() {
       <div class="flowPanelRow">
         <span class="flowLabel">Speed</span>
         <input type="range" class="flowSpeedSlider" id="flowSpeed"
-               min="0.2" max="4" step="0.1" value="1" />
+               min="0.2" max="4" step="0.1" value="1"
+               data-hold-tip-title="Playback Speed"
+               data-hold-tip="Slow the flow animation down for detail, or speed it up to scan a long window quickly." />
       </div>
 
       <!-- Node labels toggle — HIDDEN in the News Flows panel by request.
@@ -14189,9 +14554,15 @@ window.__arcCtxSegmented = (function() {
 
       <div class="semHeatSection">
         <div class="semHeatCtlTabs" id="semHeatCtlTabs">
-          <div class="semHeatCtlTab" data-ctl="keyword">Keyword</div>
-          <div class="semHeatCtlTab" data-ctl="timeseries">Time-series</div>
-          <div class="semHeatCtlTab active" data-ctl="ask">Map This</div>
+          <div class="semHeatCtlTab" data-ctl="keyword"
+               data-hold-tip-title="Keyword Mode"
+               data-hold-tip="Show coverage volume by country for a specific topic — type a word, see which countries are talking about it most.">Keyword</div>
+          <div class="semHeatCtlTab" data-ctl="timeseries"
+               data-hold-tip-title="Time-series Mode"
+               data-hold-tip="Watch coverage shift across countries over the past N days — replay the rising and falling attention.">Time-series</div>
+          <div class="semHeatCtlTab active" data-ctl="ask"
+               data-hold-tip-title="Map This"
+               data-hold-tip="Type any question in plain English — coverage, sentiment, GDP, tariffs — and see it painted across countries.">Map This</div>
         </div>
 
         <div class="semHeatCtlPanel" data-panel="keyword">
@@ -14226,9 +14597,15 @@ window.__arcCtxSegmented = (function() {
             </select>
           </div>
           <div class="semHeatTsRow">
-            <button class="semHeatTsBtn" id="semHeatPlayBtn" title="Play / pause">▶</button>
-            <button class="semHeatTsBtn" id="semHeatTsReset" title="Reset">↺</button>
-            <input type="range" class="semHeatSlider" id="semHeatTsSlider" min="0" max="0" value="0" step="1" />
+            <button class="semHeatTsBtn" id="semHeatPlayBtn" title="Play / pause"
+                    data-hold-tip-title="Play / Pause"
+                    data-hold-tip="Animate the heatmap forward in time — watch coverage rise and fall day by day.">▶</button>
+            <button class="semHeatTsBtn" id="semHeatTsReset" title="Reset"
+                    data-hold-tip-title="Reset"
+                    data-hold-tip="Jump back to the start of the time window.">↺</button>
+            <input type="range" class="semHeatSlider" id="semHeatTsSlider" min="0" max="0" value="0" step="1"
+                   data-hold-tip-title="Time Scrubber"
+                   data-hold-tip="Drag to a specific point in time — the heatmap repaints to that moment." />
           </div>
           <div class="semHeatTsLabel" id="semHeatTsLabel" style="text-align:left;">—</div>
         </div>
@@ -19498,7 +19875,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const _cpSaved = !!(window.__libraryIsSaved && window.__libraryIsSaved(article.id));
           return `
             <div style="position:relative">
-              <button class="cardFlowArcBtn" onclick="showArticleFlows(${article.id},event)" title="Show flow arcs on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/><ellipse cx="12" cy="12" rx="4" ry="9"/></svg></button>
+              <button class="cardFlowArcBtn" onclick="showArticleFlows(${article.id},event)" title="Show flow arcs on globe" data-hold-tip-title="Show on Globe" data-hold-tip="Animate this article's reach — origin to subject countries, drawn as arcs on the globe."><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/><ellipse cx="12" cy="12" rx="4" ry="9"/></svg></button>
               <button class="cardSaveBtn${_cpSaved ? ' saved' : ''}" data-saved-article-id="${article.id}" onclick="toggleBookmark(event,this,${article.id})" title="${_cpSaved ? 'Remove from saved' : 'Save'}"><svg viewBox="0 0 24 24" fill="${_cpSaved ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></button>
               <div class="articleCard fadeInCard" onclick="openPanelArticle(this)" data-article='${JSON.stringify(article).replace(/'/g,"&#39;")}' style="cursor:pointer;">
                 ${imageField}
@@ -21196,7 +21573,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
               : "";
             const _ctySaved = !!(window.__libraryIsSaved && window.__libraryIsSaved(a.id));
             return `<div style="position:relative">
-              <button class="cardFlowArcBtn" onclick="showArticleFlows(${a.id},event)" title="Show flow arcs on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/><ellipse cx="12" cy="12" rx="4" ry="9"/></svg></button>
+              <button class="cardFlowArcBtn" onclick="showArticleFlows(${a.id},event)" title="Show flow arcs on globe" data-hold-tip-title="Show on Globe" data-hold-tip="Animate this article's reach — origin to subject countries, drawn as arcs on the globe."><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/><ellipse cx="12" cy="12" rx="4" ry="9"/></svg></button>
               <button class="cardSaveBtn${_ctySaved ? ' saved' : ''}" data-saved-article-id="${a.id}" onclick="toggleBookmark(event,this,${a.id})" title="${_ctySaved ? 'Remove from saved' : 'Save'}"><svg viewBox="0 0 24 24" fill="${_ctySaved ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></button>
               <div class="articleCard fadeInCard" onclick="openRegionArticle(this)" data-article='${JSON.stringify(a).replace(/'/g,"&#39;")}' style="cursor:pointer;">
               ${img}
@@ -23633,6 +24010,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const safeScope = String(scope || _arcCtxScope || '').replace(/[^a-z0-9_:-]/gi, '');
       body.innerHTML =
         `<button class="aiAnalysisCtaBadge" data-scope="${safeScope}"` +
+                ` data-hold-tip-title="Deep Read"` +
+                ` data-hold-tip="A curated synthesis of these flows — what's driving them, who's shaping the narrative, and what to watch next."` +
                 ` onclick="window.__arcAiContextStartFromGate?.(this)">` +
           `<span class="aiAnalysisDot"></span>` +
           `<span>✦ Generate Deep Analysis</span>` +
@@ -26128,7 +26507,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         
         return `
           <div style="position:relative">
-            <button class="cardFlowArcBtn" onclick="showArticleFlows(${f.id},event)" title="Show flow arcs on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/><ellipse cx="12" cy="12" rx="4" ry="9"/></svg></button>
+            <button class="cardFlowArcBtn" onclick="showArticleFlows(${f.id},event)" title="Show flow arcs on globe" data-hold-tip-title="Show on Globe" data-hold-tip="Animate this article's reach — origin to subject countries, drawn as arcs on the globe."><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/><ellipse cx="12" cy="12" rx="4" ry="9"/></svg></button>
             <div class="articleCard" onclick="openPanelArticle(this)" data-article='${JSON.stringify(article).replace(/'/g,"&#39;")}' style="cursor:pointer;">
               ${imageField}
               <div class="articleCardBody">
@@ -27242,6 +27621,58 @@ const settingsToggle     = document.getElementById("settingsToggle");
         window.addEventListener("resize",            () => { if (STATE.enabled) resize(); });
         window.addEventListener("orientationchange", () => { if (STATE.enabled) resize(); });
 
+        // Render a FULL equirectangular world view (zoom=1, no pan) into
+        // an off-screen canvas at arbitrary resolution. Used by the
+        // share-snapshot path so 2D-map shares show the entire world,
+        // not just whatever sub-region the user happens to be zoomed
+        // into. Works by temporarily swapping STATE values to fit the
+        // off-screen target, calling paintBase + every registered layer
+        // (heatmap, polygons, dots, etc. — they all read STATE via
+        // `api.project`), then restoring STATE before returning. Runs
+        // synchronously so the live RAF tick can't interleave.
+        function snapshot(targetW, targetH) {
+          const off = document.createElement('canvas');
+          off.width  = Math.max(2, Math.floor(targetW));
+          off.height = Math.max(2, Math.floor(targetH));
+          const offCtx = off.getContext('2d');
+          // Save every STATE field paintBase + project() touch.
+          const saved = {
+            canvas: STATE.canvas, ctx: STATE.ctx,
+            width:  STATE.width,  height: STATE.height,
+            dpr:    STATE.dpr,    zoom:   STATE.zoom,
+            scrollX: STATE.scrollX, scrollY: STATE.scrollY,
+          };
+          // Override for full-equirect: at zoom=1 + scroll(0,0),
+          // worldH = STATE.height, worldW = 2 × worldH. Setting
+          // STATE.height = off.height makes the world fill the canvas
+          // exactly; off.width must equal 2 × off.height for a clean
+          // 2:1 fit (caller is responsible for passing matched dims).
+          STATE.canvas  = off;
+          STATE.ctx     = offCtx;
+          STATE.width   = off.width;
+          STATE.height  = off.height;
+          STATE.dpr     = 1;
+          STATE.zoom    = 1;
+          STATE.scrollX = 0;
+          STATE.scrollY = 0;
+          try {
+            paintBase();
+            for (let i = 0; i < STATE.layers.length; i++) {
+              try { STATE.layers[i](api, STATE.ctx); } catch (_) {}
+            }
+          } finally {
+            STATE.canvas  = saved.canvas;
+            STATE.ctx     = saved.ctx;
+            STATE.width   = saved.width;
+            STATE.height  = saved.height;
+            STATE.dpr     = saved.dpr;
+            STATE.zoom    = saved.zoom;
+            STATE.scrollX = saved.scrollX;
+            STATE.scrollY = saved.scrollY;
+          }
+          return off;
+        }
+
         // Public API. `state` is exposed for read-only debugging; subsystems
         // should mutate STATE only through dedicated functions.
         const api = {
@@ -27250,6 +27681,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           state:   STATE,
           project, unproject,
           worldW, worldH,
+          snapshot,
           // Layer registration: returns an unregister fn.
           addLayer(fn) {
             STATE.layers.push(fn);
@@ -28318,6 +28750,758 @@ const settingsToggle     = document.getElementById("settingsToggle");
   </script>
 
   <script>
+  /* ══════════════════════════════════════════════════════════════════
+     Tutorial reel — first-launch demo overlay
+     ══════════════════════════════════════════════════════════════════
+     Plays a ~16-second walkthrough of the app's main features the
+     first time a user opens it. Each beat:
+       • shows a caption at the bottom of the screen
+       • runs a `run()` function that orchestrates real UI
+         (page navigation, panel open, animation trigger, etc.)
+       • advances after BEAT_MS regardless of run()'s duration
+
+     Phase 1 (this commit): scaffolding only — beats are stubs that
+     just show captions so we can verify timing/feel before wiring
+     real UI. Phase 2+ replaces each `run` with actual page
+     navigation, modal opens, flow-arc spawns, etc.
+
+     Music: locked-timing model (option A from product discussion) —
+     visuals advance on a fixed 2s cadence, music just plays in the
+     background and the user composes to that 16s window.
+
+     Trigger:
+       • Auto-fires once after first preload completes, gated by
+         localStorage('earth00:tutorialSeen').
+       • Manually retriggered via #replayTutorialBtn in settings,
+         or programmatically via window.__startTutorial().
+       • window.__resetTutorial() clears the seen flag (handy in dev).
+
+     Skip:
+       • Tap the "Skip" pill (top-right) — ends the reel immediately.
+       • Esc on web/desktop — same.
+       • Any beat's run() returning early is OK; the BEAT_MS delay
+         still elapses before the next beat.
+     ══════════════════════════════════════════════════════════════════ */
+  (function setupTutorial() {
+    const STORAGE_KEY = 'earth00:tutorialSeen';
+    const BEAT_MS     = 2000;
+
+    // 8 beats × 2s = 16s.
+    // run() is a stub for now (Phase 1). Phase 2+ wires real UI.
+    const BEATS = [
+      // 0–2s: globe arrival. No caption — let the visual stun land.
+      // Silent navigate so the reel always starts on the globe
+      // regardless of where the user was when it fired (e.g. they
+      // were on the briefing page from a deep link).
+      { caption: '', run: () => { try { window.__goToPage?.(1); } catch (_) {} } },
+      // 2–4s: threads page. Use the app's REAL page transition + tab
+      // pill click so the user sees the actual swipe gesture and
+      // setView() runs through its proper hydrate-from-preload path.
+      // Card cascade happens automatically via the existing
+      // IntersectionObserver + .fadeInCard CSS — no extra wiring.
+      // The tiny 220ms delay between page-nav and pill-click lets the
+      // page-transition animation start before the threads view is
+      // forced active, giving "swipe lands on threads" feel rather
+      // than a snap.
+      {
+        caption: 'Threads — every story, geo-rooted',
+        run: () => {
+          try { window.__goToPage?.(2); } catch (_) {}
+          setTimeout(() => {
+            try { document.getElementById('nfViewThreads')?.click(); } catch (_) {}
+          }, 220);
+        },
+      },
+      // 4–6s: lines / timelines. Already on page 2 from the threads
+      // beat — just flip the tab pill. setView('timelines') triggers
+      // its own load (loadTimelines fetches if !timelinesLoaded, else
+      // re-renders) and the same .fadeInCard cascade fires for the
+      // line cards. No page-nav needed.
+      {
+        caption: 'Lines — stories as they unfold',
+        run: () => {
+          try { document.getElementById('nfViewTimelines')?.click(); } catch (_) {}
+        },
+      },
+      // 6–8s: keyword intelligence (search + cooccurrence).
+      // Navigates to page 0 (stats), waits for the page transition,
+      // then types a flagship query into #kwiInput character-by-
+      // character at ~55ms/char and fires kwiSearch() once the word
+      // is fully typed. The 'input' event is dispatched on each char
+      // so the autocomplete dropdown lights up too — gives the user
+      // a sense of "the input is alive". Total wall-clock: ~280ms
+      // page-transition grace + ~330ms typing = ~610ms; the
+      // remaining ~1.4s of the 2s beat lets the search results
+      // (top cooccurrence bars) render before the next beat starts.
+      {
+        caption: "Search the world\u2019s coverage",
+        run: () => {
+          try { window.__goToPage?.(0); } catch (_) {}
+          setTimeout(() => {
+            const input = document.getElementById('kwiInput');
+            if (!input) return;
+            const query = 'Russia';
+            input.value = '';
+            try { input.focus({ preventScroll: true }); } catch (_) { try { input.focus(); } catch (_) {} }
+            let idx = 0;
+            const TYPE_MS = 55;
+            const tick = () => {
+              if (idx >= query.length) {
+                try { window.kwiSearch?.(); } catch (_) {}
+                return;
+              }
+              input.value += query[idx++];
+              try { input.dispatchEvent(new Event('input', { bubbles: true })); } catch (_) {}
+              setTimeout(tick, TYPE_MS);
+            };
+            tick();
+          }, 280);
+        },
+      },
+      // 8–10s: today's briefing. Slide the bLauncher panel in over the
+      // globe page so the user sees the briefing surface — today's
+      // headline, past episodes, and the custom-briefing form. We
+      // bypass openBriefingLauncher() (which gates on Pro tier and
+      // would block free-tier viewers from seeing the panel at all)
+      // and just toggle .open directly. No audio playback — this is
+      // a visual-only demo per product call.
+      // Pre-emptively close the panel ~250ms before the beat ends so
+      // the close transition runs into beat 5's setup instead of
+      // overlapping it.
+      {
+        caption: "Today\u2019s Briefing",
+        run: () => {
+          try { window.__goToPage?.(1); } catch (_) {}
+          setTimeout(() => {
+            try { document.getElementById('bLauncher')?.classList.add('open'); } catch (_) {}
+          }, 250);
+          setTimeout(() => {
+            try { document.getElementById('bLauncher')?.classList.remove('open'); } catch (_) {}
+          }, 1750);
+        },
+      },
+      // 10–12s: globe + flow arcs. Hardcoded synthetic flow set so
+      // the demo never breaks on a slow network or stale thread; the
+      // shape is "U.S. cooperation" hub-and-spoke — neutral topic,
+      // visually impressive arcs spanning the globe (Atlantic and
+      // Pacific). We bypass _renderSynthesizedFlows (locally scoped
+      // helper) and invoke the same window.__flow* primitives it
+      // uses, so the tutorial is decoupled from internal helpers.
+      // Camera position is left wherever the user was — simpler and
+      // matches user instruction. Arcs are cleared 150ms before the
+      // beat ends so they don't bleed into the heatmap beat.
+      {
+        caption: 'See how news travels',
+        run: () => {
+          try { window.__goToPage?.(1); } catch (_) {}
+          setTimeout(() => {
+            try {
+              const hub = { type: 'country', iso: 'US', id: 'US', place: 'United States', lat: 39.83, lon: -98.58 };
+              const dests = [
+                { type: 'country', iso: 'GB', id: 'GB', place: 'United Kingdom', lat:  54.00, lon:  -2.00 },
+                { type: 'country', iso: 'DE', id: 'DE', place: 'Germany',        lat:  51.16, lon:  10.45 },
+                { type: 'country', iso: 'JP', id: 'JP', place: 'Japan',          lat:  36.20, lon: 138.25 },
+                { type: 'country', iso: 'BR', id: 'BR', place: 'Brazil',         lat: -14.24, lon: -51.93 },
+                { type: 'country', iso: 'IN', id: 'IN', place: 'India',          lat:  20.59, lon:  78.96 },
+              ];
+              const flows = dests.map(dst => ({
+                src: hub, dst, count: 1,
+                _cardTriggered: true, _sourceType: 'thread',
+              }));
+              window.__flowSetOpen?.(true);
+              window.__flowAssignLaneOffsets?.(flows);
+              flows.forEach((flow) => {
+                const arc = window.__flowCreateArc?.(flow, 1);
+                if (arc) window.__flowPushArc?.(arc);
+              });
+              // Highlight the hub + every destination country polygon
+              // so the routes read as "from here, to all of these".
+              const isos = new Set([hub.iso, ...dests.map(d => d.iso)]);
+              window.__flowHighlightCountries?.(isos);
+              window.__flowShowLabelsForCardTrigger?.(flows);
+            } catch (err) {
+              console.warn('[tutorial] flow arcs spawn failed:', err && err.message);
+            }
+          }, 220);
+          setTimeout(() => {
+            try {
+              window.__flowClearArcs?.();
+              window.clearFlowNodeLabels?.();
+              window.__flowClearHighlights?.();
+              window.__flowSetOpen?.(false);
+            } catch (_) {}
+          }, 1850);
+        },
+      },
+      // 12–14s: heatmap. Open the panel, type a neutral demo query
+      // ("GDP per capita") into the Ask-AI input character-by-
+      // character at 40ms/char, then click Map IF the user is signed
+      // in. Anon users see the typed query in the box but no submit
+      // is fired (the real submit handler 401s for anon and pops the
+      // auth modal — disruptive mid-tutorial). Heatmap stays open
+      // through the end of this beat into beat 7 so the painted
+      // colors have time to render and serve as the backdrop for the
+      // snapshot composition demo. Beat 7 owns cleanup.
+      // __semHeatOpen auto-closes flow arcs (mutex) so the arcs from
+      // beat 5 are torn down even if their own cleanup hasn't fired.
+      {
+        caption: 'Coverage at a glance',
+        run: () => {
+          try { window.__goToPage?.(1); } catch (_) {}
+          setTimeout(() => {
+            try { window.__semHeatOpen?.(); } catch (_) {}
+          }, 200);
+          setTimeout(() => {
+            const input = document.getElementById('semHeatAskInput');
+            if (!input) return;
+            const query = 'GDP per capita';
+            input.value = '';
+            let idx = 0;
+            const TYPE_MS = 40;
+            const tick = () => {
+              if (idx >= query.length) {
+                if (window.__authToken) {
+                  try { document.getElementById('semHeatAskGoBtn')?.click(); } catch (_) {}
+                }
+                return;
+              }
+              input.value += query[idx++];
+              try { input.dispatchEvent(new Event('input', { bubbles: true })); } catch (_) {}
+              setTimeout(tick, TYPE_MS);
+            };
+            tick();
+          }, 500);
+        },
+      },
+      // 14–16s: snapshot composition. Visual stand-in only — we do
+      // NOT fire the real __shareSnapshot picker because that's a
+      // modal requiring user interaction (Story / Post / Other) and
+      // would block the tutorial's auto-advance. The stand-in card
+      // is built dynamically and slides in from the right corner,
+      // showing a stylized share artifact (badge + title carried
+      // over from the heatmap beat + gradient bar + brand footer)
+      // so the user grasps "your view becomes a shareable image".
+      // This beat also owns the heatmap cleanup (beat 6 deliberately
+      // left the heatmap open so its painted colors backdropped the
+      // share-card moment).
+      {
+        caption: 'Make it yours. Share it.',
+        run: () => {
+          const card = document.createElement('div');
+          card.id = 'tutSnapStandin';
+          card.innerHTML = ''
+            + '<div class="tutSnapBadge">Earth00 \u00B7 Share</div>'
+            + '<div class="tutSnapTitle">GDP per capita</div>'
+            + '<div class="tutSnapSub">Map This \u00B7 Globe</div>'
+            + '<div class="tutSnapBar"></div>'
+            + '<div class="tutSnapFoot">EARTH00.COM</div>';
+          document.body.appendChild(card);
+          // Defer .show one frame so the slide-in transition catches
+          // the off-screen → on-screen ramp instead of snapping.
+          requestAnimationFrame(() => card.classList.add('show'));
+
+          // Tear-down sequence:
+          //   1500ms: close heatmap (beat 6 left it open as backdrop).
+          //   1700ms: slide the card back out.
+          //   1950ms: remove the card from the DOM entirely.
+          setTimeout(() => {
+            try { window.__semHeatClose?.(); } catch (_) {}
+          }, 1500);
+          setTimeout(() => {
+            try { card.classList.remove('show'); } catch (_) {}
+          }, 1700);
+          setTimeout(() => {
+            try { card.remove(); } catch (_) {}
+          }, 1950);
+        },
+      },
+    ];
+
+    let active = false;
+    let skipRequested = false;
+
+    function noop() {}
+    function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+    // Lazy-build the overlay DOM on first start. Removed entirely
+    // when the reel ends so we leave no trace in the DOM after the
+    // user has seen it (or skipped). Subsequent replay calls
+    // re-create from scratch — cheap, ~5 elements.
+    function ensureDom() {
+      if (document.getElementById('tutOverlay')) return;
+      const overlay = document.createElement('div');
+      overlay.id = 'tutOverlay';
+      overlay.innerHTML =
+        '<div id="tutSkip" role="button" tabindex="0" aria-label="Skip tutorial">Skip</div>' +
+        '<div id="tutCaption" aria-live="polite"></div>' +
+        '<div id="tutDots"></div>';
+      document.body.appendChild(overlay);
+
+      const dots = overlay.querySelector('#tutDots');
+      for (let i = 0; i < BEATS.length; i++) {
+        const d = document.createElement('div');
+        d.className = 'tutDot';
+        dots.appendChild(d);
+      }
+
+      const skipBtn = overlay.querySelector('#tutSkip');
+      skipBtn.addEventListener('click', requestSkip);
+      skipBtn.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); requestSkip(); }
+      });
+    }
+
+    // Esc-to-skip lives at the document level so it fires regardless of
+    // focus. Re-bound on every start; cleaned up in end().
+    let _escHandler = null;
+    function bindEsc() {
+      _escHandler = (e) => { if (active && e.key === 'Escape') requestSkip(); };
+      document.addEventListener('keydown', _escHandler);
+    }
+    function unbindEsc() {
+      if (_escHandler) {
+        document.removeEventListener('keydown', _escHandler);
+        _escHandler = null;
+      }
+    }
+
+    function setBeat(i) {
+      const overlay = document.getElementById('tutOverlay');
+      if (!overlay) return;
+      const dots = overlay.querySelectorAll('.tutDot');
+      dots.forEach((d, j) => {
+        d.classList.toggle('done',   j <  i);
+        d.classList.toggle('active', j === i);
+      });
+      const cap = overlay.querySelector('#tutCaption');
+      // Fade caption out, swap text, fade back in. The 120ms gap
+      // between hide → show is intentional — gives the eye a beat
+      // of empty before the next message lands so the transition
+      // reads as deliberate rather than a flicker.
+      cap.classList.remove('show');
+      setTimeout(() => {
+        cap.textContent = BEATS[i].caption || '';
+        if (BEATS[i].caption) cap.classList.add('show');
+      }, 120);
+    }
+
+    function requestSkip() {
+      if (!active) return;
+      skipRequested = true;
+    }
+
+    async function start() {
+      if (active) return;
+      active = true;
+      skipRequested = false;
+      ensureDom();
+      bindEsc();
+      const overlay = document.getElementById('tutOverlay');
+      // Defer the .active class one frame so the opacity transition
+      // catches the 0 → 1 ramp instead of snapping.
+      requestAnimationFrame(() => overlay.classList.add('active'));
+
+      for (let i = 0; i < BEATS.length; i++) {
+        if (skipRequested) break;
+        setBeat(i);
+        try { await BEATS[i].run(); } catch (err) {
+          console.warn('[tutorial] beat ' + i + ' run() threw:', err && err.message);
+        }
+        await sleep(BEAT_MS);
+      }
+
+      end();
+    }
+
+    function end() {
+      const overlay = document.getElementById('tutOverlay');
+      if (overlay) {
+        overlay.classList.remove('active');
+        // Wait for the opacity transition (350ms in CSS) before
+        // tearing the DOM down so the fade-out doesn't snap.
+        setTimeout(() => { try { overlay.remove(); } catch (_) {} }, 600);
+      }
+      unbindEsc();
+      active = false;
+      try { localStorage.setItem(STORAGE_KEY, '1'); } catch (_) {}
+    }
+
+    // ── Public API ──────────────────────────────────────────────────
+    window.__startTutorial = start;
+    window.__resetTutorial = function () {
+      try { localStorage.removeItem(STORAGE_KEY); } catch (_) {}
+    };
+
+    // ── Wire the "Replay Tour" entry in settings (added in markup
+    //    near the bottom of #viewSidebar.sidebarInner). Closes the
+    //    sidebar before firing so the reel has a clean canvas. ─────
+    document.addEventListener('click', (e) => {
+      const btn = e.target?.closest?.('#replayTutorialBtn');
+      if (!btn) return;
+      e.stopPropagation();
+      try {
+        document.getElementById('viewSidebar')?.classList.remove('open');
+        document.getElementById('settingsToggle')?.classList.remove('active');
+      } catch (_) {}
+      // Small grace so the sidebar fade-out doesn't visually overlap
+      // the reel fade-in.
+      setTimeout(() => start(), 280);
+    });
+
+    // ── Auto-fire on first launch ──────────────────────────────────
+    // Wait for preload (or its 4s ceiling) before firing so the user
+    // lands on a populated app, then add a half-second grace for the
+    // globe to stabilize (camera settling, textures attaching). The
+    // localStorage flag ensures the reel only auto-fires once per
+    // device; replay is always available via the settings entry.
+    (async () => {
+      try {
+        let seen = false;
+        try { seen = !!localStorage.getItem(STORAGE_KEY); } catch (_) {}
+        if (seen) return;
+        try { await (window.__preloadReady || Promise.resolve()); } catch (_) {}
+        await sleep(500);
+        // Only auto-fire if no critical modal is up (auth, e.g.) —
+        // those should take precedence over the tutorial.
+        if (document.body.classList.contains('auth-modal-open')) return;
+        start();
+      } catch (err) {
+        console.warn('[tutorial] auto-start skipped:', err && err.message);
+      }
+    })();
+  })();
+  </script>
+
+  <script>
+  /* ══════════════════════════════════════════════════════════════════
+     Hold-down tooltip — shared system
+     ══════════════════════════════════════════════════════════════════
+     Document-level pointer listener that watches every element with
+     `data-hold-tip="..."`. 500ms hold reveals the tooltip; release
+     dismisses. Drift > 8px during the hold cancels (treats it as a
+     scroll gesture). When the tooltip showed, the click that follows
+     pointerup is suppressed for ~50ms so the long-press doesn't also
+     fire the button's normal action.
+
+     One shared tooltip element lives on body — repositioned per
+     show() rather than rebuilt, so opening 100 different tooltips
+     across a session has no DOM-churn cost.
+
+     Optional `data-hold-tip-title="..."` adds an uppercase eyebrow.
+     ══════════════════════════════════════════════════════════════════ */
+  (function setupHoldTips() {
+    const HOLD_MS  = 500;
+    const DRIFT_PX = 8;
+
+    let timer = null;
+    let activeBtn = null;
+    let tooltipEl = null;
+    let suppressClick = false;
+    let startX = 0, startY = 0;
+
+    function escapeHtml(s) {
+      return String(s || '').replace(/[&<>"']/g, c => ({
+        '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+      }[c]));
+    }
+
+    function ensureTooltip() {
+      if (tooltipEl && document.body.contains(tooltipEl)) return tooltipEl;
+      const t = document.createElement('div');
+      t.className = 'holdTip';
+      document.body.appendChild(t);
+      tooltipEl = t;
+      return t;
+    }
+
+    function positionTooltip(btn) {
+      const tip = ensureTooltip();
+      const r   = btn.getBoundingClientRect();
+      const tr  = tip.getBoundingClientRect();
+      const margin = 12;
+      // Default: BELOW the button, centered. Flip ABOVE if it would
+      // overflow the bottom edge.
+      let top  = r.bottom + 8;
+      if (top + tr.height > window.innerHeight - margin) {
+        top = r.top - tr.height - 8;
+      }
+      // Centered horizontally, then clamped so the tip never escapes
+      // the viewport on either side.
+      let left = r.left + r.width / 2 - tr.width / 2;
+      left = Math.max(margin, Math.min(window.innerWidth - tr.width - margin, left));
+      tip.style.left = left + 'px';
+      tip.style.top  = top  + 'px';
+    }
+
+    function show(btn) {
+      const text  = btn.getAttribute('data-hold-tip');
+      if (!text) return;
+      const title = btn.getAttribute('data-hold-tip-title');
+      const tip   = ensureTooltip();
+      tip.innerHTML =
+        (title ? `<div class="holdTipTitle">${escapeHtml(title)}</div>` : '') +
+        `<div class="holdTipBody">${escapeHtml(text)}</div>`;
+      // Stage offscreen so we can measure post-paint without a flicker.
+      tip.style.left = '-9999px';
+      tip.style.top  = '0px';
+      tip.classList.remove('show');
+      requestAnimationFrame(() => {
+        positionTooltip(btn);
+        tip.classList.add('show');
+      });
+      activeBtn = btn;
+      suppressClick = true;
+    }
+
+    function hide() {
+      if (tooltipEl) tooltipEl.classList.remove('show');
+      activeBtn = null;
+    }
+
+    document.addEventListener('pointerdown', (e) => {
+      const btn = e.target?.closest?.('[data-hold-tip]');
+      if (!btn) return;
+      startX = e.clientX; startY = e.clientY;
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = null;
+        show(btn);
+      }, HOLD_MS);
+    }, { passive: true });
+
+    document.addEventListener('pointermove', (e) => {
+      if (!timer && !activeBtn) return;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      if (dx * dx + dy * dy > DRIFT_PX * DRIFT_PX) {
+        clearTimeout(timer); timer = null;
+        if (activeBtn) hide();
+      }
+    }, { passive: true });
+
+    function release() {
+      clearTimeout(timer); timer = null;
+      if (activeBtn) {
+        hide();
+        // 50ms guard: long-press → release → click event fires almost
+        // immediately. Keeping suppressClick true through that frame
+        // eats the click; resetting after the click handler runs.
+        setTimeout(() => { suppressClick = false; }, 50);
+      } else {
+        suppressClick = false;
+      }
+    }
+    document.addEventListener('pointerup',     release, { passive: true });
+    document.addEventListener('pointercancel', release, { passive: true });
+    // pointerleave on document fires when the pointer leaves the
+    // viewport entirely (e.g. user drags off-screen) — treat as cancel.
+    document.addEventListener('pointerleave',  release, { passive: true });
+
+    // Capture-phase click suppressor — runs BEFORE button handlers so
+    // we can preventDefault/stopPropagation cleanly when a long-press
+    // just fired. Without capture, the button's own handler would
+    // sometimes win the race.
+    document.addEventListener('click', (e) => {
+      if (!suppressClick) return;
+      const btn = e.target?.closest?.('[data-hold-tip]');
+      if (btn) {
+        e.stopPropagation();
+        e.preventDefault();
+      }
+    }, true);
+  })();
+  </script>
+
+  <script>
+  /* ══════════════════════════════════════════════════════════════════
+     Retention — daily streak + per-surface badges
+     ══════════════════════════════════════════════════════════════════
+     Server contract:
+       POST /api/streaks/tick   { localDate } → { current, longest, gained, … }
+       GET  /api/streaks/me                    → same shape, no mutation
+       GET  /api/badges/me                     → { threads, lines }
+       POST /api/badges/seen    { surface }    → { ok }
+
+     Client responsibilities:
+       1. On auth ready (applySession→), tick the streak ONCE per local
+          calendar day (gated by localStorage so re-opens within the
+          same day don't ping the server).
+       2. Fetch /badges/me and paint dots on the threads/lines tab pills.
+       3. When the user enters a tab, POST /badges/seen and clear the
+          local badge optimistically.
+       4. Re-render the streak pill with a brief glow when `gained=true`.
+
+     Module exports two globals:
+       window.__retentionRefresh()       — call after sign-in lands
+       window.__retentionMarkSeen(surf)  — call when user enters a surface
+     ══════════════════════════════════════════════════════════════════ */
+  (function setupRetention() {
+    const API       = window.__API || 'https://earth-wjr6.onrender.com';
+    const TICK_KEY  = 'earth00:lastTickDate:v1';
+
+    let _streak = null;
+    let _badges = null;
+    let _running = false;
+
+    // Local-date string in user's TZ. The server stores DATE only, so a
+    // 23:59 → 00:01 boundary correctly counts as two distinct days.
+    function todayLocalISO() {
+      const d = new Date();
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    }
+
+    function authHeaders() {
+      const t = window.__authToken;
+      return t ? { Authorization: `Bearer ${t}` } : {};
+    }
+
+    async function tickStreak() {
+      if (!window.__authToken) return;
+      const today = todayLocalISO();
+      let lastTick = null;
+      try { lastTick = localStorage.getItem(TICK_KEY); } catch (_) {}
+      if (lastTick === today) {
+        // Already ticked on this device today — fetch current state
+        // (without bumping) so the pill still renders correctly on
+        // app re-open.
+        try {
+          const r = await fetch(`${API}/api/streaks/me`, { headers: authHeaders() });
+          if (r.ok) { _streak = await r.json(); renderStreak(); }
+        } catch (_) {}
+        return;
+      }
+      try {
+        const r = await fetch(`${API}/api/streaks/tick`, {
+          method: 'POST',
+          headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ localDate: today }),
+        });
+        if (r.ok) {
+          _streak = await r.json();
+          try { localStorage.setItem(TICK_KEY, today); } catch (_) {}
+          renderStreak();
+        }
+      } catch (e) {
+        console.warn('[retention] tick failed:', e && e.message);
+      }
+    }
+
+    async function fetchBadges() {
+      if (!window.__authToken) return;
+      try {
+        const r = await fetch(`${API}/api/badges/me`, { headers: authHeaders() });
+        if (r.ok) { _badges = await r.json(); renderBadges(); }
+      } catch (e) {
+        console.warn('[retention] badges fetch failed:', e && e.message);
+      }
+    }
+
+    async function markSeen(surface) {
+      if (!window.__authToken) return;
+      if (surface !== 'threads' && surface !== 'lines' && surface !== 'briefing') return;
+      // Optimistic clear so the dot disappears the moment the user
+      // opens the tab — no server round-trip flicker.
+      if (_badges && Object.prototype.hasOwnProperty.call(_badges, surface)) {
+        _badges[surface] = 0;
+        renderBadges();
+      }
+      try {
+        await fetch(`${API}/api/badges/seen`, {
+          method: 'POST',
+          headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ surface }),
+        });
+      } catch (_) {}
+    }
+
+    function renderStreak() {
+      const box = document.getElementById('streakPill');
+      if (!box) return;
+      const cur = (_streak && Number(_streak.current)) || 0;
+      if (cur < 1) {
+        // Hide entirely until the user has earned at least day 1.
+        // Keeps the dropdown clean for fresh accounts.
+        box.style.display = 'none';
+        box.classList.remove('grew');
+        return;
+      }
+      box.style.display = '';
+      const dayEl = box.querySelector('.streakDay');
+      if (dayEl) dayEl.textContent = String(cur);
+      // Sub-line carries the secondary stats: longest streak + freezes
+      // remaining this week. The "freeze" is a one-skip-per-week grace
+      // so a single missed day doesn't burn a long streak — surfacing
+      // it here teaches the mechanic without a separate help screen.
+      const subEl = document.getElementById('acctDpStreakSub');
+      if (subEl) {
+        const longest = (_streak && Number(_streak.longest)) || cur;
+        const used    = Math.max(0, Number(_streak.freezes_used) || 0);
+        const max     = Math.max(1, Number(_streak.freezes_per_week) || 1);
+        const left    = Math.max(0, max - used);
+        const longestPart = longest > cur ? `Longest ${longest} days` : `On your longest ever`;
+        const freezePart  = `${left} skip${left === 1 ? '' : 's'} left this week`;
+        subEl.textContent = `${longestPart} · ${freezePart}`;
+      }
+      if (_streak && _streak.gained) {
+        box.classList.remove('grew');
+        // Force reflow so re-applying the class within the same frame
+        // re-fires the animation.
+        void box.offsetWidth;
+        box.classList.add('grew');
+        setTimeout(() => box.classList.remove('grew'), 1200);
+      }
+    }
+
+    function renderBadges() {
+      if (!_badges) return;
+      const set = (id, n) => {
+        const pillEl = document.getElementById(id);
+        if (!pillEl) return;
+        let dot = pillEl.querySelector('.tabBadge');
+        if (n > 0) {
+          if (!dot) {
+            dot = document.createElement('span');
+            dot.className = 'tabBadge';
+            pillEl.appendChild(dot);
+          }
+          dot.textContent = n > 99 ? '99+' : String(n);
+        } else if (dot) {
+          dot.remove();
+        }
+      };
+      set('nfViewThreads',   _badges.threads || 0);
+      set('nfViewTimelines', _badges.lines   || 0);
+    }
+
+    // No click handler — the streak box now lives inside the account
+    // dropdown, so it's a passive stat tile (the long-press hold-tip
+    // explains the freeze mechanic). Tap-to-open-settings was useful
+    // when the pill was a top-bar element; now it would just close
+    // the dropdown the user is already inside.
+
+    // Public API.
+    window.__retentionRefresh  = async function () {
+      if (_running) return;
+      _running = true;
+      try { await tickStreak(); } catch (_) {}
+      try { await fetchBadges(); } catch (_) {}
+      _running = false;
+    };
+    window.__retentionMarkSeen = markSeen;
+
+    // Auto-fire when an auth token is already present (session
+    // restore on page reload). applySession() handles the explicit
+    // sign-in path by calling __retentionRefresh directly.
+    setTimeout(() => {
+      if (window.__authToken) window.__retentionRefresh();
+    }, 1200);
+  })();
+  </script>
+
+  <script>
   /* ──────────────────────────────────────────────────────────────
      Grid-view toggle wiring
      ──────────────────────────────────────────────────────────────
@@ -29019,7 +30203,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const videoPrefix = isVideo ? `<span style="font-size:8px;opacity:0.6;margin-right:2px;">▶</span>` : "";
       const origin = parts.length ? `<div class="nfCardOrigin">${videoPrefix}${esc(parts.join(", "))}</div>` : "";
       const date = a.published_at ? fmtDate(a.published_at) : "";
-      const flowArcBtn = `<button class="cardFlowArcBtn" onclick="showArticleFlows(${a.id},event)" title="Show flow arcs on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/><ellipse cx="12" cy="12" rx="4" ry="9"/></svg></button>`;
+      const flowArcBtn = `<button class="cardFlowArcBtn" onclick="showArticleFlows(${a.id},event)" title="Show flow arcs on globe" data-hold-tip-title="Show on Globe" data-hold-tip="Animate this article's reach — origin to subject countries, drawn as arcs on the globe."><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/><ellipse cx="12" cy="12" rx="4" ry="9"/></svg></button>`;
       const _isSaved = window.__libraryIsSaved && window.__libraryIsSaved(a.id);
       // .nfBookmarkBtn (footer-right next to translate) was removed —
       // .cardSaveBtn (top-right corner overlay, sibling of cardFlowArcBtn)
@@ -29257,8 +30441,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
         _restorePanels(view);
       }
 
-      pillTimelines.addEventListener('click', () => setView('timelines'));
-      pillThreads.addEventListener('click', () => setView('threads'));
+      // setView triggers loadTimelines/Threads/Feed which carries the
+      // network/load cost. Marking the badge SEEN is fire-and-forget
+      // (server clears the count, optimistic local clear is in
+      // __retentionMarkSeen) so it doesn't gate or slow the tab swap.
+      pillTimelines.addEventListener('click', () => {
+        setView('timelines');
+        try { window.__retentionMarkSeen?.('lines'); } catch (_) {}
+      });
+      pillThreads.addEventListener('click', () => {
+        setView('threads');
+        try { window.__retentionMarkSeen?.('threads'); } catch (_) {}
+      });
       pillFeed.addEventListener('click', () => setView('feed'));
 
       // Default to Threads view on load
@@ -29403,7 +30597,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const entityId = t.thread_id ?? t.timeline_id ?? t.id;
         const saveKind = isTimeline ? 'timeline' : 'thread';
         const isSavedNow = !!(window.__libraryIsSaved && window.__libraryIsSaved(entityId, saveKind));
-        const threadFlowBtn = `<button class="cardFlowArcBtn" onclick="${flowFn}(${entityId},event)" title="Show flow arcs on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/><ellipse cx="12" cy="12" rx="4" ry="9"/></svg></button>`;
+        const threadFlowBtn = `<button class="cardFlowArcBtn" onclick="${flowFn}(${entityId},event)" title="Show flow arcs on globe" data-hold-tip-title="Show on Globe" data-hold-tip="Animate this story's reach — every country it has touched, drawn as arcs on the globe."><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/><ellipse cx="12" cy="12" rx="4" ry="9"/></svg></button>`;
         const threadSaveBtn = `<button class="cardSaveBtn${isSavedNow ? ' saved' : ''}" data-save-id="${entityId}" data-save-kind="${saveKind}" title="${isSavedNow ? 'Remove from saved' : 'Save'}"><svg viewBox="0 0 24 24" fill="${isSavedNow ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></button>`;
         // Share button — kind ('thread' | 'line') routes to the correct
         // /share/* URL via __shareEntity. Title is forwarded so the
@@ -34947,7 +36141,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
     if (!body) return;
     body.className = 'arcCtxBody arcCtxStateSettled';
     body.innerHTML =
-      `<button class="aiAnalysisCtaBadge" onclick="window.__adpAnalysisStartFromGate?.(this)">` +
+      `<button class="aiAnalysisCtaBadge"` +
+              ` data-hold-tip-title="Deep Read"` +
+              ` data-hold-tip="A curated synthesis of this article — context, framing, and what to watch next."` +
+              ` onclick="window.__adpAnalysisStartFromGate?.(this)">` +
         `<span class="aiAnalysisDot"></span>` +
         `<span>✦ Generate Deep Analysis</span>` +
       `</button>`;
@@ -37436,6 +38633,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
       try { await ensureSubscription(user.id); } catch (e) { console.warn('[auth] ensureSubscription:', e.message); }
       try { await loadSettings(user.id); } catch (e) { console.warn('[auth] loadSettings:', e.message); }
       try { await loadProfile(); } catch (e) { console.warn('[auth] loadProfile:', e.message); }
+      // Fire daily streak tick + badge fetch now that we have a valid
+      // token. Fire-and-forget — neither blocks UI rendering. The
+      // retention IIFE itself dedupes per-day so re-applying a session
+      // won't double-tick.
+      try { window.__retentionRefresh?.(); } catch (_) {}
       // Onboarding questionnaire temporarily disabled — code kept intact
       // (maybeShowOnboarding / showOnboarding / _obData etc.) so re-enabling
       // is a one-line flip of the gate below. Leaving the SIGNED_UP block
@@ -44075,7 +45277,7 @@ body.ticker-active .gTickerLabel {
     const date = a.published_at ? fmtDate(a.published_at) : "";
     const title = esc(a.translated_title || a.title || "");
     const dataAttr = JSON.stringify(a).replace(/'/g, "&#39;");
-    return `<div style="position:relative"><button class="cardFlowArcBtn" onclick="showArticleFlows(${a.id},event)" title="Show flow arcs on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/><ellipse cx="12" cy="12" rx="4" ry="9"/></svg></button><div class="cdCard" onclick="openThreadPanelArticle(this,event)" data-article='${dataAttr}' style="cursor:pointer">
+    return `<div style="position:relative"><button class="cardFlowArcBtn" onclick="showArticleFlows(${a.id},event)" title="Show flow arcs on globe" data-hold-tip-title="Show on Globe" data-hold-tip="Animate this article's reach — origin to subject countries, drawn as arcs on the globe."><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/><ellipse cx="12" cy="12" rx="4" ry="9"/></svg></button><div class="cdCard" onclick="openThreadPanelArticle(this,event)" data-article='${dataAttr}' style="cursor:pointer">
       ${src ? `<img class="cdCardImg" src="${src}" alt="" loading="lazy" onerror="this.style.display='none'">` : `<div class="cdCardImgNone"></div>`}
       <div class="cdCardBody">
         ${isVideo ? `<span class="cdCardVideo">▶ Video</span>` : ""}
@@ -44327,6 +45529,8 @@ body.ticker-active .gTickerLabel {
                     data-thread-id="${threadId}"
                     data-is-timeline="${isTimeline ? '1' : '0'}"
                     data-entity-label="${isTimeline ? 'timeline' : 'thread'}"
+                    data-hold-tip-title="Deep Read"
+                    data-hold-tip="A curated synthesis — what's driving this story, who's shaping it, and what to watch next."
                     onclick="window.__triggerClusterAnalysis?.(this)">
               <span class="aiAnalysisDot"></span>
               <span>✦ Generate Deep Analysis</span>
@@ -46420,6 +47624,28 @@ body.ticker-active .gTickerLabel {
     }
   };
 
+  // ── Ask-AI session token ──────────────────────────────────────────
+  // Mirrors the flow-arc session pattern. Each submit() captures a
+  // token at start; the panel's close handler bumps the counter; any
+  // post-await write checks for stale and bails. AbortController also
+  // cuts the fetch itself so we don't waste server work + DeepL/Claude
+  // credits on a query the user already abandoned. Common case: user
+  // mis-types a query and closes/reopens — old in-flight response can
+  // no longer paint the new view.
+  let _qaSession = 0;
+  let _qaActiveAbort = null;
+  function _newQaSession() {
+    _qaSession += 1;
+    if (_qaActiveAbort) {
+      try { _qaActiveAbort.abort(); } catch (_) {}
+      _qaActiveAbort = null;
+    }
+    return _qaSession;
+  }
+  function _isQaSessionStale(token) { return token !== _qaSession; }
+  // Expose so __semHeatClose can invalidate from outside this IIFE.
+  window.__semHeatCancelQA = _newQaSession;
+
   // Wire submit handlers for the Ask AI tab.
   (function wireAskAi() {
     const inp  = document.getElementById('semHeatAskInput');
@@ -46432,6 +47658,11 @@ body.ticker-active .gTickerLabel {
       const q = (inp.value || '').trim();
       if (!q || inflight) return;
       const mode = sel?.value || 'percent';
+      // Claim a session token; AbortController is wired so the fetch
+      // gets canceled if the user closes the panel mid-flight.
+      const _myToken = _newQaSession();
+      const _ac = new AbortController();
+      _qaActiveAbort = _ac;
       inflight = true;
       btn.disabled = true;
       const prevLabel = btn.textContent;
@@ -46458,8 +47689,11 @@ body.ticker-active .gTickerLabel {
         if (tok) headers['Authorization'] = `Bearer ${tok}`;
         const res = await fetch(`${apiBase}/api/heatmap/ask`, {
           method: 'POST', headers, body: JSON.stringify({ question: q, mode }),
+          signal: _ac.signal,
         });
+        if (_isQaSessionStale(_myToken)) return;
         const data = await res.json().catch(() => ({}));
+        if (_isQaSessionStale(_myToken)) return;
         if (!res.ok) {
           if (res.status === 401) {
             if (stat) stat.textContent = 'Sign in to ask questions.';
@@ -46483,11 +47717,24 @@ body.ticker-active .gTickerLabel {
         });
         if (data.credits) window.__updateCreditMeterFromResponse?.(data.credits);
       } catch (err) {
+        // AbortError fires when the user closed the panel mid-fetch —
+        // expected, not an error to surface.
+        if (err && err.name === 'AbortError') {
+          if (stat && _isQaSessionStale(_myToken)) stat.textContent = '';
+          return;
+        }
         if (stat) stat.textContent = `Network error: ${err.message}`;
       } finally {
-        inflight = false;
-        btn.disabled = false;
-        btn.textContent = prevLabel;
+        // Only clear inflight + button state if THIS submit is still
+        // the active session. Otherwise a slow-resolving canceled
+        // fetch shouldn't unlock the button while a fresh submit may
+        // already be in flight.
+        if (!_isQaSessionStale(_myToken)) {
+          inflight = false;
+          btn.disabled = false;
+          btn.textContent = prevLabel;
+          if (_qaActiveAbort === _ac) _qaActiveAbort = null;
+        }
       }
     }
     btn.addEventListener('click', submit);
@@ -47852,6 +49099,21 @@ body.ticker-active .gTickerLabel {
   window.__semHeatClose = function () {
     window.__semHeatActive = false;
     document.body.classList.remove('sem-heatmap-active');
+    // Cancel any in-flight Ask-AI query — bumps the session token AND
+    // aborts the underlying fetch so a stuck/slow Claude call can't
+    // paint stale results onto a future heatmap session, and a wrong
+    // query the user typed can be discarded by simply closing the
+    // panel. See _newQaSession near the wireAskAi IIFE for the full
+    // pattern.
+    try { window.__semHeatCancelQA?.(); } catch (_) {}
+    // Reset the Ask-AI input UI so the next open starts clean — empty
+    // status, button re-enabled, label restored.
+    try {
+      const _stat = document.getElementById('semHeatAskStatus');
+      const _btn  = document.getElementById('semHeatAskGoBtn');
+      if (_stat) _stat.textContent = '';
+      if (_btn)  { _btn.disabled = false; _btn.textContent = 'Map'; }
+    } catch (_) {}
     stopPlayback();
     clearMarkers();
     removeHeatSphere();
@@ -50807,9 +52069,30 @@ body.ticker-active .gTickerLabel {
   async function _snapCaptureView() {
     const projection = (window.__projection === 'map') ? 'map' : 'globe';
     let canvasEl;
+    let captureRect;
     if (projection === 'map' && window.__map2d?.state?.canvas) {
-      try { window.__map2d.render?.(); } catch (_) {}
-      canvasEl = window.__map2d.state.canvas;
+      // Render the FULL equirectangular world into an off-screen canvas
+      // at 2:1 aspect (worldW = 2 × worldH). Previously we captured the
+      // live viewport canvas — but on mobile that's only the zoomed/
+      // panned sub-region the user happens to be looking at, so shares
+      // showed a sliver of the world instead of the whole thing. The
+      // snapshot() method swaps STATE temporarily, runs paintBase + all
+      // registered layers (heatmap, polygons, dots, etc.) at full-world
+      // coords, then restores. captureRect maps the LIVE viewport so
+      // any DOM overlays (flow node labels) still re-project onto the
+      // composite using the user's actual on-screen positions.
+      const SNAP_H = 1200;        // tall enough for crisp text/chips
+      const SNAP_W = SNAP_H * 2;  // 2:1 equirect
+      try {
+        canvasEl = window.__map2d.snapshot(SNAP_W, SNAP_H);
+      } catch (e) {
+        console.warn('[snap] map2d.snapshot failed, falling back to viewport:', e?.message);
+        try { window.__map2d.render?.(); } catch (_) {}
+        canvasEl = window.__map2d.state.canvas;
+      }
+      // The off-screen snapshot has no DOM rect — fall back to the live
+      // canvas's rect so node-label re-projection still works.
+      captureRect = window.__map2d.state.canvas.getBoundingClientRect();
     } else {
       const renderer = window.__renderer;
       if (!renderer) throw new Error('renderer not ready');
@@ -50817,8 +52100,8 @@ body.ticker-active .gTickerLabel {
         if (window.__scene && window.__camera) renderer.render(window.__scene, window.__camera);
       } catch (_) {}
       canvasEl = renderer.domElement;
+      captureRect = canvasEl.getBoundingClientRect();
     }
-    const captureRect = canvasEl.getBoundingClientRect();
     const url = canvasEl.toDataURL('image/png');
     return { img: await _snapLoadImage(url), projection, captureRect };
   }

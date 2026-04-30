@@ -1361,7 +1361,10 @@
       background: rgba(8, 8, 8, 0.88);
       border: 1px solid rgba(255, 255, 255, 0.12);
       color: white;
-      z-index: 35;
+      /* See www/index.html for full rationale — z-index 1500 puts the
+         panel above label cards / flow-context / other in-globe
+         overlays, but below auth modals and transient hover tooltips. */
+      z-index: 1500;
       padding: 16px 14px 20px;
       box-sizing: border-box;
       box-shadow: 8px 0 30px rgba(0, 0, 0, 0.55);
@@ -4247,6 +4250,266 @@ button.arcCtxSegDot,
     @media (prefers-reduced-motion: reduce) {
       .ptr-indicator svg, .ptr-indicator { transition: none; }
       .ptr-indicator.refreshing svg { animation: none; }
+    }
+
+    /* Tutorial reel — see www/index.html for full rationale + comments. */
+    #tutOverlay {
+      position: fixed;
+      inset: 0;
+      z-index: 5000;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.35s ease;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      align-items: center;
+      padding: 0 0 max(env(safe-area-inset-bottom, 0px), 28px);
+    }
+    #tutOverlay.active { opacity: 1; }
+    #tutOverlay > * { pointer-events: auto; }
+    #tutSkip {
+      position: absolute;
+      top: max(env(safe-area-inset-top, 0px), 14px);
+      right: 14px;
+      padding: 8px 14px;
+      border-radius: 999px;
+      background: rgba(8, 8, 8, 0.72);
+      border: 1px solid rgba(255, 190, 80, 0.38);
+      color: rgba(255, 220, 180, 0.94);
+      font-size: 11px;
+      letter-spacing: 0.20em;
+      font-weight: 700;
+      text-transform: uppercase;
+      cursor: pointer;
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      user-select: none;
+      transition: background 0.18s ease, transform 0.12s ease;
+    }
+    #tutSkip:hover  { background: rgba(8, 8, 8, 0.88); }
+    #tutSkip:active { transform: scale(0.96); }
+    #tutCaption {
+      margin-bottom: 16px;
+      padding: 0 24px;
+      text-align: center;
+      font-size: 17px;
+      font-weight: 600;
+      color: rgba(255, 235, 200, 0.96);
+      text-shadow: 0 2px 12px rgba(0, 0, 0, 0.7);
+      letter-spacing: 0.005em;
+      max-width: 560px;
+      opacity: 0;
+      transform: translateY(8px);
+      transition: opacity 0.45s ease, transform 0.45s ease;
+      pointer-events: none;
+    }
+    #tutCaption.show { opacity: 1; transform: translateY(0); }
+    #tutDots {
+      display: flex;
+      gap: 8px;
+      pointer-events: none;
+    }
+    .tutDot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.18);
+      transition: background 0.25s ease, transform 0.25s ease;
+    }
+    .tutDot.done   { background: rgba(255, 190, 80, 0.45); }
+    .tutDot.active { background: rgba(255, 190, 80, 1); transform: scale(1.45); }
+    @media (prefers-reduced-motion: reduce) {
+      #tutOverlay, #tutCaption, .tutDot { transition: none; }
+    }
+
+    /* Snapshot stand-in — see www/index.html for full rationale. */
+    #tutSnapStandin {
+      position: fixed;
+      bottom: max(env(safe-area-inset-bottom, 0px), 80px);
+      right: 16px;
+      width: 220px;
+      border-radius: 14px;
+      background: linear-gradient(135deg, rgba(6,10,20,0.96), rgba(13,21,37,0.96));
+      border: 1px solid rgba(255, 190, 80, 0.38);
+      box-shadow: 0 12px 40px rgba(0,0,0,0.6), 0 0 24px rgba(255,190,80,0.14);
+      padding: 14px 16px 16px;
+      color: rgba(255, 235, 200, 0.95);
+      z-index: 5100;
+      pointer-events: none;
+      opacity: 0;
+      transform: translateX(60px) scale(0.92);
+      transition: opacity 0.4s ease, transform 0.5s cubic-bezier(0.22, 1, 0.36, 1);
+      font-family: -apple-system, system-ui, sans-serif;
+    }
+    #tutSnapStandin.show {
+      opacity: 1;
+      transform: translateX(0) scale(1);
+    }
+    .tutSnapBadge {
+      font-size: 9px;
+      font-weight: 800;
+      letter-spacing: 0.22em;
+      color: rgba(255, 190, 80, 0.95);
+      margin-bottom: 8px;
+      text-transform: uppercase;
+    }
+    .tutSnapTitle {
+      font-size: 17px;
+      font-weight: 750;
+      line-height: 1.22;
+      letter-spacing: -0.005em;
+      margin-bottom: 6px;
+      color: rgba(255, 235, 200, 0.98);
+    }
+    .tutSnapSub {
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.22em;
+      color: rgba(255, 190, 80, 0.85);
+      text-transform: uppercase;
+      margin-bottom: 10px;
+    }
+    .tutSnapBar {
+      height: 8px;
+      border-radius: 4px;
+      background: linear-gradient(90deg,
+        rgba(80, 80, 90, 0.5) 0%,
+        rgba(180, 120, 70, 0.7) 35%,
+        rgba(220, 140, 60, 0.85) 65%,
+        rgba(255, 200, 80, 0.95) 100%);
+      margin-bottom: 10px;
+    }
+    .tutSnapFoot {
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.18em;
+      color: rgba(255, 190, 80, 0.6);
+    }
+    @media (prefers-reduced-motion: reduce) {
+      #tutSnapStandin { transition: none; }
+    }
+
+    /* Hold-down tooltip — see www/index.html for full rationale. */
+    .holdTip {
+      position: fixed;
+      z-index: 4500;
+      background: rgba(8, 8, 8, 0.92);
+      color: rgba(255, 235, 200, 0.96);
+      border: 1px solid rgba(255, 190, 80, 0.32);
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-size: 12px;
+      line-height: 1.42;
+      letter-spacing: 0.005em;
+      max-width: 240px;
+      pointer-events: none;
+      opacity: 0;
+      transform: translateY(4px);
+      transition: opacity 0.18s ease, transform 0.18s ease;
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      box-shadow: 0 10px 32px rgba(0,0,0,0.6), 0 0 18px rgba(255,190,80,0.06);
+      user-select: none;
+      font-family: -apple-system, system-ui, "Segoe UI", sans-serif;
+    }
+    .holdTip.show { opacity: 1; transform: translateY(0); }
+    .holdTipTitle {
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      color: rgba(255, 190, 80, 0.95);
+      margin-bottom: 5px;
+    }
+    .holdTipBody {
+      font-weight: 500;
+      color: rgba(255, 235, 200, 0.92);
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .holdTip { transition: none; }
+    }
+
+    /* Daily streak box — see www/index.html for full rationale. */
+    .acctDpStreakBox {
+      margin: 8px 12px 8px;
+      padding: 10px 12px;
+      background: rgba(255, 160, 60, 0.06);
+      border: 1px solid rgba(255, 180, 80, 0.28);
+      border-radius: 10px;
+      cursor: default;
+      transition: box-shadow 0.4s ease, transform 0.18s ease;
+    }
+    .acctDpStreakHeader {
+      display: flex; align-items: baseline; justify-content: space-between;
+      margin-bottom: 4px;
+    }
+    .acctDpStreakLabel {
+      font-size: 10px; font-weight: 700; letter-spacing: 0.12em;
+      text-transform: uppercase; color: rgba(255, 200, 140, 0.92);
+      display: inline-flex; align-items: center; gap: 6px;
+    }
+    .acctDpStreakLabel .streakIcon {
+      font-size: 14px; line-height: 1; filter: saturate(1.2);
+    }
+    .acctDpStreakValue {
+      font-size: 16px; font-weight: 800; color: rgba(255, 230, 200, 0.98);
+      font-variant-numeric: tabular-nums;
+    }
+    .acctDpStreakValue .acctDpStreakUnit {
+      font-size: 10px; font-weight: 500; color: rgba(255,255,255,0.42);
+      margin-left: 3px;
+    }
+    .acctDpStreakSub {
+      font-size: 10px; color: rgba(255,255,255,0.48);
+      letter-spacing: 0.02em;
+    }
+    .acctDpStreakBox.grew {
+      animation: streakGrew 1.1s cubic-bezier(0.22, 1, 0.36, 1);
+      box-shadow: 0 0 22px rgba(255, 160, 60, 0.45);
+    }
+    @keyframes streakGrew {
+      0%   { transform: scale(1);    box-shadow: 0 0 0  rgba(255,160,60,0); }
+      40%  { transform: scale(1.04); box-shadow: 0 0 28px rgba(255,160,60,0.6); }
+      100% { transform: scale(1);    box-shadow: 0 0 0  rgba(255,160,60,0); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .acctDpStreakBox, .acctDpStreakBox.grew {
+        transition: none; animation: none; box-shadow: none;
+      }
+    }
+
+    /* Tab badge — see www/index.html for full rationale. */
+    .tabBadge {
+      position: absolute;
+      top: -3px;
+      right: -3px;
+      min-width: 16px;
+      height: 16px;
+      padding: 0 4px;
+      border-radius: 999px;
+      background: rgba(255, 140, 50, 0.95);
+      border: 1.5px solid rgba(6, 10, 20, 1);
+      color: #fff;
+      font-size: 9px;
+      font-weight: 800;
+      letter-spacing: 0.02em;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: none;
+      box-shadow: 0 2px 8px rgba(255, 140, 50, 0.45);
+      animation: tabBadgePulse 2.4s ease-in-out infinite;
+    }
+    @keyframes tabBadgePulse {
+      0%, 100% { box-shadow: 0 2px 8px  rgba(255, 140, 50, 0.45); }
+      50%      { box-shadow: 0 2px 14px rgba(255, 140, 50, 0.75); }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .tabBadge { animation: none; }
+    }
+    #nfViewThreads, #nfViewTimelines, #nfViewFeed {
+      position: relative;
     }
 
     .articleCard {
@@ -12599,6 +12862,21 @@ window.__arcCtxSegmented = (function() {
           </div>
           <div class="acctDpCreditSub" id="acctDpCreditSub">—</div>
         </div>
+        <!-- Daily streak — see www/index.html for full rationale. -->
+        <div class="acctDpStreakBox" id="streakPill" style="display:none;"
+             data-hold-tip-title="Daily Streak"
+             data-hold-tip="Open the app every day to keep your streak alive — one missed day per week is on the house.">
+          <div class="acctDpStreakHeader">
+            <span class="acctDpStreakLabel">
+              <span class="streakIcon">🔥</span> Daily streak
+            </span>
+            <span class="acctDpStreakValue">
+              <span class="streakDay">0</span>
+              <span class="acctDpStreakUnit">days</span>
+            </span>
+          </div>
+          <div class="acctDpStreakSub" id="acctDpStreakSub">—</div>
+        </div>
         <div class="acctDpBtn" id="acctDpUpgrade" onclick="window.__openPricing()" style="color:rgba(212,168,67,0.9)">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="17 11 12 6 7 11"/><line x1="12" y1="6" x2="12" y2="18"/>
@@ -12702,7 +12980,9 @@ window.__arcCtxSegmented = (function() {
         </div>
       </div>
     </div>
-    <div class="iconBtn" id="flowModeBtn">
+    <div class="iconBtn" id="flowModeBtn"
+         data-hold-tip-title="News Flows"
+         data-hold-tip="Animate how stories travel between source and subject countries — see who's covering what, where it's landing.">
       <!-- Globe — flow arcs LIVE on the globe, so a globe icon
            reads as "show on globe." Replaces an earlier dots-and-
            arcs glyph that looked too similar to the share icon. -->
@@ -12746,7 +13026,9 @@ window.__arcCtxSegmented = (function() {
       </div>
     </div>
     <!-- Heatmap toggle button — mutex'd against #flowModeBtn. -->
-    <div class="iconBtn" id="semHeatToggleBtn" title="Toggle Heatmap" onclick="window.__semHeatToggleBtnClick?.()" style="display:none;">
+    <div class="iconBtn" id="semHeatToggleBtn" title="Toggle Heatmap" onclick="window.__semHeatToggleBtnClick?.()" style="display:none;"
+         data-hold-tip-title="Heatmap"
+         data-hold-tip="Paint any question across the globe — coverage volume, sentiment, GDP, tariffs, anything you can ask in plain English.">
       <!-- 3×3 gradient grid — universal heatmap symbol. Replaces an
            earlier globe-with-dots glyph that conflicted with the new
            flow-arcs globe icon. -->
@@ -13074,6 +13356,17 @@ window.__arcCtxSegmented = (function() {
         </div>
       </div>
 
+      <!-- Replay-tour entry — see www/index.html for full rationale. -->
+      <div class="sidebarDivider"></div>
+      <div class="sidebarSection sidebarSectionGlobal">
+        <div class="layerList">
+          <div class="layerOpt" id="replayTutorialBtn" style="cursor:pointer;">
+            <div class="layerDot" style="background:rgba(255,190,80,0.92);"></div>
+            <span class="layerLabel">Replay Tour</span>
+          </div>
+        </div>
+      </div>
+
     </div>
   </div>
   <!-- Flow articles list panel -->
@@ -13153,8 +13446,12 @@ window.__arcCtxSegmented = (function() {
       <div class="flowPanelRow">
         <span class="flowLabel">Mode</span>
         <div class="flowModeToggle" style="flex:1;">
-          <div class="flowModePill active" data-fmode="individual">Time Series</div>
-          <div class="flowModePill" data-fmode="aggregate">Aggregate</div>
+          <div class="flowModePill active" data-fmode="individual"
+               data-hold-tip-title="Time Series"
+               data-hold-tip="Watch each story flow as a separate animation — see how the news spreads minute by minute over the window.">Time Series</div>
+          <div class="flowModePill" data-fmode="aggregate"
+               data-hold-tip-title="Aggregate"
+               data-hold-tip="Render every flow over the full window as a single composite — heaviest routes draw thickest, lighter ones softer.">Aggregate</div>
         </div>
       </div>
 
@@ -13191,18 +13488,26 @@ window.__arcCtxSegmented = (function() {
       <!-- Keyword + Load -->
       <div class="flowPanelRow">
         <div class="kwAutoWrap">
-  <input type="text" class="flowFilterInput" id="flowKeyword" placeholder="Keyword…" autocomplete="off" />
+  <input type="text" class="flowFilterInput" id="flowKeyword" placeholder="Keyword…" autocomplete="off"
+         data-hold-tip-title="Keyword Filter"
+         data-hold-tip="Restrict flows to articles that mention a specific topic — election, tariffs, climate, etc." />
   <div class="kwAutoList" id="flowKwAutoList"></div>
 </div>
-        <button class="flowBtn primary" id="flowLoadBtn">Load</button>
+        <button class="flowBtn primary" id="flowLoadBtn"
+                data-hold-tip-title="Load Flows"
+                data-hold-tip="Apply the current filters and redraw the arcs.">Load</button>
       </div>
 
       <!-- Color mode -->
       <div class="flowPanelRow">
         <span class="flowLabel">Color</span>
         <div class="flowModeRow" style="flex:1;">
-          <div class="flowModePill active" data-cmode="routing">By routing</div>
-          <div class="flowModePill" data-cmode="sentiment">Sentiment</div>
+          <div class="flowModePill active" data-cmode="routing"
+               data-hold-tip-title="Color by Routing"
+               data-hold-tip="Color each arc by its source/destination pair — routes between the same two countries share a hue.">By routing</div>
+          <div class="flowModePill" data-cmode="sentiment"
+               data-hold-tip-title="Color by Sentiment"
+               data-hold-tip="Color each arc by the tone of its articles — green for positive, red for negative, gray for neutral.">Sentiment</div>
         </div>
       </div>
 
@@ -13210,7 +13515,9 @@ window.__arcCtxSegmented = (function() {
       <div class="flowPanelRow">
         <span class="flowLabel">Speed</span>
         <input type="range" class="flowSpeedSlider" id="flowSpeed"
-               min="0.2" max="4" step="0.1" value="1" />
+               min="0.2" max="4" step="0.1" value="1"
+               data-hold-tip-title="Playback Speed"
+               data-hold-tip="Slow the flow animation down for detail, or speed it up to scan a long window quickly." />
       </div>
 
       <!-- Node labels toggle — HIDDEN in News Flows by request. The
@@ -13301,9 +13608,15 @@ window.__arcCtxSegmented = (function() {
 
       <div class="semHeatSection">
         <div class="semHeatCtlTabs" id="semHeatCtlTabs">
-          <div class="semHeatCtlTab" data-ctl="keyword">Keyword</div>
-          <div class="semHeatCtlTab" data-ctl="timeseries">Time-series</div>
-          <div class="semHeatCtlTab active" data-ctl="ask">Map This</div>
+          <div class="semHeatCtlTab" data-ctl="keyword"
+               data-hold-tip-title="Keyword Mode"
+               data-hold-tip="Show coverage volume by country for a specific topic — type a word, see which countries are talking about it most.">Keyword</div>
+          <div class="semHeatCtlTab" data-ctl="timeseries"
+               data-hold-tip-title="Time-series Mode"
+               data-hold-tip="Watch coverage shift across countries over the past N days — replay the rising and falling attention.">Time-series</div>
+          <div class="semHeatCtlTab active" data-ctl="ask"
+               data-hold-tip-title="Map This"
+               data-hold-tip="Type any question in plain English — coverage, sentiment, GDP, tariffs — and see it painted across countries.">Map This</div>
         </div>
 
         <div class="semHeatCtlPanel" data-panel="keyword">
@@ -13338,9 +13651,15 @@ window.__arcCtxSegmented = (function() {
             </select>
           </div>
           <div class="semHeatTsRow">
-            <button class="semHeatTsBtn" id="semHeatPlayBtn" title="Play / pause">▶</button>
-            <button class="semHeatTsBtn" id="semHeatTsReset" title="Reset">↺</button>
-            <input type="range" class="semHeatSlider" id="semHeatTsSlider" min="0" max="0" value="0" step="1" />
+            <button class="semHeatTsBtn" id="semHeatPlayBtn" title="Play / pause"
+                    data-hold-tip-title="Play / Pause"
+                    data-hold-tip="Animate the heatmap forward in time — watch coverage rise and fall day by day.">▶</button>
+            <button class="semHeatTsBtn" id="semHeatTsReset" title="Reset"
+                    data-hold-tip-title="Reset"
+                    data-hold-tip="Jump back to the start of the time window.">↺</button>
+            <input type="range" class="semHeatSlider" id="semHeatTsSlider" min="0" max="0" value="0" step="1"
+                   data-hold-tip-title="Time Scrubber"
+                   data-hold-tip="Drag to a specific point in time — the heatmap repaints to that moment." />
           </div>
           <div class="semHeatTsLabel" id="semHeatTsLabel" style="text-align:left;">—</div>
         </div>
@@ -18197,7 +18516,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const _cpSaved = !!(window.__libraryIsSaved && window.__libraryIsSaved(article.id));
           return `
             <div style="position:relative">
-              <button class="cardFlowArcBtn" onclick="showArticleFlows(${article.id},event)" title="Show flow arcs on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/><ellipse cx="12" cy="12" rx="4" ry="9"/></svg></button>
+              <button class="cardFlowArcBtn" onclick="showArticleFlows(${article.id},event)" title="Show flow arcs on globe" data-hold-tip-title="Show on Globe" data-hold-tip="Animate this story's reach — every country it has touched, drawn as arcs on the globe."><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/><ellipse cx="12" cy="12" rx="4" ry="9"/></svg></button>
               <button class="cardSaveBtn${_cpSaved ? ' saved' : ''}" data-saved-article-id="${article.id}" onclick="toggleBookmark(event,this,${article.id})" title="${_cpSaved ? 'Remove from saved' : 'Save'}"><svg viewBox="0 0 24 24" fill="${_cpSaved ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></button>
               <div class="articleCard fadeInCard" onclick="openPanelArticle(this)" data-article='${JSON.stringify(article).replace(/'/g,"&#39;")}' style="cursor:pointer;">
                 ${imageField}
@@ -19806,7 +20125,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
               : "";
             const _ctySaved = !!(window.__libraryIsSaved && window.__libraryIsSaved(a.id));
             return `<div style="position:relative">
-              <button class="cardFlowArcBtn" onclick="showArticleFlows(${a.id},event)" title="Show flow arcs on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/><ellipse cx="12" cy="12" rx="4" ry="9"/></svg></button>
+              <button class="cardFlowArcBtn" onclick="showArticleFlows(${a.id},event)" title="Show flow arcs on globe" data-hold-tip-title="Show on Globe" data-hold-tip="Animate this story's reach — every country it has touched, drawn as arcs on the globe."><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/><ellipse cx="12" cy="12" rx="4" ry="9"/></svg></button>
               <button class="cardSaveBtn${_ctySaved ? ' saved' : ''}" data-saved-article-id="${a.id}" onclick="toggleBookmark(event,this,${a.id})" title="${_ctySaved ? 'Remove from saved' : 'Save'}"><svg viewBox="0 0 24 24" fill="${_ctySaved ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></button>
               <div class="articleCard fadeInCard" onclick="openRegionArticle(this)" data-article='${JSON.stringify(a).replace(/'/g,"&#39;")}' style="cursor:pointer;">
               ${img}
@@ -22216,6 +22535,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const safeScope = String(scope || _arcCtxScope || '').replace(/[^a-z0-9_:-]/gi, '');
       body.innerHTML =
         `<button class="aiAnalysisCtaBadge" data-scope="${safeScope}"` +
+                ` data-hold-tip-title="Deep Read"` +
+                ` data-hold-tip="A curated synthesis of these flows — what's driving them, who's shaping the narrative, and what to watch next."` +
                 ` onclick="window.__arcAiContextStartFromGate?.(this)">` +
           `<span class="aiAnalysisDot"></span>` +
           `<span>✦ Generate Deep Analysis</span>` +
@@ -24653,7 +24974,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         
         return `
           <div style="position:relative">
-            <button class="cardFlowArcBtn" onclick="showArticleFlows(${f.id},event)" title="Show flow arcs on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/><ellipse cx="12" cy="12" rx="4" ry="9"/></svg></button>
+            <button class="cardFlowArcBtn" onclick="showArticleFlows(${f.id},event)" title="Show flow arcs on globe" data-hold-tip-title="Show on Globe" data-hold-tip="Animate this story's reach — every country it has touched, drawn as arcs on the globe."><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/><ellipse cx="12" cy="12" rx="4" ry="9"/></svg></button>
             <div class="articleCard" onclick="openPanelArticle(this)" data-article='${JSON.stringify(article).replace(/'/g,"&#39;")}' style="cursor:pointer;">
               ${imageField}
               <div class="articleCardBody">
@@ -25660,12 +25981,55 @@ const settingsToggle     = document.getElementById("settingsToggle");
         window.addEventListener("resize",            () => { if (STATE.enabled) resize(); });
         window.addEventListener("orientationchange", () => { if (STATE.enabled) resize(); });
 
+        // See www/index.html for full rationale: render the FULL
+        // equirectangular world (zoom=1, no pan) into an off-screen
+        // canvas at arbitrary resolution. Used by share-snapshot so
+        // the captured map shows the entire world, not the zoomed
+        // sub-region the user is currently viewing.
+        function snapshot(targetW, targetH) {
+          const off = document.createElement('canvas');
+          off.width  = Math.max(2, Math.floor(targetW));
+          off.height = Math.max(2, Math.floor(targetH));
+          const offCtx = off.getContext('2d');
+          const saved = {
+            canvas: STATE.canvas, ctx: STATE.ctx,
+            width:  STATE.width,  height: STATE.height,
+            dpr:    STATE.dpr,    zoom:   STATE.zoom,
+            scrollX: STATE.scrollX, scrollY: STATE.scrollY,
+          };
+          STATE.canvas  = off;
+          STATE.ctx     = offCtx;
+          STATE.width   = off.width;
+          STATE.height  = off.height;
+          STATE.dpr     = 1;
+          STATE.zoom    = 1;
+          STATE.scrollX = 0;
+          STATE.scrollY = 0;
+          try {
+            paintBase();
+            for (let i = 0; i < STATE.layers.length; i++) {
+              try { STATE.layers[i](api, STATE.ctx); } catch (_) {}
+            }
+          } finally {
+            STATE.canvas  = saved.canvas;
+            STATE.ctx     = saved.ctx;
+            STATE.width   = saved.width;
+            STATE.height  = saved.height;
+            STATE.dpr     = saved.dpr;
+            STATE.zoom    = saved.zoom;
+            STATE.scrollX = saved.scrollX;
+            STATE.scrollY = saved.scrollY;
+          }
+          return off;
+        }
+
         const api = {
           mount, unmount,
           isEnabled: () => STATE.enabled,
           state:   STATE,
           project, unproject,
           worldW, worldH,
+          snapshot,
           addLayer(fn) {
             STATE.layers.push(fn);
             return () => {
@@ -26621,6 +26985,537 @@ const settingsToggle     = document.getElementById("settingsToggle");
     window.attachPullToRefresh = attachPullToRefresh;
   })();
 
+  /* Tutorial reel — Phase 1 scaffolding. See www/index.html for full
+     rationale, beat sequence, music timing model, and skip behavior. */
+  (function setupTutorial() {
+    const STORAGE_KEY = 'earth00:tutorialSeen';
+    const BEAT_MS     = 2000;
+
+    const BEATS = [
+      // See www/index.html for full rationale on each beat's run().
+      { caption: '', run: () => { try { window.__goToPage?.(1); } catch (_) {} } },
+      {
+        caption: 'Threads — every story, geo-rooted',
+        run: () => {
+          try { window.__goToPage?.(2); } catch (_) {}
+          setTimeout(() => {
+            try { document.getElementById('nfViewThreads')?.click(); } catch (_) {}
+          }, 220);
+        },
+      },
+      {
+        caption: 'Lines — stories as they unfold',
+        run: () => {
+          try { document.getElementById('nfViewTimelines')?.click(); } catch (_) {}
+        },
+      },
+      // See www/index.html for full rationale on the type-itself-out
+      // keyword search animation (~280ms page-transition grace +
+      // ~330ms typing at 55ms/char, leaving ~1.4s for results).
+      {
+        caption: "Search the world\u2019s coverage",
+        run: () => {
+          try { window.__goToPage?.(0); } catch (_) {}
+          setTimeout(() => {
+            const input = document.getElementById('kwiInput');
+            if (!input) return;
+            const query = 'Russia';
+            input.value = '';
+            try { input.focus({ preventScroll: true }); } catch (_) { try { input.focus(); } catch (_) {} }
+            let idx = 0;
+            const TYPE_MS = 55;
+            const tick = () => {
+              if (idx >= query.length) {
+                try { window.kwiSearch?.(); } catch (_) {}
+                return;
+              }
+              input.value += query[idx++];
+              try { input.dispatchEvent(new Event('input', { bubbles: true })); } catch (_) {}
+              setTimeout(tick, TYPE_MS);
+            };
+            tick();
+          }, 280);
+        },
+      },
+      // See www/index.html for full rationale on bypassing the Pro
+      // tier gate + visual-only (no audio playback) treatment.
+      {
+        caption: "Today\u2019s Briefing",
+        run: () => {
+          try { window.__goToPage?.(1); } catch (_) {}
+          setTimeout(() => {
+            try { document.getElementById('bLauncher')?.classList.add('open'); } catch (_) {}
+          }, 250);
+          setTimeout(() => {
+            try { document.getElementById('bLauncher')?.classList.remove('open'); } catch (_) {}
+          }, 1750);
+        },
+      },
+      // See www/index.html for full rationale on the hardcoded
+      // synthetic flow set + cleanup timing.
+      {
+        caption: 'See how news travels',
+        run: () => {
+          try { window.__goToPage?.(1); } catch (_) {}
+          setTimeout(() => {
+            try {
+              const hub = { type: 'country', iso: 'US', id: 'US', place: 'United States', lat: 39.83, lon: -98.58 };
+              const dests = [
+                { type: 'country', iso: 'GB', id: 'GB', place: 'United Kingdom', lat:  54.00, lon:  -2.00 },
+                { type: 'country', iso: 'DE', id: 'DE', place: 'Germany',        lat:  51.16, lon:  10.45 },
+                { type: 'country', iso: 'JP', id: 'JP', place: 'Japan',          lat:  36.20, lon: 138.25 },
+                { type: 'country', iso: 'BR', id: 'BR', place: 'Brazil',         lat: -14.24, lon: -51.93 },
+                { type: 'country', iso: 'IN', id: 'IN', place: 'India',          lat:  20.59, lon:  78.96 },
+              ];
+              const flows = dests.map(dst => ({
+                src: hub, dst, count: 1,
+                _cardTriggered: true, _sourceType: 'thread',
+              }));
+              window.__flowSetOpen?.(true);
+              window.__flowAssignLaneOffsets?.(flows);
+              flows.forEach((flow) => {
+                const arc = window.__flowCreateArc?.(flow, 1);
+                if (arc) window.__flowPushArc?.(arc);
+              });
+              const isos = new Set([hub.iso, ...dests.map(d => d.iso)]);
+              window.__flowHighlightCountries?.(isos);
+              window.__flowShowLabelsForCardTrigger?.(flows);
+            } catch (err) {
+              console.warn('[tutorial] flow arcs spawn failed:', err && err.message);
+            }
+          }, 220);
+          setTimeout(() => {
+            try {
+              window.__flowClearArcs?.();
+              window.clearFlowNodeLabels?.();
+              window.__flowClearHighlights?.();
+              window.__flowSetOpen?.(false);
+            } catch (_) {}
+          }, 1850);
+        },
+      },
+      // See www/index.html for full rationale on the type-itself-out
+      // "GDP per capita" query, the auth-gated submit, and the
+      // intentional lack of cleanup here (beat 7 owns it).
+      {
+        caption: 'Coverage at a glance',
+        run: () => {
+          try { window.__goToPage?.(1); } catch (_) {}
+          setTimeout(() => {
+            try { window.__semHeatOpen?.(); } catch (_) {}
+          }, 200);
+          setTimeout(() => {
+            const input = document.getElementById('semHeatAskInput');
+            if (!input) return;
+            const query = 'GDP per capita';
+            input.value = '';
+            let idx = 0;
+            const TYPE_MS = 40;
+            const tick = () => {
+              if (idx >= query.length) {
+                if (window.__authToken) {
+                  try { document.getElementById('semHeatAskGoBtn')?.click(); } catch (_) {}
+                }
+                return;
+              }
+              input.value += query[idx++];
+              try { input.dispatchEvent(new Event('input', { bubbles: true })); } catch (_) {}
+              setTimeout(tick, TYPE_MS);
+            };
+            tick();
+          }, 500);
+        },
+      },
+      // See www/index.html for full rationale on the visual stand-in
+      // (no real share-picker fired) and the heatmap-cleanup ownership.
+      {
+        caption: 'Make it yours. Share it.',
+        run: () => {
+          const card = document.createElement('div');
+          card.id = 'tutSnapStandin';
+          card.innerHTML = ''
+            + '<div class="tutSnapBadge">Earth00 \u00B7 Share</div>'
+            + '<div class="tutSnapTitle">GDP per capita</div>'
+            + '<div class="tutSnapSub">Map This \u00B7 Globe</div>'
+            + '<div class="tutSnapBar"></div>'
+            + '<div class="tutSnapFoot">EARTH00.COM</div>';
+          document.body.appendChild(card);
+          requestAnimationFrame(() => card.classList.add('show'));
+          setTimeout(() => {
+            try { window.__semHeatClose?.(); } catch (_) {}
+          }, 1500);
+          setTimeout(() => {
+            try { card.classList.remove('show'); } catch (_) {}
+          }, 1700);
+          setTimeout(() => {
+            try { card.remove(); } catch (_) {}
+          }, 1950);
+        },
+      },
+    ];
+
+    let active = false;
+    let skipRequested = false;
+    function noop() {}
+    function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+    function ensureDom() {
+      if (document.getElementById('tutOverlay')) return;
+      const overlay = document.createElement('div');
+      overlay.id = 'tutOverlay';
+      overlay.innerHTML =
+        '<div id="tutSkip" role="button" tabindex="0" aria-label="Skip tutorial">Skip</div>' +
+        '<div id="tutCaption" aria-live="polite"></div>' +
+        '<div id="tutDots"></div>';
+      document.body.appendChild(overlay);
+      const dots = overlay.querySelector('#tutDots');
+      for (let i = 0; i < BEATS.length; i++) {
+        const d = document.createElement('div');
+        d.className = 'tutDot';
+        dots.appendChild(d);
+      }
+      const skipBtn = overlay.querySelector('#tutSkip');
+      skipBtn.addEventListener('click', requestSkip);
+      skipBtn.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); requestSkip(); }
+      });
+    }
+
+    let _escHandler = null;
+    function bindEsc() {
+      _escHandler = (e) => { if (active && e.key === 'Escape') requestSkip(); };
+      document.addEventListener('keydown', _escHandler);
+    }
+    function unbindEsc() {
+      if (_escHandler) {
+        document.removeEventListener('keydown', _escHandler);
+        _escHandler = null;
+      }
+    }
+
+    function setBeat(i) {
+      const overlay = document.getElementById('tutOverlay');
+      if (!overlay) return;
+      const dots = overlay.querySelectorAll('.tutDot');
+      dots.forEach((d, j) => {
+        d.classList.toggle('done',   j <  i);
+        d.classList.toggle('active', j === i);
+      });
+      const cap = overlay.querySelector('#tutCaption');
+      cap.classList.remove('show');
+      setTimeout(() => {
+        cap.textContent = BEATS[i].caption || '';
+        if (BEATS[i].caption) cap.classList.add('show');
+      }, 120);
+    }
+
+    function requestSkip() {
+      if (!active) return;
+      skipRequested = true;
+    }
+
+    async function start() {
+      if (active) return;
+      active = true;
+      skipRequested = false;
+      ensureDom();
+      bindEsc();
+      const overlay = document.getElementById('tutOverlay');
+      requestAnimationFrame(() => overlay.classList.add('active'));
+      for (let i = 0; i < BEATS.length; i++) {
+        if (skipRequested) break;
+        setBeat(i);
+        try { await BEATS[i].run(); } catch (err) {
+          console.warn('[tutorial] beat ' + i + ' run() threw:', err && err.message);
+        }
+        await sleep(BEAT_MS);
+      }
+      end();
+    }
+
+    function end() {
+      const overlay = document.getElementById('tutOverlay');
+      if (overlay) {
+        overlay.classList.remove('active');
+        setTimeout(() => { try { overlay.remove(); } catch (_) {} }, 600);
+      }
+      unbindEsc();
+      active = false;
+      try { localStorage.setItem(STORAGE_KEY, '1'); } catch (_) {}
+    }
+
+    window.__startTutorial = start;
+    window.__resetTutorial = function () {
+      try { localStorage.removeItem(STORAGE_KEY); } catch (_) {}
+    };
+
+    document.addEventListener('click', (e) => {
+      const btn = e.target?.closest?.('#replayTutorialBtn');
+      if (!btn) return;
+      e.stopPropagation();
+      try {
+        document.getElementById('viewSidebar')?.classList.remove('open');
+        document.getElementById('settingsToggle')?.classList.remove('active');
+      } catch (_) {}
+      setTimeout(() => start(), 280);
+    });
+
+    (async () => {
+      try {
+        let seen = false;
+        try { seen = !!localStorage.getItem(STORAGE_KEY); } catch (_) {}
+        if (seen) return;
+        try { await (window.__preloadReady || Promise.resolve()); } catch (_) {}
+        await sleep(500);
+        if (document.body.classList.contains('auth-modal-open')) return;
+        start();
+      } catch (err) {
+        console.warn('[tutorial] auto-start skipped:', err && err.message);
+      }
+    })();
+  })();
+
+  /* Hold-down tooltip — see www/index.html for full rationale. */
+  (function setupHoldTips() {
+    const HOLD_MS  = 500;
+    const DRIFT_PX = 8;
+    let timer = null;
+    let activeBtn = null;
+    let tooltipEl = null;
+    let suppressClick = false;
+    let startX = 0, startY = 0;
+
+    function escapeHtml(s) {
+      return String(s || '').replace(/[&<>"']/g, c => ({
+        '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+      }[c]));
+    }
+    function ensureTooltip() {
+      if (tooltipEl && document.body.contains(tooltipEl)) return tooltipEl;
+      const t = document.createElement('div');
+      t.className = 'holdTip';
+      document.body.appendChild(t);
+      tooltipEl = t;
+      return t;
+    }
+    function positionTooltip(btn) {
+      const tip = ensureTooltip();
+      const r   = btn.getBoundingClientRect();
+      const tr  = tip.getBoundingClientRect();
+      const margin = 12;
+      let top  = r.bottom + 8;
+      if (top + tr.height > window.innerHeight - margin) {
+        top = r.top - tr.height - 8;
+      }
+      let left = r.left + r.width / 2 - tr.width / 2;
+      left = Math.max(margin, Math.min(window.innerWidth - tr.width - margin, left));
+      tip.style.left = left + 'px';
+      tip.style.top  = top  + 'px';
+    }
+    function show(btn) {
+      const text  = btn.getAttribute('data-hold-tip');
+      if (!text) return;
+      const title = btn.getAttribute('data-hold-tip-title');
+      const tip   = ensureTooltip();
+      tip.innerHTML =
+        (title ? `<div class="holdTipTitle">${escapeHtml(title)}</div>` : '') +
+        `<div class="holdTipBody">${escapeHtml(text)}</div>`;
+      tip.style.left = '-9999px';
+      tip.style.top  = '0px';
+      tip.classList.remove('show');
+      requestAnimationFrame(() => {
+        positionTooltip(btn);
+        tip.classList.add('show');
+      });
+      activeBtn = btn;
+      suppressClick = true;
+    }
+    function hide() {
+      if (tooltipEl) tooltipEl.classList.remove('show');
+      activeBtn = null;
+    }
+    document.addEventListener('pointerdown', (e) => {
+      const btn = e.target?.closest?.('[data-hold-tip]');
+      if (!btn) return;
+      startX = e.clientX; startY = e.clientY;
+      clearTimeout(timer);
+      timer = setTimeout(() => {
+        timer = null;
+        show(btn);
+      }, HOLD_MS);
+    }, { passive: true });
+    document.addEventListener('pointermove', (e) => {
+      if (!timer && !activeBtn) return;
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      if (dx * dx + dy * dy > DRIFT_PX * DRIFT_PX) {
+        clearTimeout(timer); timer = null;
+        if (activeBtn) hide();
+      }
+    }, { passive: true });
+    function release() {
+      clearTimeout(timer); timer = null;
+      if (activeBtn) {
+        hide();
+        setTimeout(() => { suppressClick = false; }, 50);
+      } else {
+        suppressClick = false;
+      }
+    }
+    document.addEventListener('pointerup',     release, { passive: true });
+    document.addEventListener('pointercancel', release, { passive: true });
+    document.addEventListener('pointerleave',  release, { passive: true });
+    document.addEventListener('click', (e) => {
+      if (!suppressClick) return;
+      const btn = e.target?.closest?.('[data-hold-tip]');
+      if (btn) {
+        e.stopPropagation();
+        e.preventDefault();
+      }
+    }, true);
+  })();
+
+  /* Retention — daily streak + per-surface badges. See www/index.html
+     for full rationale, server contract, and module shape. */
+  (function setupRetention() {
+    const API       = window.__API || 'https://earth-wjr6.onrender.com';
+    const TICK_KEY  = 'earth00:lastTickDate:v1';
+
+    let _streak = null;
+    let _badges = null;
+    let _running = false;
+
+    function todayLocalISO() {
+      const d = new Date();
+      const y = d.getFullYear();
+      const m = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${y}-${m}-${day}`;
+    }
+    function authHeaders() {
+      const t = window.__authToken;
+      return t ? { Authorization: `Bearer ${t}` } : {};
+    }
+
+    async function tickStreak() {
+      if (!window.__authToken) return;
+      const today = todayLocalISO();
+      let lastTick = null;
+      try { lastTick = localStorage.getItem(TICK_KEY); } catch (_) {}
+      if (lastTick === today) {
+        try {
+          const r = await fetch(`${API}/api/streaks/me`, { headers: authHeaders() });
+          if (r.ok) { _streak = await r.json(); renderStreak(); }
+        } catch (_) {}
+        return;
+      }
+      try {
+        const r = await fetch(`${API}/api/streaks/tick`, {
+          method: 'POST',
+          headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ localDate: today }),
+        });
+        if (r.ok) {
+          _streak = await r.json();
+          try { localStorage.setItem(TICK_KEY, today); } catch (_) {}
+          renderStreak();
+        }
+      } catch (e) {
+        console.warn('[retention] tick failed:', e && e.message);
+      }
+    }
+
+    async function fetchBadges() {
+      if (!window.__authToken) return;
+      try {
+        const r = await fetch(`${API}/api/badges/me`, { headers: authHeaders() });
+        if (r.ok) { _badges = await r.json(); renderBadges(); }
+      } catch (e) {
+        console.warn('[retention] badges fetch failed:', e && e.message);
+      }
+    }
+
+    async function markSeen(surface) {
+      if (!window.__authToken) return;
+      if (surface !== 'threads' && surface !== 'lines' && surface !== 'briefing') return;
+      if (_badges && Object.prototype.hasOwnProperty.call(_badges, surface)) {
+        _badges[surface] = 0;
+        renderBadges();
+      }
+      try {
+        await fetch(`${API}/api/badges/seen`, {
+          method: 'POST',
+          headers: { ...authHeaders(), 'Content-Type': 'application/json' },
+          body: JSON.stringify({ surface }),
+        });
+      } catch (_) {}
+    }
+
+    function renderStreak() {
+      const box = document.getElementById('streakPill');
+      if (!box) return;
+      const cur = (_streak && Number(_streak.current)) || 0;
+      if (cur < 1) {
+        box.style.display = 'none';
+        box.classList.remove('grew');
+        return;
+      }
+      box.style.display = '';
+      const dayEl = box.querySelector('.streakDay');
+      if (dayEl) dayEl.textContent = String(cur);
+      const subEl = document.getElementById('acctDpStreakSub');
+      if (subEl) {
+        const longest = (_streak && Number(_streak.longest)) || cur;
+        const used    = Math.max(0, Number(_streak.freezes_used) || 0);
+        const max     = Math.max(1, Number(_streak.freezes_per_week) || 1);
+        const left    = Math.max(0, max - used);
+        const longestPart = longest > cur ? `Longest ${longest} days` : `On your longest ever`;
+        const freezePart  = `${left} skip${left === 1 ? '' : 's'} left this week`;
+        subEl.textContent = `${longestPart} · ${freezePart}`;
+      }
+      if (_streak && _streak.gained) {
+        box.classList.remove('grew');
+        void box.offsetWidth;
+        box.classList.add('grew');
+        setTimeout(() => box.classList.remove('grew'), 1200);
+      }
+    }
+
+    function renderBadges() {
+      if (!_badges) return;
+      const set = (id, n) => {
+        const pillEl = document.getElementById(id);
+        if (!pillEl) return;
+        let dot = pillEl.querySelector('.tabBadge');
+        if (n > 0) {
+          if (!dot) {
+            dot = document.createElement('span');
+            dot.className = 'tabBadge';
+            pillEl.appendChild(dot);
+          }
+          dot.textContent = n > 99 ? '99+' : String(n);
+        } else if (dot) {
+          dot.remove();
+        }
+      };
+      set('nfViewThreads',   _badges.threads || 0);
+      set('nfViewTimelines', _badges.lines   || 0);
+    }
+
+    window.__retentionRefresh  = async function () {
+      if (_running) return;
+      _running = true;
+      try { await tickStreak(); } catch (_) {}
+      try { await fetchBadges(); } catch (_) {}
+      _running = false;
+    };
+    window.__retentionMarkSeen = markSeen;
+
+    setTimeout(() => {
+      if (window.__authToken) window.__retentionRefresh();
+    }, 1200);
+  })();
+
   (function() {
     const API      = "https://earth-wjr6.onrender.com";
     const FLAG_CDN = "https://flagcdn.com/w80/";
@@ -27215,7 +28110,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const videoPrefix = isVideo ? `<span style="font-size:8px;opacity:0.6;margin-right:2px;">▶</span>` : "";
       const origin = parts.length ? `<div class="nfCardOrigin">${videoPrefix}${esc(parts.join(", "))}</div>` : "";
       const date = a.published_at ? fmtDate(a.published_at) : "";
-      const flowArcBtn = `<button class="cardFlowArcBtn" onclick="showArticleFlows(${a.id},event)" title="Show flow arcs on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/><ellipse cx="12" cy="12" rx="4" ry="9"/></svg></button>`;
+      const flowArcBtn = `<button class="cardFlowArcBtn" onclick="showArticleFlows(${a.id},event)" title="Show flow arcs on globe" data-hold-tip-title="Show on Globe" data-hold-tip="Animate this story's reach — every country it has touched, drawn as arcs on the globe."><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/><ellipse cx="12" cy="12" rx="4" ry="9"/></svg></button>`;
       const _isSaved = window.__libraryIsSaved && window.__libraryIsSaved(a.id);
       // Footer-right .nfBookmarkBtn removed — .cardSaveBtn (top-right
       // overlay) already provides the same toggleBookmark action.
@@ -27403,8 +28298,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
         }
       }
 
-      pillTimelines.addEventListener('click', () => setView('timelines'));
-      pillThreads.addEventListener('click', () => setView('threads'));
+      pillTimelines.addEventListener('click', () => {
+        setView('timelines');
+        try { window.__retentionMarkSeen?.('lines'); } catch (_) {}
+      });
+      pillThreads.addEventListener('click', () => {
+        setView('threads');
+        try { window.__retentionMarkSeen?.('threads'); } catch (_) {}
+      });
       pillFeed.addEventListener('click', () => setView('feed'));
 
       // Default to Threads view on load
@@ -27543,7 +28444,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const entityId = t.thread_id ?? t.timeline_id ?? t.id;
         const saveKind = isTimeline ? 'timeline' : 'thread';
         const isSavedNow = !!(window.__libraryIsSaved && window.__libraryIsSaved(entityId, saveKind));
-        const threadFlowBtn = `<button class="cardFlowArcBtn" onclick="${flowFn}(${entityId},event)" title="Show flow arcs on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/><ellipse cx="12" cy="12" rx="4" ry="9"/></svg></button>`;
+        const threadFlowBtn = `<button class="cardFlowArcBtn" onclick="${flowFn}(${entityId},event)" title="Show flow arcs on globe" data-hold-tip-title="Show on Globe" data-hold-tip="Animate this story's reach — every country it has touched, drawn as arcs on the globe."><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/><ellipse cx="12" cy="12" rx="4" ry="9"/></svg></button>`;
         const threadSaveBtn = `<button class="cardSaveBtn${isSavedNow ? ' saved' : ''}" data-save-id="${entityId}" data-save-kind="${saveKind}" title="${isSavedNow ? 'Remove from saved' : 'Save'}"><svg viewBox="0 0 24 24" fill="${isSavedNow ? 'currentColor' : 'none'}" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg></button>`;
         // Share button — kind ('thread' | 'line') routes to the correct
         // /share/* URL via __shareEntity. Title is forwarded so the
@@ -33058,7 +33959,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
     if (!body) return;
     body.className = 'arcCtxBody arcCtxStateSettled';
     body.innerHTML =
-      `<button class="aiAnalysisCtaBadge" onclick="window.__adpAnalysisStartFromGate?.(this)">` +
+      `<button class="aiAnalysisCtaBadge"` +
+              ` data-hold-tip-title="Deep Read"` +
+              ` data-hold-tip="A curated synthesis of this article — context, framing, and what to watch next."` +
+              ` onclick="window.__adpAnalysisStartFromGate?.(this)">` +
         `<span class="aiAnalysisDot"></span>` +
         `<span>✦ Generate Deep Analysis</span>` +
       `</button>`;
@@ -35263,6 +36167,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       try { await ensureSubscription(user.id); } catch (e) { console.warn('[auth] ensureSubscription:', e.message); }
       try { await loadSettings(user.id); } catch (e) { console.warn('[auth] loadSettings:', e.message); }
       try { await loadProfile(); } catch (e) { console.warn('[auth] loadProfile:', e.message); }
+      try { window.__retentionRefresh?.(); } catch (_) {}
       // Onboarding questionnaire temporarily disabled (flip ONBOARDING_ENABLED
       // back to true once revised). All underlying code left intact.
       const ONBOARDING_ENABLED = false;
@@ -41163,7 +42068,7 @@ body.ticker-active .gTickerLabel {
     const date = a.published_at ? fmtDate(a.published_at) : "";
     const title = esc(a.translated_title || a.title || "");
     const dataAttr = JSON.stringify(a).replace(/'/g, "&#39;");
-    return `<div style="position:relative"><button class="cardFlowArcBtn" onclick="showArticleFlows(${a.id},event)" title="Show flow arcs on globe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/><ellipse cx="12" cy="12" rx="4" ry="9"/></svg></button><div class="cdCard" onclick="openThreadPanelArticle(this,event)" data-article='${dataAttr}' style="cursor:pointer">
+    return `<div style="position:relative"><button class="cardFlowArcBtn" onclick="showArticleFlows(${a.id},event)" title="Show flow arcs on globe" data-hold-tip-title="Show on Globe" data-hold-tip="Animate this story's reach — every country it has touched, drawn as arcs on the globe."><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/><ellipse cx="12" cy="12" rx="4" ry="9"/></svg></button><div class="cdCard" onclick="openThreadPanelArticle(this,event)" data-article='${dataAttr}' style="cursor:pointer">
       ${src ? `<img class="cdCardImg" src="${src}" alt="" loading="lazy" onerror="this.style.display='none'">` : `<div class="cdCardImgNone"></div>`}
       <div class="cdCardBody">
         ${isVideo ? `<span class="cdCardVideo">▶ Video</span>` : ""}
@@ -41404,6 +42309,8 @@ body.ticker-active .gTickerLabel {
                     data-thread-id="${threadId}"
                     data-is-timeline="${isTimeline ? '1' : '0'}"
                     data-entity-label="${isTimeline ? 'timeline' : 'thread'}"
+                    data-hold-tip-title="Deep Read"
+                    data-hold-tip="A curated synthesis — what's driving this story, who's shaping it, and what to watch next."
                     onclick="window.__triggerClusterAnalysis?.(this)">
               <span class="aiAnalysisDot"></span>
               <span>✦ Generate Deep Analysis</span>
@@ -43355,6 +44262,24 @@ body.ticker-active .gTickerLabel {
     }
   };
 
+  // ── Ask-AI session token ──────────────────────────────────────────
+  // See www/index.html for full rationale. Bumping the counter +
+  // aborting the AbortController invalidates any in-flight Claude
+  // call when the user closes the panel mid-query (handled via
+  // window.__semHeatCancelQA exposed below).
+  let _qaSession = 0;
+  let _qaActiveAbort = null;
+  function _newQaSession() {
+    _qaSession += 1;
+    if (_qaActiveAbort) {
+      try { _qaActiveAbort.abort(); } catch (_) {}
+      _qaActiveAbort = null;
+    }
+    return _qaSession;
+  }
+  function _isQaSessionStale(token) { return token !== _qaSession; }
+  window.__semHeatCancelQA = _newQaSession;
+
   (function wireAskAi() {
     const inp  = document.getElementById('semHeatAskInput');
     const btn  = document.getElementById('semHeatAskGoBtn');
@@ -43366,6 +44291,9 @@ body.ticker-active .gTickerLabel {
       const q = (inp.value || '').trim();
       if (!q || inflight) return;
       const mode = sel?.value || 'percent';
+      const _myToken = _newQaSession();
+      const _ac = new AbortController();
+      _qaActiveAbort = _ac;
       inflight = true;
       btn.disabled = true;
       const prevLabel = btn.textContent;
@@ -43382,8 +44310,11 @@ body.ticker-active .gTickerLabel {
         if (tok) headers['Authorization'] = `Bearer ${tok}`;
         const res = await fetch(`${apiBase}/api/heatmap/ask`, {
           method: 'POST', headers, body: JSON.stringify({ question: q, mode }),
+          signal: _ac.signal,
         });
+        if (_isQaSessionStale(_myToken)) return;
         const data = await res.json().catch(() => ({}));
+        if (_isQaSessionStale(_myToken)) return;
         if (!res.ok) {
           if (res.status === 401) {
             if (stat) stat.textContent = 'Sign in to ask questions.';
@@ -43407,11 +44338,18 @@ body.ticker-active .gTickerLabel {
         });
         if (data.credits) window.__updateCreditMeterFromResponse?.(data.credits);
       } catch (err) {
+        if (err && err.name === 'AbortError') {
+          if (stat && _isQaSessionStale(_myToken)) stat.textContent = '';
+          return;
+        }
         if (stat) stat.textContent = `Network error: ${err.message}`;
       } finally {
-        inflight = false;
-        btn.disabled = false;
-        btn.textContent = prevLabel;
+        if (!_isQaSessionStale(_myToken)) {
+          inflight = false;
+          btn.disabled = false;
+          btn.textContent = prevLabel;
+          if (_qaActiveAbort === _ac) _qaActiveAbort = null;
+        }
       }
     }
     btn.addEventListener('click', submit);
@@ -44770,6 +45708,17 @@ body.ticker-active .gTickerLabel {
   window.__semHeatClose = function () {
     window.__semHeatActive = false;
     document.body.classList.remove('sem-heatmap-active');
+    // Cancel any in-flight Ask-AI query — see www/index.html for full
+    // rationale. Aborts the fetch and bumps the session token so a
+    // late-resolving Claude call can't paint stale results onto a
+    // future heatmap session.
+    try { window.__semHeatCancelQA?.(); } catch (_) {}
+    try {
+      const _stat = document.getElementById('semHeatAskStatus');
+      const _btn  = document.getElementById('semHeatAskGoBtn');
+      if (_stat) _stat.textContent = '';
+      if (_btn)  { _btn.disabled = false; _btn.textContent = 'Map'; }
+    } catch (_) {}
     stopPlayback();
     clearMarkers();
     removeHeatSphere();
@@ -46608,9 +47557,23 @@ body.ticker-active .gTickerLabel {
   async function _snapCaptureView() {
     const projection = (window.__projection === 'map') ? 'map' : 'globe';
     let canvasEl;
+    let captureRect;
     if (projection === 'map' && window.__map2d?.state?.canvas) {
-      try { window.__map2d.render?.(); } catch (_) {}
-      canvasEl = window.__map2d.state.canvas;
+      // Render the FULL equirectangular world via map2d.snapshot()
+      // instead of capturing the viewport canvas — see www/index.html
+      // for full rationale. Falls back to the live canvas if snapshot
+      // throws for any reason. captureRect maps to the LIVE viewport
+      // so DOM-overlay re-projection still keys off on-screen positions.
+      const SNAP_H = 1200;
+      const SNAP_W = SNAP_H * 2;
+      try {
+        canvasEl = window.__map2d.snapshot(SNAP_W, SNAP_H);
+      } catch (e) {
+        console.warn('[snap] map2d.snapshot failed, falling back to viewport:', e?.message);
+        try { window.__map2d.render?.(); } catch (_) {}
+        canvasEl = window.__map2d.state.canvas;
+      }
+      captureRect = window.__map2d.state.canvas.getBoundingClientRect();
     } else {
       const renderer = window.__renderer;
       if (!renderer) throw new Error('renderer not ready');
@@ -46618,8 +47581,8 @@ body.ticker-active .gTickerLabel {
         if (window.__scene && window.__camera) renderer.render(window.__scene, window.__camera);
       } catch (_) {}
       canvasEl = renderer.domElement;
+      captureRect = canvasEl.getBoundingClientRect();
     }
-    const captureRect = canvasEl.getBoundingClientRect();
     const url = canvasEl.toDataURL('image/png');
     return { img: await _snapLoadImage(url), projection, captureRect };
   }

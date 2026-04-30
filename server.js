@@ -982,6 +982,243 @@ app.get("/api/auth/profile", async (req, res) => {
 });
 
 /* =========================================
+   Retention — Daily streaks + badge counts
+   =========================================
+   Two user-state surfaces that compound on every other engagement
+   mechanic in the app:
+
+     1. user_streaks       — current/longest day streak with a small
+                             1-freeze-per-week grace so a single
+                             missed day doesn't burn a 30-day streak.
+
+     2. user_last_seen     — per (user, surface) timestamp; lets the
+                             client compute "N new since you visited"
+                             badges on threads/lines tabs.
+
+   See migrations/20260429_user_streaks_and_last_seen.sql for full
+   schema rationale. Endpoints:
+
+     POST /api/streaks/tick    — body: { localDate: 'YYYY-MM-DD' }
+     GET  /api/streaks/me
+     GET  /api/badges/me       — counts of new threads/lines since last seen
+     POST /api/badges/seen     — body: { surface: 'threads'|'lines'|'briefing' }
+========================================= */
+
+const _STREAK_FREEZES_PER_WEEK = 1;
+const _BADGE_SURFACES = new Set(['threads', 'lines', 'briefing']);
+
+app.post('/api/streaks/tick', async (req, res) => {
+  if (!req.user?.id) return res.status(401).json({ error: 'Authentication required' });
+  const userId = req.user.id;
+  const localDate = String(req.body?.localDate || '');
+  // Strict ISO-date parse — server trusts client's local YYYY-MM-DD,
+  // so the absolute minimum is shape-validation. Streak-fraud surface
+  // is harmless (gaming your own counter) but malformed input would
+  // throw deep inside Postgres.
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(localDate)) {
+    return res.status(400).json({ error: 'Invalid localDate (expected YYYY-MM-DD)' });
+  }
+  let client;
+  try {
+    client = await pool.connect();
+    await client.query('BEGIN');
+    const { rows: existing } = await client.query(
+      `SELECT current_streak, longest_streak, last_active_date,
+              freezes_used, freeze_week_start
+         FROM user_streaks WHERE user_id = $1 FOR UPDATE`,
+      [userId]
+    );
+
+    // Compute "this week's start" once on the server using ISO-week
+    // semantics (Monday-anchored). DATE-only so DST shifts can't
+    // double-count a week.
+    const { rows: wkRows } = await client.query(
+      `SELECT date_trunc('week', $1::date)::date AS week_start`,
+      [localDate]
+    );
+    const thisWeekStart = wkRows[0].week_start;
+
+    let current, longest, lastActive, freezesUsed, freezeWeek, gained = false;
+
+    if (!existing.length) {
+      // First-ever tick for this user.
+      current = 1; longest = 1; lastActive = localDate;
+      freezesUsed = 0; freezeWeek = thisWeekStart; gained = true;
+      await client.query(
+        `INSERT INTO user_streaks
+           (user_id, current_streak, longest_streak, last_active_date,
+            freezes_used, freeze_week_start)
+         VALUES ($1, $2, $3, $4::date, $5, $6::date)`,
+        [userId, current, longest, lastActive, freezesUsed, freezeWeek]
+      );
+    } else {
+      const r = existing[0];
+      current     = r.current_streak;
+      longest     = r.longest_streak;
+      lastActive  = r.last_active_date;
+      freezesUsed = r.freezes_used;
+      freezeWeek  = r.freeze_week_start;
+
+      // Reset the per-week freeze budget if we crossed an ISO week.
+      // Done BEFORE the diff check so a freeze used in week N doesn't
+      // count against week N+1.
+      const sameWeek =
+        freezeWeek &&
+        new Date(freezeWeek).toISOString().slice(0, 10) ===
+          new Date(thisWeekStart).toISOString().slice(0, 10);
+      if (!sameWeek) {
+        freezesUsed = 0;
+        freezeWeek  = thisWeekStart;
+      }
+
+      // Compute day delta in the user's local DATE space.
+      const { rows: dRows } = await client.query(
+        `SELECT ($1::date - $2::date) AS diff`,
+        [localDate, lastActive]
+      );
+      const daysDiff = parseInt(dRows[0].diff, 10);
+
+      if (daysDiff <= 0) {
+        // Already ticked today (or — defensively — clock skew put us
+        // in the past). No change. Still write back to refresh
+        // updated_at so the row's heartbeat advances.
+        gained = false;
+      } else if (daysDiff === 1) {
+        current += 1; gained = true;
+      } else if (daysDiff === 2 && freezesUsed < _STREAK_FREEZES_PER_WEEK) {
+        // Single missed day, freeze available — keep the streak alive
+        // and grow it (user IS active today).
+        current += 1; freezesUsed += 1; gained = true;
+      } else {
+        // Streak broken — start over at 1 today.
+        current = 1; gained = true;
+      }
+      longest = Math.max(longest, current);
+
+      await client.query(
+        `UPDATE user_streaks
+            SET current_streak    = $1,
+                longest_streak    = $2,
+                last_active_date  = $3::date,
+                freezes_used      = $4,
+                freeze_week_start = $5::date,
+                updated_at        = NOW()
+          WHERE user_id = $6`,
+        [current, longest, localDate, freezesUsed, freezeWeek, userId]
+      );
+      lastActive = localDate;
+    }
+
+    await client.query('COMMIT');
+    res.json({
+      current,
+      longest,
+      last_active_date: lastActive,
+      freezes_used: freezesUsed,
+      freezes_per_week: _STREAK_FREEZES_PER_WEEK,
+      gained,
+    });
+  } catch (err) {
+    if (client) { try { await client.query('ROLLBACK'); } catch (_) {} }
+    console.error('[streaks/tick]', err.message);
+    res.status(500).json({ error: 'Failed to update streak' });
+  } finally {
+    if (client) client.release();
+  }
+});
+
+app.get('/api/streaks/me', async (req, res) => {
+  if (!req.user?.id) return res.status(401).json({ error: 'Authentication required' });
+  try {
+    const { rows } = await pool.query(
+      `SELECT current_streak, longest_streak, last_active_date,
+              freezes_used, freeze_week_start
+         FROM user_streaks WHERE user_id = $1`,
+      [req.user.id]
+    );
+    if (!rows.length) {
+      return res.json({
+        current: 0, longest: 0,
+        last_active_date: null,
+        freezes_used: 0, freezes_per_week: _STREAK_FREEZES_PER_WEEK,
+      });
+    }
+    const r = rows[0];
+    res.json({
+      current: r.current_streak,
+      longest: r.longest_streak,
+      last_active_date: r.last_active_date,
+      freezes_used: r.freezes_used,
+      freezes_per_week: _STREAK_FREEZES_PER_WEEK,
+    });
+  } catch (err) {
+    console.error('[streaks/me]', err.message);
+    res.status(500).json({ error: 'Failed to load streak' });
+  }
+});
+
+app.get('/api/badges/me', async (req, res) => {
+  if (!req.user?.id) return res.status(401).json({ error: 'Authentication required' });
+  try {
+    // Anyone with no last_seen for a surface gets a 7-day fallback so
+    // first-time signed-in users see a SOFT badge ("hey, look here")
+    // rather than a maxed-out one ("9999 new threads since 1970").
+    const FALLBACK_AGE_MS = 7 * 24 * 3600 * 1000;
+    const { rows: lastSeenRows } = await pool.query(
+      `SELECT surface, last_seen_at FROM user_last_seen WHERE user_id = $1`,
+      [req.user.id]
+    );
+    const seenMap = new Map(lastSeenRows.map(r => [r.surface, r.last_seen_at]));
+    const fallback = new Date(Date.now() - FALLBACK_AGE_MS);
+    const since = (s) => seenMap.get(s) || fallback;
+
+    // Two cheap COUNT queries — both tables have an index on
+    // last_updated_at via existing /latest endpoints' usage patterns.
+    const [{ rows: t }, { rows: l }] = await Promise.all([
+      pool.query(
+        `SELECT COUNT(*)::int AS n FROM story_threads
+          WHERE last_updated_at > $1`,
+        [since('threads')]
+      ),
+      pool.query(
+        `SELECT COUNT(*)::int AS n FROM story_timelines
+          WHERE last_updated_at > $1`,
+        [since('lines')]
+      ),
+    ]);
+
+    res.json({
+      threads: t[0]?.n || 0,
+      lines:   l[0]?.n || 0,
+    });
+  } catch (err) {
+    console.error('[badges/me]', err.message);
+    res.status(500).json({ error: 'Failed to load badges' });
+  }
+});
+
+app.post('/api/badges/seen', async (req, res) => {
+  if (!req.user?.id) return res.status(401).json({ error: 'Authentication required' });
+  const surface = String(req.body?.surface || '').trim();
+  if (!_BADGE_SURFACES.has(surface)) {
+    return res.status(400).json({ error: 'Invalid surface' });
+  }
+  try {
+    await pool.query(
+      `INSERT INTO user_last_seen (user_id, surface, last_seen_at)
+       VALUES ($1, $2, NOW())
+       ON CONFLICT (user_id, surface)
+       DO UPDATE SET last_seen_at = EXCLUDED.last_seen_at`,
+      [req.user.id, surface]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[badges/seen]', err.message);
+    res.status(500).json({ error: 'Failed to update last-seen' });
+  }
+});
+
+/* =========================================
    Cities
 ========================================= */
 app.get("/api/cities", async (req, res) => {

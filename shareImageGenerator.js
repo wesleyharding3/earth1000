@@ -366,17 +366,22 @@ function _background() {
 // Returns SVG markup (string). isos[] should be uppercased ISO 3166-1 alpha-2.
 async function _flagChips(isos, x, y) {
   const list = (isos || []).slice(0, 6); // hard cap on chips per image
-  const CHIP_H = 36;
-  const FLAG_W_INNER = 30;
-  const FLAG_H_INNER = 22;
-  const PAD = 12;
-  const GAP = 10;
+  // Sizing bumped from 36px chip / 30×22 flag / 14px text →
+  // 50px chip / 42×30 flag / 18px text so the chip row reads as a
+  // first-class element next to the title rather than a footnote.
+  // Larger chips also leave the OG card looking less empty now that
+  // the right-panel hero image has been removed.
+  const CHIP_H = 50;
+  const FLAG_W_INNER = 42;
+  const FLAG_H_INNER = 30;
+  const PAD = 16;
+  const GAP = 12;
   const fragments = [];
   let cx = x;
   for (const iso of list) {
     const dataUri = await _flagDataUri(iso);
-    const labelW = 28; // approx width of 2-3 char label
-    const chipW = PAD + FLAG_W_INNER + 8 + labelW + PAD;
+    const labelW = 36; // approx width of 2-3 char label at 18px
+    const chipW = PAD + FLAG_W_INNER + 10 + labelW + PAD;
     fragments.push(`
       <g transform="translate(${cx}, ${y})">
         <rect width="${chipW}" height="${CHIP_H}" rx="${CHIP_H/2}"
@@ -384,9 +389,9 @@ async function _flagChips(isos, x, y) {
         ${dataUri ? `<image x="${PAD}" y="${(CHIP_H - FLAG_H_INNER) / 2}"
                             width="${FLAG_W_INNER}" height="${FLAG_H_INNER}"
                             href="${dataUri}" preserveAspectRatio="xMidYMid slice"/>` : ''}
-        <text x="${PAD + FLAG_W_INNER + 8}" y="${CHIP_H/2 + 5}"
+        <text x="${PAD + FLAG_W_INNER + 10}" y="${CHIP_H/2 + 6}"
               font-family="${FONT_FAMILY}"
-              font-weight="700" font-size="14" letter-spacing="1"
+              font-weight="700" font-size="18" letter-spacing="1"
               fill="${BRAND.cream}">${_esc(iso)}</text>
       </g>
     `);
@@ -438,13 +443,20 @@ async function _renderThreadSvg({ title, isos, category, articleCount, languageC
                   fill="${BRAND.cream}">${_esc(line)}</text>`;
   }).join('\n');
 
-  const chipsY = H - 140;
+  // Chips moved 10px lower (was H-140) to make room for the bigger
+  // coverage line above + the bigger chips themselves; without the bump
+  // the coverage text and chips would overlap.
+  const chipsY = H - 150;
   const coverageText = _coverageLine({ articleCount, languageCount, countryCount });
+  // Coverage font bumped 13px → 18px so the row reads as a real
+  // sub-headline rather than a footnote, matching the visual weight of
+  // the new larger flag chips. Letter-spacing softened from 2 → 1.4 to
+  // keep the row legible at the larger size.
   const coverageSvg = coverageText ? `
-    <text x="56" y="${chipsY - 18}"
+    <text x="56" y="${chipsY - 22}"
           font-family="${FONT_FAMILY}"
-          font-weight="600" font-size="13" letter-spacing="2"
-          fill="rgba(255,255,255,0.62)">${_esc(coverageText)}</text>
+          font-weight="600" font-size="18" letter-spacing="1.4"
+          fill="rgba(255,255,255,0.72)">${_esc(coverageText)}</text>
   ` : '';
   const chipsSvg = await _flagChips(isos, 56, chipsY);
 
@@ -490,13 +502,20 @@ async function _renderLineSvg({ title, isos, category, articleCount, languageCou
                   fill="${BRAND.cream}">${_esc(line)}</text>`;
   }).join('\n');
 
-  const chipsY = H - 140;
+  // Chips moved 10px lower (was H-140) to make room for the bigger
+  // coverage line above + the bigger chips themselves; without the bump
+  // the coverage text and chips would overlap.
+  const chipsY = H - 150;
   const coverageText = _coverageLine({ articleCount, languageCount, countryCount });
+  // Coverage font bumped 13px → 18px so the row reads as a real
+  // sub-headline rather than a footnote, matching the visual weight of
+  // the new larger flag chips. Letter-spacing softened from 2 → 1.4 to
+  // keep the row legible at the larger size.
   const coverageSvg = coverageText ? `
-    <text x="56" y="${chipsY - 18}"
+    <text x="56" y="${chipsY - 22}"
           font-family="${FONT_FAMILY}"
-          font-weight="600" font-size="13" letter-spacing="2"
-          fill="rgba(255,255,255,0.62)">${_esc(coverageText)}</text>
+          font-weight="600" font-size="18" letter-spacing="1.4"
+          fill="rgba(255,255,255,0.72)">${_esc(coverageText)}</text>
   ` : '';
   const chipsSvg = await _flagChips(isos, 56, chipsY);
 
