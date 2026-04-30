@@ -2158,21 +2158,19 @@ body.ticker-active #flowControls {
 }
 
 /* Autocomplete dropdown
-   Mobile: drops UP (bottom:100%) so the suggestions list appears
-   ABOVE the input instead of below it. The News Flows panel is
-   anchored at the bottom of the viewport on mobile and the on-screen
-   keyboard takes the lower half — a downward dropdown would render
-   behind the keyboard and be invisible. Drop-up keeps the list in
-   the visible portion of the screen above the field.
-   (Desktop has its own .flowAC declaration in /index.html with
-   top:100% — the desktop panel sits at the top-right of the globe
-   and there's plenty of room below.) */
+   Mobile: drops DOWN (top:100%) but max-height is capped by JS via
+   visualViewport so it always stops ABOVE the iOS on-screen keyboard
+   instead of disappearing behind it. The cap is set when the input
+   is focused and updated as the keyboard animates in (visualViewport
+   resize event). Default max-height is a conservative 180px in case
+   the JS hasn't computed yet — small enough to fit on most screens
+   even before keyboard adjustment lands. */
 .flowAC {
   position: absolute;
-  bottom: 100%;
+  top: 100%;
   left: 0;
   right: 0;
-  margin-bottom: 4px;
+  margin-top: 4px;
   background: rgba(5,7,10,0.98);
   border: 1px solid rgba(0,220,130,0.25);
   border-radius: 10px;
@@ -2180,7 +2178,7 @@ body.ticker-active #flowControls {
   overflow-y: auto;
   z-index: 300;
   display: none;
-  box-shadow: 0 -8px 32px rgba(0,0,0,0.5);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
 }
 .flowAC.open { display: block; }
 .flowAC-item {
@@ -25591,6 +25589,32 @@ const settingsToggle     = document.getElementById("settingsToggle");
   }
 
   /* ── Autocomplete setup ── */
+  /* Cap the autocomplete dropdown's max-height so it doesn't extend
+     into the iOS on-screen keyboard. window.visualViewport.height
+     reflects the screen MINUS the keyboard (when present) on iOS
+     Safari + WKWebView; on browsers without visualViewport support
+     we fall back to window.innerHeight (no keyboard awareness, but
+     the 240px cap below still keeps it bounded).
+       availableBelow = viewport_bottom_y − input_bottom_y − margins
+     Floor at 80px so even when the keyboard nearly fills the screen
+     the user still sees ≥2 suggestions; cap at 240px so on landscape
+     /tablets it doesn't stretch absurdly tall. The 4px subtracted
+     matches .flowAC's margin-top; the 8px is a comfort gap above
+     the keyboard. */
+  function _capDropdownToViewport(input, ac) {
+    if (!input || !ac) return;
+    try {
+      const inputRect = input.getBoundingClientRect();
+      const vv = window.visualViewport;
+      const viewportBottom = vv
+        ? (vv.offsetTop + vv.height)
+        : window.innerHeight;
+      const availableBelow = viewportBottom - inputRect.bottom - 4 - 8;
+      const capped = Math.max(80, Math.min(240, availableBelow));
+      ac.style.maxHeight = `${capped}px`;
+    } catch (_) { /* leave default 180px */ }
+  }
+
   function setupAutocomplete(inputId, acId, chipId, filterKey) {
     const input = document.getElementById(inputId);
     const ac    = document.getElementById(acId);
@@ -25598,6 +25622,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
     let acIndex = -1;
 
     input.addEventListener("focus", loadCountries);
+
+    // visualViewport.resize fires when the iOS keyboard animates
+    // in/out (and on rotation). Recompute the dropdown cap so it
+    // tracks the keyboard height — when the keyboard slides up the
+    // dropdown shrinks; when it dismisses the dropdown can grow
+    // back. Guarded on `ac.open` so the math doesn't run when the
+    // dropdown isn't even visible.
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', () => {
+        if (ac.classList.contains('open')) _capDropdownToViewport(input, ac);
+      });
+    }
 
     input.addEventListener("input", () => {
       const q = input.value.trim().toLowerCase();
@@ -25623,6 +25659,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
       });
 
       ac.classList.add("open");
+      // Compute cap on every show — handles the case where the
+      // user opened the dropdown, dismissed the keyboard, and
+      // reopened it. visualViewport.resize covers transitions
+      // mid-typing.
+      _capDropdownToViewport(input, ac);
     });
 
     input.addEventListener("keydown", (e) => {
@@ -29566,13 +29607,32 @@ const settingsToggle     = document.getElementById("settingsToggle");
               pulse('#cdSummarySection, #cdSummaryBody');
             }
           },
-          // 7s: scroll + pulse the country chips row (closest visual
-          // analog to a "country pie graph" in the current cluster
-          // panel — exists today, the pie/distribution chart is
-          // queued for v1.1).
+          // 7s: scroll + pulse the country pie chart so the view
+          //      lands on it and dwells there until the timeline
+          //      beat fires. Prefer a REAL pie chart from the thread's
+          //      data panels (#cdDataBody → renderDataPanelHTML emits
+          //      .bDataPanelChart--expandable[data-pie-id] for pie
+          //      charts). Falls back to .cdCountriesRow when the
+          //      thread has no pie panel — that row is the visual
+          //      analog (one chip per country, ordered by article
+          //      count, like a flat pie). Whichever target we land
+          //      on, we wrap to .bDataPanel (the section card) so
+          //      the pulse is on the whole panel border, not just
+          //      the SVG inside.
           { at: 7500, do: () => {
-              scrollPanelTo('#cdCountriesRow, .cdCountriesRow');
-              pulse('#cdCountriesRow, .cdCountriesRow');
+              const pie = document.querySelector(
+                '#cdDataBody .bDataPanelChart--expandable[data-pie-id], ' +
+                '#cdDataBody .bDataPanelChart[data-pie-id]'
+              );
+              const target = pie ? (pie.closest('.bDataPanel') || pie) : null;
+              if (target) {
+                scrollPanelTo(target);
+                pulse(target);
+              } else {
+                // No pie chart for this thread — country chips row.
+                scrollPanelTo('#cdCountriesRow, .cdCountriesRow');
+                pulse('#cdCountriesRow, .cdCountriesRow');
+              }
             }
           },
           // 10s: scroll + pulse the timeline section.
@@ -29806,13 +29866,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
           clearSpotlight();
         },
         beats: [
-          // 0s: pulse the News Flows toggle button at the top of the
-          //     globe page so the user sees what to tap.
+          // 0s: pulse the News Flows toggle button.
           { at: 0, do: () => pulse('#flowModeBtn') },
-          // 1s: actually click it — opens the news flows panel
-          //     (#flowControls). Wrapped in waitForElement so we don't
-          //     fall through if the button hasn't rendered yet on a
-          //     cold start.
+          // 1s: click it — opens the news flows panel (#flowControls).
           { at: 1000, do: async () => {
               try {
                 const btn = await waitForElement('#flowModeBtn', { timeout: 4000 });
@@ -29821,8 +29877,6 @@ const settingsToggle     = document.getElementById("settingsToggle");
             }
           },
           // 2.5s: pulse + type "climate" into the keyword input.
-          //       waitForElement covers the panel slide-in transition
-          //       (which can take ~300ms after click).
           { at: 2500, do: async () => {
               try {
                 const input = await waitForElement('#flowKeyword', { timeout: 3000 });
@@ -29833,19 +29887,41 @@ const settingsToggle     = document.getElementById("settingsToggle");
               } catch (_) {}
             }
           },
-          // 5s: click the Aggregate mode pill — narrator: "...or render
-          //     all flows at once."
-          { at: 5000, do: () => {
+          // 4.5s: click Aggregate mode pill.
+          { at: 4500, do: () => {
               try {
                 const pill = document.querySelector('.flowModePill[data-fmode="aggregate"]');
                 if (pill) { pulse(pill); pill.click(); }
               } catch (_) {}
             }
           },
-          // 8s: click back to Time Series ("individual" data-fmode is
-          //     the default-active value for the Time Series pill —
-          //     the codebase predates the "individual" → "time series"
-          //     rename).
+          // 6.5s: spawn synthetic arcs on the globe so the user has
+          //       something to LOOK AT during the rest of the chapter
+          //       and during the closing minimize-reveal. We don't
+          //       rely on the Load button because that hits the live
+          //       API — synthetic flows give deterministic visuals.
+          //       Mirrors chapter 7's spawn block. Doesn't call
+          //       __flowSetOpen(true) here because that would auto-
+          //       minimize the panel (per the function's `if (open)`
+          //       branch); we want the panel to stay expanded until
+          //       the explicit minimize at 11s.
+          { at: 6500, do: () => {
+              try {
+                const hub = { type: 'country', iso: 'US', id: 'US', place: 'United States', lat: 39.83, lon: -98.58 };
+                const dests = [
+                  { type: 'country', iso: 'GB', id: 'GB', place: 'United Kingdom', lat:  54.00, lon:  -2.00 },
+                  { type: 'country', iso: 'DE', id: 'DE', place: 'Germany',        lat:  51.16, lon:  10.45 },
+                  { type: 'country', iso: 'JP', id: 'JP', place: 'Japan',          lat:  36.20, lon: 138.25 },
+                  { type: 'country', iso: 'BR', id: 'BR', place: 'Brazil',         lat: -14.24, lon: -51.93 },
+                  { type: 'country', iso: 'IN', id: 'IN', place: 'India',          lat:  20.59, lon:  78.96 },
+                ];
+                const flows = dests.map(dst => ({ src: hub, dst, count: 1, _cardTriggered: false, _sourceType: 'thread' }));
+                window.__flowAssignLaneOffsets?.(flows);
+                flows.forEach(flow => { const a = window.__flowCreateArc?.(flow, 1); if (a) window.__flowPushArc?.(a); });
+              } catch (_) {}
+            }
+          },
+          // 8s: click back to Time Series ("individual" data-fmode).
           { at: 8000, do: () => {
               try {
                 const pill = document.querySelector('.flowModePill[data-fmode="individual"]');
@@ -29853,22 +29929,32 @@ const settingsToggle     = document.getElementById("settingsToggle");
               } catch (_) {}
             }
           },
-          // 10.5s: click the Sentiment color pill — narrator: "...color
-          //        by tone" or similar.
-          { at: 10500, do: () => {
+          // 9.5s: click Sentiment color pill.
+          { at: 9500, do: () => {
               try {
                 const pill = document.querySelector('.flowModePill[data-cmode="sentiment"]');
                 if (pill) { pulse(pill); pill.click(); }
               } catch (_) {}
             }
           },
-          // 12s: return to Color by Routing (default state) so the
-          //      next chapter starts from a clean baseline.
-          { at: 12000, do: () => {
+          // 10.5s: return to Color by Routing (clean baseline before
+          //        the closing reveal).
+          { at: 10500, do: () => {
               try {
                 const pill = document.querySelector('.flowModePill[data-cmode="routing"]');
                 if (pill) { pulse(pill); pill.click(); }
               } catch (_) {}
+            }
+          },
+          // 11s: minimize-reveal — collapse both #flowControls (news
+          //      flows panel) and #flowCtxCard (routes / arc list
+          //      panel, if it's open) so the last ~2s of the chapter
+          //      shows the unobstructed globe with arcs flowing.
+          //      clearPulse so no pulsing button is left mid-collapse.
+          { at: 11000, do: () => {
+              clearPulse();
+              try { document.getElementById('flowControls')?.classList.add('minimized'); } catch (_) {}
+              try { document.getElementById('flowCtxCard')?.classList.add('flowCtxMinimized'); } catch (_) {}
             }
           },
         ],
@@ -29877,8 +29963,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
           try {
             window.__flowClearArcs?.();
             window.__flowSetOpen?.(false);
-            // Close the news-flows panel if it ended up open.
-            document.getElementById('flowControls')?.classList.remove('visible');
+            // Close the news-flows panel + drop minimize state for
+            // any chapter that re-opens it later.
+            const fc = document.getElementById('flowControls');
+            if (fc) fc.classList.remove('visible', 'minimized');
+            const fcc = document.getElementById('flowCtxCard');
+            if (fcc) fcc.classList.remove('flowCtxMinimized');
           } catch (_) {}
         },
       },
@@ -29898,7 +29988,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           clearSpotlight();
         },
         beats: [
-          { at: 0,    do: () => spotlight('#semHeatToggleBtn') },
+          { at: 0,    do: () => pulse('#semHeatToggleBtn') },
           { at: 1000, do: () => { try { window.__semHeatOpen?.(); } catch (_) {} } },
           // 2s: type "GDP per capita" into Map This.
           { at: 2000, do: () => {
@@ -29906,7 +29996,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
               if (!input) return;
               input.value = 'GDP per capita';
               try { input.dispatchEvent(new Event('input', { bubbles: true })); } catch (_) {}
-              spotlight(input);
+              pulse(input);
               // Only fire the actual submit if the user is signed in
               // — anon submission would 401 + open the auth modal,
               // which would derail the tutorial.
@@ -29919,12 +30009,22 @@ const settingsToggle     = document.getElementById("settingsToggle");
           },
           { at: 7000, do: () => {
               const tab = document.querySelector('.semHeatCtlTab[data-ctl="keyword"]');
-              if (tab) { tab.click(); spotlight(tab); }
+              if (tab) { tab.click(); pulse(tab); }
             }
           },
           { at: 10000, do: () => {
               const tab = document.querySelector('.semHeatCtlTab[data-ctl="timeseries"]');
-              if (tab) { tab.click(); spotlight(tab); }
+              if (tab) { tab.click(); pulse(tab); }
+            }
+          },
+          // 12s: minimize-reveal — collapse the heatmap panel so the
+          //      last ~2s of the chapter shows the unobstructed globe
+          //      with the heatmap painted across countries. The panel
+          //      collapses to its compact bar via the `.minimized`
+          //      class (same surface that __semHeatMinimize uses).
+          { at: 12000, do: () => {
+              clearPulse();
+              try { window.__semHeatMinimize?.(); } catch (_) {}
             }
           },
         ],

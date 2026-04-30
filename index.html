@@ -27587,10 +27587,23 @@ const settingsToggle     = document.getElementById("settingsToggle");
               pulse('#cdSummarySection, #cdSummaryBody');
             }
           },
-          // 7s: scroll panel + pulse country chips row.
+          // 7s: scroll + pulse the country pie chart (real
+          //      .bDataPanelChart[data-pie-id] when the thread has
+          //      one, else the country chips row as visual analog).
+          //      See www/index.html for full rationale.
           { at: 7500, do: () => {
-              scrollPanelTo('#cdCountriesRow, .cdCountriesRow');
-              pulse('#cdCountriesRow, .cdCountriesRow');
+              const pie = document.querySelector(
+                '#cdDataBody .bDataPanelChart--expandable[data-pie-id], ' +
+                '#cdDataBody .bDataPanelChart[data-pie-id]'
+              );
+              const target = pie ? (pie.closest('.bDataPanel') || pie) : null;
+              if (target) {
+                scrollPanelTo(target);
+                pulse(target);
+              } else {
+                scrollPanelTo('#cdCountriesRow, .cdCountriesRow');
+                pulse('#cdCountriesRow, .cdCountriesRow');
+              }
             }
           },
           // 10s: scroll panel + pulse timeline section.
@@ -27813,10 +27826,27 @@ const settingsToggle     = document.getElementById("settingsToggle");
               } catch (_) {}
             }
           },
-          { at: 5000, do: () => {
+          { at: 4500, do: () => {
               try {
                 const pill = document.querySelector('.flowModePill[data-fmode="aggregate"]');
                 if (pill) { pulse(pill); pill.click(); }
+              } catch (_) {}
+            }
+          },
+          // 6.5s: spawn synthetic arcs (without auto-minimizing).
+          { at: 6500, do: () => {
+              try {
+                const hub = { type: 'country', iso: 'US', id: 'US', place: 'United States', lat: 39.83, lon: -98.58 };
+                const dests = [
+                  { type: 'country', iso: 'GB', id: 'GB', place: 'United Kingdom', lat:  54.00, lon:  -2.00 },
+                  { type: 'country', iso: 'DE', id: 'DE', place: 'Germany',        lat:  51.16, lon:  10.45 },
+                  { type: 'country', iso: 'JP', id: 'JP', place: 'Japan',          lat:  36.20, lon: 138.25 },
+                  { type: 'country', iso: 'BR', id: 'BR', place: 'Brazil',         lat: -14.24, lon: -51.93 },
+                  { type: 'country', iso: 'IN', id: 'IN', place: 'India',          lat:  20.59, lon:  78.96 },
+                ];
+                const flows = dests.map(dst => ({ src: hub, dst, count: 1, _cardTriggered: false, _sourceType: 'thread' }));
+                window.__flowAssignLaneOffsets?.(flows);
+                flows.forEach(flow => { const a = window.__flowCreateArc?.(flow, 1); if (a) window.__flowPushArc?.(a); });
               } catch (_) {}
             }
           },
@@ -27827,18 +27857,25 @@ const settingsToggle     = document.getElementById("settingsToggle");
               } catch (_) {}
             }
           },
-          { at: 10500, do: () => {
+          { at: 9500, do: () => {
               try {
                 const pill = document.querySelector('.flowModePill[data-cmode="sentiment"]');
                 if (pill) { pulse(pill); pill.click(); }
               } catch (_) {}
             }
           },
-          { at: 12000, do: () => {
+          { at: 10500, do: () => {
               try {
                 const pill = document.querySelector('.flowModePill[data-cmode="routing"]');
                 if (pill) { pulse(pill); pill.click(); }
               } catch (_) {}
+            }
+          },
+          // 11s: minimize-reveal both panels for the closing 2s.
+          { at: 11000, do: () => {
+              clearPulse();
+              try { document.getElementById('flowControls')?.classList.add('minimized'); } catch (_) {}
+              try { document.getElementById('flowCtxCard')?.classList.add('flowCtxMinimized'); } catch (_) {}
             }
           },
         ],
@@ -27847,8 +27884,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
           try {
             window.__flowClearArcs?.();
             window.__flowSetOpen?.(false);
-            // Close the news-flows panel if it ended up open.
-            document.getElementById('flowControls')?.classList.remove('visible');
+            const fc = document.getElementById('flowControls');
+            if (fc) fc.classList.remove('visible', 'minimized');
+            const fcc = document.getElementById('flowCtxCard');
+            if (fcc) fcc.classList.remove('flowCtxMinimized');
           } catch (_) {}
         },
       },
@@ -27867,7 +27906,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           clearSpotlight();
         },
         beats: [
-          { at: 0,    do: () => spotlight('#semHeatToggleBtn') },
+          { at: 0,    do: () => pulse('#semHeatToggleBtn') },
           { at: 1000, do: () => { try { window.__semHeatOpen?.(); } catch (_) {} } },
           // 2s: type "GDP per capita" into Map This.
           { at: 2000, do: () => {
@@ -27875,10 +27914,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
               if (!input) return;
               input.value = 'GDP per capita';
               try { input.dispatchEvent(new Event('input', { bubbles: true })); } catch (_) {}
-              spotlight(input);
-              // Only fire the actual submit if the user is signed in
-              // — anon submission would 401 + open the auth modal,
-              // which would derail the tutorial.
+              pulse(input);
               if (window.__authToken) {
                 setTimeout(() => {
                   try { document.getElementById('semHeatAskGoBtn')?.click(); } catch (_) {}
@@ -27888,12 +27924,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
           },
           { at: 7000, do: () => {
               const tab = document.querySelector('.semHeatCtlTab[data-ctl="keyword"]');
-              if (tab) { tab.click(); spotlight(tab); }
+              if (tab) { tab.click(); pulse(tab); }
             }
           },
           { at: 10000, do: () => {
               const tab = document.querySelector('.semHeatCtlTab[data-ctl="timeseries"]');
-              if (tab) { tab.click(); spotlight(tab); }
+              if (tab) { tab.click(); pulse(tab); }
+            }
+          },
+          // 12s: minimize-reveal — last ~2s shows the unobstructed
+          //      globe with the heatmap painted across countries.
+          //      See www/index.html.
+          { at: 12000, do: () => {
+              clearPulse();
+              try { window.__semHeatMinimize?.(); } catch (_) {}
             }
           },
         ],
