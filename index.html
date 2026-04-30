@@ -4264,13 +4264,27 @@ button.arcCtxSegDot,
       flex-direction: column;
       justify-content: flex-end;
       align-items: center;
-      padding: 0 0 max(env(safe-area-inset-bottom, 0px), 28px);
+      /* Clear page-nav + ticker + home-indicator — see www/index.html. */
+      padding: 0 0 calc(
+        var(--page-nav-height, 0px)
+        + var(--global-ticker-height, 0px)
+        + var(--global-ticker-gap, 0px)
+        + var(--app-bottom-inset, 0px)
+        + env(safe-area-inset-bottom)
+        + 18px
+      );
+    }
+    /* Per-chapter chrome flip — see www/index.html. */
+    #tutOverlay.tut-chrome-top {
+      justify-content: flex-start;
+      padding: calc(env(safe-area-inset-top, 0px) + 140px) 0 0;
     }
     #tutOverlay.active { opacity: 1; }
     #tutOverlay > * { pointer-events: auto; }
     #tutSkip {
       position: absolute;
-      top: max(env(safe-area-inset-top, 0px), 14px);
+      /* Drop below #scaleBar (top:86px). See www/index.html. */
+      top: max(calc(env(safe-area-inset-top, 0px) + 130px), 130px);
       right: 14px;
       padding: 8px 14px;
       border-radius: 999px;
@@ -4422,6 +4436,9 @@ button.arcCtxSegDot,
       pointer-events: auto;
     }
     .tutCtrlBtn {
+      /* See www/index.html — flex-shrink lock so the round button
+         doesn't compress to an ellipse on tight viewports. */
+      flex: 0 0 38px;
       width: 38px; height: 38px;
       border-radius: 50%;
       background: rgba(8, 8, 8, 0.72);
@@ -27497,12 +27514,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
       },
 
       // ── 6. Feed (~10s) ────────────────────────────────────────────
+      // Chrome moves to TOP — see www/index.html.
       {
         id: 'feed',
         title: 'Feed',
         caption: 'Raw articles — analysis, source profile, one-tap to read.',
         audio: AUDIO_BASE + '06_feed.mp3',
         fallbackMs: 10000,
+        chrome: 'top',
         onEnter: () => {
           try { window.__goToPage?.(2); } catch (_) {}
           setTimeout(() => {
@@ -27593,12 +27612,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
       },
 
       // ── 8. News Flows panel (~13s) ───────────────────────────────
+      // Chrome moves to TOP — see www/index.html.
       {
         id: 'news_flows',
         title: 'News Flows',
         caption: 'Filter by keyword, watch coverage flow out of any country.',
         audio: AUDIO_BASE + '08_news_flows.mp3',
         fallbackMs: 13000,
+        chrome: 'top',
         onEnter: () => {
           try { window.__goToPage?.(1); } catch (_) {}
           clearSpotlight();
@@ -27641,12 +27662,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
       },
 
       // ── 9. Heatmap (~14s) ────────────────────────────────────────
+      // Chrome moves to TOP — see www/index.html.
       {
         id: 'heatmap',
         title: 'Heatmap',
         caption: 'Ask any question — see it painted across countries.',
         audio: AUDIO_BASE + '09_heatmap.mp3',
         fallbackMs: 14000,
+        chrome: 'top',
         onEnter: () => {
           try { window.__goToPage?.(1); } catch (_) {}
           clearSpotlight();
@@ -27689,12 +27712,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
       },
 
       // ── 10. Briefing (~9s) ───────────────────────────────────────
+      // Chrome moves to TOP — see www/index.html.
       {
         id: 'briefing',
         title: 'Briefing',
         caption: "A curated deep dive into the day's top breaking stories.",
         audio: AUDIO_BASE + '10_briefing.mp3',
         fallbackMs: 9000,
+        chrome: 'top',
         onEnter: () => {
           try { window.__goToPage?.(1); } catch (_) {}
           clearSpotlight();
@@ -27873,6 +27898,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
       setChapterIndex(i);
       clearChapterTimers();
       stopCurrentAudio();
+
+      // Per-chapter chrome flip — see www/index.html.
+      const overlayEl = document.getElementById('tutOverlay');
+      if (overlayEl) {
+        overlayEl.classList.toggle('tut-chrome-top', ch.chrome === 'top');
+      }
 
       try { ch.onEnter?.call(ch); } catch (e) {
         console.warn('[tutorial] onEnter', i, e && e.message);

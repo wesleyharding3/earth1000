@@ -4618,13 +4618,40 @@ button.arcCtxSegDot,
       flex-direction: column;
       justify-content: flex-end;
       align-items: center;
-      padding: 0 0 max(env(safe-area-inset-bottom, 0px), 28px);
+      /* Bottom padding clears the page-nav bar, the news ticker, and
+         the home indicator so the controls + caption + dots row never
+         sits ON TOP of the ticker (where the previous reports of
+         overlap came from). Same calc the news-flow / heatmap panels
+         use for their bottom anchor. */
+      padding: 0 0 calc(
+        var(--page-nav-height, 0px)
+        + var(--global-ticker-height, 0px)
+        + var(--global-ticker-gap, 0px)
+        + var(--app-bottom-inset, 0px)
+        + env(safe-area-inset-bottom)
+        + 18px
+      );
+    }
+    /* Per-chapter chrome flip — lets a chapter declare `chrome: 'top'`
+       so the caption + controls + dots stack moves to the TOP of the
+       screen, out of the way of any panel anchored at the bottom (news
+       flows panel, briefing launcher, article-detail panel, etc.).
+       Skip button stays at top-right and clears the scale bar at
+       top:86px, so it doesn't collide with the centered top stack. */
+    #tutOverlay.tut-chrome-top {
+      justify-content: flex-start;
+      padding: calc(env(safe-area-inset-top, 0px) + 140px) 0 0;
     }
     #tutOverlay.active { opacity: 1; }
     #tutOverlay > * { pointer-events: auto; }
     #tutSkip {
       position: absolute;
-      top: max(env(safe-area-inset-top, 0px), 14px);
+      /* Drop the skip button below the #scaleBar (top:86px) so the two
+         don't visually stack at the same corner. 130px clears both
+         the scale bar's vertical extent and any safe-area inset on
+         notched devices. The 24px iOS-only margin keeps a healthy gap
+         under the dynamic island. */
+      top: max(calc(env(safe-area-inset-top, 0px) + 130px), 130px);
       right: 14px;
       padding: 8px 14px;
       border-radius: 999px;
@@ -4794,6 +4821,12 @@ button.arcCtxSegDot,
       pointer-events: auto;
     }
     .tutCtrlBtn {
+      /* flex: 0 0 38px locks the button's main-axis size so the
+         flex container can't shrink it horizontally and turn the
+         circle into an ellipse on narrow viewports. The default
+         flex-shrink:1 was the culprit on iPhone — once the controls
+         row got pushed near a tight edge, the buttons compressed. */
+      flex: 0 0 38px;
       width: 38px; height: 38px;
       border-radius: 50%;
       background: rgba(8, 8, 8, 0.72);
@@ -29324,12 +29357,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
       },
 
       // ── 6. Feed (~10s) ────────────────────────────────────────────
+      // Article detail panel slides up from the bottom on mobile —
+      // chrome moves to TOP so caption + controls don't sit on top
+      // of the article body.
       {
         id: 'feed',
         title: 'Feed',
         caption: 'Raw articles — analysis, source profile, one-tap to read.',
         audio: AUDIO_BASE + '06_feed.mp3',
         fallbackMs: 10000,
+        chrome: 'top',
         onEnter: () => {
           try { window.__goToPage?.(2); } catch (_) {}
           setTimeout(() => {
@@ -29420,12 +29457,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
       },
 
       // ── 8. News Flows panel (~13s) ───────────────────────────────
+      // News Flows panel anchors bottom-right above the ticker —
+      // chrome moves to TOP so it doesn't visually compete with the
+      // panel's keyword input + mode pills.
       {
         id: 'news_flows',
         title: 'News Flows',
         caption: 'Filter by keyword, watch coverage flow out of any country.',
         audio: AUDIO_BASE + '08_news_flows.mp3',
         fallbackMs: 13000,
+        chrome: 'top',
         onEnter: () => {
           try { window.__goToPage?.(1); } catch (_) {}
           clearSpotlight();
@@ -29468,12 +29509,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
       },
 
       // ── 9. Heatmap (~14s) ────────────────────────────────────────
+      // Heatmap panel anchors bottom-right; same chrome-flip as
+      // news flows so the panel surface stays unobstructed.
       {
         id: 'heatmap',
         title: 'Heatmap',
         caption: 'Ask any question — see it painted across countries.',
         audio: AUDIO_BASE + '09_heatmap.mp3',
         fallbackMs: 14000,
+        chrome: 'top',
         onEnter: () => {
           try { window.__goToPage?.(1); } catch (_) {}
           clearSpotlight();
@@ -29516,12 +29560,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
       },
 
       // ── 10. Briefing (~9s) ───────────────────────────────────────
+      // bLauncher slides up from the bottom — chrome at top.
       {
         id: 'briefing',
         title: 'Briefing',
         caption: "A curated deep dive into the day's top breaking stories.",
         audio: AUDIO_BASE + '10_briefing.mp3',
         fallbackMs: 9000,
+        chrome: 'top',
         onEnter: () => {
           try { window.__goToPage?.(1); } catch (_) {}
           clearSpotlight();
@@ -29700,6 +29746,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
       setChapterIndex(i);
       clearChapterTimers();
       stopCurrentAudio();
+
+      // Per-chapter chrome flip — chapters that surface a panel
+      // anchored at the bottom (news flows, heatmap, briefing,
+      // article detail) declare `chrome: 'top'` so the caption +
+      // controls + dots move out of the way. Default is bottom.
+      const overlayEl = document.getElementById('tutOverlay');
+      if (overlayEl) {
+        overlayEl.classList.toggle('tut-chrome-top', ch.chrome === 'top');
+      }
 
       try { ch.onEnter?.call(ch); } catch (e) {
         console.warn('[tutorial] onEnter', i, e && e.message);

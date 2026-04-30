@@ -2871,11 +2871,23 @@ app.get("/api/flows", heavyLimiter, async (req, res) => {
 
       // Dedicated client with per-statement timeout so a slow cold query
       // fails fast instead of holding the pool and cascading retries.
+      // SET LOCAL only takes effect inside a transaction — without an
+      // explicit BEGIN, each query runs in its own implicit transaction
+      // that ends immediately, so the SET LOCAL was a silent no-op
+      // (queries actually ran under the pool's default 45s timeout).
+      // Wrapping SET LOCAL + SELECT in a real transaction so the cap
+      // actually applies. ROLLBACK on error so the connection returns
+      // to the pool clean, no half-open transaction state.
       const client = await pool.connect();
       let rows;
       try {
+        await client.query("BEGIN");
         await client.query("SET LOCAL statement_timeout = 6000");
         ({ rows } = await client.query(aggregateQuery, params));
+        await client.query("COMMIT");
+      } catch (e) {
+        await client.query("ROLLBACK").catch(() => {});
+        throw e;
       } finally {
         client.release();
       }
@@ -2938,9 +2950,12 @@ app.get("/api/flows", heavyLimiter, async (req, res) => {
         `;
       }
 
+      // See aggregate-mode block above for the BEGIN/COMMIT rationale —
+      // SET LOCAL outside a transaction is a silent no-op.
       const client = await pool.connect();
       let rows;
       try {
+        await client.query("BEGIN");
         await client.query("SET LOCAL statement_timeout = 6000");
         ({ rows } = await client.query(`
         SELECT
@@ -2998,6 +3013,10 @@ app.get("/api/flows", heavyLimiter, async (req, res) => {
         ORDER BY a.published_at DESC
         LIMIT $${limitParam}
       `, params));
+        await client.query("COMMIT");
+      } catch (e) {
+        await client.query("ROLLBACK").catch(() => {});
+        throw e;
       } finally {
         client.release();
       }
