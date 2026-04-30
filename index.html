@@ -27155,11 +27155,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
     // Full-viewport dim with a punched-out rounded-rect over the
     // focal element. Implemented via SVG mask so the cutout edges
     // stay crisp through repositioning. Built lazily on first focus()
-    // call. Re-positions on resize + every 200ms (cheap RAF guard)
-    // so the cutout tracks if the focal element animates or scrolls.
+    // call. Re-positions every animation frame via RAF so the cutout
+    // perfectly tracks panel slide-up animations and other UI motion.
     let _spotlightEl    = null;
     let _spotlightRect  = null;       // last drawn rect
-    let _spotlightTrack = null;       // setInterval id for tracking moves
+    let _spotlightTrack = null;       // RAF id for tracking moves
     function ensureSpotlight() {
       if (_spotlightEl && document.body.contains(_spotlightEl)) return _spotlightEl;
       const el = document.createElement('div');
@@ -27207,6 +27207,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
         return;
       }
       el.classList.add('show');
+      // RAF-driven tracker — locks the cutout to the focal element
+      // every frame so the spotlight follows the country/city panel
+      // as it slides up from the bottom (and any other UI motion).
+      // setInterval at 200ms left a visible gap between the panel's
+      // top edge and the cutout during the slide-in animation.
       const update = () => {
         if (!document.body.contains(target)) { clearSpotlight(); return; }
         const r = target.getBoundingClientRect();
@@ -27216,16 +27221,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
           _spotlightRect = r;
           _setSpotlightHole(r);
         }
+        _spotlightTrack = requestAnimationFrame(update);
       };
-      update();
-      if (_spotlightTrack) clearInterval(_spotlightTrack);
-      // 200ms tracking interval — fast enough that the cutout follows
-      // a subtle camera/UI animation without juddering, slow enough
-      // that we don't burn cycles for static elements.
-      _spotlightTrack = setInterval(update, 200);
+      if (_spotlightTrack) cancelAnimationFrame(_spotlightTrack);
+      _spotlightTrack = requestAnimationFrame(update);
     }
     function clearSpotlight() {
-      if (_spotlightTrack) { clearInterval(_spotlightTrack); _spotlightTrack = null; }
+      if (_spotlightTrack) { cancelAnimationFrame(_spotlightTrack); _spotlightTrack = null; }
       _spotlightRect = null;
       const el = ensureSpotlight();
       el.classList.remove('show');
@@ -27313,12 +27315,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
       },
 
       // ── 2. Globe + Egypt + Global tab (~15s) ─────────────────────
+      // Country panel slides up from the bottom on mobile — chrome
+      // moves to TOP so the caption + controls don't sit on top of
+      // the panel content the user is being asked to look at.
       {
         id: 'globe',
         title: 'The globe',
         caption: 'Tap any country — every story we track from there.',
         audio: AUDIO_BASE + '02_globe.mp3',
         fallbackMs: 15000,
+        chrome: 'top',
         onEnter: () => {
           try { window.__goToPage?.(1); } catch (_) {}
           clearSpotlight();
@@ -27349,16 +27355,25 @@ const settingsToggle     = document.getElementById("settingsToggle");
           },
           // 5–9s: spotlight the country panel.
           { at: 5500, do: () => spotlight('#infoPanel.active, #infoPanel') },
-          // 10–14s: switch to / spotlight the Global tab inside the
-          // panel (if it exists). Falls back to no-op if not found.
+          // 10–14s: when the narrator says "global", actually toggle
+          // the panel's Local/Global segment to Global and spotlight
+          // it. The panel's segmented control uses
+          // `.panelSortOption[data-sort="global"]` inside #infoPanel
+          // — clicking it triggers the same handler a real tap would.
           { at: 10000, do: () => {
               try {
-                // Country panel typically uses a tab strip with
-                // [data-tab="local"] / [data-tab="global"] children.
-                const globalTab = document.querySelector('#infoPanel [data-tab="global"], #infoPanel .panelTab.global, #infoPanel [data-panel-tab="global"]');
+                const globalTab = document.querySelector(
+                  '#infoPanel.active .panelSortOption[data-sort="global"], ' +
+                  '#infoPanel .panelSortOption[data-sort="global"]'
+                );
                 if (globalTab) {
-                  globalTab.click();
-                  setTimeout(() => spotlight(globalTab), 100);
+                  // Spotlight first so the user's eye lands on the
+                  // pill before its color flips to active. Then fire
+                  // the click on the next frame.
+                  spotlight(globalTab);
+                  requestAnimationFrame(() => {
+                    try { globalTab.click(); } catch (_) {}
+                  });
                 }
               } catch (_) {}
             }
@@ -27374,23 +27389,33 @@ const settingsToggle     = document.getElementById("settingsToggle");
       },
 
       // ── 3. City + Cairo (~8s) ────────────────────────────────────
+      // Cairo's city panel slides up from the bottom too — chrome
+      // moves to TOP so the caption + controls don't sit on top of
+      // the panel content the user is being asked to look at.
       {
         id: 'city',
         title: 'City view',
         caption: 'Switch to city view — same precision, block by block.',
         audio: AUDIO_BASE + '03_city.mp3',
         fallbackMs: 8000,
+        chrome: 'top',
         onEnter: () => {
           try { window.__goToPage?.(1); } catch (_) {}
           clearSpotlight();
         },
         beats: [
-          // 0s: spotlight + click the view-toggle pill.
+          // 0s: spotlight the view-toggle pill briefly so the user
+          //      sees where the tap is happening.
           { at: 0, do: () => {
               const toggle = document.querySelector('#viewToggle, [data-view-toggle]');
               if (toggle) spotlight(toggle);
             }
           },
+          // 1.2s: drop the shadow BEFORE the click so the user can
+          //        watch the globe swap country dots for city dots
+          //        unobstructed. Stays clear through the camera move
+          //        to Cairo until the city panel opens.
+          { at: 1200, do: () => clearSpotlight() },
           { at: 1500, do: () => {
               try {
                 const cityOpt = document.querySelector('.viewOption[data-mode="city"]');
@@ -27407,6 +27432,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
                 if (cairo && cairo.lat != null) {
                   window.startFocus?.(parseFloat(cairo.lat), parseFloat(cairo.lon));
                   setTimeout(() => { try { window.__openNodePanel?.(cairo, 'city'); } catch (_) {} }, 600);
+                  // Re-arm the shadow once the panel has started
+                  // sliding up — RAF tracker locks it to the panel
+                  // edge as it animates into position.
                   setTimeout(() => spotlight('#infoPanel'), 1100);
                 }
               } catch (_) {}
