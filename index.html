@@ -12942,6 +12942,14 @@ window.__arcCtxSegmented = (function() {
             </svg>
             Restore Purchases
           </div>
+          <!-- Replay Tour — see www/index.html for full rationale. -->
+          <div class="acctDpBtn" id="replayTutorialBtn" onclick="window.__replayTutorial?.()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"/>
+              <polygon points="10 8 16 12 10 16 10 8" fill="currentColor" stroke="none"/>
+            </svg>
+            Replay Tour
+          </div>
           <div class="acctDpBtn" id="acctDpPrivacy">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
@@ -13356,16 +13364,6 @@ window.__arcCtxSegmented = (function() {
         </div>
       </div>
 
-      <!-- Replay-tour entry — see www/index.html for full rationale. -->
-      <div class="sidebarDivider"></div>
-      <div class="sidebarSection sidebarSectionGlobal">
-        <div class="layerList">
-          <div class="layerOpt" id="replayTutorialBtn" style="cursor:pointer;">
-            <div class="layerDot" style="background:rgba(255,190,80,0.92);"></div>
-            <span class="layerLabel">Replay Tour</span>
-          </div>
-        </div>
-      </div>
 
     </div>
   </div>
@@ -27249,16 +27247,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
       try { localStorage.removeItem(STORAGE_KEY); } catch (_) {}
     };
 
-    document.addEventListener('click', (e) => {
-      const btn = e.target?.closest?.('#replayTutorialBtn');
-      if (!btn) return;
-      e.stopPropagation();
+    // Replay Tour entry point — called inline from the button in the
+    // account dropdown's Settings sub-view. See www/index.html for
+    // full rationale on why we can't use a document-delegated handler
+    // (account dropdown stops click propagation).
+    window.__replayTutorial = function () {
       try {
-        document.getElementById('viewSidebar')?.classList.remove('open');
-        document.getElementById('settingsToggle')?.classList.remove('active');
+        document.getElementById('accountDropdown')?.classList.remove('open');
+        const main = document.getElementById('acctDpMain');
+        const sub  = document.getElementById('acctDpSettings');
+        if (main) main.style.display = '';
+        if (sub)  sub.style.display  = 'none';
       } catch (_) {}
-      setTimeout(() => start(), 280);
-    });
+      setTimeout(() => { try { start(); } catch (_) {} }, 280);
+    };
 
     (async () => {
       try {

@@ -13886,6 +13886,20 @@ window.__arcCtxSegmented = (function() {
             </svg>
             Restore Purchases
           </div>
+          <!-- Replay first-launch tutorial reel. Inline onclick (rather
+               than a document-delegated handler) because the account
+               dropdown ancestor calls stopPropagation on click events,
+               which prevents the older delegated pattern from ever
+               seeing the event. window.__replayTutorial wraps the
+               cleanup (close dropdown, reset Settings sub-view back to
+               main) + start() so the reel fires from a clean canvas. -->
+          <div class="acctDpBtn" id="replayTutorialBtn" onclick="window.__replayTutorial?.()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"/>
+              <polygon points="10 8 16 12 10 16 10 8" fill="currentColor" stroke="none"/>
+            </svg>
+            Replay Tour
+          </div>
           <div class="acctDpBtn" id="acctDpPrivacy">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
@@ -14285,20 +14299,6 @@ window.__arcCtxSegmented = (function() {
               <div class="layerDot" id="tickerVisToggleDot" style="background:#ff9940;"></div>
               <span class="layerLabel">Show News Ticker</span>
             </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Global section pinned to the bottom of every panel — replays
-           the first-launch tutorial reel for the curious. Wired in the
-           tutorial-reel module further down: clears the localStorage
-           "seen" flag and re-fires the orchestrator. -->
-      <div class="sidebarDivider"></div>
-      <div class="sidebarSection sidebarSectionGlobal">
-        <div class="layerList">
-          <div class="layerOpt" id="replayTutorialBtn" style="cursor:pointer;">
-            <div class="layerDot" style="background:rgba(255,190,80,0.92);"></div>
-            <span class="layerLabel">Replay Tour</span>
           </div>
         </div>
       </div>
@@ -29132,21 +29132,30 @@ const settingsToggle     = document.getElementById("settingsToggle");
       try { localStorage.removeItem(STORAGE_KEY); } catch (_) {}
     };
 
-    // ── Wire the "Replay Tour" entry in settings (added in markup
-    //    near the bottom of #viewSidebar.sidebarInner). Closes the
-    //    sidebar before firing so the reel has a clean canvas. ─────
-    document.addEventListener('click', (e) => {
-      const btn = e.target?.closest?.('#replayTutorialBtn');
-      if (!btn) return;
-      e.stopPropagation();
+    // ── Public replay entry point ─────────────────────────────────
+    // Called inline from the Replay Tour button in the account
+    // dropdown's Settings sub-view. Wraps the cleanup (close dropdown,
+    // reset sub-view back to main, drop the seen flag if it lingered)
+    // + start() so the reel fires from a clean canvas.
+    //
+    // We can't use a document-level click delegate here: the account
+    // dropdown's pointer/click listeners stopPropagation, so a global
+    // listener never sees clicks fired inside it. Inline onclick on
+    // the button calls this function directly — no bubbling required.
+    window.__replayTutorial = function () {
       try {
-        document.getElementById('viewSidebar')?.classList.remove('open');
-        document.getElementById('settingsToggle')?.classList.remove('active');
+        document.getElementById('accountDropdown')?.classList.remove('open');
+        // Reset the Settings sub-view back to the main account list
+        // so the next dropdown open lands on the familiar surface.
+        const main = document.getElementById('acctDpMain');
+        const sub  = document.getElementById('acctDpSettings');
+        if (main) main.style.display = '';
+        if (sub)  sub.style.display  = 'none';
       } catch (_) {}
-      // Small grace so the sidebar fade-out doesn't visually overlap
+      // Small grace so the dropdown fade-out doesn't visually overlap
       // the reel fade-in.
-      setTimeout(() => start(), 280);
-    });
+      setTimeout(() => { try { start(); } catch (_) {} }, 280);
+    };
 
     // ── Auto-fire on first launch ──────────────────────────────────
     // Wait for preload (or its 4s ceiling) before firing so the user
