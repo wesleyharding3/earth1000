@@ -46,19 +46,17 @@ const VALID_DATE_PRECISION = new Set([
 ]);
 
 // ─── Prompt ──────────────────────────────────────────────────────────────────
+// Split into:
+//   ENTITY_EXTRACTION_SYSTEM_PROMPT — module-level, byte-identical static
+//     rules + worked examples. Sent with cache_control:'ephemeral' so calls
+//     2+ within 5 min pay 10% of normal input price. Article-listener bursts
+//     (10–200 articles in a few minutes) get heavy cache reuse.
+//   buildUserPrompt(article)        — variable per call, just article data.
 
-function buildPrompt(article) {
-  const title = article.title || '';
-  const body  = (article.translated_summary || article.summary || '').slice(0, MAX_BODY_CHARS);
-  const pubDate = article.published_at
-    ? new Date(article.published_at).toISOString().slice(0, 10)
-    : 'unknown';
+const ENTITY_EXTRACTION_SYSTEM_PROMPT =
+`You are extracting structured entities from a news article for a knowledge graph that connects present-day stories to historical events. Be precise, conservative, and never invent. DO NOT generate Wikidata QIDs — they will be looked up later by a separate resolver.
 
-  return `You are extracting structured entities from a news article for a knowledge graph that connects present-day stories to historical events. Be precise, conservative, and never invent. DO NOT generate Wikidata QIDs — they will be looked up later by a separate resolver.
-
-ARTICLE PUBLISHED: ${pubDate}
-TITLE: ${title}
-BODY: ${body}
+The article (publication date, title, body) will be provided in the user message.
 
 ═══ YOUR TASK ═══
 
@@ -214,7 +212,27 @@ Output:
   ]
 }
 
-Now extract entities and referenced dates from the article above. Return only the JSON object.`;
+Now extract entities and referenced dates from the article in the user message. Return only the JSON object.`;
+
+// Per-call user message — only the variable article data. Kept tiny so
+// the cache-hittable system prompt above does the heavy lifting.
+function buildUserPrompt(article) {
+  const title = article.title || '';
+  const body  = (article.translated_summary || article.summary || '').slice(0, MAX_BODY_CHARS);
+  const pubDate = article.published_at
+    ? new Date(article.published_at).toISOString().slice(0, 10)
+    : 'unknown';
+  return `ARTICLE PUBLISHED: ${pubDate}
+TITLE: ${title}
+BODY: ${body}`;
+}
+
+// Back-compat shim — buildPrompt was the old single-string builder. Some
+// internal CLI / test code may still call it. Returns the concatenation
+// of system + user so behavior matches the pre-caching version when used
+// outside the caching path.
+function buildPrompt(article) {
+  return ENTITY_EXTRACTION_SYSTEM_PROMPT + '\n\n' + buildUserPrompt(article);
 }
 
 // ─── Validation / sanitisation ───────────────────────────────────────────────
@@ -294,12 +312,22 @@ async function extractEntities(article) {
     return { entities: [], referenced_dates: [], raw: null, usage: null };
   }
 
-  const prompt = buildPrompt(article);
+  const userPrompt = buildUserPrompt(article);
 
+  // Static rules go in `system` with cache_control so back-to-back
+  // article-listener calls within 5 min only pay full price for the
+  // rules ONCE — calls 2..N pay 10% on the cached prefix.
   const response = await client.messages.create({
     model:      MODEL,
     max_tokens: MAX_TOKENS,
-    messages:   [{ role: 'user', content: prompt }]
+    system: [
+      {
+        type: 'text',
+        text: ENTITY_EXTRACTION_SYSTEM_PROMPT,
+        cache_control: { type: 'ephemeral' }
+      }
+    ],
+    messages:   [{ role: 'user', content: userPrompt }]
   });
 
   const text = response.content[0]?.text || '';

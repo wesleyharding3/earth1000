@@ -68,40 +68,53 @@ async function main() {
       outliers = await askClaude(t, articles);
     } catch (err) {
       console.log(`✗ ERROR: ${err.message}`);
+      // Do NOT stamp last_audited_at — Claude failed, the audit didn't
+      // happen. Next run will retry this thread.
       continue;
     }
 
     if (!outliers.length) {
       console.log(`✓ clean`);
-      continue;
-    }
+    } else {
+      flaggedCount += outliers.length;
+      console.log(`🚩 ${outliers.length} outlier(s)`);
+      for (const o of outliers) {
+        const art = articles.find(a => a.id === o.article_id);
+        const title = (art?.title || '').slice(0, 80);
+        console.log(`       - #${o.article_id} "${title}"  reason: ${o.reason}`);
+      }
 
-    flaggedCount += outliers.length;
-    console.log(`🚩 ${outliers.length} outlier(s)`);
-    for (const o of outliers) {
-      const art = articles.find(a => a.id === o.article_id);
-      const title = (art?.title || '').slice(0, 80);
-      console.log(`       - #${o.article_id} "${title}"  reason: ${o.reason}`);
-    }
-
-    if (DETACH) {
-      const ids = outliers.map(o => o.article_id).filter(Boolean);
-      if (ids.length) {
-        const { rowCount } = await pool.query(
-          `DELETE FROM story_thread_articles WHERE thread_id = $1 AND article_id = ANY($2::int[])`,
-          [t.id, ids]
-        );
-        detachedCount += rowCount;
-        // Recompute article_count so the thread's badge stays truthful.
-        await pool.query(
-          `UPDATE story_threads
-              SET article_count = (SELECT COUNT(*) FROM story_thread_articles WHERE thread_id = $1),
-                  last_updated_at = NOW()
-            WHERE id = $1`,
-          [t.id]
-        );
+      if (DETACH) {
+        const ids = outliers.map(o => o.article_id).filter(Boolean);
+        if (ids.length) {
+          const { rowCount } = await pool.query(
+            `DELETE FROM story_thread_articles WHERE thread_id = $1 AND article_id = ANY($2::int[])`,
+            [t.id, ids]
+          );
+          detachedCount += rowCount;
+          // Recompute article_count so the thread's badge stays truthful.
+          await pool.query(
+            `UPDATE story_threads
+                SET article_count = (SELECT COUNT(*) FROM story_thread_articles WHERE thread_id = $1),
+                    last_updated_at = NOW()
+              WHERE id = $1`,
+            [t.id]
+          );
+        }
       }
     }
+
+    // Stamp last_audited_at AFTER any other writes to this row so the
+    // timestamp wins the race against the detach branch's last_updated_at
+    // bump (NOW() returns a slightly later value here than there). The
+    // gate in loadThreads() then correctly skips this thread on the
+    // next run until new articles arrive. Done in BOTH dry-run and
+    // detach modes — the audit happened either way; we shouldn't burn
+    // another Claude call on the same unchanged thread tomorrow.
+    await pool.query(
+      `UPDATE story_threads SET last_audited_at = NOW() WHERE id = $1`,
+      [t.id]
+    );
   }
 
   console.log(`\n${DETACH ? '✅ Detach complete' : '✅ Dry run complete'} in ${el()}.`);
@@ -112,6 +125,8 @@ async function main() {
 // ─── Loaders ─────────────────────────────────────────────────────────────────
 async function loadThreads() {
   if (THREAD_FILTER?.length) {
+    // --thread=X,Y,Z bypasses the last_audited_at gate so the user
+    // can force a re-audit of a specific thread on demand.
     const { rows } = await pool.query(
       `SELECT id, title, description, keywords, primary_category
          FROM story_threads
@@ -120,11 +135,20 @@ async function loadThreads() {
     );
     return rows;
   }
+  // Gate: only audit threads that have either never been audited
+  // (last_audited_at IS NULL) or have accumulated new articles since
+  // their last audit (last_updated_at > last_audited_at). At a 2×/day
+  // cadence + ~300 active+cooling threads, this drops the per-run
+  // workload from ~300 audits to ~75 (typical 25% hit rate), turning
+  // the daily Anthropic bill from ~$2.70 → ~$0.70. Index that backs
+  // this query: idx_story_threads_audit_gate (migration
+  // 20260430_add_last_audited_at_to_story_threads.sql).
   const { rows } = await pool.query(`
     SELECT id, title, description, keywords, primary_category
       FROM story_threads
      WHERE status IN ('active','cooling')
        AND article_count >= ${MIN_ARTICLES}
+       AND (last_audited_at IS NULL OR last_updated_at > last_audited_at)
      ORDER BY article_count DESC, last_updated_at DESC
      LIMIT ${MAX_THREADS}
   `);

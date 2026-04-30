@@ -3075,6 +3075,8 @@ body.flow-maximized #flowArcList {
      tight halos visually distinct. */
   gap: var(--seg-gap);
 }
+/* Flow context panel: hide segment dots, keep arrows. See www/index.html. */
+#flowCtxCard .arcCtxSegDots { display: none; }
 button.arcCtxSegDot,
 .arcCtxSegDot {
   /* WKWebView in particular inflates tiny <button>s with the
@@ -4445,6 +4447,37 @@ button.arcCtxSegDot,
     }
     #tutOverlay { z-index: 5100; }
 
+    /* Tutorial — elevate-panel mode (legacy). See www/index.html. */
+    body.tut-elevate-panel #infoPanel.active {
+      z-index: 5075;
+    }
+
+    /* Tutorial — pulse glow on focal element. Replaces the spotlight
+       cutout. See www/index.html for full rationale. */
+    @keyframes tutPulseGlow {
+      0%, 100% {
+        box-shadow:
+          0 0 0 0    rgba(255, 190, 80, 0),
+          0 0 0 0    rgba(255, 190, 80, 0);
+      }
+      50% {
+        box-shadow:
+          0 0 0 5px  rgba(255, 190, 80, 0.55),
+          0 0 26px 6px rgba(255, 190, 80, 0.65);
+      }
+    }
+    .tut-pulse-target {
+      animation: tutPulseGlow 1.6s ease-in-out infinite;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .tut-pulse-target {
+        animation: none;
+        box-shadow:
+          0 0 0 3px  rgba(255, 190, 80, 0.55),
+          0 0 18px 4px rgba(255, 190, 80, 0.55);
+      }
+    }
+
     #tutControls {
       display: flex;
       gap: 10px;
@@ -5040,17 +5073,28 @@ button.arcCtxSegDot,
 .flowCtxLiveArcsTitle {
   display: none;
   align-items: center;
-  gap: 7px;
-  padding: 0 2px;
-  font-size: 10px;
+  /* Tightened to reclaim space for the pill bar on narrow panels.
+     See www/index.html for full rationale. */
+  gap: 5px;
+  padding: 0;
+  font-size: 9px;
   font-weight: 700;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: rgba(255,200,120,0.85);
   text-shadow: 0 0 8px rgba(255,180,60,0.30);
-  flex-shrink: 0;
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+  white-space: nowrap;
 }
-#flowCtxCard.view-arcs .flowCtxLiveArcsTitle { display: flex; }
+.flowCtxLiveArcsTitle > span:not([class]) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* :not(.flowCtxMinimized) — keeps the minimized pill flush left when
+   in routes view. See www/index.html for full rationale. */
+#flowCtxCard.view-arcs:not(.flowCtxMinimized) .flowCtxLiveArcsTitle { display: flex; }
 .flowCtxLiveArcsDot {
   width: 6px; height: 6px; border-radius: 50%;
   background: rgba(255,210,140,0.9);
@@ -5060,7 +5104,7 @@ button.arcCtxSegDot,
 /* Route-count chip beside the "Routes" eyebrow. tabular-nums keeps the
    width stable as the count flips between 1 / 10 / 100. */
 .flowCtxLiveArcsCount {
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 700;
   letter-spacing: 0.04em;
   font-variant-numeric: tabular-nums;
@@ -5068,8 +5112,9 @@ button.arcCtxSegDot,
   background: rgba(255,180,80,0.10);
   border: 1px solid rgba(255,180,80,0.18);
   border-radius: 8px;
-  padding: 1px 6px;
+  padding: 1px 5px;
   line-height: 1.2;
+  flex-shrink: 0;
 }
 @keyframes flowCtxArcsDotPulse {
   0%,100% { opacity: 0.55; box-shadow: 0 0 6px rgba(255,180,60,0.45); }
@@ -5306,7 +5351,10 @@ button.arcCtxSegDot,
    by removing .visible. Previously this rule unconditionally forced display,
    which defeated __arcListMinimize() — click minimize, panel stayed open. */
 #flowCtxCard.view-arcs #flowArcList.visible { display: flex; }
-#flowCtxCard.view-ctx  #arcContextPanel { display: flex; position: static; opacity: 1; visibility: visible; pointer-events: auto; }
+/* :not(.flowCtxMinimized) — see www/index.html. The view-ctx rule
+   was overriding the minimize fade on source-order tie-break, so
+   the AI Context body stayed visible after the [—] click. */
+#flowCtxCard.view-ctx:not(.flowCtxMinimized) #arcContextPanel { display: flex; position: static; opacity: 1; visibility: visible; pointer-events: auto; }
 /* Arcs + ctx views use the tall card so the list / AI body have room. */
 #flowCtxCard.view-arcs,
 #flowCtxCard.view-ctx {
@@ -27216,34 +27264,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
       hole.setAttribute('width',  String(rect.width  + PAD * 2));
       hole.setAttribute('height', String(rect.height + PAD * 2));
     }
+    // spotlight() — thin alias for pulse(). See www/index.html.
     function spotlight(selectorOrEl) {
-      const el = ensureSpotlight();
-      let target = null;
-      if (typeof selectorOrEl === 'string') target = document.querySelector(selectorOrEl);
-      else if (selectorOrEl && selectorOrEl.getBoundingClientRect) target = selectorOrEl;
-      if (!target) {
-        clearSpotlight();
-        return;
-      }
-      el.classList.add('show');
-      // RAF-driven tracker — locks the cutout to the focal element
-      // every frame so the spotlight follows the country/city panel
-      // as it slides up from the bottom (and any other UI motion).
-      // setInterval at 200ms left a visible gap between the panel's
-      // top edge and the cutout during the slide-in animation.
-      const update = () => {
-        if (!document.body.contains(target)) { clearSpotlight(); return; }
-        const r = target.getBoundingClientRect();
-        if (!_spotlightRect ||
-            r.left !== _spotlightRect.left || r.top    !== _spotlightRect.top ||
-            r.width !== _spotlightRect.width || r.height !== _spotlightRect.height) {
-          _spotlightRect = r;
-          _setSpotlightHole(r);
-        }
-        _spotlightTrack = requestAnimationFrame(update);
-      };
-      if (_spotlightTrack) cancelAnimationFrame(_spotlightTrack);
-      _spotlightTrack = requestAnimationFrame(update);
+      pulse(selectorOrEl);
     }
     function clearSpotlight() {
       if (_spotlightTrack) { cancelAnimationFrame(_spotlightTrack); _spotlightTrack = null; }
@@ -27251,6 +27274,35 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const el = ensureSpotlight();
       el.classList.remove('show');
       _setSpotlightHole(null);
+      try { document.body.classList.remove('tut-elevate-panel'); } catch (_) {}
+      clearPulse();
+    }
+
+    // ── Pulse glow on focal element ────────────────────────────────
+    // See www/index.html for full rationale. Replaces the spotlight
+    // cutout with a warm-gold animated ring on the target's outer
+    // casing. spotlight() is now a thin alias for pulse().
+    let _pulseTarget = null;
+    function pulse(selectorOrEl) {
+      clearPulse();
+      let target = null;
+      if (typeof selectorOrEl === 'string') target = document.querySelector(selectorOrEl);
+      else if (selectorOrEl && selectorOrEl.classList) target = selectorOrEl;
+      if (!target) return;
+      target.classList.add('tut-pulse-target');
+      _pulseTarget = target;
+    }
+    function clearPulse() {
+      if (_pulseTarget) {
+        try { _pulseTarget.classList.remove('tut-pulse-target'); } catch (_) {}
+        _pulseTarget = null;
+      }
+    }
+
+    // ── Legacy: dimAndElevatePanel ─────────────────────────────────
+    // Now just pulses the panel border. See www/index.html.
+    function dimAndElevatePanel() {
+      pulse('#infoPanel.active, #infoPanel');
     }
 
     // ── Mock analysis stream ──────────────────────────────────────
@@ -27372,28 +27424,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
               } catch (_) {}
             }
           },
-          // 5–9s: spotlight the country panel.
-          { at: 5500, do: () => spotlight('#infoPanel.active, #infoPanel') },
-          // 10–14s: when the narrator says "global", actually toggle
-          // the panel's Local/Global segment to Global and spotlight
-          // it. The panel's segmented control uses
-          // `.panelSortOption[data-sort="global"]` inside #infoPanel
-          // — clicking it triggers the same handler a real tap would.
+          // 5–9s: full-screen dim with the country panel elevated in
+          //        front of it. Whole panel reads cleanly above the
+          //        shadow; everything else is dimmed back.
+          { at: 5500, do: () => dimAndElevatePanel() },
+          // 10–14s: just click the Global pill — no extra spotlight
+          // needed, the whole panel is already visible above the dim.
           { at: 10000, do: () => {
               try {
                 const globalTab = document.querySelector(
                   '#infoPanel.active .panelSortOption[data-sort="global"], ' +
                   '#infoPanel .panelSortOption[data-sort="global"]'
                 );
-                if (globalTab) {
-                  // Spotlight first so the user's eye lands on the
-                  // pill before its color flips to active. Then fire
-                  // the click on the next frame.
-                  spotlight(globalTab);
-                  requestAnimationFrame(() => {
-                    try { globalTab.click(); } catch (_) {}
-                  });
-                }
+                if (globalTab) globalTab.click();
               } catch (_) {}
             }
           },
@@ -27451,10 +27494,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
                 if (cairo && cairo.lat != null) {
                   window.startFocus?.(parseFloat(cairo.lat), parseFloat(cairo.lon));
                   setTimeout(() => { try { window.__openNodePanel?.(cairo, 'city'); } catch (_) {} }, 600);
-                  // Re-arm the shadow once the panel has started
-                  // sliding up — RAF tracker locks it to the panel
-                  // edge as it animates into position.
-                  setTimeout(() => spotlight('#infoPanel'), 1100);
+                  // Full-screen dim with the city panel elevated in
+                  // front of it (z-index 5075). Cleaner than the
+                  // cutout approach which left a seam during slide-up.
+                  setTimeout(() => dimAndElevatePanel(), 1100);
                 }
               } catch (_) {}
             }
@@ -27473,12 +27516,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
       },
 
       // ── 4. Threads + thread panel (~13s) ─────────────────────────
+      // Cluster detail panel slides up from the bottom — chrome
+      // moves to TOP. Same pattern as ch 2/3/6.
       {
         id: 'threads',
         title: 'Threads',
         caption: 'Stories that span dozens of articles, often across borders.',
         audio: AUDIO_BASE + '04_threads.mp3',
         fallbackMs: 13000,
+        chrome: 'top',
         onEnter: () => {
           try { window.__goToPage?.(2); } catch (_) {}
           setTimeout(() => {
@@ -27512,16 +27558,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
       },
 
       // ── 5. Lines + Analysis demo (~18s) ──────────────────────────
-      // onEnter / onExit are regular `function`s (not arrows) so play()
-      // can `.call(ch)` to bind `this` to the chapter object — used
-      // here to stash the mock-analysis cleanup callback so onExit
-      // can tear it down.
+      // Same cluster panel as ch 4 (slides up from bottom) — chrome
+      // moves to TOP. onEnter / onExit are regular `function`s (not
+      // arrows) so play() can `.call(ch)` to bind `this` to the
+      // chapter object — used here to stash the mock-analysis
+      // cleanup callback so onExit can tear it down.
       {
         id: 'lines',
         title: 'Lines',
         caption: 'Lines unfold over weeks or months — open the deep read for the analysis.',
         audio: AUDIO_BASE + '05_lines.mp3',
         fallbackMs: 18000,
+        chrome: 'top',
         onEnter: function () {
           try { window.__goToPage?.(2); } catch (_) {}
           setTimeout(() => {
@@ -29398,17 +29446,21 @@ const settingsToggle     = document.getElementById("settingsToggle");
             </div>
             <div class="nfThreadCardFooter">
               <span class="nfThreadCardMeta">${count} article${count !== 1 ? 's' : ''}</span>
-              <div class="nfThreadCardNations">${nations.map(iso => {
-                const code = String(iso || '').trim().toLowerCase();
-                if (!code) return '';
-                const up = code.toUpperCase();
-                const name = esc(_isoToName(iso) || up);
-                const flagUrl = `https://flagcdn.com/w40/${code}.png`;
-                // onerror swaps the chip into text-fallback mode (shows iso code)
-                // for codes flagcdn doesn't serve. tabindex makes the chip focusable
-                // so mobile taps reveal the label via :focus-within.
-                return `<span class="nfNationChip" tabindex="0" aria-label="${name}"><img class="nfNationFlag" src="${flagUrl}" alt="" loading="lazy" onerror="this.closest('.nfNationChip').classList.add('nfNationChip--text');this.onerror=null;"><span class="nfNationCode">${up}</span><span class="nfNationLabel">${name}</span></span>`;
-              }).join('')}</div>
+              <div class="nfThreadCardNations">${(() => {
+                // Preprocess: uppercase, alias UK→GB, then dedupe.
+                // See www/index.html for full rationale.
+                const _seen = new Set();
+                const _normalized = nations
+                  .map(n => String(n || '').trim().toUpperCase())
+                  .map(n => n === 'UK' ? 'GB' : n)
+                  .filter(n => n && !_seen.has(n) && (_seen.add(n), true));
+                return _normalized.map(up => {
+                  const code = up.toLowerCase();
+                  const name = esc(_isoToName(up) || up);
+                  const flagUrl = `https://flagcdn.com/w40/${code}.png`;
+                  return `<span class="nfNationChip" tabindex="0" aria-label="${name}"><img class="nfNationFlag" src="${flagUrl}" alt="" loading="lazy" onerror="this.closest('.nfNationChip').classList.add('nfNationChip--text');this.onerror=null;"><span class="nfNationCode">${up}</span><span class="nfNationLabel">${name}</span></span>`;
+                }).join('');
+              })()}</div>
             </div>
           </div>
         </div></div>`;
@@ -43194,6 +43246,9 @@ body.ticker-active .gTickerLabel {
           const _seen = new Set();
           const _isos = _nations
             .map(n => String(n || '').trim().toUpperCase())
+            // Alias UK→GB before dedupe; UK isn't a valid ISO 3166-1
+            // alpha-2 (GB is). See www/index.html for full rationale.
+            .map(n => n === 'UK' ? 'GB' : n)
             .filter(n => n && /^[A-Z]{2,3}$/.test(n) && !_seen.has(n) && (_seen.add(n), true));
           if (!_isos.length) return '';
           const _resolveName = window._isoToName || ((iso) => iso);

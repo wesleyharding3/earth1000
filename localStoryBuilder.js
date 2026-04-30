@@ -416,7 +416,25 @@ async function processCountry(country) {
   return { created, skipped: false };
 }
 
+// ─── KILL SWITCH ──────────────────────────────────────────────────────────────
+// Disabled 20260430 to cut Anthropic API spend. Per-country Haiku calls add up
+// (~150 calls/day, $5–15/day depending on caching state). The "Local threads"
+// strip in country panels will degrade gracefully — country panels already
+// show global threads filtered to that country's iso, so the feature isn't
+// blank, just less locally-curated.
+//
+// Set ENABLE_LOCAL_STORY_BUILDER=1 in env to re-enable when v2 ships and
+// there's revenue to support it.
+const LOCAL_STORY_BUILDER_ENABLED = process.env.ENABLE_LOCAL_STORY_BUILDER === '1';
+
 async function main() {
+  if (!LOCAL_STORY_BUILDER_ENABLED) {
+    console.log(`\n🏛  Local Story Builder — DISABLED via kill switch`);
+    console.log(`   Set ENABLE_LOCAL_STORY_BUILDER=1 in env to re-enable.\n`);
+    await pool.end();
+    return;
+  }
+
   const t0 = Date.now();
   const elapsed = () => `+${((Date.now() - t0) / 1000).toFixed(1)}s`;
   console.log(`\n🏛  Local Story Builder — ${new Date().toISOString()}`);

@@ -277,9 +277,30 @@ function _sanitizeStringArray(arr, { max = 12, maxLen = 400 } = {}) {
   return out;
 }
 
+// ─── KILL SWITCH ──────────────────────────────────────────────────────────────
+// Disabled 20260430 to cut Anthropic API spend. Per the audit:
+//   - sentiment_score is already populated by sentimentLexicon.js (free, lexicon)
+//   - keywords are already extracted in fetcher.js (per-article Haiku, 200 tok)
+//     and re-normalized by storyThreadBuilder
+//   - entities are already extracted in entityExtractor.js (batched Haiku) from
+//     articleListener
+//   - relationships + background are unique to this module BUT only consumed by
+//     briefingGenerator, which we are not actively shipping
+//   - primary_nations is the only live-UX-relevant output; it backfills NULLs
+//     left by storyThreadBuilder's batch call. Acceptable to skip; thread-builder
+//     produces primary_nations directly in its own batch prompt.
+// Set ENABLE_DEEP_ENRICHMENT=1 in env to re-enable. Read paths
+// (loadContextForArticles, aggregateThreadContext) remain live so existing
+// data in article_deep_context is still consumable.
+const DEEP_ENRICHMENT_ENABLED = process.env.ENABLE_DEEP_ENRICHMENT === '1';
+
 // ─── Main export: enrichArticle ───────────────────────────────────────────────
 async function enrichArticle(articleId, { skipThreshold = false } = {}) {
   const tag = `[deep:${articleId}]`;
+  // Hard short-circuit — return null (same contract as the existing skip
+  // paths: priority threshold, daily cap, missing article). No Claude call,
+  // no scrape, no DB write.
+  if (!DEEP_ENRICHMENT_ENABLED) return null;
   try {
     // ── 1. Load article ──────────────────────────────────────────────────────
     const { rows } = await pool.query(`

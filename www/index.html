@@ -3159,6 +3159,16 @@ body.flow-maximized #flowArcList {
      tight halos visually distinct. */
   gap: var(--seg-gap);
 }
+/* Flow context panel is narrow (~220px on noInfoOrigin / mobile). With
+   many segments even the minimum 3px-dot + 7px-gap sizing overflowed
+   the row, pushing the prev / next arrows off the right edge of the
+   card. We hide the dots in this surface only — the arrows stay centered
+   and remain reachable. Cluster panel + article detail panel are wider
+   and unaffected, so they keep the dots. JS-side state (is-done /
+   is-active classes) still toggles on the hidden buttons; harmless,
+   and lets us flip this back on by removing the rule if we ever shrink
+   the segment count. */
+#flowCtxCard .arcCtxSegDots { display: none; }
 button.arcCtxSegDot,
 .arcCtxSegDot {
   /* Default appearance reset — WKWebView in particular adds
@@ -4828,6 +4838,52 @@ button.arcCtxSegDot,
     /* Captions/dots/skip should always paint ABOVE the spotlight dim. */
     #tutOverlay { z-index: 5100; }
 
+    /* Tutorial — elevate-panel mode (legacy, retained for any chapter
+       that still calls dimAndElevatePanel). Bumps #infoPanel above
+       the spotlight dim. The chapters now prefer .tut-pulse-target
+       (below) over the dim approach. */
+    body.tut-elevate-panel #infoPanel.active {
+      z-index: 5075;
+    }
+
+    /* Tutorial — pulse glow.
+       Replaces the spotlight cutout/dim on every chapter beat that
+       previously called spotlight(target). A warm-gold box-shadow
+       ring grows + fades on the target's outer casing on a 1.6s
+       loop. Subtle but unmistakable: the user's eye lands on the
+       pulsed element without the rest of the screen getting dimmed
+       back. Works on buttons, pills, inputs, sections, and panels.
+
+       Note on box-shadow: the resting shadow (if any) is overridden
+       only while the class is applied. Restored when clearPulse()
+       removes the class. The keyframe at 0/100% sets shadow to
+       rgba(...,0) so the ring is invisible at the loop boundaries.
+       Safari iOS renders this at 60fps; reduced-motion is handled
+       below. */
+    @keyframes tutPulseGlow {
+      0%, 100% {
+        box-shadow:
+          0 0 0 0    rgba(255, 190, 80, 0),
+          0 0 0 0    rgba(255, 190, 80, 0);
+      }
+      50% {
+        box-shadow:
+          0 0 0 5px  rgba(255, 190, 80, 0.55),
+          0 0 26px 6px rgba(255, 190, 80, 0.65);
+      }
+    }
+    .tut-pulse-target {
+      animation: tutPulseGlow 1.6s ease-in-out infinite;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      .tut-pulse-target {
+        animation: none;
+        box-shadow:
+          0 0 0 3px  rgba(255, 190, 80, 0.55),
+          0 0 18px 4px rgba(255, 190, 80, 0.55);
+      }
+    }
+
     /* ──────────────────────────────────────────────────────────────────
        Tutorial — chapter controls (Next / Prev / Pause)
        Sit above the dot row inside the existing #tutOverlay container.
@@ -5757,7 +5813,15 @@ button.arcCtxSegDot,
    by removing .visible. Previously this rule unconditionally forced display,
    which defeated __arcListMinimize() — click minimize, panel stayed open. */
 #flowCtxCard.view-arcs #flowArcList.visible { display: flex; }
-#flowCtxCard.view-ctx  #arcContextPanel { display: flex; position: static; opacity: 1; visibility: visible; pointer-events: auto; }
+/* :not(.flowCtxMinimized) — when the user clicks the [—] minimize
+   button while the AI Context view is open, the unified minimize
+   rule (above) tries to fade #arcContextPanel via opacity:0 +
+   pointer-events:none. Without this :not(), the view-ctx rule's
+   opacity:1 + visibility:visible + pointer-events:auto wins on
+   source-order tie-break, so the AI badge + streamed analysis text
+   stayed visible after minimize. Excluding the minimized state lets
+   the fade run cleanly. */
+#flowCtxCard.view-ctx:not(.flowCtxMinimized) #arcContextPanel { display: flex; position: static; opacity: 1; visibility: visible; pointer-events: auto; }
 #flowCtxCard.view-arcs,
 #flowCtxCard.view-ctx {
   max-height: calc(100vh - env(safe-area-inset-top, 0px) - 100px);
@@ -5953,17 +6017,40 @@ button.arcCtxSegDot,
 .flowCtxLiveArcsTitle {
   display: none;
   align-items: center;
-  gap: 7px;
-  padding: 0 2px;
-  font-size: 10px;
+  /* Tightened to reclaim space for the pill bar on narrow panels.
+     Was: font-size 10px, letter-spacing 0.14em, gap 7px, padding 0 2px,
+     flex-shrink 0 — that combo pushed the close/share/minimize pill
+     off the right edge of the card on mobile. Now smaller / tighter
+     and shrinkable, so the pill bar always fits and the title
+     truncates with ellipsis if the card gets really narrow. */
+  gap: 5px;
+  padding: 0;
+  font-size: 9px;
   font-weight: 700;
-  letter-spacing: 0.14em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: rgba(255,200,120,0.85);
   text-shadow: 0 0 8px rgba(255,180,60,0.30);
-  flex-shrink: 0;
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+  white-space: nowrap;
 }
-#flowCtxCard.view-arcs .flowCtxLiveArcsTitle { display: flex; }
+.flowCtxLiveArcsTitle > span:not([class]) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* :not(.flowCtxMinimized) — when the user clicks [—] while in routes
+   (view-arcs) view, the unified minimize CSS fades the eyebrow via
+   opacity:0 + pointer-events:none, but the element stays display:flex
+   so it still holds horizontal LAYOUT space. With the card shrunk to
+   width:max-content via the minimize rule, that ghost layout pushed
+   the pill bar to the right side of the card — the user reported the
+   pill ending up on the right edge of the screen on routes view but
+   on the left on info/article view. Excluding the minimized state
+   collapses the title back to its default display:none, so the card
+   shrinks to just the pill width and the pill sits flush left. */
+#flowCtxCard.view-arcs:not(.flowCtxMinimized) .flowCtxLiveArcsTitle { display: flex; }
 .flowCtxLiveArcsDot {
   width: 6px; height: 6px; border-radius: 50%;
   background: rgba(255,210,140,0.9);
@@ -5975,7 +6062,7 @@ button.arcCtxSegDot,
    pill bar would shift right by ~1px each transition). Slightly dimmer
    than the eyebrow label so it reads as a quantity, not a heading. */
 .flowCtxLiveArcsCount {
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 700;
   letter-spacing: 0.04em;
   font-variant-numeric: tabular-nums;
@@ -5983,8 +6070,9 @@ button.arcCtxSegDot,
   background: rgba(255,180,80,0.10);
   border: 1px solid rgba(255,180,80,0.18);
   border-radius: 8px;
-  padding: 1px 6px;
+  padding: 1px 5px;
   line-height: 1.2;
+  flex-shrink: 0;
 }
 @keyframes flowCtxArcsDotPulse {
   0%,100% { opacity: 0.55; box-shadow: 0 0 6px rgba(255,180,60,0.45); }
@@ -29061,34 +29149,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
       hole.setAttribute('width',  String(rect.width  + PAD * 2));
       hole.setAttribute('height', String(rect.height + PAD * 2));
     }
+    // spotlight() — kept as a thin alias for pulse() so all existing
+    // chapter beats and onEnter/onExit hooks keep working without
+    // per-call edits. Every call now produces a warm-gold pulse on
+    // the target's outer casing instead of the old SVG-mask cutout.
+    // The cutout machinery (_setSpotlightHole, ensureSpotlight, RAF
+    // tracker) is dead code now — leaving it in place since it isn't
+    // hurting anything; can be deleted in a follow-up cleanup pass.
     function spotlight(selectorOrEl) {
-      const el = ensureSpotlight();
-      let target = null;
-      if (typeof selectorOrEl === 'string') target = document.querySelector(selectorOrEl);
-      else if (selectorOrEl && selectorOrEl.getBoundingClientRect) target = selectorOrEl;
-      if (!target) {
-        clearSpotlight();
-        return;
-      }
-      el.classList.add('show');
-      // RAF-driven tracker — locks the cutout to the focal element
-      // every frame so the spotlight follows the country/city panel
-      // as it slides up from the bottom (and any other UI motion).
-      // setInterval at 200ms left a visible gap between the panel's
-      // top edge and the cutout during the slide-in animation.
-      const update = () => {
-        if (!document.body.contains(target)) { clearSpotlight(); return; }
-        const r = target.getBoundingClientRect();
-        if (!_spotlightRect ||
-            r.left !== _spotlightRect.left || r.top    !== _spotlightRect.top ||
-            r.width !== _spotlightRect.width || r.height !== _spotlightRect.height) {
-          _spotlightRect = r;
-          _setSpotlightHole(r);
-        }
-        _spotlightTrack = requestAnimationFrame(update);
-      };
-      if (_spotlightTrack) cancelAnimationFrame(_spotlightTrack);
-      _spotlightTrack = requestAnimationFrame(update);
+      pulse(selectorOrEl);
     }
     function clearSpotlight() {
       if (_spotlightTrack) { cancelAnimationFrame(_spotlightTrack); _spotlightTrack = null; }
@@ -29096,6 +29165,44 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const el = ensureSpotlight();
       el.classList.remove('show');
       _setSpotlightHole(null);
+      // Drop any panel-elevation class set by legacy dimAndElevatePanel.
+      try { document.body.classList.remove('tut-elevate-panel'); } catch (_) {}
+      // Also clear the pulse focus — every chapter onEnter/onExit calls
+      // clearSpotlight, so this single hook is enough to reset all
+      // visual focus state when chapters transition.
+      clearPulse();
+    }
+
+    // ── Pulse glow on focal element ────────────────────────────────
+    // Replacement for the heavy spotlight cutout. Adds a warm-gold
+    // animated ring (box-shadow) on the target's outer casing. Used
+    // on buttons, pills, inputs, sections, and panels — anywhere the
+    // tutorial wants to draw the user's eye. Idempotent: pulse(x)
+    // first clears any existing pulse before applying the new one,
+    // so chapter beats can chain without accumulating ghost glows.
+    let _pulseTarget = null;
+    function pulse(selectorOrEl) {
+      clearPulse();
+      let target = null;
+      if (typeof selectorOrEl === 'string') target = document.querySelector(selectorOrEl);
+      else if (selectorOrEl && selectorOrEl.classList) target = selectorOrEl;
+      if (!target) return;
+      target.classList.add('tut-pulse-target');
+      _pulseTarget = target;
+    }
+    function clearPulse() {
+      if (_pulseTarget) {
+        try { _pulseTarget.classList.remove('tut-pulse-target'); } catch (_) {}
+        _pulseTarget = null;
+      }
+    }
+
+    // ── Legacy: dimAndElevatePanel ─────────────────────────────────
+    // Kept as a thin wrapper so any code still calling it doesn't
+    // explode — it now just pulses the panel border instead of dim+
+    // elevating. Will be deleted once all callers migrate to pulse().
+    function dimAndElevatePanel() {
+      pulse('#infoPanel.active, #infoPanel');
     }
 
     // ── Mock analysis stream ──────────────────────────────────────
@@ -29217,28 +29324,22 @@ const settingsToggle     = document.getElementById("settingsToggle");
               } catch (_) {}
             }
           },
-          // 5–9s: spotlight the country panel.
-          { at: 5500, do: () => spotlight('#infoPanel.active, #infoPanel') },
-          // 10–14s: when the narrator says "global", actually toggle
-          // the panel's Local/Global segment to Global and spotlight
-          // it. The panel's segmented control uses
-          // `.panelSortOption[data-sort="global"]` inside #infoPanel
-          // — clicking it triggers the same handler a real tap would.
+          // 5–9s: full-screen dim with the country panel elevated in
+          //        front of it. Whole panel reads cleanly above the
+          //        shadow; everything else (globe, scale bar, ticker)
+          //        is dimmed back.
+          { at: 5500, do: () => dimAndElevatePanel() },
+          // 10–14s: when the narrator says "global", just click the
+          // Local/Global segment's Global pill. No extra spotlight —
+          // the whole panel is already visible (elevated above the
+          // dim) so the user can see the pill change state.
           { at: 10000, do: () => {
               try {
                 const globalTab = document.querySelector(
                   '#infoPanel.active .panelSortOption[data-sort="global"], ' +
                   '#infoPanel .panelSortOption[data-sort="global"]'
                 );
-                if (globalTab) {
-                  // Spotlight first so the user's eye lands on the
-                  // pill before its color flips to active. Then fire
-                  // the click on the next frame.
-                  spotlight(globalTab);
-                  requestAnimationFrame(() => {
-                    try { globalTab.click(); } catch (_) {}
-                  });
-                }
+                if (globalTab) globalTab.click();
               } catch (_) {}
             }
           },
@@ -29297,9 +29398,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
                   window.startFocus?.(parseFloat(cairo.lat), parseFloat(cairo.lon));
                   setTimeout(() => { try { window.__openNodePanel?.(cairo, 'city'); } catch (_) {} }, 600);
                   // Re-arm the shadow once the panel has started
-                  // sliding up — RAF tracker locks it to the panel
-                  // edge as it animates into position.
-                  setTimeout(() => spotlight('#infoPanel'), 1100);
+                  // sliding up. dimAndElevatePanel() paints the dim
+                  // across the whole screen and elevates the panel
+                  // (z-index 5075) above it — cleaner than the cutout
+                  // approach which left a seam during the slide-up.
+                  setTimeout(() => dimAndElevatePanel(), 1100);
                 }
               } catch (_) {}
             }
@@ -29318,12 +29421,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
       },
 
       // ── 4. Threads + thread panel (~13s) ─────────────────────────
+      // Cluster detail panel slides up from the bottom — chrome
+      // moves to TOP so caption + controls don't sit on top of the
+      // panel content. Same pattern as ch 2/3/6.
       {
         id: 'threads',
         title: 'Threads',
         caption: 'Stories that span dozens of articles, often across borders.',
         audio: AUDIO_BASE + '04_threads.mp3',
         fallbackMs: 13000,
+        chrome: 'top',
         onEnter: () => {
           try { window.__goToPage?.(2); } catch (_) {}
           setTimeout(() => {
@@ -29357,16 +29464,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
       },
 
       // ── 5. Lines + Analysis demo (~18s) ──────────────────────────
-      // onEnter / onExit are regular `function`s (not arrows) so play()
-      // can `.call(ch)` to bind `this` to the chapter object — used
-      // here to stash the mock-analysis cleanup callback so onExit
-      // can tear it down.
+      // Same cluster panel as ch 4 (slides up from bottom) — chrome
+      // moves to TOP. onEnter / onExit are regular `function`s (not
+      // arrows) so play() can `.call(ch)` to bind `this` to the
+      // chapter object — used here to stash the mock-analysis
+      // cleanup callback so onExit can tear it down.
       {
         id: 'lines',
         title: 'Lines',
         caption: 'Lines unfold over weeks or months — open the deep read for the analysis.',
         audio: AUDIO_BASE + '05_lines.mp3',
         fallbackMs: 18000,
+        chrome: 'top',
         onEnter: function () {
           try { window.__goToPage?.(2); } catch (_) {}
           setTimeout(() => {
@@ -31527,17 +31636,26 @@ const settingsToggle     = document.getElementById("settingsToggle");
             </div>
             <div class="nfThreadCardFooter">
               <span class="nfThreadCardMeta">${count} article${count !== 1 ? 's' : ''}</span>
-              <div class="nfThreadCardNations">${nations.map(iso => {
-                const code = String(iso || '').trim().toLowerCase();
-                if (!code) return '';
-                const up = code.toUpperCase();
-                const name = esc(_isoToName(iso) || up);
-                const flagUrl = `https://flagcdn.com/w40/${code}.png`;
-                // onerror swaps the chip into text-fallback mode (shows iso code)
-                // for codes flagcdn doesn't serve. tabindex makes the chip focusable
-                // so mobile taps reveal the label via :focus-within.
-                return `<span class="nfNationChip" tabindex="0" aria-label="${name}"><img class="nfNationFlag" src="${flagUrl}" alt="" loading="lazy" onerror="this.closest('.nfNationChip').classList.add('nfNationChip--text');this.onerror=null;"><span class="nfNationCode">${up}</span><span class="nfNationLabel">${name}</span></span>`;
-              }).join('')}</div>
+              <div class="nfThreadCardNations">${(() => {
+                // Preprocess: uppercase, alias UK→GB (UK isn't a valid
+                // ISO 3166-1 alpha-2 code; it was rendering as a
+                // duplicate text-only chip next to the real GB flag),
+                // then dedupe so each country only shows once.
+                const _seen = new Set();
+                const _normalized = nations
+                  .map(n => String(n || '').trim().toUpperCase())
+                  .map(n => n === 'UK' ? 'GB' : n)
+                  .filter(n => n && !_seen.has(n) && (_seen.add(n), true));
+                return _normalized.map(up => {
+                  const code = up.toLowerCase();
+                  const name = esc(_isoToName(up) || up);
+                  const flagUrl = `https://flagcdn.com/w40/${code}.png`;
+                  // onerror swaps the chip into text-fallback mode (shows iso code)
+                  // for codes flagcdn doesn't serve. tabindex makes the chip focusable
+                  // so mobile taps reveal the label via :focus-within.
+                  return `<span class="nfNationChip" tabindex="0" aria-label="${name}"><img class="nfNationFlag" src="${flagUrl}" alt="" loading="lazy" onerror="this.closest('.nfNationChip').classList.add('nfNationChip--text');this.onerror=null;"><span class="nfNationCode">${up}</span><span class="nfNationLabel">${name}</span></span>`;
+                }).join('');
+              })()}</div>
             </div>
           </div>
         </div></div>`;
@@ -46391,6 +46509,14 @@ body.ticker-active .gTickerLabel {
           const _seen = new Set();
           const _isos = _nations
             .map(n => String(n || '').trim().toUpperCase())
+            // Normalize aliases BEFORE the dedupe filter — "UK" is a
+            // common alternative for the United Kingdom but isn't a
+            // valid ISO 3166-1 alpha-2 code (the real one is "GB").
+            // flagcdn.com only serves the GB flag, so a UK chip would
+            // render text-only next to the GB chip → two chips for
+            // every British story. Collapsing UK→GB here gives one
+            // chip with a flag.
+            .map(n => n === 'UK' ? 'GB' : n)
             .filter(n => n && /^[A-Z]{2,3}$/.test(n) && !_seen.has(n) && (_seen.add(n), true));
           if (!_isos.length) return '';
           const _resolveName = window._isoToName || ((iso) => iso);
