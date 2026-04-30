@@ -8781,6 +8781,10 @@ button.arcCtxSegDot,
     }
     .nfNationChip:hover .nfNationLabel,
     .nfNationChip:focus-within .nfNationLabel { opacity: 1; }
+    /* Suppress chip labels during the tutorial — see www/index.html. */
+    body.tutorial-active .nfNationChip:hover .nfNationLabel,
+    body.tutorial-active .nfNationChip:focus-within .nfNationLabel,
+    body.tutorial-active .nfNationLabel { opacity: 0 !important; }
 
     /* Sort */
     .nfSortSeg {
@@ -27699,8 +27703,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
               } catch (_) {}
             }
           },
-          { at: 4500, do: () => spotlight('#articleDetailPanel .adpAnalysis, #adpAnalysisBody') },
-          { at: 7000, do: () => spotlight('#articleDetailPanel .adpSourceSummary, .adpSourceSummary') },
+          { at: 4500, do: () => pulse('#articleDetailPanel .adpAnalysis, #adpAnalysisBody') },
+          { at: 7000, do: () => pulse('#articleDetailPanel .adpSourceSummary, .adpSourceSummary') },
+          // 9s: scroll to + pulse the "Read Full Article" /
+          //     "Watch on YouTube" external-source link CTA. See
+          //     www/index.html for full rationale.
+          { at: 9000, do: () => {
+              const link = document.querySelector('#articleDetailPanel .adpReadOriginal');
+              if (link) {
+                try { link.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (_) {}
+                pulse(link);
+              }
+            }
+          },
         ],
         onExit: () => {
           clearSpotlight();
@@ -27789,6 +27804,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
             window.__flowClearHighlights?.();
             window.__flowSetOpen?.(false);
             window.hideFlowCtxCard?.();
+            // See www/index.html — strip leftover .minimized so
+            // chapter 8 opens the panel expanded.
+            const fc = document.getElementById('flowControls');
+            if (fc) fc.classList.remove('minimized');
           } catch (_) {}
         },
       },
@@ -27813,6 +27832,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
               try {
                 const btn = await waitForElement('#flowModeBtn', { timeout: 4000 });
                 if (btn) btn.click();
+                requestAnimationFrame(() => {
+                  try { document.getElementById('flowControls')?.classList.remove('minimized'); } catch (_) {}
+                });
               } catch (_) {}
             }
           },
@@ -28347,6 +28369,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
       requestAnimationFrame(() => overlay.classList.add('active'));
       // Make sure the spotlight overlay exists so beats can flip it on.
       ensureSpotlight();
+      // body.tutorial-active suppresses chip labels + other side-
+      // effects of focus-within during programmatic scroll. See
+      // www/index.html for full rationale.
+      try { document.body.classList.add('tutorial-active'); } catch (_) {}
       play(0);
     }
     function end() {
@@ -28371,6 +28397,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       active = false;
       // Release the ambient-headlines gate so the cycle resumes.
       window.__tutorialActive = false;
+      try { document.body.classList.remove('tutorial-active'); } catch (_) {}
       try { localStorage.setItem(STORAGE_KEY, '1'); } catch (_) {}
     }
 

@@ -9554,6 +9554,17 @@ button.arcCtxSegDot,
     }
     .nfNationChip:hover .nfNationLabel,
     .nfNationChip:focus-within .nfNationLabel { opacity: 1; }
+    /* During the tutorial, the auto-scroll into the cluster panel
+       sometimes leaves a chip in :focus-within (browser default
+       focus management for tabindex=0 elements during programmatic
+       scroll). The persistent label looks like a stuck tooltip the
+       user didn't trigger. Suppress all chip labels while
+       body.tutorial-active is set — the tutorial isn't asking the
+       user to inspect individual countries here, so the label adds
+       no value mid-reel. */
+    body.tutorial-active .nfNationChip:hover .nfNationLabel,
+    body.tutorial-active .nfNationChip:focus-within .nfNationLabel,
+    body.tutorial-active .nfNationLabel { opacity: 0 !important; }
 
     /* Sort */
     .nfSortSeg {
@@ -29729,8 +29740,24 @@ const settingsToggle     = document.getElementById("settingsToggle");
               } catch (_) {}
             }
           },
-          { at: 4500, do: () => spotlight('#articleDetailPanel .adpAnalysis, #adpAnalysisBody') },
-          { at: 7000, do: () => spotlight('#articleDetailPanel .adpSourceSummary, .adpSourceSummary') },
+          { at: 4500, do: () => pulse('#articleDetailPanel .adpAnalysis, #adpAnalysisBody') },
+          { at: 7000, do: () => pulse('#articleDetailPanel .adpSourceSummary, .adpSourceSummary') },
+          // 9s: narrator says "the link to the source itself" —
+          //     scroll the article-detail panel down to the
+          //     .adpReadOriginal CTA at the bottom of the panel and
+          //     pulse it. The button is the LAST element in the
+          //     panel, so scrollIntoView with block:'end' would put
+          //     it at the bottom of the visible region; default
+          //     'start' lifts it to the top of the scrollport which
+          //     reads more naturally for a "look here" beat.
+          { at: 9000, do: () => {
+              const link = document.querySelector('#articleDetailPanel .adpReadOriginal');
+              if (link) {
+                try { link.scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (_) {}
+                pulse(link);
+              }
+            }
+          },
         ],
         onExit: () => {
           clearSpotlight();
@@ -29845,6 +29872,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
             window.__flowClearHighlights?.();
             window.__flowSetOpen?.(false);
             window.hideFlowCtxCard?.();
+            // __flowSetOpen(false) leaves `.minimized` on flowControls
+            // because the open=true branch added it but the open=false
+            // branch never clears it. Strip it explicitly so the next
+            // chapter's flowModeBtn click opens the panel expanded.
+            const fc = document.getElementById('flowControls');
+            if (fc) fc.classList.remove('minimized');
           } catch (_) {}
         },
       },
@@ -29869,10 +29902,22 @@ const settingsToggle     = document.getElementById("settingsToggle");
           // 0s: pulse the News Flows toggle button.
           { at: 0, do: () => pulse('#flowModeBtn') },
           // 1s: click it — opens the news flows panel (#flowControls).
+          //     Also strip any leftover `.minimized` class from a
+          //     previous chapter's __flowSetOpen(true) call (chapter 7
+          //     spawns synthetic arcs which auto-minimizes the
+          //     panel). Without this, the panel opens already
+          //     collapsed to the small bar and the user never sees
+          //     the keyword/mode/color controls. The click toggles
+          //     `visible`; we drop `minimized` on the next frame so
+          //     it doesn't get re-added during the visible-class
+          //     transition.
           { at: 1000, do: async () => {
               try {
                 const btn = await waitForElement('#flowModeBtn', { timeout: 4000 });
                 if (btn) btn.click();
+                requestAnimationFrame(() => {
+                  try { document.getElementById('flowControls')?.classList.remove('minimized'); } catch (_) {}
+                });
               } catch (_) {}
             }
           },
@@ -30498,6 +30543,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
       requestAnimationFrame(() => overlay.classList.add('active'));
       // Make sure the spotlight overlay exists so beats can flip it on.
       ensureSpotlight();
+      // Body class so CSS can suppress hover/focus side-effects that
+      // collide with the tutorial's auto-driven scroll + pulse — e.g.
+      // .nfNationChip flag-chip labels were appearing during chapter
+      // 4 as the panel scrolled past. The class pairs with `body.
+      // tutorial-active <chip-selector>` rules in the stylesheet.
+      try { document.body.classList.add('tutorial-active'); } catch (_) {}
       play(0);
     }
     function end() {
@@ -30523,6 +30574,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // Release the ambient-headlines gate so the cycle resumes
       // once the post-reel state has had a beat to settle.
       window.__tutorialActive = false;
+      try { document.body.classList.remove('tutorial-active'); } catch (_) {}
       try { localStorage.setItem(STORAGE_KEY, '1'); } catch (_) {}
     }
 
