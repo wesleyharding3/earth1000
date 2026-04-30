@@ -16248,6 +16248,12 @@ function computeCityTiers(cities) {
         clearTimeout(focusPanelTimer);
         focusPanelTimer = null;
       }
+      // Exposed for showFan() — see www/index.html.
+      window.__cancelPendingPanel = function() {
+        focusPendingPanel = null;
+        focusPanelLastRequested = null;
+        clearFocusPanelTimer();
+      };
 
       function queueFocusPanelOpen(callback, options = {}) {
         const { immediate = false } = options;
@@ -27743,6 +27749,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
           try { window.__goToPage?.(1); } catch (_) {}
           clearSpotlight();
           this._mockCleanup = null;
+          // body.flow-from-card hides #flowControls — see www/index.html.
+          try { document.body.classList.add('flow-from-card'); } catch (_) {}
         },
         beats: [
           // 1s: open flowCtxCard with mock Thread + spawn arcs.
@@ -27813,6 +27821,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
             // chapter 8 opens the panel expanded.
             const fc = document.getElementById('flowControls');
             if (fc) fc.classList.remove('minimized');
+            document.body.classList.remove('flow-from-card');
           } catch (_) {}
         },
       },
@@ -27915,6 +27924,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
             if (fc) fc.classList.remove('visible', 'minimized');
             const fcc = document.getElementById('flowCtxCard');
             if (fcc) fcc.classList.remove('flowCtxMinimized');
+            // Heatmap mutex release. See www/index.html.
+            document.body.classList.remove('news-flows-active');
           } catch (_) {}
         },
       },
@@ -28342,7 +28353,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
       try { window.__flowClearHighlights?.();   } catch (_) {}
       try { window.clearFlowNodeLabels?.();     } catch (_) {}
       try { window.__flowSetOpen?.(false);      } catch (_) {}
-      try { document.getElementById('flowControls')?.classList.remove('visible'); } catch (_) {}
+      try {
+        const fc = document.getElementById('flowControls');
+        if (fc) fc.classList.remove('visible', 'minimized');
+        document.body.classList.remove('news-flows-active', 'flow-from-card');
+      } catch (_) {}
       try { if (window.__semHeatActive) window.__semHeatClose?.(); } catch (_) {}
       try { document.querySelector('.viewOption[data-mode="country"]')?.click(); } catch (_) {}
       try { window.__goToPage?.(1); } catch (_) {}
@@ -28431,6 +28446,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // Release the ambient-headlines gate so the cycle resumes.
       window.__tutorialActive = false;
       try { document.body.classList.remove('tutorial-active'); } catch (_) {}
+      // Defensive mutex release — see www/index.html.
+      try {
+        document.body.classList.remove('news-flows-active', 'flow-from-card');
+        const fc = document.getElementById('flowControls');
+        if (fc) fc.classList.remove('visible', 'minimized');
+      } catch (_) {}
       try { localStorage.setItem(STORAGE_KEY, '1'); } catch (_) {}
     }
 
@@ -47875,6 +47896,13 @@ body.ticker-active .gTickerLabel {
   // ── fan UI ────────────────────────────────────────────────────────────
   function showFan(fanList, clientX, clientY) {
     if (!fanEl) return;
+    // Cancel any pending dot-pick panel-open + close any already-open
+    // panel — see www/index.html for full rationale.
+    try { window.__cancelPendingPanel?.(); } catch (_) {}
+    try {
+      const ip = document.getElementById('infoPanel');
+      if (ip?.classList.contains('active')) ip.querySelector('.closePanel')?.click();
+    } catch (_) {}
     fanEl.innerHTML = '';
     const maxShow = 6;
     const items = fanList.slice(0, maxShow);

@@ -17442,6 +17442,19 @@ function computeCityTiers(cities) {
         clearTimeout(focusPanelTimer);
         focusPanelTimer = null;
       }
+      // Exposed on window so showFan() (in the polygon-layer IIFE
+      // below) can abort any in-flight panel-open queued by the
+      // touchend / mousedown country-dot pick BEFORE the user has
+      // resolved the disambiguation fan. Without this, a tap near
+      // a border would queue an Egypt panel open via queueFocusPanelOpen
+      // (220 ms later), then the polygon click would surface the fan
+      // — but the panel had already auto-fired for whichever
+      // country won the dot-pick, making the fan useless.
+      window.__cancelPendingPanel = function() {
+        focusPendingPanel = null;
+        focusPanelLastRequested = null;
+        clearFocusPanelTimer();
+      };
 
       function queueFocusPanelOpen(callback, options = {}) {
         const { immediate = false } = options;
@@ -29805,18 +29818,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
       },
 
       // ── 7. Flow arcs + Context demo (~19s) ───────────────────────
-      // Pure-mock chapter, runs entirely on page 1 (globe) — does
-      // NOT open the news flows panel or page 2's thread grid.
-      // showFlowCtxCard() opens the flow-context card at top-left
-      // with synthetic Thread metadata so all three pill-bar tabs
-      // (Article / Routes / Context) are visible. Synthetic arcs
-      // spawn alongside, populating the Routes view; the Context
-      // tab gets a streamed mock analysis so the user sees what
-      // the real Claude-powered Context view looks like.
-      //
-      // As the narrator names each tab, we both PULSE its pill (so
-      // the user's eye lands on the right control) AND switch the
-      // card's view to that tab (so they see what it shows).
+      // Pure-mock chapter on the globe (page 1). The news-flows
+      // panel must NOT appear in this chapter — it's only supposed
+      // to surface in chapter 8. Real thread-arc clicks use
+      // `body.flow-from-card` to hide #flowControls (CSS rule
+      // `body.flow-from-card #flowControls.visible { display:none }`
+      // at line ~1753) — we adopt the same mechanism so the spawn
+      // can call __flowSetOpen(true) without the panel becoming
+      // visible. onExit strips the class so chapter 8 can show
+      // the panel normally.
       {
         id: 'flow_arcs',
         title: 'Flow arcs',
@@ -29827,6 +29837,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
           try { window.__goToPage?.(1); } catch (_) {}
           clearSpotlight();
           this._mockCleanup = null;
+          // Same hide mechanism real thread-arc clicks use. Without
+          // this, __flowSetOpen(true) below would surface
+          // #flowControls in its minimized form at the bottom of
+          // the screen during chapter 7 — which is reserved for
+          // chapter 8.
+          try { document.body.classList.add('flow-from-card'); } catch (_) {}
         },
         beats: [
           // 1s: open flowCtxCard with synthetic Thread metadata AND
@@ -29917,6 +29933,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
             // chapter's flowModeBtn click opens the panel expanded.
             const fc = document.getElementById('flowControls');
             if (fc) fc.classList.remove('minimized');
+            // Drop the panel-hide class so chapter 8 can show
+            // #flowControls normally.
+            document.body.classList.remove('flow-from-card');
           } catch (_) {}
         },
       },
@@ -30047,12 +30066,21 @@ const settingsToggle     = document.getElementById("settingsToggle");
           try {
             window.__flowClearArcs?.();
             window.__flowSetOpen?.(false);
-            // Close the news-flows panel + drop minimize state for
-            // any chapter that re-opens it later.
             const fc = document.getElementById('flowControls');
             if (fc) fc.classList.remove('visible', 'minimized');
             const fcc = document.getElementById('flowCtxCard');
             if (fcc) fcc.classList.remove('flowCtxMinimized');
+            // Critical mutex release: __flowSetOpen(false) sets
+            // flowModeOpen = false but does NOT clear the
+            // `body.news-flows-active` class — that class is only
+            // toggled by the flowModeBtn click handler. The heatmap
+            // toggle (chapter 9 + the actual UI button) checks
+            // `body.news-flows-active` and refuses to open with a
+            // "Close news flows first" toast if it's still set. So
+            // without this strip, the next chapter (or the user
+            // post-tutorial) is locked out of the heatmap even
+            // though no panel is on screen.
+            document.body.classList.remove('news-flows-active');
           } catch (_) {}
         },
       },
@@ -30525,8 +30553,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
       try { window.__flowClearHighlights?.();   } catch (_) {}
       try { window.clearFlowNodeLabels?.();     } catch (_) {}
       try { window.__flowSetOpen?.(false);      } catch (_) {}
-      // 7. News-flows panel.
-      try { document.getElementById('flowControls')?.classList.remove('visible'); } catch (_) {}
+      // 7. News-flows panel + clear the body mutex/hide classes so
+      //    the heatmap toggle isn't gate-locked by stale state and
+      //    the news flows panel can re-show normally.
+      try {
+        const fc = document.getElementById('flowControls');
+        if (fc) fc.classList.remove('visible', 'minimized');
+        document.body.classList.remove('news-flows-active', 'flow-from-card');
+      } catch (_) {}
       // 8. Heatmap.
       try { if (window.__semHeatActive) window.__semHeatClose?.(); } catch (_) {}
       // 9. View mode → country (back from city / regions / environment /
@@ -30668,6 +30702,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // once the post-reel state has had a beat to settle.
       window.__tutorialActive = false;
       try { document.body.classList.remove('tutorial-active'); } catch (_) {}
+      // Defensive mutex release — even if a chapter's onExit didn't
+      // run (skipped via Esc, audio errored, etc.) we MUST clear
+      // these body classes so the heatmap toggle isn't gate-locked
+      // and the news-flows panel can re-show normally on next use.
+      // Belt-and-suspenders with the per-chapter onExit calls.
+      try {
+        document.body.classList.remove('news-flows-active', 'flow-from-card');
+        const fc = document.getElementById('flowControls');
+        if (fc) fc.classList.remove('visible', 'minimized');
+      } catch (_) {}
       try { localStorage.setItem(STORAGE_KEY, '1'); } catch (_) {}
     }
 
@@ -51664,6 +51708,23 @@ body.ticker-active .gTickerLabel {
   // ── fan UI ────────────────────────────────────────────────────────────
   function showFan(fanList, clientX, clientY) {
     if (!fanEl) return;
+    // Cancel any pending panel-open queued by the touchend / mousedown
+    // country-dot pick that fired moments before this fan resolved.
+    // The pick path queues openNodePanel via queueFocusPanelOpen with
+    // a 220 ms timer; without this cancel, that panel auto-opens
+    // for whichever country the dot-pick chose first, making this
+    // fan useless because the user already has a selection committed.
+    // The fan itself takes ownership of the panel-open — its card
+    // click handlers below call selectCountry + __openCountryByName
+    // directly, so this cancellation is symmetric.
+    try { window.__cancelPendingPanel?.(); } catch (_) {}
+    // Also close any panel that's already open for the same reason —
+    // if the dot-pick was fast enough that the panel opened before
+    // the fan resolved, we want the fan to be the source of truth.
+    try {
+      const ip = document.getElementById('infoPanel');
+      if (ip?.classList.contains('active')) ip.querySelector('.closePanel')?.click();
+    } catch (_) {}
     fanEl.innerHTML = '';
     const maxShow = 6;
     const items = fanList.slice(0, maxShow);
