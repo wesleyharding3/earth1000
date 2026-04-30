@@ -4281,38 +4281,56 @@ button.arcCtxSegDot,
     }
     #tutOverlay.active { opacity: 1; }
     #tutOverlay > * { pointer-events: auto; }
+    /* Chrome panel — caption + controls + dots + skip in one glass
+       card. See www/index.html for full rationale. */
+    #tutChromePanel {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 12px;
+      padding: 32px 22px 16px;
+      border-radius: 22px;
+      background: rgba(10, 10, 14, 0.62);
+      border: 1px solid rgba(255, 190, 80, 0.22);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      box-shadow:
+        0 8px 32px rgba(0, 0, 0, 0.55),
+        inset 0 1px 0 rgba(255, 255, 255, 0.06);
+      pointer-events: auto;
+      max-width: calc(100vw - 32px);
+    }
+    /* Skip — top-right of the chrome panel. */
     #tutSkip {
       position: absolute;
-      /* Drop below #scaleBar (top:86px). See www/index.html. */
-      top: max(calc(env(safe-area-inset-top, 0px) + 130px), 130px);
-      right: 14px;
-      padding: 8px 14px;
+      top: 8px;
+      right: 10px;
+      padding: 4px 10px;
       border-radius: 999px;
-      background: rgba(8, 8, 8, 0.72);
-      border: 1px solid rgba(255, 190, 80, 0.38);
-      color: rgba(255, 220, 180, 0.94);
-      font-size: 11px;
-      letter-spacing: 0.20em;
+      background: rgba(0, 0, 0, 0.35);
+      border: 1px solid rgba(255, 190, 80, 0.30);
+      color: rgba(255, 220, 180, 0.85);
+      font-size: 10px;
+      letter-spacing: 0.18em;
       font-weight: 700;
       text-transform: uppercase;
       cursor: pointer;
-      backdrop-filter: blur(10px);
-      -webkit-backdrop-filter: blur(10px);
       user-select: none;
-      transition: background 0.18s ease, transform 0.12s ease;
+      transition: background 0.18s ease, color 0.18s ease, transform 0.12s ease;
     }
-    #tutSkip:hover  { background: rgba(8, 8, 8, 0.88); }
-    #tutSkip:active { transform: scale(0.96); }
+    #tutSkip:hover  { background: rgba(0, 0, 0, 0.55); color: rgba(255, 235, 200, 1); }
+    #tutSkip:active { transform: scale(0.94); }
     #tutCaption {
-      margin-bottom: 16px;
-      padding: 0 24px;
+      margin: 0;
+      padding: 0 4px;
       text-align: center;
       font-size: 17px;
       font-weight: 600;
       color: rgba(255, 235, 200, 0.96);
       text-shadow: 0 2px 12px rgba(0, 0, 0, 0.7);
       letter-spacing: 0.005em;
-      max-width: 560px;
+      max-width: 520px;
       opacity: 0;
       transform: translateY(8px);
       transition: opacity 0.45s ease, transform 0.45s ease;
@@ -4432,7 +4450,7 @@ button.arcCtxSegDot,
       gap: 10px;
       align-items: center;
       justify-content: center;
-      margin-bottom: 12px;
+      margin: 0; /* panel's gap controls vertical spacing now */
       pointer-events: auto;
     }
     .tutCtrlBtn {
@@ -21165,6 +21183,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
             && ambientSpeed > 0
             && !window.briefingActive
             && !window.__semHeatActive
+            && !window.__tutorialActive    /* paused while the narrated reel is on-screen */
             && currentViewMode !== "transportation"
             && !document.getElementById("infoPanel")?.classList.contains("active")
             && !document.getElementById("flowControls")?.classList.contains("visible");
@@ -27832,22 +27851,26 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (document.getElementById('tutOverlay')) return;
       const overlay = document.createElement('div');
       overlay.id = 'tutOverlay';
+      // Chrome panel — caption + controls + dots + skip in one
+      // glass card. See www/index.html for full rationale.
       overlay.innerHTML =
-        '<div id="tutSkip" role="button" tabindex="0" aria-label="Skip tutorial">Skip</div>' +
-        '<div id="tutCaption" aria-live="polite"></div>' +
-        '<div id="tutControls">' +
-          '<button class="tutCtrlBtn tutCtrlPrev" aria-label="Previous chapter" title="Previous">' +
-            '<svg viewBox="0 0 16 16"><polygon points="11,2 11,14 4,8"/></svg>' +
-          '</button>' +
-          '<button class="tutCtrlBtn tutCtrlPlay" aria-label="Pause" title="Pause">' +
-            '<svg class="tutCtrlPauseIcon" viewBox="0 0 16 16"><rect x="4" y="3" width="3" height="10"/><rect x="9" y="3" width="3" height="10"/></svg>' +
-            '<svg class="tutCtrlPlayIcon"  viewBox="0 0 16 16" style="display:none"><polygon points="4,2 4,14 14,8"/></svg>' +
-          '</button>' +
-          '<button class="tutCtrlBtn tutCtrlNext" aria-label="Next chapter" title="Next">' +
-            '<svg viewBox="0 0 16 16"><polygon points="5,2 5,14 12,8"/></svg>' +
-          '</button>' +
-        '</div>' +
-        '<div id="tutDots"></div>';
+        '<div id="tutChromePanel">' +
+          '<div id="tutSkip" role="button" tabindex="0" aria-label="Skip tutorial">Skip</div>' +
+          '<div id="tutCaption" aria-live="polite"></div>' +
+          '<div id="tutControls">' +
+            '<button class="tutCtrlBtn tutCtrlPrev" aria-label="Previous chapter" title="Previous">' +
+              '<svg viewBox="0 0 16 16"><polygon points="11,2 11,14 4,8"/></svg>' +
+            '</button>' +
+            '<button class="tutCtrlBtn tutCtrlPlay" aria-label="Pause" title="Pause">' +
+              '<svg class="tutCtrlPauseIcon" viewBox="0 0 16 16"><rect x="4" y="3" width="3" height="10"/><rect x="9" y="3" width="3" height="10"/></svg>' +
+              '<svg class="tutCtrlPlayIcon"  viewBox="0 0 16 16" style="display:none"><polygon points="4,2 4,14 14,8"/></svg>' +
+            '</button>' +
+            '<button class="tutCtrlBtn tutCtrlNext" aria-label="Next chapter" title="Next">' +
+              '<svg viewBox="0 0 16 16"><polygon points="5,2 5,14 12,8"/></svg>' +
+            '</button>' +
+          '</div>' +
+          '<div id="tutDots"></div>' +
+        '</div>';
       document.body.appendChild(overlay);
 
       const dots = overlay.querySelector('#tutDots');
@@ -28054,12 +28077,44 @@ const settingsToggle     = document.getElementById("settingsToggle");
       setTimeout(() => { try { w.remove(); } catch (_) {} }, 500);
     }
 
+    // ── World reset ────────────────────────────────────────────────
+    // Tear down every transient surface that might be on-screen when
+    // the user invokes Replay tour, so the reel always opens against
+    // a clean baseline globe. See www/index.html for full rationale.
+    function resetWorldForTutorial() {
+      try {
+        document.getElementById('viewSidebar')?.classList.remove('open');
+        document.getElementById('settingsToggle')?.classList.remove('active');
+        document.getElementById('accountDropdown')?.classList.remove('open');
+      } catch (_) {}
+      try {
+        const ip = document.getElementById('infoPanel');
+        if (ip?.classList.contains('active')) ip.querySelector('.closePanel')?.click();
+      } catch (_) {}
+      try { window.closeArticleDetail?.(); } catch (_) {}
+      try { window.__clusterCloseNodePanel?.(); } catch (_) {}
+      try { if (window.briefingActive) window.__closeBriefing?.(); } catch (_) {}
+      try { window.__flowClearArcs?.();         } catch (_) {}
+      try { window.__flowClearHighlights?.();   } catch (_) {}
+      try { window.clearFlowNodeLabels?.();     } catch (_) {}
+      try { window.__flowSetOpen?.(false);      } catch (_) {}
+      try { document.getElementById('flowControls')?.classList.remove('visible'); } catch (_) {}
+      try { if (window.__semHeatActive) window.__semHeatClose?.(); } catch (_) {}
+      try { document.querySelector('.viewOption[data-mode="country"]')?.click(); } catch (_) {}
+      try { window.__goToPage?.(1); } catch (_) {}
+      window.__tutorialActive = true;
+      try { window.__dismissAmbientHeadline?.(); } catch (_) {}
+    }
+
     // ── Lifecycle ──────────────────────────────────────────────────
     function startReel() {
       if (active) return;
       active = true;
       skipRequested = false;
       currentIdx = 0;
+      // Hard-reset everything on the globe / in panels so chapter 1
+      // always opens against a known-clean baseline.
+      resetWorldForTutorial();
       ensureOverlay();
       bindEsc();
       const overlay = document.getElementById('tutOverlay');
@@ -28088,6 +28143,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }
       unbindEsc();
       active = false;
+      // Release the ambient-headlines gate so the cycle resumes.
+      window.__tutorialActive = false;
       try { localStorage.setItem(STORAGE_KEY, '1'); } catch (_) {}
     }
 
@@ -39828,6 +39885,9 @@ body.ticker-active .gTickerLabel {
     }
   }
 
+  // Exposed on window so the tutorial reset can tear down the briefing
+  // from outside this IIFE. See www/index.html for full rationale.
+  window.__closeBriefing = closeBriefing;
   function closeBriefing() {
     window.briefingActive = false;
     document.body.classList.remove('briefing-active');
