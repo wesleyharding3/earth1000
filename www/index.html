@@ -29679,12 +29679,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
       },
 
       // ── 7. Flow arcs + Context demo (~19s) ───────────────────────
-      // Starts on page 2 (news flows panel, threads view) so the
-      // first beat can pulse the globe button on a thread card —
-      // narrator says "tap the button" early in the audio and we
-      // want the user to see WHICH button activates flow arcs.
-      // After ~1.5s (button highlight done), we navigate to page 1
-      // and run the synthetic arc demo as before.
+      // Pure-mock chapter, runs entirely on page 1 (globe) — does
+      // NOT open the news flows panel or page 2's thread grid.
+      // showFlowCtxCard() opens the flow-context card at top-left
+      // with synthetic Thread metadata so all three pill-bar tabs
+      // (Article / Routes / Context) are visible. Synthetic arcs
+      // spawn alongside, populating the Routes view; the Context
+      // tab gets a streamed mock analysis so the user sees what
+      // the real Claude-powered Context view looks like.
+      //
+      // As the narrator names each tab, we both PULSE its pill (so
+      // the user's eye lands on the right control) AND switch the
+      // card's view to that tab (so they see what it shows).
       {
         id: 'flow_arcs',
         title: 'Flow arcs',
@@ -29692,39 +29698,26 @@ const settingsToggle     = document.getElementById("settingsToggle");
         audio: AUDIO_BASE + '07_flow_arcs.mp3',
         fallbackMs: 19000,
         onEnter: function () {
-          // Stay on / navigate to page 2 with thread cards visible
-          // for the upcoming "tap the button" pulse. If we're already
-          // here from chapter 6's news-flows panel, switching to
-          // threads view is the only adjustment needed.
-          try { window.__goToPage?.(2); } catch (_) {}
-          setTimeout(() => {
-            try { document.getElementById('nfViewThreads')?.click(); } catch (_) {}
-          }, 220);
+          try { window.__goToPage?.(1); } catch (_) {}
           clearSpotlight();
           this._mockCleanup = null;
         },
         beats: [
-          // 0s: narrator says "tap the button" — pulse the globe-arc
-          //      button on the first visible thread card so the user
-          //      sees what activates flow arcs. waitForElement covers
-          //      cold-start where the card hasn't rendered yet.
-          { at: 0, do: async () => {
+          // 1s: open flowCtxCard with synthetic Thread metadata AND
+          //     spawn the arc set on the globe. kind:'Thread' (NOT
+          //     'Article') keeps all three tabs visible — Article
+          //     tab carries the mock title + meta as the "article"
+          //     content; the Live Arcs tab will populate as arcs
+          //     spawn; the AI Context tab is streamed at 13s.
+          { at: 1000, do: () => {
               try {
-                const btn = await waitForElement(
-                  '.nfThreadCard ~ .cardFlowArcBtn, .cardFlowArcBtn',
-                  { timeout: 6000 }
-                );
-                if (btn) pulse(btn);
+                window.showFlowCtxCard?.({
+                  kind: 'Thread',
+                  title: 'Climate Summit Reaches Historic Accord',
+                  meta:  '142 articles · 5 nations · 7 days',
+                  isoCode: 'US',
+                });
               } catch (_) {}
-            }
-          },
-          // 1.5s: drop the button pulse, navigate to globe, and spawn
-          //       the synthetic flow set. Combined into one beat so
-          //       the page transition + arc-spawn happen back-to-back
-          //       without a visible gap on the globe.
-          { at: 1500, do: () => {
-              clearPulse();
-              try { window.__goToPage?.(1); } catch (_) {}
               try {
                 const hub = { type: 'country', iso: 'US', id: 'US', place: 'United States', lat: 39.83, lon: -98.58 };
                 const dests = [
@@ -29744,21 +29737,41 @@ const settingsToggle     = document.getElementById("settingsToggle");
               } catch (_) {}
             }
           },
-          // 7s: spotlight Articles tab (live arcs panel).
-          { at: 7000, do: () => spotlight('#flowArcList .arcCtxTab[data-view="articles"], #flowArcList .arcCtxTab.articles, #flowArcList') },
-          // 10s: spotlight Routes tab.
-          { at: 10000, do: () => spotlight('#flowArcList .arcCtxTab[data-view="routes"], #flowArcList .arcCtxTab.routes, #flowArcList') },
-          // 13s: spotlight Context badge + stream mock analysis.
-          { at: 13000, do: function () {
-              const badge = document.querySelector('#arcListAiBtn, .aiAnalysisCtaBadge');
-              if (badge) spotlight(badge);
+          // 5s: pulse the Article tab (info view is already active by
+          //     default after showFlowCtxCard) — narrator: "the
+          //     article tab shows the source story…"
+          { at: 5000, do: () => {
+              try { window.__flowCtxSetView?.('info'); } catch (_) {}
+              const tab = document.querySelector('#flowCtxCard .flowCtxTab[data-view="info"]');
+              if (tab) pulse(tab);
             }
           },
-          { at: 15000, do: function () {
+          // 8s: switch to + pulse Routes tab — narrator: "the routes
+          //     tab lists every destination country…"
+          { at: 8000, do: () => {
+              try { window.__flowCtxSetView?.('arcs'); } catch (_) {}
+              const tab = document.querySelector('#flowCtxCard .flowCtxTab[data-view="arcs"]');
+              if (tab) pulse(tab);
+            }
+          },
+          // 11s: switch to + pulse Context (AI) tab — narrator: "the
+          //      context tab generates an AI synthesis…"
+          { at: 11000, do: () => {
+              try { window.__flowCtxSetView?.('ctx'); } catch (_) {}
+              const tab = document.querySelector('#flowCtxCard .flowCtxTab[data-view="ctx"], #flowCtxCard .flowCtxTab.ai');
+              if (tab) pulse(tab);
+            }
+          },
+          // 13s: stream mock Claude analysis into the AI context body
+          //      so the user sees what the real Context tab generates
+          //      without a real ($-burning) Claude call. _mockCleanup
+          //      stashed on the chapter object so onExit can tear it
+          //      down — that's why this beat's `do` is a `function`
+          //      not an arrow.
+          { at: 13000, do: function () {
               const body = document.getElementById('arcCtxBody');
               if (body) {
                 this._mockCleanup = streamMockAnalysis(body, MOCK_FLOWS_CONTEXT, 1300);
-                spotlight(body);
               }
             }
           },
@@ -29771,6 +29784,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
             window.clearFlowNodeLabels?.();
             window.__flowClearHighlights?.();
             window.__flowSetOpen?.(false);
+            window.hideFlowCtxCard?.();
           } catch (_) {}
         },
       },

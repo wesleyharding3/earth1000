@@ -27696,9 +27696,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
       },
 
       // ── 7. Flow arcs + Context demo (~19s) ───────────────────────
-      // Starts on page 2 with thread cards visible so we can pulse
-      // the globe button on a card during the "tap the button"
-      // narration. See www/index.html for full rationale.
+      // Pure-mock chapter — runs entirely on page 1 (globe). Opens
+      // flowCtxCard with synthetic Thread metadata + spawns arcs;
+      // each pill-bar tab is pulsed and switched-to as narrator
+      // names it. See www/index.html for full rationale.
       {
         id: 'flow_arcs',
         title: 'Flow arcs',
@@ -27706,29 +27707,21 @@ const settingsToggle     = document.getElementById("settingsToggle");
         audio: AUDIO_BASE + '07_flow_arcs.mp3',
         fallbackMs: 19000,
         onEnter: function () {
-          try { window.__goToPage?.(2); } catch (_) {}
-          setTimeout(() => {
-            try { document.getElementById('nfViewThreads')?.click(); } catch (_) {}
-          }, 220);
+          try { window.__goToPage?.(1); } catch (_) {}
           clearSpotlight();
           this._mockCleanup = null;
         },
         beats: [
-          // 0s: pulse the globe-arc button on the first thread card.
-          { at: 0, do: async () => {
+          // 1s: open flowCtxCard with mock Thread + spawn arcs.
+          { at: 1000, do: () => {
               try {
-                const btn = await waitForElement(
-                  '.nfThreadCard ~ .cardFlowArcBtn, .cardFlowArcBtn',
-                  { timeout: 6000 }
-                );
-                if (btn) pulse(btn);
+                window.showFlowCtxCard?.({
+                  kind: 'Thread',
+                  title: 'Climate Summit Reaches Historic Accord',
+                  meta:  '142 articles · 5 nations · 7 days',
+                  isoCode: 'US',
+                });
               } catch (_) {}
-            }
-          },
-          // 1.5s: drop pulse, navigate to globe, spawn synthetic arcs.
-          { at: 1500, do: () => {
-              clearPulse();
-              try { window.__goToPage?.(1); } catch (_) {}
               try {
                 const hub = { type: 'country', iso: 'US', id: 'US', place: 'United States', lat: 39.83, lon: -98.58 };
                 const dests = [
@@ -27748,21 +27741,28 @@ const settingsToggle     = document.getElementById("settingsToggle");
               } catch (_) {}
             }
           },
-          // 7s: spotlight Articles tab (live arcs panel).
-          { at: 7000, do: () => spotlight('#flowArcList .arcCtxTab[data-view="articles"], #flowArcList .arcCtxTab.articles, #flowArcList') },
-          // 10s: spotlight Routes tab.
-          { at: 10000, do: () => spotlight('#flowArcList .arcCtxTab[data-view="routes"], #flowArcList .arcCtxTab.routes, #flowArcList') },
-          // 13s: spotlight Context badge + stream mock analysis.
-          { at: 13000, do: function () {
-              const badge = document.querySelector('#arcListAiBtn, .aiAnalysisCtaBadge');
-              if (badge) spotlight(badge);
+          { at: 5000, do: () => {
+              try { window.__flowCtxSetView?.('info'); } catch (_) {}
+              const tab = document.querySelector('#flowCtxCard .flowCtxTab[data-view="info"]');
+              if (tab) pulse(tab);
             }
           },
-          { at: 15000, do: function () {
+          { at: 8000, do: () => {
+              try { window.__flowCtxSetView?.('arcs'); } catch (_) {}
+              const tab = document.querySelector('#flowCtxCard .flowCtxTab[data-view="arcs"]');
+              if (tab) pulse(tab);
+            }
+          },
+          { at: 11000, do: () => {
+              try { window.__flowCtxSetView?.('ctx'); } catch (_) {}
+              const tab = document.querySelector('#flowCtxCard .flowCtxTab[data-view="ctx"], #flowCtxCard .flowCtxTab.ai');
+              if (tab) pulse(tab);
+            }
+          },
+          { at: 13000, do: function () {
               const body = document.getElementById('arcCtxBody');
               if (body) {
                 this._mockCleanup = streamMockAnalysis(body, MOCK_FLOWS_CONTEXT, 1300);
-                spotlight(body);
               }
             }
           },
@@ -27775,6 +27775,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
             window.clearFlowNodeLabels?.();
             window.__flowClearHighlights?.();
             window.__flowSetOpen?.(false);
+            window.hideFlowCtxCard?.();
           } catch (_) {}
         },
       },
