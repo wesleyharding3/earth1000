@@ -4683,20 +4683,18 @@ button.arcCtxSegDot,
        the chrome reads as a single unit instead of floating pieces
        over the spotlight dim. position:relative so #tutSkip can be
        absolutely-positioned in the panel's top-right corner. */
-    /* Shrunken: was max-width: calc(100vw - 32px) which spanned the
-       whole screen and hid the globe / panels behind it. Now caps at
-       240px (about half the typical phone width) so the chrome reads
-       as a discrete control widget rather than a screen-blocking
-       banner. Tightened padding + gap + font + buttons in lockstep
-       so the panel still looks balanced at the smaller size. */
+    /* Shrunken further: 240 → 200px max so the chrome reads as a
+       compact control widget. Padding + gap also tightened so the
+       panel doesn't end up looking padding-heavy at the smaller
+       overall footprint. */
     #tutChromePanel {
       position: relative;
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 8px;
-      padding: 22px 14px 12px;
-      border-radius: 18px;
+      gap: 6px;
+      padding: 20px 12px 10px;
+      border-radius: 16px;
       background: rgba(10, 10, 14, 0.62);
       border: 1px solid rgba(255, 190, 80, 0.22);
       backdrop-filter: blur(20px);
@@ -4705,7 +4703,7 @@ button.arcCtxSegDot,
         0 8px 32px rgba(0, 0, 0, 0.55),
         inset 0 1px 0 rgba(255, 255, 255, 0.06);
       pointer-events: auto;
-      max-width: min(240px, calc(100vw - 32px));
+      max-width: min(200px, calc(100vw - 32px));
     }
     /* Skip — small chip in the panel's top-right corner. Tightened
        in lockstep with the panel shrink. */
@@ -4732,11 +4730,11 @@ button.arcCtxSegDot,
       margin: 0;
       padding: 0 2px;
       text-align: center;
-      /* 17px → 14px so a 60-char caption wraps to ~3 lines inside the
-         narrower panel instead of spilling past it. */
-      font-size: 14px;
+      /* 14 → 13px in step with the 240 → 200 max-width drop so the
+         caption still wraps to ~3 lines on the longest captions. */
+      font-size: 13px;
       font-weight: 600;
-      line-height: 1.35;
+      line-height: 1.32;
       color: rgba(255, 235, 200, 0.96);
       text-shadow: 0 2px 12px rgba(0, 0, 0, 0.7);
       letter-spacing: 0.005em;
@@ -4927,11 +4925,22 @@ button.arcCtxSegDot,
       pointer-events: auto;
     }
     .tutCtrlBtn {
-      /* 38 → 32px in lockstep with the panel shrink. Apple HIG min
-         tap target is 32×32, so this is the floor; flex-shrink stays
-         locked to 0 to keep them perfectly circular at any width. */
+      /* 38 → 32px (Apple HIG min tap target). The triplet
+         `-webkit-appearance:none + box-sizing:border-box + padding:0`
+         is required on iOS WebKit because <button> elements get an
+         implicit native padding (~1px 6px asymmetric) that inflates
+         the rendered width past height — the circle becomes an
+         ellipse on mobile. flex-shrink stays at 0 so the controls
+         row can't compress them either. */
+      -webkit-appearance: none;
+      appearance: none;
+      box-sizing: border-box;
+      padding: 0;
       flex: 0 0 32px;
       width: 32px; height: 32px;
+      min-width: 32px; min-height: 32px;
+      max-width: 32px; max-height: 32px;
+      line-height: 1;
       border-radius: 50%;
       background: rgba(8, 8, 8, 0.72);
       border: 1px solid rgba(255, 190, 80, 0.32);
@@ -5069,6 +5078,45 @@ button.arcCtxSegDot,
        above the body text — useful when the body needs a short noun-
        phrase header to anchor it ("MAP THIS", "TIME SERIES").
        ────────────────────────────────────────────────────────────── */
+    /* Suppress iOS native long-press behaviors on any element that
+       opts into custom hold-tooltips. Without these, the user sees a
+       visual conflict during the hold:
+         -webkit-tap-highlight-color  → translucent gray rectangle on
+                                        tap; persists for the duration
+                                        of a long-press, painted on
+                                        top of the button's own active
+                                        state. Set transparent to kill.
+         -webkit-touch-callout        → iOS's "Copy / Share / Look Up"
+                                        context menu that pops up on
+                                        long-press of links / images /
+                                        buttons with text content.
+                                        'none' disables it entirely.
+         user-select                  → prevents the browser from
+                                        starting a text selection on
+                                        the held element (which on
+                                        iOS draws blue selection
+                                        handles around the button). */
+    [data-hold-tip] {
+      -webkit-tap-highlight-color: transparent;
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+    /* While the hold-tooltip is on screen for a button, soften that
+       button's active-state visuals so the user's eye lands on the
+       tooltip rather than the "pressed" button look. JS adds the
+       class on tooltip show, removes on hide. transform:none undoes
+       common scale(0.94)-on-active patterns; opacity nudge keeps a
+       little dimming so it still reads as "this button is the one
+       being explained" without competing with the gold-bordered tip. */
+    [data-hold-tip].holdTip-source-active,
+    [data-hold-tip].holdTip-source-active:active,
+    [data-hold-tip].holdTip-source-active:hover {
+      transform: none !important;
+      filter: none !important;
+      opacity: 0.85;
+    }
+
     .holdTip {
       position: fixed;
       z-index: 4500;        /* above flow ctx card (820), settings sidebar (1500); below auth modal (10000), tutorial (5000) */
@@ -29631,6 +29679,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
       },
 
       // ── 7. Flow arcs + Context demo (~19s) ───────────────────────
+      // Starts on page 2 (news flows panel, threads view) so the
+      // first beat can pulse the globe button on a thread card —
+      // narrator says "tap the button" early in the audio and we
+      // want the user to see WHICH button activates flow arcs.
+      // After ~1.5s (button highlight done), we navigate to page 1
+      // and run the synthetic arc demo as before.
       {
         id: 'flow_arcs',
         title: 'Flow arcs',
@@ -29638,13 +29692,39 @@ const settingsToggle     = document.getElementById("settingsToggle");
         audio: AUDIO_BASE + '07_flow_arcs.mp3',
         fallbackMs: 19000,
         onEnter: function () {
-          try { window.__goToPage?.(1); } catch (_) {}
+          // Stay on / navigate to page 2 with thread cards visible
+          // for the upcoming "tap the button" pulse. If we're already
+          // here from chapter 6's news-flows panel, switching to
+          // threads view is the only adjustment needed.
+          try { window.__goToPage?.(2); } catch (_) {}
+          setTimeout(() => {
+            try { document.getElementById('nfViewThreads')?.click(); } catch (_) {}
+          }, 220);
           clearSpotlight();
           this._mockCleanup = null;
         },
         beats: [
-          // 1s: spawn the synthetic flow set on the globe.
-          { at: 1000, do: () => {
+          // 0s: narrator says "tap the button" — pulse the globe-arc
+          //      button on the first visible thread card so the user
+          //      sees what activates flow arcs. waitForElement covers
+          //      cold-start where the card hasn't rendered yet.
+          { at: 0, do: async () => {
+              try {
+                const btn = await waitForElement(
+                  '.nfThreadCard ~ .cardFlowArcBtn, .cardFlowArcBtn',
+                  { timeout: 6000 }
+                );
+                if (btn) pulse(btn);
+              } catch (_) {}
+            }
+          },
+          // 1.5s: drop the button pulse, navigate to globe, and spawn
+          //       the synthetic flow set. Combined into one beat so
+          //       the page transition + arc-spawn happen back-to-back
+          //       without a visible gap on the globe.
+          { at: 1500, do: () => {
+              clearPulse();
+              try { window.__goToPage?.(1); } catch (_) {}
               try {
                 const hub = { type: 'country', iso: 'US', id: 'US', place: 'United States', lat: 39.83, lon: -98.58 };
                 const dests = [
@@ -29696,9 +29776,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
       },
 
       // ── 8. News Flows panel (~13s) ───────────────────────────────
-      // News Flows panel anchors bottom-right above the ticker —
+      // News Flows panel anchors bottom-center above the ticker —
       // chrome moves to TOP so it doesn't visually compete with the
-      // panel's keyword input + mode pills.
+      // panel's keyword input + mode pills. Each narrated button
+      // gets pulsed AND clicked so the user sees the cause + effect.
       {
         id: 'news_flows',
         title: 'News Flows',
@@ -29711,28 +29792,69 @@ const settingsToggle     = document.getElementById("settingsToggle");
           clearSpotlight();
         },
         beats: [
-          { at: 0, do: () => spotlight('#flowModeBtn') },
-          { at: 1500, do: () => {
-              try { document.getElementById('flowModeBtn')?.click(); } catch (_) {}
+          // 0s: pulse the News Flows toggle button at the top of the
+          //     globe page so the user sees what to tap.
+          { at: 0, do: () => pulse('#flowModeBtn') },
+          // 1s: actually click it — opens the news flows panel
+          //     (#flowControls). Wrapped in waitForElement so we don't
+          //     fall through if the button hasn't rendered yet on a
+          //     cold start.
+          { at: 1000, do: async () => {
+              try {
+                const btn = await waitForElement('#flowModeBtn', { timeout: 4000 });
+                if (btn) btn.click();
+              } catch (_) {}
             }
           },
-          // 3s: type "climate" into the keyword input.
-          { at: 3000, do: () => {
-              const input = document.getElementById('flowKeyword');
-              if (!input) return;
-              input.value = 'climate';
-              try { input.dispatchEvent(new Event('input', { bubbles: true })); } catch (_) {}
-              spotlight(input);
+          // 2.5s: pulse + type "climate" into the keyword input.
+          //       waitForElement covers the panel slide-in transition
+          //       (which can take ~300ms after click).
+          { at: 2500, do: async () => {
+              try {
+                const input = await waitForElement('#flowKeyword', { timeout: 3000 });
+                if (!input) return;
+                input.value = 'climate';
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+                pulse(input);
+              } catch (_) {}
             }
           },
-          { at: 6000, do: () => {
-              const pill = document.querySelector('.flowModePill[data-fmode="aggregate"]');
-              if (pill) { pill.click(); spotlight(pill); }
+          // 5s: click the Aggregate mode pill — narrator: "...or render
+          //     all flows at once."
+          { at: 5000, do: () => {
+              try {
+                const pill = document.querySelector('.flowModePill[data-fmode="aggregate"]');
+                if (pill) { pulse(pill); pill.click(); }
+              } catch (_) {}
             }
           },
-          { at: 9500, do: () => {
-              const pill = document.querySelector('.flowModePill[data-fmode="individual"]');
-              if (pill) { pill.click(); spotlight(pill); }
+          // 8s: click back to Time Series ("individual" data-fmode is
+          //     the default-active value for the Time Series pill —
+          //     the codebase predates the "individual" → "time series"
+          //     rename).
+          { at: 8000, do: () => {
+              try {
+                const pill = document.querySelector('.flowModePill[data-fmode="individual"]');
+                if (pill) { pulse(pill); pill.click(); }
+              } catch (_) {}
+            }
+          },
+          // 10.5s: click the Sentiment color pill — narrator: "...color
+          //        by tone" or similar.
+          { at: 10500, do: () => {
+              try {
+                const pill = document.querySelector('.flowModePill[data-cmode="sentiment"]');
+                if (pill) { pulse(pill); pill.click(); }
+              } catch (_) {}
+            }
+          },
+          // 12s: return to Color by Routing (default state) so the
+          //      next chapter starts from a clean baseline.
+          { at: 12000, do: () => {
+              try {
+                const pill = document.querySelector('.flowModePill[data-cmode="routing"]');
+                if (pill) { pulse(pill); pill.click(); }
+              } catch (_) {}
             }
           },
         ],
@@ -30168,25 +30290,56 @@ const settingsToggle     = document.getElementById("settingsToggle");
     }
 
     // ── Pre-warm API endpoints used by chapters 4 / 5 / 6 ──────────
-    // On a cold-start tour the user lands on page 1 (globe). Chapters
-    // 4 / 5 / 6 navigate to page 2 (news flows) and immediately try to
-    // tap a thread / timeline / article card. If the network is slow,
-    // the cards haven't rendered by the 3s beat and the chapter falls
-    // through with no panel open — the user just sees a loading
-    // spinner during the narration. Firing these GETs at reel start
-    // seeds the browser cache so by the time the panel actually
-    // opens, the same fetch returns instantly. Failures are silent —
-    // the fallback is `waitForElement` below, which polls for the
-    // card to appear before clicking.
+    // On cold start, chapters 4 / 5 / 6 navigate to page 2 (news
+    // flows) and immediately tap a card — if data hasn't loaded the
+    // tutorial just shows a spinner during the narration.
+    //
+    // The app's own boot preload at line 13900 already covers:
+    //   /api/threads/latest?limit=10      → window.__preloadedThreads
+    //   /api/news/search?limit=25&offset=0 → window.__preloadedFeed
+    // …so chapter 4 (Threads) renders instantly from the 10-item
+    // preload, and chapter 6 (Feed) renders from the 25-item preload.
+    //
+    // Chapter 5 (Lines / Timelines) has NO preload — loadTimelines
+    // hits a cold cachedFetch every time. That's what "the cache
+    // didn't work" was: the limit=1000 URL was never warmed.
+    //
+    // Critical: the URLs MUST match exactly what loadThreads /
+    // loadTimelines call. They use ?limit=1000, not ?limit=30 (an
+    // earlier version of this prewarm got that wrong, which is why
+    // the user saw spinners — the cache key didn't match).
+    //
+    // Use window.cachedFetch when available so the response lands in
+    // the in-memory _apiCache that loadThreads/loadTimelines read
+    // from. Plain fetch() goes to the BROWSER http cache, which only
+    // helps if the API sets Cache-Control headers — unreliable here.
     function prewarmTutorialData() {
       const API = window.__API || 'https://earth-wjr6.onrender.com';
+      const cf = (typeof window.cachedFetch === 'function') ? window.cachedFetch : fetch;
+      // Match the exact URLs that loadThreads + loadTimelines use.
       const urls = [
-        `${API}/api/threads/latest?limit=30`,
-        `${API}/api/timelines/latest?limit=30`,
-        `${API}/api/news/search?limit=25&offset=0`,
+        `${API}/api/threads/latest?limit=1000`,
+        `${API}/api/timelines/latest?limit=1000`,
       ];
+      // Egypt (chapter 2's country panel) — the panel's loadMore uses
+      // raw fetch and the URL is keyed by numeric ID, so we need
+      // window.__globeCountries to be populated (it usually is by the
+      // time the user clicks "Take the tour" — globe data loads on
+      // page 1 boot). Even though cachedFetch's TTL map doesn't
+      // include /api/news/country/... so this won't land in
+      // _apiCache, the fetch primes DNS / TCP / TLS / Render's
+      // server-side connection pool — typically 200–500ms shaved off
+      // the panel's actual fetch a few seconds later.
+      try {
+        const eg = (window.__globeCountries || []).find(
+          c => c && (c.iso_code || '').toUpperCase() === 'EG'
+        );
+        if (eg && eg.id) {
+          urls.push(`${API}/api/news/country/${eg.id}?limit=20&offset=0`);
+        }
+      } catch (_) {}
       for (const url of urls) {
-        try { fetch(url).catch(() => {}); } catch (_) {}
+        try { cf(url).catch(() => {}); } catch (_) {}
       }
     }
 
@@ -30387,11 +30540,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
         tip.classList.add('show');
       });
       activeBtn = btn;
+      // Class the button so its :active visual cues (tap-highlight,
+      // scale-down, glow) get softened by the CSS rule above. Removed
+      // by hide() / release(). Wrap in try/catch because some
+      // elements may have read-only classList (rare; SVG-in-foreign-
+      // namespace edge cases on older WebKit).
+      try { btn.classList.add('holdTip-source-active'); } catch (_) {}
       suppressClick = true;
     }
 
     function hide() {
       if (tooltipEl) tooltipEl.classList.remove('show');
+      if (activeBtn) {
+        try { activeBtn.classList.remove('holdTip-source-active'); } catch (_) {}
+      }
       activeBtn = null;
     }
 

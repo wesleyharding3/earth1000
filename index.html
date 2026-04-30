@@ -4287,16 +4287,15 @@ button.arcCtxSegDot,
     #tutOverlay > * { pointer-events: auto; }
     /* Chrome panel — caption + controls + dots + skip in one glass
        card. See www/index.html for full rationale. */
-    /* Shrunk to ~240px max so the chrome doesn't span the screen.
-       See www/index.html for full rationale. */
+    /* Shrunk further to ~200px max. See www/index.html. */
     #tutChromePanel {
       position: relative;
       display: flex;
       flex-direction: column;
       align-items: center;
-      gap: 8px;
-      padding: 22px 14px 12px;
-      border-radius: 18px;
+      gap: 6px;
+      padding: 20px 12px 10px;
+      border-radius: 16px;
       background: rgba(10, 10, 14, 0.62);
       border: 1px solid rgba(255, 190, 80, 0.22);
       backdrop-filter: blur(20px);
@@ -4305,7 +4304,7 @@ button.arcCtxSegDot,
         0 8px 32px rgba(0, 0, 0, 0.55),
         inset 0 1px 0 rgba(255, 255, 255, 0.06);
       pointer-events: auto;
-      max-width: min(240px, calc(100vw - 32px));
+      max-width: min(200px, calc(100vw - 32px));
     }
     /* Skip — top-right of the chrome panel. */
     #tutSkip {
@@ -4331,9 +4330,9 @@ button.arcCtxSegDot,
       margin: 0;
       padding: 0 2px;
       text-align: center;
-      font-size: 14px;
+      font-size: 13px;
       font-weight: 600;
-      line-height: 1.35;
+      line-height: 1.32;
       color: rgba(255, 235, 200, 0.96);
       text-shadow: 0 2px 12px rgba(0, 0, 0, 0.7);
       letter-spacing: 0.005em;
@@ -4491,9 +4490,17 @@ button.arcCtxSegDot,
       pointer-events: auto;
     }
     .tutCtrlBtn {
-      /* 38 → 32px in lockstep with chrome shrink. See www/index.html. */
+      /* iOS button-reset triplet: prevents the native asymmetric
+         padding from making the circle an ellipse. See www/index.html. */
+      -webkit-appearance: none;
+      appearance: none;
+      box-sizing: border-box;
+      padding: 0;
       flex: 0 0 32px;
       width: 32px; height: 32px;
+      min-width: 32px; min-height: 32px;
+      max-width: 32px; max-height: 32px;
+      line-height: 1;
       border-radius: 50%;
       background: rgba(8, 8, 8, 0.72);
       border: 1px solid rgba(255, 190, 80, 0.32);
@@ -4599,6 +4606,22 @@ button.arcCtxSegDot,
     }
     @media (prefers-reduced-motion: reduce) {
       #tutSnapStandin { transition: none; }
+    }
+
+    /* Hold-tip suppress iOS native tap-highlight + long-press menu —
+       see www/index.html for full rationale. */
+    [data-hold-tip] {
+      -webkit-tap-highlight-color: transparent;
+      -webkit-touch-callout: none;
+      -webkit-user-select: none;
+      user-select: none;
+    }
+    [data-hold-tip].holdTip-source-active,
+    [data-hold-tip].holdTip-source-active:active,
+    [data-hold-tip].holdTip-source-active:hover {
+      transform: none !important;
+      filter: none !important;
+      opacity: 0.85;
     }
 
     /* Hold-down tooltip — see www/index.html for full rationale. */
@@ -27673,6 +27696,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
       },
 
       // ── 7. Flow arcs + Context demo (~19s) ───────────────────────
+      // Starts on page 2 with thread cards visible so we can pulse
+      // the globe button on a card during the "tap the button"
+      // narration. See www/index.html for full rationale.
       {
         id: 'flow_arcs',
         title: 'Flow arcs',
@@ -27680,13 +27706,29 @@ const settingsToggle     = document.getElementById("settingsToggle");
         audio: AUDIO_BASE + '07_flow_arcs.mp3',
         fallbackMs: 19000,
         onEnter: function () {
-          try { window.__goToPage?.(1); } catch (_) {}
+          try { window.__goToPage?.(2); } catch (_) {}
+          setTimeout(() => {
+            try { document.getElementById('nfViewThreads')?.click(); } catch (_) {}
+          }, 220);
           clearSpotlight();
           this._mockCleanup = null;
         },
         beats: [
-          // 1s: spawn the synthetic flow set on the globe.
-          { at: 1000, do: () => {
+          // 0s: pulse the globe-arc button on the first thread card.
+          { at: 0, do: async () => {
+              try {
+                const btn = await waitForElement(
+                  '.nfThreadCard ~ .cardFlowArcBtn, .cardFlowArcBtn',
+                  { timeout: 6000 }
+                );
+                if (btn) pulse(btn);
+              } catch (_) {}
+            }
+          },
+          // 1.5s: drop pulse, navigate to globe, spawn synthetic arcs.
+          { at: 1500, do: () => {
+              clearPulse();
+              try { window.__goToPage?.(1); } catch (_) {}
               try {
                 const hub = { type: 'country', iso: 'US', id: 'US', place: 'United States', lat: 39.83, lon: -98.58 };
                 const dests = [
@@ -27751,28 +27793,51 @@ const settingsToggle     = document.getElementById("settingsToggle");
           clearSpotlight();
         },
         beats: [
-          { at: 0, do: () => spotlight('#flowModeBtn') },
-          { at: 1500, do: () => {
-              try { document.getElementById('flowModeBtn')?.click(); } catch (_) {}
+          // See www/index.html for full rationale on each beat.
+          { at: 0, do: () => pulse('#flowModeBtn') },
+          { at: 1000, do: async () => {
+              try {
+                const btn = await waitForElement('#flowModeBtn', { timeout: 4000 });
+                if (btn) btn.click();
+              } catch (_) {}
             }
           },
-          // 3s: type "climate" into the keyword input.
-          { at: 3000, do: () => {
-              const input = document.getElementById('flowKeyword');
-              if (!input) return;
-              input.value = 'climate';
-              try { input.dispatchEvent(new Event('input', { bubbles: true })); } catch (_) {}
-              spotlight(input);
+          { at: 2500, do: async () => {
+              try {
+                const input = await waitForElement('#flowKeyword', { timeout: 3000 });
+                if (!input) return;
+                input.value = 'climate';
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+                pulse(input);
+              } catch (_) {}
             }
           },
-          { at: 6000, do: () => {
-              const pill = document.querySelector('.flowModePill[data-fmode="aggregate"]');
-              if (pill) { pill.click(); spotlight(pill); }
+          { at: 5000, do: () => {
+              try {
+                const pill = document.querySelector('.flowModePill[data-fmode="aggregate"]');
+                if (pill) { pulse(pill); pill.click(); }
+              } catch (_) {}
             }
           },
-          { at: 9500, do: () => {
-              const pill = document.querySelector('.flowModePill[data-fmode="individual"]');
-              if (pill) { pill.click(); spotlight(pill); }
+          { at: 8000, do: () => {
+              try {
+                const pill = document.querySelector('.flowModePill[data-fmode="individual"]');
+                if (pill) { pulse(pill); pill.click(); }
+              } catch (_) {}
+            }
+          },
+          { at: 10500, do: () => {
+              try {
+                const pill = document.querySelector('.flowModePill[data-cmode="sentiment"]');
+                if (pill) { pulse(pill); pill.click(); }
+              } catch (_) {}
+            }
+          },
+          { at: 12000, do: () => {
+              try {
+                const pill = document.querySelector('.flowModePill[data-cmode="routing"]');
+                if (pill) { pulse(pill); pill.click(); }
+              } catch (_) {}
             }
           },
         ],
@@ -28185,16 +28250,27 @@ const settingsToggle     = document.getElementById("settingsToggle");
       try { window.__dismissAmbientHeadline?.(); } catch (_) {}
     }
 
-    // Pre-warm + waitForElement helpers — see www/index.html.
+    // Pre-warm + waitForElement helpers — see www/index.html for
+    // the URL-match rationale (must be ?limit=1000, NOT 30 — the
+    // earlier value didn't match what loadThreads/loadTimelines
+    // actually call, so the cache key never lined up).
     function prewarmTutorialData() {
       const API = window.__API || 'https://earth-wjr6.onrender.com';
+      const cf = (typeof window.cachedFetch === 'function') ? window.cachedFetch : fetch;
       const urls = [
-        `${API}/api/threads/latest?limit=30`,
-        `${API}/api/timelines/latest?limit=30`,
-        `${API}/api/news/search?limit=25&offset=0`,
+        `${API}/api/threads/latest?limit=1000`,
+        `${API}/api/timelines/latest?limit=1000`,
       ];
+      try {
+        const eg = (window.__globeCountries || []).find(
+          c => c && (c.iso_code || '').toUpperCase() === 'EG'
+        );
+        if (eg && eg.id) {
+          urls.push(`${API}/api/news/country/${eg.id}?limit=20&offset=0`);
+        }
+      } catch (_) {}
       for (const url of urls) {
-        try { fetch(url).catch(() => {}); } catch (_) {}
+        try { cf(url).catch(() => {}); } catch (_) {}
       }
     }
     function waitForElement(selector, { timeout = 6000, pollInterval = 200 } = {}) {
@@ -28355,10 +28431,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
         tip.classList.add('show');
       });
       activeBtn = btn;
+      // Soften the button's :active visuals while the tooltip is up.
+      // See www/index.html.
+      try { btn.classList.add('holdTip-source-active'); } catch (_) {}
       suppressClick = true;
     }
     function hide() {
       if (tooltipEl) tooltipEl.classList.remove('show');
+      if (activeBtn) {
+        try { activeBtn.classList.remove('holdTip-source-active'); } catch (_) {}
+      }
       activeBtn = null;
     }
     document.addEventListener('pointerdown', (e) => {
