@@ -50,15 +50,19 @@ function isDateLikeKeyword(keyword) {
 // ── Trending ────────────────────────────────────────────────────────────────
 // Top keywords by total mention volume over the last N days (global only).
 async function computeTrending({ days = 7, limit = 50 } = {}) {
-  // Bounded long-running aggregation. Previously we ran with
-  // statement_timeout = 0 (unbounded) and a single run was clocking
-  // 16+ minutes while holding pool connections — see Render logs
-  // "[keywordCron] trending: 50 keywords cached (1010.1s)". 5 min is
-  // plenty for the partial covering index path; if the query still can't
-  // complete in that window we'd rather skip the refresh than choke the API.
+  // Bounded long-running aggregation. Originally unbounded and clocking
+  // 16+ minutes; bumped down to 5 min, then to 90 s after pg_stat_activity
+  // showed two parallel "WITH recent AS …" queries from this cron holding
+  // slots for 4.6 minutes apiece (likely a cron-schedule overlap where the
+  // previous invocation hadn't finished before the next one started).
+  // 90 s is short enough that an overlapping invocation can't compound:
+  // worst case the second copy of trending/rising fails fast and the
+  // cache stays one cycle stale. If 90 s starts failing routinely the
+  // right fix is a partial covering index, not bumping the timeout back
+  // up — the goal is to bound slot occupation.
   const client = await pool.connect();
   try {
-    await client.query("SET statement_timeout = '5min'");
+    await client.query("SET statement_timeout = '90s'");
     const { rows } = await client.query(`
       SELECT
         k.keyword,
@@ -85,10 +89,10 @@ async function computeTrending({ days = 7, limit = 50 } = {}) {
 // ── Rising ──────────────────────────────────────────────────────────────────
 // Keywords whose recent velocity is significantly above their baseline rate.
 async function computeRising({ days = 3, baselineDays = 14, limit = 30 } = {}) {
-  // Same 5-minute bound as computeTrending — see comment there.
+  // Same 90 s bound as computeTrending — see comment there.
   const client = await pool.connect();
   try {
-    await client.query("SET statement_timeout = '5min'");
+    await client.query("SET statement_timeout = '90s'");
     const { rows } = await client.query(`
     WITH recent AS (
       SELECT k.keyword, SUM(k.total_count)::bigint AS recent_count

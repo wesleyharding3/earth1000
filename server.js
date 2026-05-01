@@ -401,6 +401,31 @@ function _persistFeedSnapshot() {
   require('fs').writeFile(_FEED_SNAPSHOT_FILE, JSON.stringify(out), () => {});
 }
 
+// Per-key expiry jitter — when this server runs as multiple Render
+// replicas, each replica has its own in-process _ttlCache. All replicas
+// that warm a key at the same instant will also expire that key at the
+// same instant, and on the next request they all simultaneously
+// produce a fresh value (cross-process thundering herd: pg_stat_activity
+// showed 13 copies of the same producer query running in parallel).
+//
+// In-process coalescing (the _ttlInflight Map below) already prevents
+// N requests on a single replica from firing N producers — that part
+// works. What it can't prevent is N replicas all expiring together.
+//
+// The fix is decorrelation, not coordination: spread each replica's
+// expiry by ±10% of the configured TTL so replicas drift apart over
+// time. After a few cycles, replicas are firing producers at staggered
+// moments instead of all at once. Cross-process coalescing (e.g. via
+// Redis or pg_try_advisory_lock) would be cleaner but requires either
+// new infrastructure or burning a connection slot just to acquire the
+// lock — counter-productive when slot saturation is the very thing we
+// were investigating.
+function _jitteredExpiry(ttlMs) {
+  // Multiply by [0.9, 1.1). +ttlMs/10 random offset across replicas.
+  const factor = 0.9 + Math.random() * 0.2;
+  return Date.now() + Math.round(ttlMs * factor);
+}
+
 async function ttlCached(key, ttlMs, producer) {
   const now = Date.now();
   const hit = _ttlCache.get(key);
@@ -413,7 +438,7 @@ async function ttlCached(key, ttlMs, producer) {
       const bg = (async () => {
         try {
           const value = await producer();
-          _ttlCache.set(key, { expires: Date.now() + ttlMs, value });
+          _ttlCache.set(key, { expires: _jitteredExpiry(ttlMs), value });
       if (_SNAPSHOT_KEYS.has(key)) _persistFeedSnapshot();
         } catch (_) {} finally { _ttlInflight.delete(key); }
       })();
@@ -426,7 +451,7 @@ async function ttlCached(key, ttlMs, producer) {
   const p = (async () => {
     try {
       const value = await producer();
-      _ttlCache.set(key, { expires: Date.now() + ttlMs, value });
+      _ttlCache.set(key, { expires: _jitteredExpiry(ttlMs), value });
       if (_SNAPSHOT_KEYS.has(key)) _persistFeedSnapshot();
 
       return value;

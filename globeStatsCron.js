@@ -326,6 +326,49 @@ async function fetchAll() {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+//  DB resilience — Render's shared Postgres has a hard ceiling on
+//  connections. When other services (main app, other crons) are
+//  collectively at the limit, our pool.acquire() returns "too many
+//  clients already" or "remaining connection slots are reserved for
+//  roles with the SUPERUSER attribute". Both surface as PG error
+//  53300 (too_many_connections). Retrying with backoff usually wins —
+//  some other service finishes its query and frees a slot within a
+//  few seconds.
+//
+//  Network-level errors (ECONNREFUSED, ETIMEDOUT, "Connection terminated")
+//  also retry: those are typically transient too on managed PG.
+//  Anything else (syntax error, FK violation, etc.) is permanent and
+//  rethrows immediately so we don't burn time retrying real bugs.
+// ────────────────────────────────────────────────────────────────────────────
+function isDbConnectionError(err) {
+  if (!err) return false;
+  if (err.code === '53300') return true;        // PG: too_many_connections
+  if (err.code === '53400') return true;        // PG: configuration_limit_exceeded
+  if (err.code === 'ECONNREFUSED') return true;
+  if (err.code === 'ETIMEDOUT') return true;
+  const msg = String(err.message || '').toLowerCase();
+  return /too many clients|connection slots are reserved|connection terminated|connection ended|econnrefused|etimedout/i.test(msg);
+}
+
+async function withDbRetry(fn, label) {
+  const RETRY_DELAYS_MS = [0, 1000, 3000, 8000];
+  let lastErr = null;
+  for (let attempt = 0; attempt < RETRY_DELAYS_MS.length; attempt++) {
+    if (RETRY_DELAYS_MS[attempt] > 0) {
+      await new Promise(r => setTimeout(r, RETRY_DELAYS_MS[attempt]));
+    }
+    try {
+      return await fn();
+    } catch (e) {
+      lastErr = e;
+      if (!isDbConnectionError(e)) throw e;
+      console.warn(`${TAG} ${label} db saturation, retry ${attempt + 1}/${RETRY_DELAYS_MS.length}: ${e.message}`);
+    }
+  }
+  throw lastErr;
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 //  Last-known-good loader — reads the most recent cached results so we
 //  can fill missing keys when a particular series 5xx'd persistently
 //  this run. Daily commodity prices change <2% in a 6-hour window;
@@ -335,13 +378,16 @@ async function fetchAll() {
 // ────────────────────────────────────────────────────────────────────────────
 async function loadPrevCache(mode, filterKey) {
   try {
-    const { rows } = await pool.query(`
-      SELECT results
-        FROM keyword_intelligence_cache
-       WHERE mode = $1 AND filter_key = $2
-       ORDER BY computed_at DESC
-       LIMIT 1
-    `, [mode, filterKey]);
+    const rows = await withDbRetry(async () => {
+      const r = await pool.query(`
+        SELECT results
+          FROM keyword_intelligence_cache
+         WHERE mode = $1 AND filter_key = $2
+         ORDER BY computed_at DESC
+         LIMIT 1
+      `, [mode, filterKey]);
+      return r.rows;
+    }, 'loadPrevCache');
     if (!rows.length) return null;
     const r = rows[0].results;
     return typeof r === 'string' ? JSON.parse(r) : r;
@@ -352,25 +398,37 @@ async function loadPrevCache(mode, filterKey) {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-//  DB cache writer (same table as sourcesStatsCron)
+//  DB cache writer (same table as sourcesStatsCron). Both queries go
+//  through withDbRetry so a single saturated moment doesn't fail the
+//  whole run. The prune is best-effort — if it fails after the insert
+//  succeeded, the row count just runs slightly above the 6-row cap
+//  until the next prune; not worth aborting over.
 // ────────────────────────────────────────────────────────────────────────────
 async function writeCache(mode, filterKey, results) {
-  await pool.query(`
-    INSERT INTO keyword_intelligence_cache (mode, filter_key, results)
-    VALUES ($1, $2, $3)
-  `, [mode, filterKey, JSON.stringify(results)]);
+  await withDbRetry(async () => {
+    await pool.query(`
+      INSERT INTO keyword_intelligence_cache (mode, filter_key, results)
+      VALUES ($1, $2, $3)
+    `, [mode, filterKey, JSON.stringify(results)]);
+  }, 'writeCache insert');
 
   // Prune: keep the 6 most recent rows per mode+filter
-  await pool.query(`
-    DELETE FROM keyword_intelligence_cache
-    WHERE mode = $1 AND filter_key = $2
-      AND id NOT IN (
-        SELECT id FROM keyword_intelligence_cache
+  try {
+    await withDbRetry(async () => {
+      await pool.query(`
+        DELETE FROM keyword_intelligence_cache
         WHERE mode = $1 AND filter_key = $2
-        ORDER BY computed_at DESC
-        LIMIT 6
-      )
-  `, [mode, filterKey]);
+          AND id NOT IN (
+            SELECT id FROM keyword_intelligence_cache
+            WHERE mode = $1 AND filter_key = $2
+            ORDER BY computed_at DESC
+            LIMIT 6
+          )
+      `, [mode, filterKey]);
+    }, 'writeCache prune');
+  } catch (e) {
+    console.warn(`${TAG} prune failed (insert already succeeded): ${e.message}`);
+  }
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -411,8 +469,20 @@ async function run() {
 
     const count = Object.keys(results).length;
     if (count > 0) {
-      await writeCache('globe-stats', 'global', results);
-      console.log(`${TAG} cached to DB (${elapsed(t0)})`);
+      try {
+        await writeCache('globe-stats', 'global', results);
+        console.log(`${TAG} cached to DB (${elapsed(t0)})`);
+      } catch (e) {
+        // Already retried inside withDbRetry. If we still can't write,
+        // the DB is genuinely down or saturated for the entire backoff
+        // window. Log loudly but don't exit non-zero — the data we
+        // fetched is good, the next run (6h later) will get a fresh
+        // shot at writing, and Render's "cron failed" alert is reserved
+        // for actual code errors. Stale tiles from the previous cache
+        // row still serve users in the meantime.
+        console.warn(`${TAG} writeCache failed after retries: ${e.message}`);
+        console.warn(`${TAG} skipping write — next run will retry; dashboard continues serving prev cache`);
+      }
     } else {
       console.warn(`${TAG} no data fetched — skipping cache write`);
     }
@@ -422,7 +492,9 @@ async function run() {
     console.error(`${TAG} fatal:`, err.message);
     process.exit(1);
   } finally {
-    await pool.end();
+    // pool.end() can itself throw if every slot was previously
+    // unreachable — swallow so the process exits cleanly.
+    try { await pool.end(); } catch (_) {}
   }
 }
 
