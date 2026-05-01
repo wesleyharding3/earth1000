@@ -29905,7 +29905,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
             }
           },
           { at: 14000, do: () => {
-              scrollPanelTo('#cdTimelineSection');
+              // Scroll to and pulse the Activity histogram (bar graph
+              // density ruler) FIRST — it sits directly above the events
+              // section in the panel for lines, so anchoring the scroll
+              // there brings both sections into the same viewport. The
+              // density ruler reads as "the shape of this story over
+              // time" and pairs naturally with the chronological events
+              // list below it; pulsing both sells the connection.
+              scrollPanelTo('#cdDensitySection');
+              pulse('#cdDensitySection');
               pulse('#cdTimelineSection');
             }
           },
@@ -30145,24 +30153,51 @@ const settingsToggle     = document.getElementById("settingsToggle");
               } catch (_) {}
             }
           },
-          // 4.5s: click Aggregate mode pill.
+          // 4.5s: click Aggregate mode pill AND immediately spawn an
+          //       aggregate-style arc set on the globe. This is the
+          //       moment the narrator says "aggregate news flows", so
+          //       we want the visual on the map to land on that beat —
+          //       not 2 s later. Real aggregate mode hits /api/flows?
+          //       mode=aggregate which returns a many-to-many matrix;
+          //       hard-coding the mock here gives the same visual
+          //       impression with zero latency and no API dependency.
           { at: 4500, do: () => {
               try {
                 const pill = document.querySelector('.flowModePill[data-fmode="aggregate"]');
                 if (pill) { pulse(pill); pill.click(); }
               } catch (_) {}
+              try {
+                const NODES = [
+                  { type: 'country', iso: 'US', id: 'US', place: 'United States', lat:  39.83, lon:  -98.58 },
+                  { type: 'country', iso: 'GB', id: 'GB', place: 'United Kingdom', lat:  54.00, lon:   -2.00 },
+                  { type: 'country', iso: 'DE', id: 'DE', place: 'Germany',        lat:  51.16, lon:   10.45 },
+                  { type: 'country', iso: 'JP', id: 'JP', place: 'Japan',          lat:  36.20, lon:  138.25 },
+                  { type: 'country', iso: 'BR', id: 'BR', place: 'Brazil',         lat: -14.24, lon:  -51.93 },
+                  { type: 'country', iso: 'IN', id: 'IN', place: 'India',          lat:  20.59, lon:   78.96 },
+                ];
+                // Many-to-many: each origin connects to its two next-
+                // index neighbours. 12 arcs total, distributed across
+                // the globe — visually distinct from chapter 7's hub-
+                // and-spoke shape and characteristic of what real
+                // aggregate flows look like on the map.
+                const flows = [];
+                for (let i = 0; i < NODES.length; i++) {
+                  const src = NODES[i];
+                  flows.push({ src, dst: NODES[(i + 1) % NODES.length], count: 1, _cardTriggered: false, _sourceType: 'thread' });
+                  flows.push({ src, dst: NODES[(i + 2) % NODES.length], count: 1, _cardTriggered: false, _sourceType: 'thread' });
+                }
+                window.__flowAssignLaneOffsets?.(flows);
+                flows.forEach(flow => { const a = window.__flowCreateArc?.(flow, 1); if (a) window.__flowPushArc?.(a); });
+                window.__flowHighlightCountries?.(new Set(NODES.map(n => n.iso)));
+              } catch (_) {}
             }
           },
-          // 6.5s: spawn synthetic arcs on the globe so the user has
-          //       something to LOOK AT during the rest of the chapter
-          //       and during the closing minimize-reveal. We don't
-          //       rely on the Load button because that hits the live
-          //       API — synthetic flows give deterministic visuals.
-          //       Mirrors chapter 7's spawn block. Doesn't call
-          //       __flowSetOpen(true) here because that would auto-
-          //       minimize the panel (per the function's `if (open)`
-          //       branch); we want the panel to stay expanded until
-          //       the explicit minimize at 11s.
+          // 6.5s: refill arcs so the visual stays dense through the
+          //       middle of the chapter. Without a refill, the 4.5s
+          //       spawn fades by ~7-8s and the globe goes quiet during
+          //       the time-series / sentiment / routing demos below.
+          //       Original hub-and-spoke shape kept — gives the user a
+          //       second visual variant.
           { at: 6500, do: () => {
               try {
                 const hub = { type: 'country', iso: 'US', id: 'US', place: 'United States', lat: 39.83, lon: -98.58 };
@@ -30209,10 +30244,28 @@ const settingsToggle     = document.getElementById("settingsToggle");
           //      panel, if it's open) so the last ~2s of the chapter
           //      shows the unobstructed globe with arcs flowing.
           //      clearPulse so no pulsing button is left mid-collapse.
+          //      ALSO re-spawn fresh synthetic arcs at this beat so
+          //      the user definitely sees flows on the globe during
+          //      the reveal — without this refresh, arcs spawned at
+          //      6.5s have likely faded by 11s and the closing pan
+          //      is just an empty globe.
           { at: 11000, do: () => {
               clearPulse();
               try { document.getElementById('flowControls')?.classList.add('minimized'); } catch (_) {}
               try { document.getElementById('flowCtxCard')?.classList.add('flowCtxMinimized'); } catch (_) {}
+              try {
+                const hub = { type: 'country', iso: 'US', id: 'US', place: 'United States', lat: 39.83, lon: -98.58 };
+                const dests = [
+                  { type: 'country', iso: 'GB', id: 'GB', place: 'United Kingdom', lat:  54.00, lon:  -2.00 },
+                  { type: 'country', iso: 'DE', id: 'DE', place: 'Germany',        lat:  51.16, lon:  10.45 },
+                  { type: 'country', iso: 'JP', id: 'JP', place: 'Japan',          lat:  36.20, lon: 138.25 },
+                  { type: 'country', iso: 'BR', id: 'BR', place: 'Brazil',         lat: -14.24, lon: -51.93 },
+                  { type: 'country', iso: 'IN', id: 'IN', place: 'India',          lat:  20.59, lon:  78.96 },
+                ];
+                const flows = dests.map(dst => ({ src: hub, dst, count: 1, _cardTriggered: false, _sourceType: 'thread' }));
+                window.__flowAssignLaneOffsets?.(flows);
+                flows.forEach(flow => { const a = window.__flowCreateArc?.(flow, 1); if (a) window.__flowPushArc?.(a); });
+              } catch (_) {}
             }
           },
         ],
@@ -30320,6 +30373,26 @@ const settingsToggle     = document.getElementById("settingsToggle");
               // Open bLauncher directly (bypasses the Pro tier gate
               // so free-tier viewers see the panel during the demo).
               try { document.getElementById('bLauncher')?.classList.add('open'); } catch (_) {}
+              // Inject a mock headline + date + visible Start button
+              // so the panel reads as "ready" instead of the cold-
+              // start "Loading…" or "Check back tomorrow…" fallback.
+              // Without this the user lands on a blank-looking panel
+              // and the spotlight at 3s has nothing readable to point
+              // at. The real fetch may still complete in the
+              // background and overwrite — that's fine; either way
+              // the user sees a populated panel during the demo.
+              try {
+                const headline = document.getElementById('bLauncherTodayHeadline');
+                if (headline) headline.textContent = "Today's top stories — climate accord, market jitters, ceasefire hopes";
+                const dateEl = document.getElementById('bLauncherTodayDate');
+                if (dateEl) {
+                  dateEl.textContent = new Date().toLocaleDateString(undefined, {
+                    weekday: 'long', month: 'long', day: 'numeric',
+                  });
+                }
+                const startBtn = document.getElementById('bLauncherStartToday');
+                if (startBtn) { startBtn.style.display = ''; startBtn.disabled = false; }
+              } catch (_) {}
             }
           },
           { at: 3000, do: () => spotlight('#bLauncherTodaySection') },
@@ -37754,12 +37827,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
   });
 
   const GLOBE_SECTIONS = {
+    // Lithium / Cobalt / Rare Earths removed — no reliable free real-
+    // time data source for them (LME + Trading Economics are paid;
+    // World Bank Pink Sheet is monthly with a 6-week lag). Steel is
+    // backed by FRED WPU101 (PPI for iron & steel), so its unit is
+    // "index" rather than $/ton.
     gsCommoditiesGrid: { widgets: [
       { id: 'oil', label: 'Crude Oil', unit: '$/bbl' }, { id: 'natgas', label: 'Natural Gas', unit: '$/MMBtu' },
-      { id: 'coal', label: 'Coal', unit: '$/ton' }, { id: 'steel', label: 'Steel', unit: '$/ton' },
+      { id: 'coal', label: 'Coal', unit: '$/ton' }, { id: 'steel', label: 'Steel', unit: 'index' },
       { id: 'aluminum', label: 'Aluminum', unit: '$/ton' }, { id: 'copper', label: 'Copper', unit: '$/lb' },
-      { id: 'lithium', label: 'Lithium', unit: '$/ton' }, { id: 'cobalt', label: 'Cobalt', unit: '$/ton' },
-      { id: 'rareearth', label: 'Rare Earths', unit: 'index' }, { id: 'gold', label: 'Gold', unit: '$/oz' },
+      { id: 'gold', label: 'Gold', unit: '$/oz' },
       { id: 'silver', label: 'Silver', unit: '$/oz' }, { id: 'platinum', label: 'Platinum', unit: '$/oz' },
       { id: 'palladium', label: 'Palladium', unit: '$/oz' }, { id: 'lumber', label: 'Lumber', unit: '$/mbf' },
       { id: 'cotton', label: 'Cotton', unit: '¢/lb' }, { id: 'rubber', label: 'Rubber', unit: '$/kg' },

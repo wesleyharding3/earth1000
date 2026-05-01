@@ -193,10 +193,19 @@ async function fetchAll() {
   const results = {};
 
   // ── Commodities ──────────────────────────────────────────────────────────
+  // Steel: WPU101 = PPI for "Iron and steel". Index value, not $/ton —
+  // the frontend tile labels it "Steel — index" instead of "$/ton" once
+  // the unit override below is in effect.
+  // Lithium / Cobalt / Rare Earths intentionally NOT fetched: there is
+  // no reliable free real-time API for them. Trading Economics and the
+  // London Metal Exchange require paid subscriptions; the World Bank
+  // Pink Sheet only covers some of them at monthly cadence with a
+  // 6-week lag. Their tiles were removed from the frontend rather
+  // than rendering blank forever.
   console.log(`${TAG} fetching commodities...`);
   const [
     oil, natgas, coal, gold, silver, platinum, palladium,
-    copper, aluminum, wheat, corn, soybeans, coffee, cocoa, cotton, lumber, rubber
+    copper, aluminum, steel, wheat, corn, soybeans, coffee, cocoa, cotton, lumber, rubber
   ] = await Promise.allSettled([
     fredLatest('DCOILWTICO'),              // WTI Crude Oil
     fredLatest('DHHNGSP'),                 // Henry Hub Natural Gas
@@ -207,6 +216,7 @@ async function fetchAll() {
     goldApiPrice('XPD'),                   // Palladium
     fredLatest('PCOPPUSDM'),               // Copper
     fredLatest('PALUMUSDM'),               // Aluminum
+    fredLatest('WPU101'),                  // Steel (PPI index for iron & steel)
     fredLatest('PWHEAMTUSDM'),             // Wheat
     fredLatest('PMAIZMTUSDM'),             // Corn (maize)
     fredLatest('PSOYBUSDM'),               // Soybeans
@@ -232,6 +242,7 @@ async function fetchAll() {
   assign('palladium', palladium);
   assign('copper', copper);
   assign('aluminum', aluminum);
+  assign('steel', steel);
   assign('wheat', wheat);
   assign('corn', corn);
   assign('soybeans', soybeans);

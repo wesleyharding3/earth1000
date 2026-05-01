@@ -27699,7 +27699,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
             }
           },
           { at: 14000, do: () => {
-              scrollPanelTo('#cdTimelineSection');
+              // Anchor scroll on the Activity bar-graph (density ruler)
+              // so both it and the events list fall into view together.
+              // See www/index.html for full rationale.
+              scrollPanelTo('#cdDensitySection');
+              pulse('#cdDensitySection');
               pulse('#cdTimelineSection');
             }
           },
@@ -27887,14 +27891,35 @@ const settingsToggle     = document.getElementById("settingsToggle");
               } catch (_) {}
             }
           },
+          // 4.5s: aggregate click + immediate aggregate arc spawn.
+          // See www/index.html for full rationale.
           { at: 4500, do: () => {
               try {
                 const pill = document.querySelector('.flowModePill[data-fmode="aggregate"]');
                 if (pill) { pulse(pill); pill.click(); }
               } catch (_) {}
+              try {
+                const NODES = [
+                  { type: 'country', iso: 'US', id: 'US', place: 'United States', lat:  39.83, lon:  -98.58 },
+                  { type: 'country', iso: 'GB', id: 'GB', place: 'United Kingdom', lat:  54.00, lon:   -2.00 },
+                  { type: 'country', iso: 'DE', id: 'DE', place: 'Germany',        lat:  51.16, lon:   10.45 },
+                  { type: 'country', iso: 'JP', id: 'JP', place: 'Japan',          lat:  36.20, lon:  138.25 },
+                  { type: 'country', iso: 'BR', id: 'BR', place: 'Brazil',         lat: -14.24, lon:  -51.93 },
+                  { type: 'country', iso: 'IN', id: 'IN', place: 'India',          lat:  20.59, lon:   78.96 },
+                ];
+                const flows = [];
+                for (let i = 0; i < NODES.length; i++) {
+                  const src = NODES[i];
+                  flows.push({ src, dst: NODES[(i + 1) % NODES.length], count: 1, _cardTriggered: false, _sourceType: 'thread' });
+                  flows.push({ src, dst: NODES[(i + 2) % NODES.length], count: 1, _cardTriggered: false, _sourceType: 'thread' });
+                }
+                window.__flowAssignLaneOffsets?.(flows);
+                flows.forEach(flow => { const a = window.__flowCreateArc?.(flow, 1); if (a) window.__flowPushArc?.(a); });
+                window.__flowHighlightCountries?.(new Set(NODES.map(n => n.iso)));
+              } catch (_) {}
             }
           },
-          // 6.5s: spawn synthetic arcs (without auto-minimizing).
+          // 6.5s: refill arcs so the visual stays dense.
           { at: 6500, do: () => {
               try {
                 const hub = { type: 'country', iso: 'US', id: 'US', place: 'United States', lat: 39.83, lon: -98.58 };
@@ -27933,10 +27958,25 @@ const settingsToggle     = document.getElementById("settingsToggle");
             }
           },
           // 11s: minimize-reveal both panels for the closing 2s.
+          // ALSO re-spawn arcs so they're still flowing during the
+          // reveal — see www/index.html for full rationale.
           { at: 11000, do: () => {
               clearPulse();
               try { document.getElementById('flowControls')?.classList.add('minimized'); } catch (_) {}
               try { document.getElementById('flowCtxCard')?.classList.add('flowCtxMinimized'); } catch (_) {}
+              try {
+                const hub = { type: 'country', iso: 'US', id: 'US', place: 'United States', lat: 39.83, lon: -98.58 };
+                const dests = [
+                  { type: 'country', iso: 'GB', id: 'GB', place: 'United Kingdom', lat:  54.00, lon:  -2.00 },
+                  { type: 'country', iso: 'DE', id: 'DE', place: 'Germany',        lat:  51.16, lon:  10.45 },
+                  { type: 'country', iso: 'JP', id: 'JP', place: 'Japan',          lat:  36.20, lon: 138.25 },
+                  { type: 'country', iso: 'BR', id: 'BR', place: 'Brazil',         lat: -14.24, lon: -51.93 },
+                  { type: 'country', iso: 'IN', id: 'IN', place: 'India',          lat:  20.59, lon:  78.96 },
+                ];
+                const flows = dests.map(dst => ({ src: hub, dst, count: 1, _cardTriggered: false, _sourceType: 'thread' }));
+                window.__flowAssignLaneOffsets?.(flows);
+                flows.forEach(flow => { const a = window.__flowCreateArc?.(flow, 1); if (a) window.__flowPushArc?.(a); });
+              } catch (_) {}
             }
           },
         ],
@@ -28029,6 +28069,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
               // Open bLauncher directly (bypasses the Pro tier gate
               // so free-tier viewers see the panel during the demo).
               try { document.getElementById('bLauncher')?.classList.add('open'); } catch (_) {}
+              // Inject mock headline/date — see www/index.html for
+              // full rationale (avoids "Loading…" / cold-start blank).
+              try {
+                const headline = document.getElementById('bLauncherTodayHeadline');
+                if (headline) headline.textContent = "Today's top stories — climate accord, market jitters, ceasefire hopes";
+                const dateEl = document.getElementById('bLauncherTodayDate');
+                if (dateEl) {
+                  dateEl.textContent = new Date().toLocaleDateString(undefined, {
+                    weekday: 'long', month: 'long', day: 'numeric',
+                  });
+                }
+                const startBtn = document.getElementById('bLauncherStartToday');
+                if (startBtn) { startBtn.style.display = ''; startBtn.disabled = false; }
+              } catch (_) {}
             }
           },
           { at: 3000, do: () => spotlight('#bLauncherTodaySection') },
@@ -34991,18 +35045,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
   // Globe widget definitions
   const GLOBE_SECTIONS = {
+    // Lithium / Cobalt / Rare Earths removed — see www/index.html.
+    // Steel uses FRED WPU101 (PPI index for iron & steel).
     gsCommoditiesGrid: {
       title: 'Commodities & Resources',
       widgets: [
         { id: 'oil',       label: 'Crude Oil',     unit: '$/bbl' },
         { id: 'natgas',    label: 'Natural Gas',   unit: '$/MMBtu' },
         { id: 'coal',      label: 'Coal',          unit: '$/ton' },
-        { id: 'steel',     label: 'Steel',         unit: '$/ton' },
+        { id: 'steel',     label: 'Steel',         unit: 'index' },
         { id: 'aluminum',  label: 'Aluminum',      unit: '$/ton' },
         { id: 'copper',    label: 'Copper',        unit: '$/lb' },
-        { id: 'lithium',   label: 'Lithium',       unit: '$/ton' },
-        { id: 'cobalt',    label: 'Cobalt',        unit: '$/ton' },
-        { id: 'rareearth', label: 'Rare Earths',   unit: 'index' },
         { id: 'gold',      label: 'Gold',          unit: '$/oz' },
         { id: 'silver',    label: 'Silver',        unit: '$/oz' },
         { id: 'platinum',  label: 'Platinum',      unit: '$/oz' },

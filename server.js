@@ -12914,7 +12914,14 @@ app.get("/api/news/sources-stats", async (req, res) => {
 ========================================= */
 app.get("/api/globe-stats", async (req, res) => {
   try {
-    const data = await ttlCached('globe-stats:all', 600_000, async () => {
+    // 90s server-side cache — was 10 min. The DB row is what the cron
+    // updates; the in-memory layer's only job is to absorb burst reads
+    // so we don't hit Postgres on every API call. 90s is plenty for
+    // that (the DB read is a single small JSONB row) and dramatically
+    // shortens the "I just ran the cron, why doesn't it show up yet"
+    // window. Cloudflare's s-maxage=120 still caps front-end visibility
+    // at ~2 min total — see the cacheControlByPath table.
+    const data = await ttlCached('globe-stats:all', 90_000, async () => {
       // Read from DB cache (populated by globeStatsCron.js)
       const dbCached = await getDbKeywordCache("globe-stats", "global", 1440); // 24h max staleness
       if (dbCached) return dbCached;
