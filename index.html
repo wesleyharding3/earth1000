@@ -13014,42 +13014,42 @@ window.__arcCtxSegmented = (function() {
       <div class="stats-panel" id="statsGlobePanel" style="display:none;">
         <div class="stats-panel-scroll">
 
-          <div class="gs-category collapsed" id="gsCommodities">
+          <div class="gs-category" id="gsCommodities">
             <div class="gs-category-header"><span class="gs-cat-title">Commodities &amp; Resources</span></div>
             <div class="gs-category-body">
               <div class="gs-grid" id="gsCommoditiesGrid"></div>
             </div>
           </div>
 
-          <div class="gs-category collapsed" id="gsEconomic">
+          <div class="gs-category" id="gsEconomic">
             <div class="gs-category-header"><span class="gs-cat-title">Economic Indicators</span></div>
             <div class="gs-category-body">
               <div class="gs-grid" id="gsEconomicGrid"></div>
             </div>
           </div>
 
-          <div class="gs-category collapsed" id="gsDemographics">
+          <div class="gs-category" id="gsDemographics">
             <div class="gs-category-header"><span class="gs-cat-title">Demographics</span></div>
             <div class="gs-category-body">
               <div class="gs-grid" id="gsDemographicsGrid"></div>
             </div>
           </div>
 
-          <div class="gs-category collapsed" id="gsGeopolitical">
+          <div class="gs-category" id="gsGeopolitical">
             <div class="gs-category-header"><span class="gs-cat-title">Geopolitical</span></div>
             <div class="gs-category-body">
               <div class="gs-grid" id="gsGeopoliticalGrid"></div>
             </div>
           </div>
 
-          <div class="gs-category collapsed" id="gsEnergy">
+          <div class="gs-category" id="gsEnergy">
             <div class="gs-category-header"><span class="gs-cat-title">Energy &amp; Environment</span></div>
             <div class="gs-category-body">
               <div class="gs-grid" id="gsEnergyGrid"></div>
             </div>
           </div>
 
-          <div class="gs-category collapsed" id="gsUnique">
+          <div class="gs-category" id="gsUnique">
             <div class="gs-category-header"><span class="gs-cat-title">Unique Metrics</span></div>
             <div class="gs-category-body">
               <div class="gs-grid" id="gsUniqueGrid"></div>
@@ -19862,6 +19862,47 @@ const settingsToggle     = document.getElementById("settingsToggle");
         briefingExtraRings.length = 0;
       }
 
+      // ── Persistent nation halos — see www/index.html for rationale.
+      const briefingNationHalos = [];
+      function briefingNationHaloAt(lat, lon, tier) {
+        const isPrimary = tier !== 'secondary';
+        const phi = (90 - lat) * (Math.PI / 180);
+        const theta = (lon + 180) * (Math.PI / 180);
+        const rAlt = 0.025;
+        const rx = -(radius + rAlt) * Math.sin(phi) * Math.cos(theta);
+        const rz =  (radius + rAlt) * Math.sin(phi) * Math.sin(theta);
+        const ry =  (radius + rAlt) * Math.cos(phi);
+        const group = new THREE.Group();
+        group.position.set(rx, ry, rz);
+        group.lookAt(0, 0, 0);
+        scene.add(group);
+        const innerR  = isPrimary ? 0.022 : 0.014;
+        const outerR  = isPrimary ? 0.030 : 0.020;
+        const opacity = isPrimary ? 0.55  : 0.32;
+        const color   = isPrimary
+          ? new THREE.Color(0xffce6a)
+          : new THREE.Color(0x8ec5ff);
+        const geo = new THREE.RingGeometry(innerR, outerR, 64);
+        const mat = new THREE.MeshBasicMaterial({
+          color, transparent: true, opacity,
+          side: THREE.DoubleSide, depthWrite: false,
+          blending: THREE.AdditiveBlending,
+        });
+        const ring = new THREE.Mesh(geo, mat);
+        group.add(ring);
+        briefingNationHalos.push({ group, ring });
+        return ring;
+      }
+      function clearBriefingNationHalos() {
+        for (const { group, ring } of briefingNationHalos) {
+          try { ring.geometry.dispose(); ring.material.dispose(); group.remove(ring); } catch (_) {}
+          try { scene.remove(group); } catch (_) {}
+        }
+        briefingNationHalos.length = 0;
+      }
+      window.briefingNationHaloAt      = briefingNationHaloAt;
+      window.clearBriefingNationHalos  = clearBriefingNationHalos;
+
       // ── Expose globe API for briefing player (module scope → global) ──────
       window.startFocus           = startFocus;
       window.focusCity            = focusCity;
@@ -19969,7 +20010,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       // Default revealSecs lowered from 2.5 → 1.0 to match thread/line
       // flow arcs (INDIVIDUAL_TRAVEL_MIN/MAX = 0.85/1.15s in setupFlowAnimation).
-      window.buildBriefingArc = function(lat0, lon0, lat1, lon1, arcHeight, revealSecs) {
+      // tier: 'primary' (default) draws thicker/brighter; 'secondary'
+      // preserves the previous baseline. See www/index.html for full
+      // rationale.
+      window.buildBriefingArc = function(lat0, lon0, lat1, lon1, arcHeight, revealSecs, tier) {
+        const isPrimary = tier !== 'secondary';
         const R = radius + 0.006;
         const STEPS = 96;
         const v0 = latLonToVec3Trans(lat0, lon0, 1);
@@ -19981,22 +20026,21 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const lift = 1 + (arcHeight || 0.14) * Math.sin(t * Math.PI);
           pts.push(mid.multiplyScalar(R * lift));
         }
-        // Tube geometry gives us real screen-space thickness
-        // (WebGL ignores LineSegments linewidth on most platforms).
         const curve = new THREE.CatmullRomCurve3(pts);
-        const TUBE_RADIUS = R * 0.003;
+        const TUBE_RADIUS = R * (isPrimary ? 0.0048 : 0.003);
         const geo = new THREE.TubeGeometry(curve, STEPS, TUBE_RADIUS, 10, false);
+
+        const arcColor = isPrimary
+          ? new THREE.Color(0xffd070)
+          : new THREE.Color(0xffb04a);
+        const intensity = isPrimary ? 1.35 : 1.0;
 
         const mat = new THREE.ShaderMaterial({
           transparent: true, depthWrite: false,
-          // Additive blending for "much brighter glow". See www/index.html
-          // for full rationale — was NormalBlending which read as a tan
-          // stripe rather than a glowing arc.
           blending: THREE.AdditiveBlending,
           uniforms: {
-            // Brighter, more saturated amber. Was 0xb35414 (deep brown-amber)
-            // which read muddy. 0xffb04a is warm and pops against dark globe.
-            uColor:      { value: new THREE.Color(0xffb04a) },
+            uColor:      { value: arcColor },
+            uIntensity:  { value: intensity },
             uRevealEnd:  { value: 0.0 },
             uRevealRate: { value: 1.0 / (revealSecs || 2.5) },
             uTime:       { value: 0.0 },
@@ -20006,11 +20050,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
             varying vec2  vUv;
             void main() {
               vUv = uv;
-              vT  = uv.x;   // 0..1 along the tube length
+              vT  = uv.x;
               gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
             }`,
           fragmentShader: `
             uniform vec3  uColor;
+            uniform float uIntensity;
             uniform float uRevealEnd;
             uniform float uTime;
             varying float vT;
@@ -20026,10 +20071,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
               float ph = mod(uTime * 0.42, 1.0);
               float d  = abs(vT - ph); d = min(d, 1.0 - d);
               float pulse = smoothstep(0.12, 0.0, d) * settled;
-              // Brighter base + stronger highlight contribution. With
-              // AdditiveBlending the values stack onto the framebuffer.
-              vec3 col = uColor * (1.05 + core * 0.85)
-                       + vec3(1.0, 0.65, 0.20) * (leadGlow * 1.6 + pulse * 1.0);
+              vec3 col = uColor * (1.05 + core * 0.85) * uIntensity
+                       + vec3(1.0, 0.65, 0.20) * (leadGlow * 1.6 + pulse * 1.0) * uIntensity;
               float alpha = clamp(0.96 * radial + leadGlow * 0.55, 0.0, 1.0);
               gl_FragColor = vec4(col, alpha);
             }`
@@ -35158,11 +35201,35 @@ const settingsToggle     = document.getElementById("settingsToggle");
     fetchGlobeStats();
   }
 
+  // Single attempt; throws on non-2xx so the retry wrapper sees it.
+  async function _fetchGlobeStatsOnce() {
+    const res = await fetch(`${API}/api/globe-stats`);
+    if (!res.ok) {
+      const t = await res.text().catch(() => '');
+      const e = new Error(`globe-stats HTTP ${res.status}${t ? ': ' + t.slice(0, 200) : ''}`);
+      e.status = res.status;
+      throw e;
+    }
+    return await res.json();
+  }
   async function fetchGlobeStats() {
+    let data = null;
+    let lastErr = null;
+    // One retry after 1.5s — see www/index.html for full rationale.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (attempt > 0) await new Promise(r => setTimeout(r, 1500));
+      try {
+        data = await _fetchGlobeStatsOnce();
+        break;
+      } catch (err) {
+        lastErr = err;
+      }
+    }
+    if (!data) {
+      console.warn('[globe-stats] load failed:', lastErr?.message || lastErr);
+      return;
+    }
     try {
-      const res = await fetch(`${API}/api/globe-stats`);
-      if (!res.ok) throw new Error(res.status);
-      const data = await res.json();
 
       for (const [gridId, section] of Object.entries(GLOBE_SECTIONS)) {
         section.widgets.forEach(w => {
@@ -35220,7 +35287,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         });
       }
     } catch (err) {
-      console.warn('Globe stats load failed:', err);
+      console.warn('[globe-stats] render failed:', err?.message || err);
     }
   }
 
@@ -40587,57 +40654,76 @@ body.ticker-active .gTickerLabel {
     );
   }
 
-  function drawSegmentArcs(seg) {
-    if (!seg.flow_arcs?.length || !window.buildArcLines) return;
-    for (let ai = 0; ai < seg.flow_arcs.length; ai++) {
-      const arc = seg.flow_arcs[ai];
-      if (arc.from_lat == null || arc.to_lat == null) continue;
+  // See www/index.html for full rationale. Reveal duration shared
+  // with the to-side label delay so the label "lands with the arc".
+  const BRIEFING_ARC_REVEAL_SECS = 1.0;
 
+  function drawSegmentArcs(seg) {
+    const primaryArcs   = Array.isArray(seg.flow_arcs)           ? seg.flow_arcs           : [];
+    const secondaryArcs = Array.isArray(seg.secondary_flow_arcs) ? seg.secondary_flow_arcs : [];
+    if (!primaryArcs.length && !secondaryArcs.length) return;
+
+    const seenHaloKeys = new Set();
+    const haloKey = (lat, lng) => `${lat.toFixed(2)}|${lng.toFixed(2)}`;
+
+    const drawOneArc = (arc, tier) => {
+      if (arc.from_lat == null || arc.to_lat == null) return;
       const rawFromLat = arc.from_lat, rawFromLng = arc.from_lng ?? arc.from_lon ?? 0;
       const rawToLat   = arc.to_lat,   rawToLng   = arc.to_lng   ?? arc.to_lon   ?? 0;
 
-      // Always shoot arcs from/to country centroids
       const from = _toCountryCentroid(rawFromLat, rawFromLng);
       const to   = _toCountryCentroid(rawToLat,   rawToLng);
-
       const distKm = haversineKm(from.lat, from.lng, to.lat, to.lng);
-
       const samePoint = Math.abs(from.lat - to.lat) < 0.1 && Math.abs(from.lng - to.lng) < 0.1;
-      if (samePoint) continue;
+      if (samePoint) return;
 
-      // For city endpoints (not country centroids), show temporary pulse dot
       if (!_isCentroid(rawFromLat, rawFromLng) && window.briefingPulseAt) {
         window.briefingPulseAt(rawFromLat, rawFromLng);
       }
       if (!_isCentroid(rawToLat, rawToLng) && window.briefingPulseAt) {
         window.briefingPulseAt(rawToLat, rawToLng);
       }
-      // Show hover cards for arc endpoints (from first, then to after delay)
+
+      if (window.briefingNationHaloAt) {
+        const fk = haloKey(from.lat, from.lng);
+        const tk = haloKey(to.lat,   to.lng);
+        if (!seenHaloKeys.has(fk)) { seenHaloKeys.add(fk); window.briefingNationHaloAt(from.lat, from.lng, tier); }
+        if (!seenHaloKeys.has(tk)) { seenHaloKeys.add(tk); window.briefingNationHaloAt(to.lat,   to.lng,   tier); }
+      }
+
       if (window.briefingShowLabelAt) {
         window.briefingShowLabelAt(rawFromLat, rawFromLng, arc.from_name);
+        const toDelayMs = (distKm < DOMESTIC_KM)
+          ? 500
+          : Math.round(BRIEFING_ARC_REVEAL_SECS * 1000);
         addBTimer(setTimeout(() => {
           if (window.briefingShowLabelAt) window.briefingShowLabelAt(rawToLat, rawToLng, arc.to_name);
-        }, 600));
+        }, toDelayMs));
       }
 
       if (distKm < DOMESTIC_KM) {
-        // Domestic: pulse both centroids, skip the arc line
         if (window.briefingPulseAt) {
           window.briefingPulseAt(from.lat, from.lng);
           addBTimer(setTimeout(() => {
             if (window.briefingPulseAt) window.briefingPulseAt(to.lat, to.lng);
           }, 500));
         }
-        continue;
+        return;
       }
       try {
         if (window.buildBriefingArc) {
-          const mesh = window.buildBriefingArc(from.lat, from.lng, to.lat, to.lng, 0.16, 1.0);
+          const mesh = window.buildBriefingArc(
+            from.lat, from.lng, to.lat, to.lng,
+            0.16, BRIEFING_ARC_REVEAL_SECS, tier
+          );
           arcMeshes.push(mesh);
           if (window.briefingRevealList) window.briefingRevealList.push(mesh);
         }
       } catch (_) {}
-    }
+    };
+
+    for (const arc of primaryArcs)   drawOneArc(arc, 'primary');
+    for (const arc of secondaryArcs) drawOneArc(arc, 'secondary');
   }
 
   // ── Globe timers for a segment ────────────────────────────────────────────
@@ -40943,11 +41029,16 @@ body.ticker-active .gTickerLabel {
           const volumeLevel = fm?.volume || 'medium';
           const transition  = fm?.narrator_transition || '';
 
+          // FOCAL_PRE_PAUSE_MS buffer added so the narrator's transition
+          // phrase fully completes before audio.pause() fires — see
+          // www/index.html for full rationale.
           const focalAbsMs    = Number.isFinite(seg.focal_trigger_ms) ? seg.focal_trigger_ms : null;
           const focalOffsetMs = (focalAbsMs != null && Number.isFinite(seg.start_ms))
             ? Math.max(0, focalAbsMs - seg.start_ms)
             : null;
-          const triggerDelayMs = (focalOffsetMs != null) ? focalOffsetMs : ms(triggerPct);
+          const triggerDelayMs = (focalOffsetMs != null)
+            ? (focalOffsetMs + FOCAL_PRE_PAUSE_MS)
+            : ms(triggerPct);
 
           if (isHeatmap) {
             console.log(`[briefing/heatmap] seg ${idx} firing in ${triggerDelayMs}ms — q="${hmQ || '(none)'}" mode=${hmMode} resolved=${!!hmResolved} fm.enabled=${fm?.enabled ?? '(no fm)'}`);
@@ -41787,9 +41878,12 @@ body.ticker-active .gTickerLabel {
       if (videoId) {
         const iframe = document.createElement('iframe');
         iframe.id   = 'bVideoIframe';
+        // mute:false so audio is on from the very first frame —
+        // see www/index.html for full rationale.
         iframe.src  = window._ytEmbedUrl(videoId, {
           jsapi: true, cc: enableCaptions !== false,
           start: startSec, end: endSec,
+          mute: false,
         });
         iframe.allowFullscreen = true;
         iframe.setAttribute('allow', 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share');
@@ -42105,7 +42199,8 @@ body.ticker-active .gTickerLabel {
     const videoId = article.video_id;
     const title = (article.translated_title || article.title || '').replace(/</g, '&lt;');
     const safeUrl = (article.url || '').replace(/'/g, '%27');
-    const src = `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&controls=1&rel=0&modestbranding=1&playsinline=1`;
+    // mute=0 — see www/index.html.
+    const src = `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=0&controls=1&rel=0&modestbranding=1&playsinline=1`;
     return `<div class="bAPCard bAPArticleVideoCard">
       <div class="bAPArticleVideoEmbed" style="position:relative;width:100%;aspect-ratio:16/9;background:#000">
         <iframe src="${src}" style="position:absolute;inset:0;width:100%;height:100%;border:0"
@@ -42132,6 +42227,10 @@ body.ticker-active .gTickerLabel {
         if (m.material) m.material.dispose();
       } catch (_) {}
     });
+    // Halos belong to the segment lifecycle — see www/index.html.
+    if (window.clearBriefingNationHalos) {
+      try { window.clearBriefingNationHalos(); } catch (_) {}
+    }
     arcMeshes = [];
   }
   // Expose so setBriefingViewMode can call it when returning to country view

@@ -2356,6 +2356,14 @@ async function buildSegments(narrative, threadData, allArcs, entityCoords = {}) 
       primary_city:        primaryCity,
       primary_country:     primaryCountry,
       flow_arcs:           arcs,
+      // Secondary flow arcs — same per-arc shape as flow_arcs. The
+      // editor saves them as a parallel list; the briefing renderer
+      // dispatches by which list each arc came from at draw time.
+      // Empty array (not undefined) so consumers can iterate without
+      // null checks.
+      secondary_flow_arcs: Array.isArray(thread.secondary_flow_arcs)
+        ? thread.secondary_flow_arcs
+        : [],
       secondary_locations: filteredSecondaries,
       // Pre-computed ISOs so the runtime doesn't have to fuzzy-match names
       // at playback time. See Fix 4 in the briefing-system refactor: the
@@ -2374,6 +2382,16 @@ async function buildSegments(narrative, threadData, allArcs, entityCoords = {}) 
       )),
       flow_arc_isos: Array.from(new Set(
         arcs.flatMap(a => [
+          _isoResolver(a.from_name, a.from_lat, a.from_lng),
+          _isoResolver(a.to_name,   a.to_lat,   a.to_lng),
+        ]).filter(Boolean)
+      )),
+      // Pre-resolved ISOs for secondary arc endpoints, kept separate
+      // from flow_arc_isos so downstream consumers (highlight overlay,
+      // tier-aware halos) can distinguish primary from secondary
+      // membership without repeating the lookup at playback time.
+      secondary_flow_arc_isos: Array.from(new Set(
+        (Array.isArray(thread.secondary_flow_arcs) ? thread.secondary_flow_arcs : []).flatMap(a => [
           _isoResolver(a.from_name, a.from_lat, a.from_lng),
           _isoResolver(a.to_name,   a.to_lat,   a.to_lng),
         ]).filter(Boolean)

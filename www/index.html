@@ -14106,37 +14106,37 @@ window.__arcCtxSegmented = (function() {
            pushed off, even on narrow viewports. -->
       <div class="stats-panel" id="statsGlobePanel" style="display:none;">
         <div class="stats-panel-scroll">
-          <div class="gs-category collapsed" id="gsCommodities">
+          <div class="gs-category" id="gsCommodities">
             <div class="gs-category-header"><span class="gs-cat-title">Commodities &amp; Resources</span></div>
             <div class="gs-category-body">
               <div class="gs-grid" id="gsCommoditiesGrid"></div>
             </div>
           </div>
-          <div class="gs-category collapsed" id="gsEconomic">
+          <div class="gs-category" id="gsEconomic">
             <div class="gs-category-header"><span class="gs-cat-title">Economic Indicators</span></div>
             <div class="gs-category-body">
               <div class="gs-grid" id="gsEconomicGrid"></div>
             </div>
           </div>
-          <div class="gs-category collapsed" id="gsDemographics">
+          <div class="gs-category" id="gsDemographics">
             <div class="gs-category-header"><span class="gs-cat-title">Demographics</span></div>
             <div class="gs-category-body">
               <div class="gs-grid" id="gsDemographicsGrid"></div>
             </div>
           </div>
-          <div class="gs-category collapsed" id="gsGeopolitical">
+          <div class="gs-category" id="gsGeopolitical">
             <div class="gs-category-header"><span class="gs-cat-title">Geopolitical</span></div>
             <div class="gs-category-body">
               <div class="gs-grid" id="gsGeopoliticalGrid"></div>
             </div>
           </div>
-          <div class="gs-category collapsed" id="gsEnergy">
+          <div class="gs-category" id="gsEnergy">
             <div class="gs-category-header"><span class="gs-cat-title">Energy &amp; Environment</span></div>
             <div class="gs-category-body">
               <div class="gs-grid" id="gsEnergyGrid"></div>
             </div>
           </div>
-          <div class="gs-category collapsed" id="gsUnique">
+          <div class="gs-category" id="gsUnique">
             <div class="gs-category-header"><span class="gs-cat-title">Unique Metrics</span></div>
             <div class="gs-category-body">
               <div class="gs-grid" id="gsUniqueGrid"></div>
@@ -21557,6 +21557,58 @@ const settingsToggle     = document.getElementById("settingsToggle");
         briefingExtraRings.length = 0;
       }
 
+      // ── Persistent nation halos (briefing) ─────────────────────────
+      // Steady halo rings anchored at country centroids for the
+      // duration of a segment, used to mark which countries are
+      // "primary" vs "secondary" for the current story. Different
+      // tier visuals so the user can see at a glance which nations
+      // carry the story (larger amber halo) and which are secondary
+      // relations (smaller, paler-blue halo). Cleared on segment
+      // change via clearBriefingNationHalos.
+      const briefingNationHalos = [];
+      function briefingNationHaloAt(lat, lon, tier) {
+        const isPrimary = tier !== 'secondary';
+        const phi = (90 - lat) * (Math.PI / 180);
+        const theta = (lon + 180) * (Math.PI / 180);
+        const rAlt = 0.025;
+        const rx = -(radius + rAlt) * Math.sin(phi) * Math.cos(theta);
+        const rz =  (radius + rAlt) * Math.sin(phi) * Math.sin(theta);
+        const ry =  (radius + rAlt) * Math.cos(phi);
+        const group = new THREE.Group();
+        group.position.set(rx, ry, rz);
+        group.lookAt(0, 0, 0);
+        scene.add(group);
+        // Primary halo: bigger ring, brighter amber matching the primary
+        // arc color so the eye links arc + halo as the same tier.
+        // Secondary: smaller ring + cooler tone (low-saturation blue) so
+        // the secondary nodes feel less prominent without disappearing.
+        const innerR  = isPrimary ? 0.022 : 0.014;
+        const outerR  = isPrimary ? 0.030 : 0.020;
+        const opacity = isPrimary ? 0.55  : 0.32;
+        const color   = isPrimary
+          ? new THREE.Color(0xffce6a)
+          : new THREE.Color(0x8ec5ff);
+        const geo = new THREE.RingGeometry(innerR, outerR, 64);
+        const mat = new THREE.MeshBasicMaterial({
+          color, transparent: true, opacity,
+          side: THREE.DoubleSide, depthWrite: false,
+          blending: THREE.AdditiveBlending,
+        });
+        const ring = new THREE.Mesh(geo, mat);
+        group.add(ring);
+        briefingNationHalos.push({ group, ring });
+        return ring;
+      }
+      function clearBriefingNationHalos() {
+        for (const { group, ring } of briefingNationHalos) {
+          try { ring.geometry.dispose(); ring.material.dispose(); group.remove(ring); } catch (_) {}
+          try { scene.remove(group); } catch (_) {}
+        }
+        briefingNationHalos.length = 0;
+      }
+      window.briefingNationHaloAt      = briefingNationHaloAt;
+      window.clearBriefingNationHalos  = clearBriefingNationHalos;
+
       // ── Expose globe API for briefing player (module scope → global) ──────
       window.startFocus           = startFocus;
       window.focusCity            = focusCity;
@@ -21668,7 +21720,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // slower than the rest of the flow visualisations — distracting
       // when a segment cuts to the next while the prior arc is still
       // crawling toward its destination. 1.0s feels native.
-      window.buildBriefingArc = function(lat0, lon0, lat1, lon1, arcHeight, revealSecs) {
+      // tier: 'primary' (default) draws a thicker, brighter arc;
+      // 'secondary' preserves the original 0.003·R baseline for the
+      // subtler "lower-priority" relations the editor designates.
+      // Editor surfaces both tiers as parallel arc lists on a segment;
+      // see drawSegmentArcs for the dispatch.
+      window.buildBriefingArc = function(lat0, lon0, lat1, lon1, arcHeight, revealSecs, tier) {
+        const isPrimary = tier !== 'secondary';
         const R = radius + 0.006;
         const STEPS = 96;
         const v0 = latLonToVec3Trans(lat0, lon0, 1);
@@ -21682,23 +21740,27 @@ const settingsToggle     = document.getElementById("settingsToggle");
         }
         // Tube geometry gives us real screen-space thickness
         // (WebGL ignores LineSegments linewidth on most platforms).
+        // Primary tier: ~60% thicker tube than the secondary baseline.
         const curve = new THREE.CatmullRomCurve3(pts);
-        const TUBE_RADIUS = R * 0.003;
+        const TUBE_RADIUS = R * (isPrimary ? 0.0048 : 0.003);
         const geo = new THREE.TubeGeometry(curve, STEPS, TUBE_RADIUS, 10, false);
+
+        // Primary tier: paler, brighter amber + extra intensity
+        // multiplier in the shader. Secondary tier: the existing
+        // 0xffb04a amber at 1.0× intensity (visually identical to the
+        // pre-feature briefing arcs — that's the user's spec, "secondary
+        // flow arcs the same as they are now").
+        const arcColor = isPrimary
+          ? new THREE.Color(0xffd070)
+          : new THREE.Color(0xffb04a);
+        const intensity = isPrimary ? 1.35 : 1.0;
 
         const mat = new THREE.ShaderMaterial({
           transparent: true, depthWrite: false,
-          // Additive blending — much brighter glow against the dark globe.
-          // The previous NormalBlending produced a darker, opaque-feeling
-          // fill that read as a tan stripe rather than a glowing arc. The
-          // user asked for "much brighter glow" — additive is the standard
-          // way to get that without painting the geometry pure white.
           blending: THREE.AdditiveBlending,
           uniforms: {
-            // Brighter, more saturated amber. Was 0xb35414 (deep brown-
-            // amber) which read muddy. 0xffb04a is a warm, vivid orange
-            // that pops against the blue ocean / dark globe.
-            uColor:      { value: new THREE.Color(0xffb04a) },
+            uColor:      { value: arcColor },
+            uIntensity:  { value: intensity },
             uRevealEnd:  { value: 0.0 },
             uRevealRate: { value: 1.0 / (revealSecs || 2.5) },
             uTime:       { value: 0.0 },
@@ -21713,35 +21775,24 @@ const settingsToggle     = document.getElementById("settingsToggle");
             }`,
           fragmentShader: `
             uniform vec3  uColor;
+            uniform float uIntensity;
             uniform float uRevealEnd;
             uniform float uTime;
             varying float vT;
             varying vec2  vUv;
             void main() {
               if (vT > uRevealEnd + 0.008) discard;
-              // Soft cylindrical shading across the cross-section
-              float r       = abs(vUv.y - 0.5) * 2.0;          // 0 center → 1 edge
+              float r       = abs(vUv.y - 0.5) * 2.0;
               float radial  = 1.0 - smoothstep(0.55, 1.0, r);
-              float core    = 1.0 - smoothstep(0.0,  0.55, r); // brighter core stripe
-              // Leading edge highlight (slightly tighter exp falloff so the
-              // bright head reads as a comet head instead of a long fade).
+              float core    = 1.0 - smoothstep(0.0,  0.55, r);
               float headDist = max(0.0, uRevealEnd - vT);
               float settled  = clamp((uRevealEnd - 0.85) / 0.15, 0.0, 1.0);
               float leadGlow = exp(-headDist * 14.0) * (1.0 - settled * 0.35);
-              // Steady pulse once arc is fully drawn
               float ph = mod(uTime * 0.42, 1.0);
               float d  = abs(vT - ph); d = min(d, 1.0 - d);
               float pulse = smoothstep(0.12, 0.0, d) * settled;
-              // Brighter base + stronger highlight contribution. With
-              // AdditiveBlending the values stack onto the framebuffer, so
-              // each multiplier directly drives perceived glow intensity.
-              vec3 col = uColor * (1.05 + core * 0.85)
-                       + vec3(1.0, 0.65, 0.20) * (leadGlow * 1.6 + pulse * 1.0);
-              // Alpha controls how much of col is added per pixel. With
-              // additive we want this generous on the body of the arc
-              // (so the line itself glows strongly) and even higher near
-              // the leading edge (so the head pops).
-              // (Avoid backticks in comments — outer JS template literal.)
+              vec3 col = uColor * (1.05 + core * 0.85) * uIntensity
+                       + vec3(1.0, 0.65, 0.20) * (leadGlow * 1.6 + pulse * 1.0) * uIntensity;
               float alpha = clamp(0.96 * radial + leadGlow * 0.55, 0.0, 1.0);
               gl_FragColor = vec4(col, alpha);
             }`
@@ -37901,39 +37952,72 @@ const settingsToggle     = document.getElementById("settingsToggle");
     fetchGlobeStats();
   }
 
+  // _fetchGlobeStatsOnce: single fetch attempt. Throws on non-2xx so
+  // the retry wrapper can decide whether to retry. Decouples HTTP-level
+  // failure (retry candidate) from "data is empty" (don't retry; cron
+  // hasn't written yet — tiles stay on the "—" placeholder).
+  async function _fetchGlobeStatsOnce() {
+    const res = await fetch(`${API}/api/globe-stats`);
+    if (!res.ok) {
+      const t = await res.text().catch(() => '');
+      const e = new Error(`globe-stats HTTP ${res.status}${t ? ': ' + t.slice(0, 200) : ''}`);
+      e.status = res.status;
+      throw e;
+    }
+    return await res.json();
+  }
   async function fetchGlobeStats() {
-    try {
-      const res = await fetch(`${API}/api/globe-stats`);
-      if (!res.ok) throw new Error(res.status);
-      const data = await res.json();
-      for (const [gridId, section] of Object.entries(GLOBE_SECTIONS)) {
-        section.widgets.forEach(w => {
-          const card = document.getElementById('gs-' + w.id);
-          if (!card) return;
-          const val = data[w.id];
-          if (val == null) return;
-          const valEl = card.querySelector('.gs-widget-value');
-          const subEl = card.querySelector('.gs-widget-sub');
-          if (typeof val === 'number') { valEl.style.color = ''; valEl.style.textShadow = ''; valEl.textContent = fmtNum(val); return; }
-          if (val.series && val.labels) {
-            const firstSeries = val.series[0];
-            const latestVal = [...firstSeries.values].reverse().find(v => v != null);
-            valEl.style.color = ''; valEl.style.textShadow = ''; valEl.textContent = latestVal != null ? fmtNum(latestVal) : '—';
-            if (subEl) subEl.textContent = val.unit || w.unit;
-            if (val.series.length > 1) {
-              let existing = card.querySelector('.gs-series-list');
-              if (!existing) { existing = document.createElement('div'); existing.className = 'gs-series-list'; existing.style.cssText = 'margin-top:8px;font-size:10px;color:rgba(255,255,255,0.5);'; card.appendChild(existing); }
-              existing.innerHTML = val.series.map(s => {
-                const lv = [...s.values].reverse().find(v => v != null);
-                return `<div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid rgba(255,255,255,0.04);"><span>${s.name}</span><span style="color:rgba(74,184,255,0.7)">${lv != null ? fmtNum(lv) : '—'}</span></div>`;
-              }).join('');
-            }
-            return;
-          }
-          if (typeof val === 'string') { valEl.style.color = ''; valEl.textContent = val; }
-        });
+    let data = null;
+    let lastErr = null;
+    // One retry after 1.5s for transient 5xx / network blips. The
+    // backend's ttlCached caches an empty {} for 90 s when the DB read
+    // fails, so a second attempt during that window won't help — the
+    // retry is for the much shorter window where the request itself
+    // didn't reach a successful endpoint (CDN edge timeout, brief
+    // server restart, etc.).
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (attempt > 0) await new Promise(r => setTimeout(r, 1500));
+      try {
+        data = await _fetchGlobeStatsOnce();
+        break;
+      } catch (err) {
+        lastErr = err;
       }
-    } catch (err) { console.warn('Globe stats load failed:', err); }
+    }
+    if (!data) {
+      // err.message — Error objects log as "{}" via console.warn(label, err)
+      // because their .message field is non-enumerable. Stringify
+      // explicitly so the log actually tells us what went wrong.
+      console.warn('[globe-stats] load failed:', lastErr?.message || lastErr);
+      return;
+    }
+    for (const [gridId, section] of Object.entries(GLOBE_SECTIONS)) {
+      section.widgets.forEach(w => {
+        const card = document.getElementById('gs-' + w.id);
+        if (!card) return;
+        const val = data[w.id];
+        if (val == null) return;
+        const valEl = card.querySelector('.gs-widget-value');
+        const subEl = card.querySelector('.gs-widget-sub');
+        if (typeof val === 'number') { valEl.style.color = ''; valEl.style.textShadow = ''; valEl.textContent = fmtNum(val); return; }
+        if (val.series && val.labels) {
+          const firstSeries = val.series[0];
+          const latestVal = [...firstSeries.values].reverse().find(v => v != null);
+          valEl.style.color = ''; valEl.style.textShadow = ''; valEl.textContent = latestVal != null ? fmtNum(latestVal) : '—';
+          if (subEl) subEl.textContent = val.unit || w.unit;
+          if (val.series.length > 1) {
+            let existing = card.querySelector('.gs-series-list');
+            if (!existing) { existing = document.createElement('div'); existing.className = 'gs-series-list'; existing.style.cssText = 'margin-top:8px;font-size:10px;color:rgba(255,255,255,0.5);'; card.appendChild(existing); }
+            existing.innerHTML = val.series.map(s => {
+              const lv = [...s.values].reverse().find(v => v != null);
+              return `<div style="display:flex;justify-content:space-between;padding:2px 0;border-bottom:1px solid rgba(255,255,255,0.04);"><span>${s.name}</span><span style="color:rgba(74,184,255,0.7)">${lv != null ? fmtNum(lv) : '—'}</span></div>`;
+            }).join('');
+          }
+          return;
+        }
+        if (typeof val === 'string') { valEl.style.color = ''; valEl.textContent = val; }
+      });
+    }
   }
 
   window.__statsSetView = setStatsView;
@@ -43905,23 +43989,34 @@ body.ticker-active .gTickerLabel {
     );
   }
 
-  function drawSegmentArcs(seg) {
-    if (!seg.flow_arcs?.length || !window.buildArcLines) return;
-    for (let ai = 0; ai < seg.flow_arcs.length; ai++) {
-      const arc = seg.flow_arcs[ai];
-      if (arc.from_lat == null || arc.to_lat == null) continue;
+  // Reveal duration shared by buildBriefingArc + the to-endpoint label
+  // delay below. Constants aligned: when the arc's reveal animation
+  // finishes (uRevealEnd hits 1.0), the to-side label card pops, so the
+  // label visually "lands with the arc". Was a fixed 600ms regardless
+  // of reveal duration — that fired before the arc finished drawing.
+  const BRIEFING_ARC_REVEAL_SECS = 1.0;
 
+  function drawSegmentArcs(seg) {
+    const primaryArcs   = Array.isArray(seg.flow_arcs)           ? seg.flow_arcs           : [];
+    const secondaryArcs = Array.isArray(seg.secondary_flow_arcs) ? seg.secondary_flow_arcs : [];
+    if (!primaryArcs.length && !secondaryArcs.length) return;
+
+    // Track every (lat, lng) endpoint that's already had a halo dropped
+    // so two arcs sharing a country centroid don't stack rings.
+    const seenHaloKeys = new Set();
+    const haloKey = (lat, lng) => `${lat.toFixed(2)}|${lng.toFixed(2)}`;
+
+    const drawOneArc = (arc, tier) => {
+      if (arc.from_lat == null || arc.to_lat == null) return;
       const rawFromLat = arc.from_lat, rawFromLng = arc.from_lng ?? arc.from_lon ?? 0;
       const rawToLat   = arc.to_lat,   rawToLng   = arc.to_lng   ?? arc.to_lon   ?? 0;
 
       // Always shoot arcs from/to country centroids
       const from = _toCountryCentroid(rawFromLat, rawFromLng);
       const to   = _toCountryCentroid(rawToLat,   rawToLng);
-
       const distKm = haversineKm(from.lat, from.lng, to.lat, to.lng);
-
       const samePoint = Math.abs(from.lat - to.lat) < 0.1 && Math.abs(from.lng - to.lng) < 0.1;
-      if (samePoint) continue;
+      if (samePoint) return;
 
       // For city endpoints (not country centroids), show temporary pulse dot
       if (!_isCentroid(rawFromLat, rawFromLng) && window.briefingPulseAt) {
@@ -43930,12 +44025,34 @@ body.ticker-active .gTickerLabel {
       if (!_isCentroid(rawToLat, rawToLng) && window.briefingPulseAt) {
         window.briefingPulseAt(rawToLat, rawToLng);
       }
-      // Show hover cards for arc endpoints (from first, then to after delay)
+
+      // Persistent halos at the centroid endpoints for the duration of
+      // this segment — primary arcs spawn primary (larger amber) halos,
+      // secondary arcs spawn secondary (smaller cool-blue) halos. A
+      // country touched by BOTH a primary and secondary arc keeps its
+      // primary halo (we register primary arcs first so the dedupe set
+      // claims its key first).
+      if (window.briefingNationHaloAt) {
+        const fk = haloKey(from.lat, from.lng);
+        const tk = haloKey(to.lat,   to.lng);
+        if (!seenHaloKeys.has(fk)) { seenHaloKeys.add(fk); window.briefingNationHaloAt(from.lat, from.lng, tier); }
+        if (!seenHaloKeys.has(tk)) { seenHaloKeys.add(tk); window.briefingNationHaloAt(to.lat,   to.lng,   tier); }
+      }
+
+      // Label cards: from-endpoint shows the moment the arc spawns
+      // (it's where the arc "leaves from"); to-endpoint shows when the
+      // arc reveal completes (~BRIEFING_ARC_REVEAL_SECS later) so the
+      // label "lands" with the arc head. For domestic arcs there's no
+      // travel animation — show both labels immediately so neither node
+      // goes unannounced.
       if (window.briefingShowLabelAt) {
         window.briefingShowLabelAt(rawFromLat, rawFromLng, arc.from_name);
+        const toDelayMs = (distKm < DOMESTIC_KM)
+          ? 500
+          : Math.round(BRIEFING_ARC_REVEAL_SECS * 1000);
         addBTimer(setTimeout(() => {
           if (window.briefingShowLabelAt) window.briefingShowLabelAt(rawToLat, rawToLng, arc.to_name);
-        }, 600));
+        }, toDelayMs));
       }
 
       if (distKm < DOMESTIC_KM) {
@@ -43946,16 +44063,25 @@ body.ticker-active .gTickerLabel {
             if (window.briefingPulseAt) window.briefingPulseAt(to.lat, to.lng);
           }, 500));
         }
-        continue;
+        return;
       }
       try {
         if (window.buildBriefingArc) {
-          const mesh = window.buildBriefingArc(from.lat, from.lng, to.lat, to.lng, 0.16, 1.0);
+          const mesh = window.buildBriefingArc(
+            from.lat, from.lng, to.lat, to.lng,
+            0.16, BRIEFING_ARC_REVEAL_SECS, tier
+          );
           arcMeshes.push(mesh);
           if (window.briefingRevealList) window.briefingRevealList.push(mesh);
         }
       } catch (_) {}
-    }
+    };
+
+    // Primary arcs first so they claim halo keys before secondary —
+    // a country that appears as a primary endpoint AND a secondary
+    // endpoint reads as primary, never demoted.
+    for (const arc of primaryArcs)   drawOneArc(arc, 'primary');
+    for (const arc of secondaryArcs) drawOneArc(arc, 'secondary');
   }
 
   // ── Globe timers for a segment ────────────────────────────────────────────
@@ -44311,11 +44437,26 @@ body.ticker-active .gTickerLabel {
           // generator (it points at the exact end of the "before video"
           // voiceover, generated as its own MP3 piece). Fall back to the
           // approximate triggerPct fraction for legacy episodes.
+          //
+          // FOCAL_PRE_PAUSE_MS buffer: the generator's reported
+          // beforePiece.durationMs is the duration the TTS engine
+          // synthesised — but actual playback typically runs a hair
+          // longer because (a) the audio includes a few ms of trailing
+          // tail before the silence, and (b) the JS event loop can
+          // schedule setTimeout up to a frame early. Without this buffer
+          // the audio.pause() inside the trigger handler would clip the
+          // last syllable of the narrator's transition phrase. The
+          // FOCAL_PRE_PAUSE_MS constant was already declared with a
+          // comment about this purpose ("breath after last narrator
+          // word, before media UI starts") but was never actually
+          // applied — wiring it in here finally honors its definition.
           const focalAbsMs    = Number.isFinite(seg.focal_trigger_ms) ? seg.focal_trigger_ms : null;
           const focalOffsetMs = (focalAbsMs != null && Number.isFinite(seg.start_ms))
             ? Math.max(0, focalAbsMs - seg.start_ms)
             : null;
-          const triggerDelayMs = (focalOffsetMs != null) ? focalOffsetMs : ms(triggerPct);
+          const triggerDelayMs = (focalOffsetMs != null)
+            ? (focalOffsetMs + FOCAL_PRE_PAUSE_MS)
+            : ms(triggerPct);
 
           if (isHeatmap) {
             console.log(`[briefing/heatmap] seg ${idx} firing in ${triggerDelayMs}ms — q="${hmQ || '(none)'}" mode=${hmMode} resolved=${!!hmResolved} fm.enabled=${fm?.enabled ?? '(no fm)'}`);
@@ -45368,10 +45509,16 @@ body.ticker-active .gTickerLabel {
         const iframe = document.createElement('iframe');
         iframe.id   = 'bVideoIframe';
         // start=startSec in the URL means the YT player loads pre-positioned
-        // — no flash of 0:00 before our seekTo can fire.
+        // — no flash of 0:00 before our seekTo can fire. mute:false on
+        // the URL itself (not just via the postMessage unMute below)
+        // means audio is on from the very first frame even if the
+        // unMute postMessage gets dropped during the player's bootstrap
+        // window. The user has already gestured (pressed "Start
+        // Briefing") so unmuted autoplay is permitted by browser policy.
         iframe.src  = window._ytEmbedUrl(videoId, {
           jsapi: true, cc: enableCaptions !== false,
           start: startSec, end: endSec,
+          mute: false,
         });
         iframe.allowFullscreen = true;
         iframe.setAttribute('allow', 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share');
@@ -45723,7 +45870,13 @@ body.ticker-active .gTickerLabel {
       } else if (sideContent === 'article-video') {
         cards.push(makeArticleVideoCard(sideArticleVideo));
       }
-      cards.push(...initialArticles.map(makeAPCard));
+      // Mobile (this file is the Capacitor / mobile-web build): drop the
+      // rotating article cards entirely. They added a second tier to the
+      // side rail that crowded the globe + caption stack on small
+      // viewports and pushed important UI under the fold. Featured
+      // video, Twitter embed, and article-video cards still mount —
+      // those carry first-class media and pay for their footprint.
+      // The desktop build (index.html) keeps the article cards.
       panel.innerHTML = cards.join('');
       if (cards.length) panel.classList.add('visible');
 
@@ -45751,12 +45904,12 @@ body.ticker-active .gTickerLabel {
         else if (srcEl.textContent.trim() === '—') srcEl.textContent = 'Video';
       }
 
-      // ── Mid-segment article rotation ────────────────────────────────
-      // If the article pool has more articles than fit in the rotating
-      // slots, swap them at 50% of the segment's audio duration. The
-      // side-video / twitter card stays put; only the article-card slots
-      // rotate. addBTimer registers each timer with the briefing
-      // registry so it gets cleared on segment change.
+      // ── Mid-segment article rotation (desktop only) ─────────────────
+      // Mobile build skipped earlier — no article cards in the panel,
+      // so there's nothing to rotate. The block below is unreachable on
+      // mobile because of the lack of article cards in the first place
+      // (querySelectorAll returns 0 nodes), but we leave it here so a
+      // future merge with desktop's loadArticlePanel stays diff-clean.
       if (articlePool.length > rotatingSlotCount) {
         const dur = getSegmentDuration(snapIdx) * 1000;
         const swapAtMs = Math.max(2000, Math.round(dur / 2));
@@ -45810,7 +45963,11 @@ body.ticker-active .gTickerLabel {
     const videoId = article.video_id;
     const title = (article.translated_title || article.title || '').replace(/</g, '&lt;');
     const safeUrl = (article.url || '').replace(/'/g, '%27');
-    const src = `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=1&controls=1&rel=0&modestbranding=1&playsinline=1`;
+    // mute=0 — the briefing context guarantees a prior user gesture
+    // (Start Briefing click), so unmuted autoplay is permitted. Earlier
+    // mute=1 default was paranoia about autoplay policies that don't
+    // apply once the briefing is running.
+    const src = `https://www.youtube.com/embed/${videoId}?autoplay=1&mute=0&controls=1&rel=0&modestbranding=1&playsinline=1`;
     return `<div class="bAPCard bAPArticleVideoCard">
       <div class="bAPArticleVideoEmbed" style="position:relative;width:100%;aspect-ratio:16/9;background:#000">
         <iframe src="${src}" style="position:absolute;inset:0;width:100%;height:100%;border:0"
@@ -45838,6 +45995,12 @@ body.ticker-active .gTickerLabel {
       } catch (_) {}
     });
     arcMeshes = [];
+    // Tier halos belong to the same segment lifecycle as arcs — when
+    // arcs go, halos go. Without this, halos from segment N leak into
+    // segment N+1 even after its own arcs/halos have been spawned.
+    if (window.clearBriefingNationHalos) {
+      try { window.clearBriefingNationHalos(); } catch (_) {}
+    }
   }
   // Expose so setBriefingViewMode can call it when returning to country view
   window.clearBriefingArcs = clearArcMeshes;

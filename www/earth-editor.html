@@ -1984,7 +1984,7 @@
             <button class="seg-add" onclick="addSecondaryLocation(${idx})">+ Add Location</button></div>`;
 
           const arcs = seg.flow_arcs || [];
-          bodyHtml += `<div class="seg-field" id="flow-arcs-${idx}"><div class="seg-label">Flow Arcs</div>
+          bodyHtml += `<div class="seg-field" id="flow-arcs-${idx}"><div class="seg-label">Flow Arcs <span style="opacity:0.55;font-size:11px;font-weight:400;">— primary (thicker, brighter)</span></div>
             ${arcs.map((arc, ai) => `<div class="seg-row" data-seg="${idx}" data-arc="${ai}">
               <input class="seg-input" data-field="arc_from_name" placeholder="From" value="${escHtml(arc.from_name || '')}" />
               <input class="seg-input short" data-field="arc_from_lat" placeholder="lat" value="${arc.from_lat ?? ''}" />
@@ -1996,6 +1996,26 @@
               <button class="seg-remove" onclick="removeFlowArc(${idx}, ${ai})">&#10005;</button>
             </div>`).join('')}
             <button class="seg-add" onclick="addFlowArc(${idx})">+ Add Arc</button></div>`;
+
+          // Secondary flow arcs — same shape as primary; the briefing
+          // renderer dispatches by which list an arc came from. Subtler
+          // visual style on the globe (current pre-feature thickness,
+          // cool-tone halo). Keeps the editing UI parallel so writers
+          // can drag-quick-think between the two tiers without a
+          // schema reshape per arc.
+          const secArcs = seg.secondary_flow_arcs || [];
+          bodyHtml += `<div class="seg-field" id="secondary-flow-arcs-${idx}"><div class="seg-label">Secondary Flow Arcs <span style="opacity:0.55;font-size:11px;font-weight:400;">— subtle relations</span></div>
+            ${secArcs.map((arc, ai) => `<div class="seg-row" data-seg="${idx}" data-secarc="${ai}">
+              <input class="seg-input" data-field="secarc_from_name" placeholder="From" value="${escHtml(arc.from_name || '')}" />
+              <input class="seg-input short" data-field="secarc_from_lat" placeholder="lat" value="${arc.from_lat ?? ''}" />
+              <input class="seg-input short" data-field="secarc_from_lng" placeholder="lng" value="${arc.from_lng ?? ''}" />
+              <span class="arc-arrow">&rarr;</span>
+              <input class="seg-input" data-field="secarc_to_name" placeholder="To" value="${escHtml(arc.to_name || '')}" />
+              <input class="seg-input short" data-field="secarc_to_lat" placeholder="lat" value="${arc.to_lat ?? ''}" />
+              <input class="seg-input short" data-field="secarc_to_lng" placeholder="lng" value="${arc.to_lng ?? ''}" />
+              <button class="seg-remove" onclick="removeSecondaryFlowArc(${idx}, ${ai})">&#10005;</button>
+            </div>`).join('')}
+            <button class="seg-add" onclick="addSecondaryFlowArc(${idx})">+ Add Secondary Arc</button></div>`;
 
           const articles = seg.articles || [];
           bodyHtml += `<div class="seg-field" id="articles-${idx}"><div class="seg-label">Articles</div>
@@ -2175,7 +2195,18 @@
     function applyResolvedCoords(nameInput, coord) {
       const row = nameInput.closest('.seg-row');
       if (!row) return;
-      const prefix = nameInput.dataset.field.startsWith('arc_from') ? 'arc_from' : 'arc_to';
+      // Derive the row's lat/lng prefix from the name input's own
+      // field name so primary (arc_from / arc_to) and secondary
+      // (secarc_from / secarc_to) rows both resolve into the right
+      // siblings. Was hardcoded to 'arc_from'/'arc_to' which silently
+      // dropped secondary-arc resolutions.
+      const f = nameInput.dataset.field;
+      let prefix;
+      if      (f === 'arc_from_name')    prefix = 'arc_from';
+      else if (f === 'arc_to_name')      prefix = 'arc_to';
+      else if (f === 'secarc_from_name') prefix = 'secarc_from';
+      else if (f === 'secarc_to_name')   prefix = 'secarc_to';
+      else return;
       const latInput = row.querySelector(`[data-field="${prefix}_lat"]`);
       const lngInput = row.querySelector(`[data-field="${prefix}_lng"]`);
       if (latInput && (!latInput.value || latInput.value === '0')) latInput.value = coord.lat;
@@ -2183,7 +2214,12 @@
     }
 
     function attachArcResolveListeners() {
-      document.querySelectorAll('[data-field="arc_from_name"], [data-field="arc_to_name"]').forEach(input => {
+      // Cover both primary (arc_*) and secondary (secarc_*) name inputs
+      // so blur-resolve fills lat/lng for either tier.
+      document.querySelectorAll(
+        '[data-field="arc_from_name"], [data-field="arc_to_name"], ' +
+        '[data-field="secarc_from_name"], [data-field="secarc_to_name"]'
+      ).forEach(input => {
         if (input._resolveAttached) return;
         input._resolveAttached = true;
         input.addEventListener('blur', () => resolveArcCoords(input));
@@ -2193,7 +2229,13 @@
     async function autoResolveEmptyCoords(segments) {
       const namesToResolve = new Set();
       for (const seg of segments) {
+        // Pull from BOTH primary and secondary lists so the auto-resolve
+        // pass on initial load fills coordinates for either tier.
         for (const arc of (seg.flow_arcs || [])) {
+          if (arc.from_name && (!arc.from_lat || arc.from_lat === 0)) namesToResolve.add(arc.from_name);
+          if (arc.to_name && (!arc.to_lat || arc.to_lat === 0)) namesToResolve.add(arc.to_name);
+        }
+        for (const arc of (seg.secondary_flow_arcs || [])) {
           if (arc.from_name && (!arc.from_lat || arc.from_lat === 0)) namesToResolve.add(arc.from_name);
           if (arc.to_name && (!arc.to_lat || arc.to_lat === 0)) namesToResolve.add(arc.to_name);
         }
@@ -2208,11 +2250,24 @@
           if (res.ok) Object.assign(_coordCache, await res.json());
         } catch (_) {}
       }
+      // Primary arc rows
       document.querySelectorAll('.seg-row[data-arc]').forEach(row => {
         ['from', 'to'].forEach(dir => {
           const nameInput = row.querySelector(`[data-field="arc_${dir}_name"]`);
           const latInput = row.querySelector(`[data-field="arc_${dir}_lat"]`);
           const lngInput = row.querySelector(`[data-field="arc_${dir}_lng"]`);
+          if (!nameInput || !latInput || !lngInput) return;
+          const coord = _coordCache[nameInput.value.trim()];
+          if (coord && (!latInput.value || latInput.value === '0')) latInput.value = coord.lat;
+          if (coord && (!lngInput.value || lngInput.value === '0')) lngInput.value = coord.lon;
+        });
+      });
+      // Secondary arc rows
+      document.querySelectorAll('.seg-row[data-secarc]').forEach(row => {
+        ['from', 'to'].forEach(dir => {
+          const nameInput = row.querySelector(`[data-field="secarc_${dir}_name"]`);
+          const latInput = row.querySelector(`[data-field="secarc_${dir}_lat"]`);
+          const lngInput = row.querySelector(`[data-field="secarc_${dir}_lng"]`);
           if (!nameInput || !latInput || !lngInput) return;
           const coord = _coordCache[nameInput.value.trim()];
           if (coord && (!latInput.value || latInput.value === '0')) latInput.value = coord.lat;
@@ -2299,6 +2354,21 @@
               to_name: row.querySelector('[data-field="arc_to_name"]').value,
               to_lat: parseFloat(row.querySelector('[data-field="arc_to_lat"]').value) || 0,
               to_lng: parseFloat(row.querySelector('[data-field="arc_to_lng"]').value) || 0
+            });
+          });
+          // Secondary arcs — parallel collection. Stored under a
+          // separate field so the briefing renderer can distinguish
+          // them from primary arcs at draw time.
+          const secArcRows = document.querySelectorAll(`#secondary-flow-arcs-${idx} .seg-row[data-secarc]`);
+          clone.secondary_flow_arcs = [];
+          secArcRows.forEach(row => {
+            clone.secondary_flow_arcs.push({
+              from_name: row.querySelector('[data-field="secarc_from_name"]').value,
+              from_lat: parseFloat(row.querySelector('[data-field="secarc_from_lat"]').value) || 0,
+              from_lng: parseFloat(row.querySelector('[data-field="secarc_from_lng"]').value) || 0,
+              to_name: row.querySelector('[data-field="secarc_to_name"]').value,
+              to_lat: parseFloat(row.querySelector('[data-field="secarc_to_lat"]').value) || 0,
+              to_lng: parseFloat(row.querySelector('[data-field="secarc_to_lng"]').value) || 0
             });
           });
           const artRows = document.querySelectorAll(`#articles-${idx} .seg-article-row`);
@@ -2406,6 +2476,26 @@
       if (card && !card.classList.contains('open')) toggleSegment(segIdx);
     }
 
+    // Secondary-arc helpers — same lifecycle as primary, separate list.
+    function addSecondaryFlowArc(segIdx) {
+      syncSegmentFromDOM(segIdx);
+      editableSegments[segIdx].secondary_flow_arcs = editableSegments[segIdx].secondary_flow_arcs || [];
+      editableSegments[segIdx].secondary_flow_arcs.push({ from_name: '', from_lat: 0, from_lng: 0, to_name: '', to_lat: 0, to_lng: 0 });
+      renderSegmentEditor(editableSegments);
+      attachArcResolveListeners();
+      const card = document.getElementById(`seg-card-${segIdx}`);
+      if (card && !card.classList.contains('open')) toggleSegment(segIdx);
+    }
+
+    function removeSecondaryFlowArc(segIdx, arcIdx) {
+      syncSegmentFromDOM(segIdx);
+      editableSegments[segIdx].secondary_flow_arcs.splice(arcIdx, 1);
+      renderSegmentEditor(editableSegments);
+      attachArcResolveListeners();
+      const card = document.getElementById(`seg-card-${segIdx}`);
+      if (card && !card.classList.contains('open')) toggleSegment(segIdx);
+    }
+
     function addArticle(segIdx) {
       const input = document.getElementById(`new-art-${segIdx}`);
       const val = input ? input.value.trim() : '';
@@ -2445,9 +2535,23 @@
         //      Kept for backwards compatibility with briefings that had
         //      featured toggled in Step 3 before this refactor.
         if (d.featured_video?.enabled) {
+          // start_sec / end_sec MUST be forwarded — without them the
+          // playback path (www/index.html `_mountPendingVideoCard` →
+          // `startFocalVideo`) falls back to `start = 0` and a hard-
+          // coded duration. That's the bug where a clip set to play
+          // 60→90s was actually playing 0→30s. duration_sec stays as a
+          // mirror so legacy backends that only consume that field
+          // still work; the front-end prefers start_sec/end_sec when
+          // present.
+          const _fvStart = Number.isFinite(d.featured_video.start_sec) ? d.featured_video.start_sec : 0;
+          const _fvEnd   = Number.isFinite(d.featured_video.end_sec)
+            ? d.featured_video.end_sec
+            : (_fvStart + (d.featured_video.duration_sec || 15));
           entry.featured_video = {
             enabled: true,
-            duration_sec: d.featured_video.duration_sec || 15,
+            start_sec:    _fvStart,
+            end_sec:      _fvEnd,
+            duration_sec: Math.max(1, _fvEnd - _fvStart),
             narrator_transition:      d.featured_video.narrator_transition || '',
             narrator_transition_hint: d.featured_video.narrator_transition_hint || '',
             media_type:               d.featured_video.media_type || 'heatmap',
@@ -2460,9 +2564,17 @@
         } else if (editableSegments?.length) {
           const seg = editableSegments.find(s => String(s.thread_id) === String(id));
           if (seg?.video_focal?.enabled) {
+            // Same start_sec / end_sec forwarding for the legacy
+            // segment-level path.
+            const _vfStart = Number.isFinite(seg.video_focal.start_sec) ? seg.video_focal.start_sec : 0;
+            const _vfEnd   = Number.isFinite(seg.video_focal.end_sec)
+              ? seg.video_focal.end_sec
+              : (_vfStart + 15);
             entry.featured_video = {
               enabled: true,
-              duration_sec: (seg.video_focal.end_sec || 15) - (seg.video_focal.start_sec || 0),
+              start_sec:    _vfStart,
+              end_sec:      _vfEnd,
+              duration_sec: Math.max(1, _vfEnd - _vfStart),
               narrator_transition: seg.video_focal.narrator_transition || '',
               media_type: seg.media_type || 'heatmap',
               twitter_url: seg.twitter_url || null,

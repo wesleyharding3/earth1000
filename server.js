@@ -393,6 +393,14 @@ const _SNAPSHOT_KEYS = new Set([
   'news/search:default:v9:24:0',
   'cities:all',
   'countries:all',
+  // globe-stats:all added because the producer falls back to {} when
+  // the DB read fails (getDbKeywordCache silently swallows pool errors)
+  // — cron failures + DB saturation both surface there. With a disk
+  // snapshot, the boot sequence reads the last successful response,
+  // marks it stale, and serves it via stale-while-revalidate while
+  // the DB recovers. Without this, /api/globe-stats returns {} for
+  // up to 90 s after every cold boot and the dashboard renders blank.
+  'globe-stats:all',
 ]);
 try {
   const raw = require('fs').readFileSync(_FEED_SNAPSHOT_FILE, 'utf8');
