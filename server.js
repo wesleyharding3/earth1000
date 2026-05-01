@@ -376,9 +376,23 @@ const _FEED_SNAPSHOT_FILE = require('path').join(__dirname, '.feed-snapshot.json
 // added per-country dispersion to _finalizeSearchResults — see the long
 // comment in that function. Keep these in lock-step with the cacheKey
 // template used by /api/news/search default-query path.
+//
+// cities:all and countries:all added because the bootstrap of the mobile
+// + desktop clients depends on those endpoints — when /api/countries
+// 500s on cold start (typically because the Postgres pool was saturated
+// at the moment of request, which we've seen happen when other services
+// hold all the slots) the entire app boots into an unusable state with
+// "Bootstrap: countries empty" warnings and the tutorial's country-
+// selection chapters silently no-op. Snapshotting these to disk means
+// a freshly-deployed replica can serve last-known-good data via
+// ttlCached's stale-if-error path even when its first DB query fails.
+// Both endpoints are essentially-static (countries change ~never,
+// cities change a few times a week), so serving stale is fine.
 const _SNAPSHOT_KEYS = new Set([
   'news/search:default:v9:25:0',
   'news/search:default:v9:24:0',
+  'cities:all',
+  'countries:all',
 ]);
 try {
   const raw = require('fs').readFileSync(_FEED_SNAPSHOT_FILE, 'utf8');

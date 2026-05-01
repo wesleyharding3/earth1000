@@ -27482,9 +27482,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
           //     full rationale.
           { at: 3000, do: () => {
               try {
-                const c = (window.__globeCountries || []).find(
+                let c = (window.__globeCountries || []).find(
                   c => c && (c.iso_code || '').toUpperCase() === 'EG'
                 );
+                // Synthetic fallback — see www/index.html for rationale.
+                if (!c) {
+                  c = { iso_code: 'EG', name: 'Egypt', lat: 26.8206, lon: 30.8025 };
+                }
                 if (c && c.lat != null) {
                   if (window.focusCountry) window.focusCountry(c);
                   else window.startFocus?.(parseFloat(c.lat), parseFloat(c.lon));
@@ -27565,9 +27569,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
           //     the bare startFocus we replaced skipped it.
           { at: 3500, do: () => {
               try {
-                const cairo = (window.__globeCities || []).find(
+                let cairo = (window.__globeCities || []).find(
                   c => c && /cairo/i.test(c.name || '')
                 );
+                // Synthetic fallback — see www/index.html for rationale.
+                if (!cairo) {
+                  cairo = { name: 'Cairo', country: 'Egypt', lat: 30.0444, lon: 31.2357 };
+                }
                 if (cairo && cairo.lat != null) {
                   if (window.focusCity) window.focusCity(cairo);
                   else window.startFocus?.(parseFloat(cairo.lat), parseFloat(cairo.lon));
@@ -27881,19 +27889,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
               } catch (_) {}
             }
           },
-          { at: 2500, do: async () => {
-              try {
-                const input = await waitForElement('#flowKeyword', { timeout: 3000 });
-                if (!input) return;
-                input.value = 'climate';
-                input.dispatchEvent(new Event('input', { bubbles: true }));
-                pulse(input);
-              } catch (_) {}
-            }
-          },
-          // 4.5s: aggregate click + immediate aggregate arc spawn.
-          // See www/index.html for full rationale.
-          { at: 4500, do: () => {
+          // 2.5s: Aggregate (Map This) FIRST + spawn aggregate arcs.
+          // New ordering — see www/index.html for full rationale.
+          { at: 2500, do: () => {
               try {
                 const pill = document.querySelector('.flowModePill[data-fmode="aggregate"]');
                 if (pill) { pulse(pill); pill.click(); }
@@ -27919,8 +27917,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
               } catch (_) {}
             }
           },
-          // 6.5s: refill arcs so the visual stays dense.
-          { at: 6500, do: () => {
+          // 5s: Time Series + refill with hub-and-spoke arcs.
+          { at: 5000, do: () => {
+              try {
+                const pill = document.querySelector('.flowModePill[data-fmode="individual"]');
+                if (pill) { pulse(pill); pill.click(); }
+              } catch (_) {}
               try {
                 const hub = { type: 'country', iso: 'US', id: 'US', place: 'United States', lat: 39.83, lon: -98.58 };
                 const dests = [
@@ -27936,21 +27938,25 @@ const settingsToggle     = document.getElementById("settingsToggle");
               } catch (_) {}
             }
           },
-          { at: 8000, do: () => {
+          // 7.5s: keyword input LAST.
+          { at: 7500, do: async () => {
               try {
-                const pill = document.querySelector('.flowModePill[data-fmode="individual"]');
-                if (pill) { pulse(pill); pill.click(); }
+                const input = await waitForElement('#flowKeyword', { timeout: 3000 });
+                if (!input) return;
+                input.value = 'climate';
+                input.dispatchEvent(new Event('input', { bubbles: true }));
+                pulse(input);
               } catch (_) {}
             }
           },
-          { at: 9500, do: () => {
+          { at: 9000, do: () => {
               try {
                 const pill = document.querySelector('.flowModePill[data-cmode="sentiment"]');
                 if (pill) { pulse(pill); pill.click(); }
               } catch (_) {}
             }
           },
-          { at: 10500, do: () => {
+          { at: 10000, do: () => {
               try {
                 const pill = document.querySelector('.flowModePill[data-cmode="routing"]');
                 if (pill) { pulse(pill); pill.click(); }
