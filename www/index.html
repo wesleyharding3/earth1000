@@ -21936,6 +21936,163 @@ const settingsToggle     = document.getElementById("settingsToggle");
         hideHoverCard();
       };
 
+      // ── Multi-label system for briefing flow-arc endpoints ──────────
+      //
+      // The single-card briefingShowLabel above can only show one
+      // country at a time — calling it twice overwrites #hoverCard.
+      // For flow-arc segments the user wants every visible flow-arc
+      // country labeled simultaneously, each with an SVG leader line.
+      //
+      // This system maintains an array of independent card + line
+      // elements. _briefingTrackFlowArcLabels (called from the render
+      // loop next to _briefingTrackHoverCard) re-projects each anchor
+      // every frame, hides cards on the back hemisphere via the same
+      // dot-product gate the picker uses, and updates the leader line
+      // endpoints. Clears on segment change via clearBriefingFlowArcLabels
+      // (hooked into clearArcMeshes alongside clearBriefingNationHalos).
+      const briefingFlowLabels = [];
+      let _briefingFlowSvg = null;
+      function _ensureBriefingFlowSvg() {
+        if (_briefingFlowSvg && document.body.contains(_briefingFlowSvg)) return _briefingFlowSvg;
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.id = 'briefingFlowLabelSvg';
+        svg.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;z-index:5050;pointer-events:none;';
+        document.body.appendChild(svg);
+        _briefingFlowSvg = svg;
+        return svg;
+      }
+      // Resolve a (lat, lon, name) into the canonical country/city node
+      // from the loaded data. Same priority briefingShowLabelAt uses:
+      // exact name match first, then nearest-by-coords. Returns
+      // { node, posArr, pts } or null. The node carries the canonical
+      // name + lat/lon used to anchor the card's leader line.
+      function _resolveBriefingNode(lat, lon, name) {
+        const nl = (name || '').trim().toLowerCase();
+        if (nl) {
+          const country = countries.find(c => c.name && c.name.toLowerCase() === nl);
+          if (country) {
+            const idx = countries.findIndex(c => c === country);
+            return { node: country, posArr: countryPositions, pts: countryPoints, idx };
+          }
+          const city = cities.find(c => c.name && c.name.toLowerCase() === nl);
+          if (city) {
+            const idx = cities.findIndex(c => c === city);
+            return { node: city, posArr: positions, pts: cityPoints, idx };
+          }
+        }
+        // Fallback: nearest country (preferred) within a generous radius
+        let bestC = null, bestCD = Infinity, bestCIdx = -1;
+        for (let i = 0; i < countries.length; i++) {
+          const c = countries[i];
+          if (c.lat == null) continue;
+          const d = (c.lat - lat) ** 2 + ((c.lon ?? c.lng ?? 0) - lon) ** 2;
+          if (d < bestCD) { bestCD = d; bestC = c; bestCIdx = i; }
+        }
+        if (bestC && bestCD < 16) {
+          return { node: bestC, posArr: countryPositions, pts: countryPoints, idx: bestCIdx };
+        }
+        return null;
+      }
+      window.briefingAddFlowArcLabel = function(lat, lon, name) {
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+        const resolved = _resolveBriefingNode(lat, lon, name);
+        if (!resolved) return;
+        const key = (resolved.node.name || '').toLowerCase().trim();
+        // Dedupe — a country that appears as both the from-endpoint of
+        // one arc and the to-endpoint of another only gets one label.
+        if (briefingFlowLabels.some(l => l._key === key)) return;
+        const card = document.createElement('div');
+        card.className = 'briefingFlowLabel';
+        card.textContent = resolved.node.name || '';
+        card.style.cssText = [
+          'position: fixed', 'pointer-events: none',
+          'padding: 4px 10px',
+          'background: rgba(8,12,22,0.94)',
+          'border: 1px solid rgba(255,180,80,0.42)',
+          'border-radius: 8px',
+          'font-size: 11px', 'font-weight: 600',
+          'letter-spacing: 0.04em',
+          'color: rgba(255,215,160,0.96)',
+          'white-space: nowrap',
+          'z-index: 5060',
+          'opacity: 0',
+          'transform: translate(-50%, -100%)',
+          'transition: opacity 0.2s ease',
+          'box-shadow: 0 4px 14px rgba(0,0,0,0.55)',
+          'text-shadow: 0 0 6px rgba(255,180,80,0.25)',
+        ].join(';');
+        document.body.appendChild(card);
+        const svg = _ensureBriefingFlowSvg();
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        line.setAttribute('stroke', 'rgba(255,180,80,0.55)');
+        line.setAttribute('stroke-width', '1.2');
+        line.setAttribute('stroke-dasharray', '3,3');
+        line.style.cssText = 'opacity:0;transition:opacity 0.2s ease;';
+        svg.appendChild(line);
+        // Anchor reference: the canonical posArr + index so re-projection
+        // each frame uses the live globe transform (mirrors the single-
+        // card briefingShowLabel pattern).
+        briefingFlowLabels.push({
+          posArr: resolved.posArr,
+          pts:    resolved.pts,
+          idx:    resolved.idx,
+          name:   resolved.node.name,
+          cardEl: card,
+          lineEl: line,
+          _key:   key,
+        });
+      };
+      window.clearBriefingFlowArcLabels = function() {
+        for (const l of briefingFlowLabels) {
+          try { l.cardEl.remove(); } catch (_) {}
+          try { l.lineEl.remove(); } catch (_) {}
+        }
+        briefingFlowLabels.length = 0;
+      };
+      // Called per render-loop tick. Keeps cards/lines pinned to their
+      // 3D anchors as the globe rotates and hides any whose anchor has
+      // rotated to the back hemisphere (same dot-product gate the
+      // single hover card uses, same threshold the city-fan picker uses).
+      window._briefingTrackFlowArcLabels = function() {
+        if (!briefingFlowLabels.length) return;
+        const rect = renderer.domElement.getBoundingClientRect();
+        const tmp = new THREE.Vector3();
+        for (const l of briefingFlowLabels) {
+          if (!l.posArr || !l.pts) continue;
+          tmp.set(
+            l.posArr[l.idx * 3],
+            l.posArr[l.idx * 3 + 1],
+            l.posArr[l.idx * 3 + 2],
+          ).applyMatrix4(l.pts.matrixWorld);
+          const projected = tmp.clone().project(camera);
+          const sx = rect.left + (projected.x + 1) / 2 * rect.width;
+          const sy = rect.top  + (-projected.y + 1) / 2 * rect.height;
+          // Back-hemisphere gate: if the anchor's surface normal faces
+          // the same direction as the camera, the country is on the far
+          // side of the globe and we hide the card + line entirely.
+          const camDir = tmp.clone().sub(camera.position).normalize();
+          const surfaceNormal = tmp.clone().normalize();
+          const dot = surfaceNormal.dot(camDir);
+          if (dot > -0.05 || projected.z > 1) {
+            l.cardEl.style.opacity = '0';
+            l.lineEl.style.opacity = '0';
+            continue;
+          }
+          // Card sits ~32 px above the node, leader line connects card
+          // bottom-center to the node dot. Same offset feel as the
+          // single hover card so visual language stays consistent.
+          const cardOffsetPx = 32;
+          l.cardEl.style.left = sx + 'px';
+          l.cardEl.style.top  = (sy - cardOffsetPx) + 'px';
+          l.cardEl.style.opacity = '1';
+          l.lineEl.setAttribute('x1', sx);
+          l.lineEl.setAttribute('y1', sy - cardOffsetPx);
+          l.lineEl.setAttribute('x2', sx);
+          l.lineEl.setAttribute('y2', sy);
+          l.lineEl.style.opacity = '1';
+        }
+      };
+
       // Reverse-lookup the nearest node from lat/lon and show its hover card.
       // Used when ring pulses fire on secondary locations that have no nodeObj.
       window.briefingShowLabelAt = function(lat, lon, name) {
@@ -22370,6 +22527,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // During briefing, track the hover card to the globe coordinate each frame
         if (window.briefingActive && window._briefingTrackHoverCard) {
           window._briefingTrackHoverCard();
+        }
+        // Multi-label system for flow-arc countries — re-projects every
+        // registered label's anchor and updates its card + leader-line
+        // position so all visible flow-arc countries stay labeled while
+        // the globe rotates.
+        if (window.briefingActive && window._briefingTrackFlowArcLabels) {
+          window._briefingTrackFlowArcLabels();
         }
 
         if (ringStates.some(s => s.active)) {
@@ -43699,6 +43863,27 @@ body.ticker-active .gTickerLabel {
   function closeBriefing() {
     window.briefingActive = false;
     document.body.classList.remove('briefing-active');
+    // Reset the globe view to country mode if a city-focused segment
+    // was running when the briefing was closed mid-flight. setBriefingViewMode
+    // (the briefing-player's internal mode setter) updates currentViewMode +
+    // opacity targets but doesn't touch the user-facing #viewDropdown
+    // toggle — so the globe would render city dots while the toggle still
+    // showed "Country" as active. Clicking the country .viewOption fires
+    // the standard mode-change handler which syncs both the internal
+    // mode AND the toggle UI's .active class. No-op when the briefing
+    // ended naturally on country view (idempotent click).
+    try {
+      const countryOpt = document.querySelector('.viewOption[data-mode="country"]');
+      if (countryOpt && !countryOpt.classList.contains('active')) {
+        countryOpt.click();
+      } else if (window.__currentViewMode !== 'country' && window.setBriefingViewMode) {
+        // Fallback: if the toggle's "active" class is already on country
+        // but the internal mode somehow drifted (e.g. setBriefingViewMode
+        // ran during the segment without going through the click path),
+        // force the internal mode back via the briefing setter.
+        window.setBriefingViewMode('country');
+      }
+    } catch (_) {}
     playing = false;
     clearTimeout(segTimer);
     clearBTimers();
@@ -44039,19 +44224,26 @@ body.ticker-active .gTickerLabel {
         if (!seenHaloKeys.has(tk)) { seenHaloKeys.add(tk); window.briefingNationHaloAt(to.lat,   to.lng,   tier); }
       }
 
-      // Label cards: from-endpoint shows the moment the arc spawns
-      // (it's where the arc "leaves from"); to-endpoint shows when the
-      // arc reveal completes (~BRIEFING_ARC_REVEAL_SECS later) so the
-      // label "lands" with the arc head. For domestic arcs there's no
-      // travel animation — show both labels immediately so neither node
-      // goes unannounced.
-      if (window.briefingShowLabelAt) {
-        window.briefingShowLabelAt(rawFromLat, rawFromLng, arc.from_name);
+      // Multi-label cards: each visible flow-arc country gets its own
+      // card + SVG leader line, all maintained simultaneously by the
+      // multi-label system (briefingAddFlowArcLabel + the per-frame
+      // tracker). From-endpoint registers immediately so the card is
+      // ready when the arc spawns; to-endpoint registers after the arc
+      // reveal completes so the destination label "lands" with the arc
+      // head. Both calls are deduped by country name inside the system,
+      // so a country appearing as the to-side of one arc and the from-
+      // side of another only gets one card. The dot-product gate hides
+      // any back-hemisphere card, so on a hemisphere flip only the
+      // visible labels stay on screen.
+      if (window.briefingAddFlowArcLabel) {
+        window.briefingAddFlowArcLabel(rawFromLat, rawFromLng, arc.from_name);
         const toDelayMs = (distKm < DOMESTIC_KM)
           ? 500
           : Math.round(BRIEFING_ARC_REVEAL_SECS * 1000);
         addBTimer(setTimeout(() => {
-          if (window.briefingShowLabelAt) window.briefingShowLabelAt(rawToLat, rawToLng, arc.to_name);
+          if (window.briefingAddFlowArcLabel) {
+            window.briefingAddFlowArcLabel(rawToLat, rawToLng, arc.to_name);
+          }
         }, toDelayMs));
       }
 
@@ -46011,6 +46203,12 @@ body.ticker-active .gTickerLabel {
     // segment N+1 even after its own arcs/halos have been spawned.
     if (window.clearBriefingNationHalos) {
       try { window.clearBriefingNationHalos(); } catch (_) {}
+    }
+    // Same lifecycle for the multi-label flow-arc system — labels for
+    // segment N's flow_arcs / secondary_flow_arcs go away when the
+    // segment ends, before segment N+1 registers its own.
+    if (window.clearBriefingFlowArcLabels) {
+      try { window.clearBriefingFlowArcLabels(); } catch (_) {}
     }
   }
   // Expose so setBriefingViewMode can call it when returning to country view

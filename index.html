@@ -20338,6 +20338,129 @@ const settingsToggle     = document.getElementById("settingsToggle");
         hideHoverCard();
       };
 
+      // ── Multi-label flow-arc system — see www/index.html for full notes.
+      const briefingFlowLabels = [];
+      let _briefingFlowSvg = null;
+      function _ensureBriefingFlowSvg() {
+        if (_briefingFlowSvg && document.body.contains(_briefingFlowSvg)) return _briefingFlowSvg;
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.id = 'briefingFlowLabelSvg';
+        svg.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;z-index:5050;pointer-events:none;';
+        document.body.appendChild(svg);
+        _briefingFlowSvg = svg;
+        return svg;
+      }
+      function _resolveBriefingNode(lat, lon, name) {
+        const nl = (name || '').trim().toLowerCase();
+        if (nl) {
+          const country = countries.find(c => c.name && c.name.toLowerCase() === nl);
+          if (country) {
+            const idx = countries.findIndex(c => c === country);
+            return { node: country, posArr: countryPositions, pts: countryPoints, idx };
+          }
+          const city = cities.find(c => c.name && c.name.toLowerCase() === nl);
+          if (city) {
+            const idx = cities.findIndex(c => c === city);
+            return { node: city, posArr: positions, pts: cityPoints, idx };
+          }
+        }
+        let bestC = null, bestCD = Infinity, bestCIdx = -1;
+        for (let i = 0; i < countries.length; i++) {
+          const c = countries[i];
+          if (c.lat == null) continue;
+          const d = (c.lat - lat) ** 2 + ((c.lon ?? c.lng ?? 0) - lon) ** 2;
+          if (d < bestCD) { bestCD = d; bestC = c; bestCIdx = i; }
+        }
+        if (bestC && bestCD < 16) {
+          return { node: bestC, posArr: countryPositions, pts: countryPoints, idx: bestCIdx };
+        }
+        return null;
+      }
+      window.briefingAddFlowArcLabel = function(lat, lon, name) {
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+        const resolved = _resolveBriefingNode(lat, lon, name);
+        if (!resolved) return;
+        const key = (resolved.node.name || '').toLowerCase().trim();
+        if (briefingFlowLabels.some(l => l._key === key)) return;
+        const card = document.createElement('div');
+        card.className = 'briefingFlowLabel';
+        card.textContent = resolved.node.name || '';
+        card.style.cssText = [
+          'position: fixed', 'pointer-events: none',
+          'padding: 4px 10px',
+          'background: rgba(8,12,22,0.94)',
+          'border: 1px solid rgba(255,180,80,0.42)',
+          'border-radius: 8px',
+          'font-size: 11px', 'font-weight: 600',
+          'letter-spacing: 0.04em',
+          'color: rgba(255,215,160,0.96)',
+          'white-space: nowrap',
+          'z-index: 5060',
+          'opacity: 0',
+          'transform: translate(-50%, -100%)',
+          'transition: opacity 0.2s ease',
+          'box-shadow: 0 4px 14px rgba(0,0,0,0.55)',
+          'text-shadow: 0 0 6px rgba(255,180,80,0.25)',
+        ].join(';');
+        document.body.appendChild(card);
+        const svg = _ensureBriefingFlowSvg();
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        line.setAttribute('stroke', 'rgba(255,180,80,0.55)');
+        line.setAttribute('stroke-width', '1.2');
+        line.setAttribute('stroke-dasharray', '3,3');
+        line.style.cssText = 'opacity:0;transition:opacity 0.2s ease;';
+        svg.appendChild(line);
+        briefingFlowLabels.push({
+          posArr: resolved.posArr,
+          pts:    resolved.pts,
+          idx:    resolved.idx,
+          name:   resolved.node.name,
+          cardEl: card,
+          lineEl: line,
+          _key:   key,
+        });
+      };
+      window.clearBriefingFlowArcLabels = function() {
+        for (const l of briefingFlowLabels) {
+          try { l.cardEl.remove(); } catch (_) {}
+          try { l.lineEl.remove(); } catch (_) {}
+        }
+        briefingFlowLabels.length = 0;
+      };
+      window._briefingTrackFlowArcLabels = function() {
+        if (!briefingFlowLabels.length) return;
+        const rect = renderer.domElement.getBoundingClientRect();
+        const tmp = new THREE.Vector3();
+        for (const l of briefingFlowLabels) {
+          if (!l.posArr || !l.pts) continue;
+          tmp.set(
+            l.posArr[l.idx * 3],
+            l.posArr[l.idx * 3 + 1],
+            l.posArr[l.idx * 3 + 2],
+          ).applyMatrix4(l.pts.matrixWorld);
+          const projected = tmp.clone().project(camera);
+          const sx = rect.left + (projected.x + 1) / 2 * rect.width;
+          const sy = rect.top  + (-projected.y + 1) / 2 * rect.height;
+          const camDir = tmp.clone().sub(camera.position).normalize();
+          const surfaceNormal = tmp.clone().normalize();
+          const dot = surfaceNormal.dot(camDir);
+          if (dot > -0.05 || projected.z > 1) {
+            l.cardEl.style.opacity = '0';
+            l.lineEl.style.opacity = '0';
+            continue;
+          }
+          const cardOffsetPx = 32;
+          l.cardEl.style.left = sx + 'px';
+          l.cardEl.style.top  = (sy - cardOffsetPx) + 'px';
+          l.cardEl.style.opacity = '1';
+          l.lineEl.setAttribute('x1', sx);
+          l.lineEl.setAttribute('y1', sy - cardOffsetPx);
+          l.lineEl.setAttribute('x2', sx);
+          l.lineEl.setAttribute('y2', sy);
+          l.lineEl.style.opacity = '1';
+        }
+      };
+
       // Reverse-lookup the nearest node from lat/lon and show its hover card.
       // Used when ring pulses fire on secondary locations that have no nodeObj.
       window.briefingShowLabelAt = function(lat, lon, name) {
@@ -20774,6 +20897,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // During briefing, track the hover card to the globe coordinate each frame
         if (window.briefingActive && window._briefingTrackHoverCard) {
           window._briefingTrackHoverCard();
+        }
+        // Multi-label flow-arc tracker — see www/index.html for full notes.
+        if (window.briefingActive && window._briefingTrackFlowArcLabels) {
+          window._briefingTrackFlowArcLabels();
         }
 
         if (ringStates.some(s => s.active)) {
@@ -40495,6 +40622,16 @@ body.ticker-active .gTickerLabel {
   function closeBriefing() {
     window.briefingActive = false;
     document.body.classList.remove('briefing-active');
+    // Reset to country view if briefing closed mid city-focused segment.
+    // See www/index.html for full rationale.
+    try {
+      const countryOpt = document.querySelector('.viewOption[data-mode="country"]');
+      if (countryOpt && !countryOpt.classList.contains('active')) {
+        countryOpt.click();
+      } else if (window.__currentViewMode !== 'country' && window.setBriefingViewMode) {
+        window.setBriefingViewMode('country');
+      }
+    } catch (_) {}
     playing = false;
     clearTimeout(segTimer);
     clearBTimers();
@@ -40821,13 +40958,16 @@ body.ticker-active .gTickerLabel {
         if (!seenHaloKeys.has(tk)) { seenHaloKeys.add(tk); window.briefingNationHaloAt(to.lat,   to.lng,   tier); }
       }
 
-      if (window.briefingShowLabelAt) {
-        window.briefingShowLabelAt(rawFromLat, rawFromLng, arc.from_name);
+      // Multi-label cards — see www/index.html for full notes.
+      if (window.briefingAddFlowArcLabel) {
+        window.briefingAddFlowArcLabel(rawFromLat, rawFromLng, arc.from_name);
         const toDelayMs = (distKm < DOMESTIC_KM)
           ? 500
           : Math.round(BRIEFING_ARC_REVEAL_SECS * 1000);
         addBTimer(setTimeout(() => {
-          if (window.briefingShowLabelAt) window.briefingShowLabelAt(rawToLat, rawToLng, arc.to_name);
+          if (window.briefingAddFlowArcLabel) {
+            window.briefingAddFlowArcLabel(rawToLat, rawToLng, arc.to_name);
+          }
         }, toDelayMs));
       }
 
@@ -42365,6 +42505,10 @@ body.ticker-active .gTickerLabel {
     // Halos belong to the segment lifecycle — see www/index.html.
     if (window.clearBriefingNationHalos) {
       try { window.clearBriefingNationHalos(); } catch (_) {}
+    }
+    // Multi-label cards — same lifecycle, see www/index.html.
+    if (window.clearBriefingFlowArcLabels) {
+      try { window.clearBriefingFlowArcLabels(); } catch (_) {}
     }
     arcMeshes = [];
   }
