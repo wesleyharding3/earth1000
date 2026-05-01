@@ -17176,15 +17176,28 @@ function computeCityTiers(cities) {
         });
 
       function isCityVisible(pointPos, camera) {
-        // A node is rendered if its surface normal (= normalised world position for a
-        // unit sphere) has any component facing the camera.  The visible tangent ring
-        // sits at dot ≈ -0.33 for camera z=3; anything < 0 is unambiguously front-face.
-        // We use +0.12 as the cutoff so nodes right at the globe's equatorial seam —
-        // which ARE rendered on screen — are never silently excluded.
+        // Picking/hover gate. A node is "pickable" if its surface normal
+        // (= normalised world position on the unit sphere) faces the
+        // camera. Tangent ring is at dot ≈ -0.33 for camera z=3; pure
+        // front-face is dot ≤ 0. Anything past the visible rim shades
+        // toward the back hemisphere as dot rises toward +1.
+        //
+        // Threshold raised 0.12 → 0.4 so cities right at and slightly
+        // past the visible rim stay pickable — the old cutoff snapped
+        // hover/fan eligibility off the moment a city rotated near the
+        // horizon, which read as "dots disappear at certain angles"
+        // even though updateNodeGlow's Math.pow fade keeps the glowing
+        // dot itself drawn. 0.4 is well short of the back hemisphere
+        // (dot ≥ 0.5 is genuinely back-facing); cities past that are
+        // intentionally excluded so the fan / hover never targets a
+        // dot the user can't see.
+        //
+        // Rendering is unaffected — the glow curve in updateNodeGlow
+        // already provides the soft front→back fade the user asked for.
         const pointVector = pointPos.clone().normalize();
         const cameraDir = new THREE.Vector3();
         camera.getWorldDirection(cameraDir).normalize();
-        return cameraDir.dot(pointVector) < 0.12;
+        return cameraDir.dot(pointVector) < 0.4;
       }
 
       function updateCompass() {
@@ -19412,19 +19425,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
       function cityFanRadiusMi() {
         const DEFAULT_CAM = _isMobileView ? 3.6 : 3.0;
         const zf = DEFAULT_CAM / Math.max(0.1, camera.position.length());
-        // Mobile fingers are fatter than mouse cursors AND tap precision
-        // is naturally lower — bumping all three constants here so the
-        // disambiguation fan reliably triggers when nearby cities are
-        // close. Desktop also gets a small bump.
-        //   • BASE: at default zoom, this is the geodesic radius the
-        //     click sweeps. Mobile +20mi over desktop.
-        //   • MIN_MI: floor as zoom-in compresses the radius. Mobile
-        //     keeps it at 14mi (two adjacent cities can still both
-        //     register at extreme zoom-in).
+        // Geodesic catch radius for the city-fan picker. Bumped ~45%
+        // over the previous values so taps near cluster centers still
+        // catch nearby cities even when the user clicks slightly off-
+        // target. Mobile gets the bigger absolute jump because finger
+        // taps are inherently less precise than mouse clicks.
+        //   • BASE: at default zoom, the geodesic radius the click sweeps.
+        //   • MIN_MI: floor as zoom-in compresses the radius. Two adjacent
+        //     cities can still both register at extreme zoom-in.
         //   • MAX_MI: ceiling as zoom-out expands the radius.
-        const BASE   = _isMobileView ? 90  : 60;
-        const MIN_MI = _isMobileView ? 14  : 8;
-        const MAX_MI = _isMobileView ? 110 : 80;
+        const BASE   = _isMobileView ? 130 : 95;
+        const MIN_MI = _isMobileView ? 18  : 12;
+        const MAX_MI = _isMobileView ? 160 : 125;
         return Math.max(MIN_MI, Math.min(MAX_MI, BASE / Math.max(0.35, zf)));
       }
       function collectCityHits(clickLat, clickLon, radiusMi) {
@@ -19463,7 +19475,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         focusCity(h.city);
         queueFocusPanelOpen(() => openNodePanel(h.city, "city"), { immediate: true });
       }
-      function showCityFanUI(hits, x, y) {
+      function showCityFanUI(hits, x, y, anchorLat, anchorLon) {
         const fanEl = document.getElementById('countryFan');
         if (!fanEl) return;
         fanEl.innerHTML = '';
@@ -19520,11 +19532,114 @@ const settingsToggle     = document.getElementById("settingsToggle");
         fanEl.style.left = x + 'px';
         fanEl.style.top  = y + 'px';
         fanEl.classList.add('visible');
-        // Render leader lines anchored at the click point (x, y) — see
-        // drawCityFanLines for why we anchor at the click rather than
-        // at each city's projected dot.
+        // Stash the click anchor as a 3D point on the unit sphere so
+        // _refreshCityFanLines (driven from the animate loop) can re-
+        // project it to screen coords every frame. This tethers the
+        // SVG anchor + leader endpoints to the actual point on the
+        // globe — if the user spins the globe (drag, pinch, or any
+        // non-paused-ambient motion) after the fan opens, the lines
+        // follow the click point instead of staying frozen on a stale
+        // screen position. We still pause ambient rotation so the
+        // CARDS stay put for selection; only the leader anchor moves.
+        if (Number.isFinite(anchorLat) && Number.isFinite(anchorLon)) {
+          const anchorVec = latLonToVec3Trans(anchorLat, anchorLon, 1);
+          _cityFanAnchorState = {
+            lat: anchorLat,
+            lon: anchorLon,
+            anchorVec,        // local-space sphere position; transform per frame
+            cardEls,
+            hits: visible,
+            // Fallback screen coords used until first frame projection.
+            fallbackX: x,
+            fallbackY: y,
+          };
+        } else {
+          _cityFanAnchorState = null;
+        }
+        // Render leader lines anchored at the click point (x, y) —
+        // immediate first paint so the line is in place before the
+        // animate loop's first refresh. Subsequent frames retether to
+        // the projected 3D anchor via _refreshCityFanLines.
         requestAnimationFrame(() => drawCityFanLines(cardEls, visible, x, y));
       }
+
+      // 3D anchor state for the city-fan leader lines. Set in
+      // showCityFanUI, cleared in hideCityFanLines. Read each animate-
+      // loop tick by _refreshCityFanLines to re-project the anchor.
+      let _cityFanAnchorState = null;
+      // Reusable Vector3s so the per-frame refresh doesn't allocate
+      // (called every animate() tick — must stay cheap).
+      const _cityFanTmpVec    = new THREE.Vector3();
+      const _cityFanTmpVecN   = new THREE.Vector3();
+      const _cityFanCamDir    = new THREE.Vector3();
+      function _refreshCityFanLines() {
+        const st = _cityFanAnchorState;
+        if (!st) return;
+        if (!_cityFanLineSvg || _cityFanLineSvg.style.display === 'none') return;
+        // Project the stored sphere-space anchor through the current
+        // scene transform + camera. cityPoints.matrixWorld gives the
+        // composed transform (same one updateNodeGlow uses to project
+        // city positions), which captures both the globe's spin and
+        // any zoom-driven camera motion.
+        _cityFanTmpVec.copy(st.anchorVec).applyMatrix4(cityPoints.matrixWorld);
+        // If the click point has rotated to the back hemisphere, hide
+        // the leader lines — drawing toward an invisible anchor would
+        // produce noise. The fan cards themselves remain on screen so
+        // the user can still pick; the picker uses geodesic distance,
+        // not the anchor point.
+        camera.getWorldDirection(_cityFanCamDir).normalize();
+        _cityFanTmpVecN.copy(_cityFanTmpVec).normalize();
+        if (_cityFanCamDir.dot(_cityFanTmpVecN) >= 0.4) {
+          // Same threshold isCityVisible uses for picking. If the
+          // anchor is past the visible rim, leave the previous frame's
+          // lines in place — they'll resync when the anchor rotates
+          // back into view.
+          return;
+        }
+        _cityFanTmpVec.project(camera);
+        const rect = renderer.domElement.getBoundingClientRect();
+        const cax = rect.left + (_cityFanTmpVec.x + 1) / 2 * rect.width;
+        const cay = rect.top  + (-_cityFanTmpVec.y + 1) / 2 * rect.height;
+        if (!Number.isFinite(cax) || !Number.isFinite(cay)) return;
+        // Sub-pixel changes aren't worth the SVG mutation work. This
+        // skips most frames when the globe is paused (ambient locked
+        // while fan is up); only user drag / momentum / zoom triggers
+        // an actual redraw.
+        if (st.lastSx != null &&
+            Math.abs(cax - st.lastSx) < 0.5 &&
+            Math.abs(cay - st.lastSy) < 0.5) return;
+        st.lastSx = cax;
+        st.lastSy = cay;
+        // In-place mutation of existing leader paths + anchor dot —
+        // avoids the recreate-children thrash that drawCityFanLines'
+        // initial paint does. We rely on showCityFanUI having seeded
+        // the SVG with the correct number of <path> + 1 <circle>;
+        // their data-card-idx attribute identifies which card row
+        // each path belongs to.
+        const paths = _cityFanLineSvg.querySelectorAll('.cfLeader');
+        for (let i = 0; i < paths.length; i++) {
+          const card = st.cardEls[i];
+          if (!card) continue;
+          const r = card.getBoundingClientRect();
+          const cardEdgeX = cax <= r.left + r.width / 2 ? r.left : r.right;
+          const cardEdgeY = r.top + r.height / 2;
+          const dx = cardEdgeX - cax;
+          const dy = cardEdgeY - cay;
+          const cx = cax + dx * 0.65 + (dx >= 0 ? 8 : -8);
+          const cy = cay + dy * 0.35;
+          paths[i].setAttribute(
+            'd',
+            `M ${cax.toFixed(1)} ${cay.toFixed(1)} Q ${cx.toFixed(1)} ${cy.toFixed(1)} ${cardEdgeX.toFixed(1)} ${cardEdgeY.toFixed(1)}`
+          );
+        }
+        const anchorDot = _cityFanLineSvg.querySelector('.cfAnchorDot');
+        if (anchorDot) {
+          anchorDot.setAttribute('cx', cax.toFixed(1));
+          anchorDot.setAttribute('cy', cay.toFixed(1));
+        }
+      }
+      // Expose so the animate loop can call it.
+      window.__refreshCityFanLines = _refreshCityFanLines;
 
       // ── Leader-line overlay ─────────────────────────────────────────
       // Each card in the fan gets a thin SVG line connecting its near
@@ -19545,6 +19660,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
           _cityFanLineSvg.style.display = 'none';
           while (_cityFanLineSvg.firstChild) _cityFanLineSvg.removeChild(_cityFanLineSvg.firstChild);
         }
+        // Clear the 3D anchor so _refreshCityFanLines no longer ticks
+        // for this fan instance.
+        _cityFanAnchorState = null;
       }
       // Exposed so the polygon-layer's hideFan() (in a different IIFE)
       // can tear down the leader-line SVG when the city/country fan
@@ -19714,7 +19832,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const hits = collectCityHits(ll.lat, ll.lon, cityFanRadiusMi());
           if (hits.length === 0) { if (fanEl) fanEl.classList.remove('visible'); hideCityFanLines(); return; }
           if (hits.length === 1) { if (fanEl) fanEl.classList.remove('visible'); hideCityFanLines(); commitCityHit(hits[0]); return; }
-          showCityFanUI(hits, event.clientX, event.clientY);
+          showCityFanUI(hits, event.clientX, event.clientY, ll.lat, ll.lon);
           return;
         }
 
@@ -19866,7 +19984,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
               _pendingTouchPick = () => {
                 touchNodeSelectTime = Date.now();
                 if (hits.length === 1) commitCityHit(hits[0]);
-                else showCityFanUI(hits, tx, ty);
+                else showCityFanUI(hits, tx, ty, ll.lat, ll.lon);
               };
               _pendingTouchPickTime = Date.now();
             }
@@ -22371,6 +22489,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
           }
         }
         tickShootingStars();
+        // Re-tether the city-fan SVG anchor to the user's click point
+        // (lat/lon) so leader lines follow globe rotation. Cheap when
+        // no fan is active — early-exit on null state.
+        try { _refreshCityFanLines(); } catch (_) {}
         renderer.render(scene, camera);
       }
 

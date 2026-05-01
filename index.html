@@ -8641,7 +8641,14 @@ button.arcCtxSegDot,
       background: rgba(255,255,255,0.04);
       border: 1px solid rgba(255,255,255,0.09);
       border-radius: 16px;
-      overflow: hidden;
+      /* overflow:visible (default) so chip hover labels (.nfNationLabel)
+         can extend outside the card. The card used to clip with
+         overflow:hidden so the image's top corners followed the card
+         radius — that broke chip tooltips when a flag chip sat near
+         the card's right edge: the label, centered above the chip,
+         extended past the card's right border and got clipped. The
+         border-radius is now applied directly to the image / placeholder
+         so the visual is identical without a card-level clip. */
       cursor: pointer;
       transition: background 0.2s, border-color 0.2s, transform 0.14s;
       display: flex;
@@ -8656,6 +8663,8 @@ button.arcCtxSegDot,
       background: linear-gradient(135deg,rgba(255,255,255,0.04),rgba(255,255,255,0.015));
       display: block; flex-shrink: 0;
       color: transparent; /* hides alt text and broken image icon */
+      border-top-left-radius: 16px;
+      border-top-right-radius: 16px;
     }
     .nfThreadCardImg:-moz-broken { opacity: 0; }
     .nfThreadCardImg::after { content: ''; display: block; }
@@ -8663,6 +8672,8 @@ button.arcCtxSegDot,
       width: 100%; height: 200px;
       background: linear-gradient(135deg,rgba(255,255,255,0.04),rgba(255,255,255,0.015));
       display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+      border-top-left-radius: 16px;
+      border-top-right-radius: 16px;
     }
     .nfThreadCardImgPh svg { width: 24px; height: 24px; opacity: 0.12; }
     .nfThreadCardBody {
@@ -15966,15 +15977,13 @@ function computeCityTiers(cities) {
         });
 
       function isCityVisible(pointPos, camera) {
-        // A node is rendered if its surface normal (= normalised world position for a
-        // unit sphere) has any component facing the camera.  The visible tangent ring
-        // sits at dot ≈ -0.33 for camera z=3; anything < 0 is unambiguously front-face.
-        // We use +0.12 as the cutoff so nodes right at the globe's equatorial seam —
-        // which ARE rendered on screen — are never silently excluded.
+        // Picking/hover gate. Threshold raised 0.12 → 0.4 so cities at
+        // and slightly past the visible rim stay pickable. See
+        // www/index.html for full notes — rendering is unaffected.
         const pointVector = pointPos.clone().normalize();
         const cameraDir = new THREE.Vector3();
         camera.getWorldDirection(cameraDir).normalize();
-        return cameraDir.dot(pointVector) < 0.12;
+        return cameraDir.dot(pointVector) < 0.4;
       }
 
       function updateCompass() {

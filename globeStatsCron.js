@@ -32,23 +32,95 @@ function elapsed(t0) { return `${((Date.now() - t0) / 1000).toFixed(1)}s`; }
 const TAG = '[globeStatsCron]';
 
 // ────────────────────────────────────────────────────────────────────────────
-//  FRED helper — pulls last N observations for a given series
+//  FRED helper — pulls last N observations for a given series.
+//
+//  Two layers of resilience because FRED's app servers reject parallel
+//  bursts with transient 5xx (NOT 429 — they're not rate-limiting us,
+//  the backend is just hot):
+//
+//    1. Concurrency cap (FRED_MAX_CONCURRENT) — we used to fire 13+
+//       requests in parallel from the commodities block. Capping in-
+//       flight calls at 3 prevents the burst from saturating any one
+//       FRED app server in the first place.
+//
+//    2. Retry with exponential backoff on 5xx (and on network errors).
+//       Most 5xx retries succeed on attempt 2 because the burst pressure
+//       has cleared by then. 4xx returns aren't retried — they're
+//       permanent (bad series id, missing key, etc.) and retrying just
+//       wastes runtime.
 // ────────────────────────────────────────────────────────────────────────────
+const FRED_MAX_CONCURRENT = 3;
+let _fredInFlight = 0;
+const _fredQueue = [];
+function _fredAcquire() {
+  return new Promise(resolve => {
+    if (_fredInFlight < FRED_MAX_CONCURRENT) {
+      _fredInFlight++;
+      resolve();
+    } else {
+      _fredQueue.push(resolve);
+    }
+  });
+}
+function _fredRelease() {
+  _fredInFlight--;
+  if (_fredQueue.length) {
+    _fredInFlight++;
+    _fredQueue.shift()();
+  }
+}
+
 async function fredLatest(seriesId, limit = 2) {
   if (!FRED_API_KEY) return null;
+  await _fredAcquire();
   try {
     const url = `https://api.stlouisfed.org/fred/series/observations`
       + `?series_id=${seriesId}&api_key=${FRED_API_KEY}&file_type=json`
       + `&sort_order=desc&limit=${limit}`;
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`FRED ${res.status}`);
-    const data = await res.json();
-    const obs = (data.observations || []).filter(o => o.value !== '.');
-    if (!obs.length) return null;
-    return parseFloat(obs[0].value);
-  } catch (e) {
-    console.warn(`${TAG} FRED ${seriesId} failed: ${e.message}`);
+    // Backoff schedule. First attempt is immediate; subsequent ones
+    // wait 300ms, 1.2s, 3.5s. Max 4 attempts means worst-case ~5s
+    // wasted per persistently-failing series, which is fine — the
+    // cron's total runtime is already 16s and a single permanent
+    // failure shouldn't compound.
+    const RETRY_DELAYS_MS = [0, 300, 1200, 3500];
+    let lastErrMsg = '';
+    for (let attempt = 0; attempt < RETRY_DELAYS_MS.length; attempt++) {
+      if (RETRY_DELAYS_MS[attempt] > 0) {
+        await new Promise(r => setTimeout(r, RETRY_DELAYS_MS[attempt]));
+      }
+      let res;
+      try {
+        res = await fetch(url);
+      } catch (e) {
+        // Network-level error (DNS, connection reset). Retry.
+        lastErrMsg = e.message;
+        continue;
+      }
+      if (res.status >= 500 && res.status < 600) {
+        // Transient server error — retry.
+        lastErrMsg = `FRED ${res.status}`;
+        continue;
+      }
+      if (!res.ok) {
+        // 4xx is permanent (bad series, bad key). No retry.
+        console.warn(`${TAG} FRED ${seriesId} failed: FRED ${res.status}`);
+        return null;
+      }
+      try {
+        const data = await res.json();
+        const obs = (data.observations || []).filter(o => o.value !== '.');
+        if (!obs.length) return null;
+        return parseFloat(obs[0].value);
+      } catch (e) {
+        // Malformed body — treat as transient and retry.
+        lastErrMsg = e.message;
+        continue;
+      }
+    }
+    console.warn(`${TAG} FRED ${seriesId} failed after ${RETRY_DELAYS_MS.length} attempts: ${lastErrMsg}`);
     return null;
+  } finally {
+    _fredRelease();
   }
 }
 
@@ -254,6 +326,32 @@ async function fetchAll() {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
+//  Last-known-good loader — reads the most recent cached results so we
+//  can fill missing keys when a particular series 5xx'd persistently
+//  this run. Daily commodity prices change <2% in a 6-hour window;
+//  serving a slightly stale value beats a blank tile on the dashboard.
+//  When FRED has a longer outage, this also keeps the panel populated
+//  (just with values that visibly stop advancing) until they recover.
+// ────────────────────────────────────────────────────────────────────────────
+async function loadPrevCache(mode, filterKey) {
+  try {
+    const { rows } = await pool.query(`
+      SELECT results
+        FROM keyword_intelligence_cache
+       WHERE mode = $1 AND filter_key = $2
+       ORDER BY computed_at DESC
+       LIMIT 1
+    `, [mode, filterKey]);
+    if (!rows.length) return null;
+    const r = rows[0].results;
+    return typeof r === 'string' ? JSON.parse(r) : r;
+  } catch (e) {
+    console.warn(`${TAG} loadPrevCache failed: ${e.message}`);
+    return null;
+  }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
 //  DB cache writer (same table as sourcesStatsCron)
 // ────────────────────────────────────────────────────────────────────────────
 async function writeCache(mode, filterKey, results) {
@@ -288,9 +386,30 @@ async function run() {
 
   try {
     const results = await fetchAll();
-    const count = Object.keys(results).length;
-    console.log(`${TAG} total indicators fetched: ${count} (${elapsed(t0)})`);
+    const fetchedCount = Object.keys(results).length;
+    console.log(`${TAG} total indicators fetched: ${fetchedCount} (${elapsed(t0)})`);
 
+    // Fill any holes from the previous cache row before we write —
+    // when a single FRED series 5xxs through all retries, this
+    // preserves its last-known-good value instead of letting the new
+    // row drop the key entirely (which would render as "—" on the
+    // dashboard tile). New successful fetches always win; we only
+    // copy keys that are missing from THIS run's results.
+    const prev = await loadPrevCache('globe-stats', 'global');
+    let reused = 0;
+    if (prev && typeof prev === 'object') {
+      for (const k of Object.keys(prev)) {
+        if (results[k] == null && prev[k] != null) {
+          results[k] = prev[k];
+          reused++;
+        }
+      }
+    }
+    if (reused) {
+      console.log(`${TAG} reused ${reused} stale value(s) from prev cache`);
+    }
+
+    const count = Object.keys(results).length;
     if (count > 0) {
       await writeCache('globe-stats', 'global', results);
       console.log(`${TAG} cached to DB (${elapsed(t0)})`);
