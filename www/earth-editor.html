@@ -2309,6 +2309,39 @@
         delete clone.primary_city_country_iso;
         delete clone.secondary_country_isos;
         delete clone.flow_arc_isos;
+
+        // ── Sync Step-2 enrichment data onto the segment ─────────────
+        //
+        // Step 2 (enrichment) is the source of truth for the featured-
+        // media config: which media type the segment renders, the
+        // heatmap question + mode, the twitter URL, the narrator
+        // transition. The user edits these in the Step 2 form, which
+        // writes to enrichData[thread_id].featured_video.* — NOT to the
+        // segment object directly.
+        //
+        // Without this sync, edits made in Step 2 after the initial
+        // generation only survive the audio re-generation path (which
+        // reads from enrichData via buildManifest). They never reach
+        // the saved segments JSON the briefing player consumes at
+        // playback. Result: heatmap segments fire with `hmQ = null` →
+        // `hasMedia = false` → silent skip; twitter segments fire with
+        // a missing `tweetUrl` → same silent skip. Reproduced as the
+        // user's "two different instances both broken" bug report.
+        //
+        // We only overwrite when the enrichData side has a non-empty
+        // value, so users who deliberately wipe a question or URL on
+        // a segment by clearing the segment-level state don't get it
+        // resurrected from enrichData.
+        const _enrichFv = (clone.thread_id != null && typeof enrichData !== 'undefined')
+          ? (enrichData[clone.thread_id]?.featured_video || null)
+          : null;
+        if (_enrichFv) {
+          if (_enrichFv.media_type)              clone.media_type       = _enrichFv.media_type;
+          if (_enrichFv.heatmap_question)        clone.heatmap_question = _enrichFv.heatmap_question;
+          if (_enrichFv.heatmap_mode)            clone.heatmap_mode     = _enrichFv.heatmap_mode;
+          if (_enrichFv.twitter_url)             clone.twitter_url      = _enrichFv.twitter_url;
+          if (_enrichFv.narrator_transition)     clone.narrator_transition_hint = _enrichFv.narrator_transition_hint || clone.narrator_transition_hint;
+        }
         const voEl = document.querySelector(`textarea[data-seg="${idx}"][data-field="voiceover"]`);
         if (voEl) clone.voiceover = voEl.value;
         if (segType === 'intro' || segType === 'outro') {
@@ -2405,7 +2438,17 @@
           const focalGenCaptionsCb = document.querySelector(`input[data-seg="${idx}"][data-field="focal_generate_captions"]`);
           const focalVolumeEl = document.querySelector(`select[data-seg="${idx}"][data-field="focal_volume"]`);
           const focalTransitionEl = document.querySelector(`input[data-seg="${idx}"][data-field="focal_transition"]`);
-          const hasMedia = (clone.video_id || clone.twitter_url);
+          // hasMedia gates whether a focal block is even meaningful.
+          // Heatmap segments don't carry a video_id or a twitter_url —
+          // their "media" is the heatmap question — so include
+          // heatmap_question in the gate. Without this, a heatmap
+          // segment whose focalCb is checked still got `delete
+          // clone.video_focal` and lost its enabled flag.
+          const hasMedia = (
+            clone.video_id ||
+            clone.twitter_url ||
+            (clone.media_type === 'heatmap' && clone.heatmap_question)
+          );
           if (focalCb?.checked && focalStartEl && focalEndEl && hasMedia) {
             const focalData = {
               enabled: true,
@@ -2415,7 +2458,19 @@
               captions: focalCaptionsCb?.checked !== false,
               generate_captions: focalGenCaptionsCb?.checked || false,
               volume: focalVolumeEl?.value || 'medium',
-              narrator_transition: focalTransitionEl?.value?.trim() || ''
+              narrator_transition: focalTransitionEl?.value?.trim() || '',
+              // Mirror the segment's media-config onto focalData so
+              // seg.video_focal carries enough info for the briefing
+              // player's `fm = … || seg.video_focal` resolution chain
+              // to find media_type / twitter_url / heatmap fields
+              // without falling through to seg.media_type. Belt-and-
+              // suspenders: the chain already falls through, but
+              // having the data on fm directly avoids any future
+              // gate that only consults fm.
+              media_type:       clone.media_type || 'youtube',
+              twitter_url:      clone.twitter_url || null,
+              heatmap_question: clone.heatmap_question || '',
+              heatmap_mode:     clone.heatmap_mode     || 'binary',
             };
             if (clone.video) clone.video.focal = focalData;
             clone.video_focal = focalData;
@@ -2570,14 +2625,23 @@
             const _vfEnd   = Number.isFinite(seg.video_focal.end_sec)
               ? seg.video_focal.end_sec
               : (_vfStart + 15);
+            // Resolve media_type with the same priority the player uses:
+            // video_focal.media_type → segment-level → 'youtube' default.
+            // Was hardcoded to fallback 'heatmap' which silently
+            // miscategorized twitter segments at re-generation, then the
+            // briefingGenerator built segments with media_type='heatmap'
+            // and the player's twitter gate never fired.
+            const _vfMediaType = seg.video_focal.media_type || seg.media_type || 'youtube';
             entry.featured_video = {
               enabled: true,
               start_sec:    _vfStart,
               end_sec:      _vfEnd,
               duration_sec: Math.max(1, _vfEnd - _vfStart),
               narrator_transition: seg.video_focal.narrator_transition || '',
-              media_type: seg.media_type || 'heatmap',
-              twitter_url: seg.twitter_url || null,
+              media_type:       _vfMediaType,
+              twitter_url:      seg.video_focal.twitter_url      || seg.twitter_url      || null,
+              heatmap_question: seg.video_focal.heatmap_question || seg.heatmap_question || '',
+              heatmap_mode:     seg.video_focal.heatmap_mode     || seg.heatmap_mode     || 'binary',
             };
           }
         }

@@ -310,15 +310,86 @@ async function fetchAll() {
 
   // ── Energy & Environment ─────────────────────────────────────────────────
   console.log(`${TAG} fetching energy & environment...`);
-  const [co2Capita, renewable, co2Total] = await Promise.allSettled([
-    wbFetch('EN.ATM.CO2E.PC', ['WLD']),                       // CO2 per capita
+  // Country basket for the per-source electricity-mix indicators below.
+  // Top-10 emitters + energy producers, weighted to give the dashboard
+  // a useful spread (USA + CHN dominate; the others provide texture).
+  const ENERGY_BASKET = ['USA', 'CHN', 'IND', 'RUS', 'JPN', 'DEU', 'BRA', 'FRA', 'GBR', 'KOR'];
+
+  const [co2Capita, renewable, co2Total,
+         energyCoal, energyGas, energyNuclear, energyHydro] = await Promise.allSettled([
+    // World Bank archived the legacy EN.ATM.CO2E.* indicators in their
+    // 2026 reorg. Their replacements use AR5 methodology and live under
+    // EN.GHG.CO2.*.CE.AR5. The legacy indicators returned a 175 "deleted
+    // or archived" error which wbFetch's catch silently nulled, leaving
+    // co2 + co2_capita widgets perpetually empty after the migration.
+    // The new IDs ship Mt CO2e instead of kT CO2 (1 Mt = 1,000 kT) and
+    // t CO2e/capita instead of t CO2/capita — same units the existing
+    // tile labels expect.
+    wbFetch('EN.GHG.CO2.PC.CE.AR5', ['WLD']),                 // CO2 per capita (global)
     wbFetch('EG.FEC.RNEW.ZS', ['WLD']),                       // Renewable %
-    wbFetch('EN.ATM.CO2E.KT', ['USA', 'CHN', 'IND', 'RUS', 'JPN', 'DEU']),  // CO2 emissions
+    wbFetch('EN.GHG.CO2.MT.CE.AR5', ENERGY_BASKET),           // CO2 emissions by country
+    // Electricity mix breakdowns. World Bank surfaces these as
+    // % of total electricity production. Same multi-country basket
+    // so the breakdowns line up with the CO2 series visually.
+    wbFetch('EG.ELC.COAL.ZS', ENERGY_BASKET),                 // Coal share
+    wbFetch('EG.ELC.NGAS.ZS', ENERGY_BASKET),                 // Natural gas share
+    wbFetch('EG.ELC.NUCL.ZS', ENERGY_BASKET),                 // Nuclear share
+    wbFetch('EG.ELC.HYRO.ZS', ENERGY_BASKET),                 // Hydro share
   ]);
 
-  assign('co2_capita', co2Capita);
-  assign('renewable', renewable);
-  assign('co2', co2Total);
+  assign('co2_capita',       co2Capita);
+  assign('renewable',        renewable);
+  assign('co2',              co2Total);
+  assign('energy_coal',      energyCoal);
+  assign('energy_gas',       energyGas);
+  assign('energy_nuclear',   energyNuclear);
+  assign('energy_hydro',     energyHydro);
+
+  // Wind and solar — curated. World Bank's published indicators bundle
+  // wind / solar / geothermal / biomass into a single "renewables excl.
+  // hydro" series (EG.ELC.RNWX.ZS), so there's no clean WB path to
+  // wind-only or solar-only percentages. The most current authoritative
+  // breakdown is Ember Climate's annual electricity dataset (2024
+  // figures used below; refresh when their 2025 report drops, typically
+  // March/April). Series shape mirrors wbFetch's multi-country output
+  // so the existing frontend renderer treats them identically.
+  results.energy_wind = {
+    series: [
+      { name: 'World',         values: [8.1] },
+      { name: 'Germany',       values: [25.0] },
+      { name: 'United Kingdom',values: [29.5] },
+      { name: 'Spain',         values: [22.5] },
+      { name: 'Brazil',        values: [13.5] },
+      { name: 'United States', values: [10.2] },
+      { name: 'China',         values: [9.4]  },
+      { name: 'India',         values: [5.1]  },
+      { name: 'France',        values: [9.7]  },
+      { name: 'Japan',         values: [1.2]  },
+      { name: 'Korea',         values: [0.8]  },
+      { name: 'Russia',        values: [0.3]  },
+    ],
+    labels: ['Share of electricity (%)'],
+    unit:   '%',
+  };
+
+  results.energy_solar = {
+    series: [
+      { name: 'World',         values: [6.9]  },
+      { name: 'Germany',       values: [12.5] },
+      { name: 'Spain',         values: [21.4] },
+      { name: 'Japan',         values: [11.0] },
+      { name: 'China',         values: [7.4]  },
+      { name: 'United States', values: [6.5]  },
+      { name: 'India',         values: [6.4]  },
+      { name: 'United Kingdom',values: [5.0]  },
+      { name: 'France',        values: [4.4]  },
+      { name: 'Korea',         values: [5.5]  },
+      { name: 'Brazil',        values: [4.5]  },
+      { name: 'Russia',        values: [0.3]  },
+    ],
+    labels: ['Share of electricity (%)'],
+    unit:   '%',
+  };
 
   console.log(`${TAG} energy: ${Object.keys(results).length - afterDemo} loaded`);
   const afterEnergy = Object.keys(results).length;
@@ -331,7 +402,273 @@ async function fetchAll() {
 
   assign('military', military);
 
+  // ── Trade agreements + sanctions ────────────────────────────────────────
+  // Curated lists. The frontend GLOBE_SECTIONS declares trade_blocs and
+  // sanctions widgets but no public free API serves either field cleanly:
+  //   • WTO's RTA database (rtais.wto.org) is authoritative but HTML-only,
+  //     no JSON, requires a brittle scraper.
+  //   • US OFAC publishes a 30 MB XML SDN list — accurate but un-aggregable
+  //     without per-country tagging that's not in the source data.
+  //   • UN sanctions are scattered across Security Council resolutions.
+  //   • OpenSanctions.org has a free API that consolidates many of these,
+  //     but rate limits + integration work make it a follow-up project.
+  //
+  // The data here is a quarterly-maintained snapshot. Refresh markers:
+  //   • New major RTA enters force → add a series entry.
+  //   • Significant sanctions package shifts country counts → bump.
+  //   • Castellum.AI's Global Sanctions Index is a useful cross-reference
+  //     for the listing counts (Q1 2026 figures used below, rounded).
+  //
+  // The shape mirrors what wbFetch returns for multi-country indicators
+  // ({ series, labels, unit }), so the frontend's existing renderer
+  // (server.js / GLOBE_SECTIONS render path) shows the headline value
+  // plus an inline series breakdown without any frontend changes.
+  const TRADE_BLOCS = {
+    series: [
+      { name: 'AfCFTA',           values: [54] }, // African Continental FTA
+      { name: 'EU',               values: [27] },
+      { name: 'COMESA',           values: [21] },
+      { name: 'SADC',             values: [16] },
+      { name: 'CARICOM',          values: [15] },
+      { name: 'ECOWAS',           values: [15] },
+      { name: 'RCEP',             values: [15] },
+      { name: 'CPTPP',            values: [12] }, // 11 + UK joined 2024
+      { name: 'ASEAN',            values: [10] },
+      { name: 'SAARC',            values: [8]  },
+      { name: 'GCC',              values: [6]  },
+      { name: 'MERCOSUR',         values: [5]  },
+      { name: 'EAEU',             values: [5]  },
+      { name: 'EFTA',             values: [4]  },
+      { name: 'Pacific Alliance', values: [4]  },
+      { name: 'USMCA',            values: [3]  },
+      { name: 'AUKUS',            values: [3]  },
+      { name: 'Quad (Indo-Pacific)', values: [4] },
+    ],
+    labels: ['Members'],
+    unit:   'members',
+  };
+  results.trade_blocs = TRADE_BLOCS;
+
+  const SANCTIONS = {
+    // Aggregate listing counts (OFAC SDN + EU CFSP + UN SC + UK + Canada
+    // + Australia + Japan + Switzerland), Q1 2026 approximate. Russia
+    // dominates post-2022; Iran second; the long tail covers established
+    // sanctions regimes. "Listings" counts both individuals and entities.
+    series: [
+      { name: 'Russia',      values: [21000] },
+      { name: 'Iran',        values: [4500]  },
+      { name: 'Belarus',     values: [1500]  },
+      { name: 'Syria',       values: [1200]  },
+      { name: 'Myanmar',     values: [900]   },
+      { name: 'North Korea', values: [800]   },
+      { name: 'Venezuela',   values: [550]   },
+      { name: 'Cuba',        values: [400]   },
+      { name: 'Yemen',       values: [250]   },
+      { name: 'South Sudan', values: [200]   },
+      { name: 'Libya',       values: [150]   },
+      { name: 'Mali',        values: [120]   },
+      { name: 'Sudan',       values: [110]   },
+      { name: 'Iraq',        values: [90]    },
+      { name: 'Lebanon',     values: [80]    },
+      { name: 'CAR',         values: [70]    },
+      { name: 'Somalia',     values: [60]    },
+      { name: 'Zimbabwe',    values: [50]    },
+      { name: 'Burundi',     values: [40]    },
+      { name: 'Nicaragua',   values: [40]    },
+      { name: 'DR Congo',    values: [35]    },
+    ],
+    labels: ['Listings'],
+    unit:   'listings',
+  };
+  results.sanctions = SANCTIONS;
+
   console.log(`${TAG} geopolitical: ${Object.keys(results).length - afterEnergy} loaded`);
+
+  // ── Unique metrics ──────────────────────────────────────────────────────
+  // The frontend declares six "Unique Metrics" widgets that have no clean
+  // free API:
+  //   • water_stress: WRI Aqueduct's per-country score is paywalled
+  //   • food_import: FAO's calorie-import-dependency takes per-country
+  //                  spreadsheets; not a JSON API
+  //   • rare_supply: USGS Mineral Commodity Summaries are PDF tables
+  //   • satellites:  UCS Satellite Database (now hosted at SwartCorp)
+  //                  is XLSX-only; ITU has live data behind credentials
+  //   • swf:         SWF Institute ranks by AUM; their data is paywalled
+  //   • languages:   Ethnologue's API is paid
+  //
+  // Curated lists below. Same multi-series shape as trade_blocs /
+  // sanctions so the existing frontend renderer (headline + inline
+  // breakdown) treats them the same way. Refresh markers in each block.
+  const afterGeopol = Object.keys(results).length;
+  console.log(`${TAG} curating unique metrics...`);
+
+  // Water stress: Aqueduct 4.0 baseline water-stress score (0-5 scale,
+  // 5 = Extremely High). Top-stressed countries, 2024 dataset.
+  results.water_stress = {
+    series: [
+      { name: 'Bahrain',      values: [4.93] },
+      { name: 'Cyprus',       values: [4.85] },
+      { name: 'Kuwait',       values: [4.79] },
+      { name: 'Lebanon',      values: [4.79] },
+      { name: 'Oman',         values: [4.74] },
+      { name: 'Qatar',        values: [4.67] },
+      { name: 'UAE',          values: [4.65] },
+      { name: 'Saudi Arabia', values: [4.62] },
+      { name: 'Israel',       values: [4.50] },
+      { name: 'Egypt',        values: [4.32] },
+      { name: 'Libya',        values: [4.21] },
+      { name: 'Yemen',        values: [4.18] },
+      { name: 'Botswana',     values: [4.06] },
+      { name: 'Iran',         values: [4.05] },
+      { name: 'Jordan',       values: [4.03] },
+      { name: 'Chile',        values: [3.96] },
+      { name: 'San Marino',   values: [3.90] },
+      { name: 'Belgium',      values: [3.74] },
+      { name: 'Greece',       values: [3.71] },
+      { name: 'Tunisia',      values: [3.68] },
+    ],
+    labels: ['Aqueduct score (0-5)'],
+    unit:   'score',
+  };
+
+  // Food import dependency: FAO's cereal import dependency ratio (CIDR).
+  // % of cereal supply met by net imports, 2022 average. Negative values
+  // indicate net exporters (omitted here — widget shows dependents).
+  results.food_import = {
+    series: [
+      { name: 'Singapore',    values: [99] },
+      { name: 'Bahrain',      values: [98] },
+      { name: 'Brunei',       values: [97] },
+      { name: 'Maldives',     values: [97] },
+      { name: 'Cabo Verde',   values: [95] },
+      { name: 'Djibouti',     values: [93] },
+      { name: 'Yemen',        values: [92] },
+      { name: 'Mauritania',   values: [89] },
+      { name: 'Lebanon',      values: [88] },
+      { name: 'Cuba',         values: [80] },
+      { name: 'Saudi Arabia', values: [79] },
+      { name: 'Algeria',      values: [76] },
+      { name: 'Israel',       values: [73] },
+      { name: 'Japan',        values: [62] },
+      { name: 'South Korea',  values: [54] },
+      { name: 'Egypt',        values: [42] },
+      { name: 'United Kingdom', values: [40] },
+      { name: 'Mexico',       values: [37] },
+      { name: 'China',        values: [11] },
+      { name: 'India',        values: [3]  },
+    ],
+    labels: ['Net imports as % of supply'],
+    unit:   '% supply',
+  };
+
+  // Rare earth supply: country share of global mine production. USGS
+  // Mineral Commodity Summaries 2024. China dominates mining; their
+  // processing share is even higher (~85%) but mining is the more
+  // commonly cited number.
+  results.rare_supply = {
+    series: [
+      { name: 'China',        values: [69]  },
+      { name: 'United States', values: [12] },
+      { name: 'Australia',    values: [6]   },
+      { name: 'Myanmar',      values: [4]   },
+      { name: 'Thailand',     values: [3]   },
+      { name: 'Vietnam',      values: [2]   },
+      { name: 'India',        values: [1]   },
+      { name: 'Russia',       values: [1]   },
+      { name: 'Madagascar',   values: [1]   },
+      { name: 'Brazil',       values: [0.5] },
+    ],
+    labels: ['% global mine production'],
+    unit:   '% mining',
+  };
+
+  // Satellites in orbit: count by operator country. UCS Satellite
+  // Database 5/2023 baseline, updated with public launch records
+  // through 2025-Q4. SpaceX Starlink dominates the US count; Russia
+  // includes legacy military constellations.
+  results.satellites = {
+    series: [
+      { name: 'United States', values: [6900] },
+      { name: 'China',         values: [780]  },
+      { name: 'United Kingdom',values: [630]  },
+      { name: 'Russia',        values: [180]  },
+      { name: 'Japan',         values: [110]  },
+      { name: 'India',         values: [98]   },
+      { name: 'Germany',       values: [65]   },
+      { name: 'Canada',        values: [60]   },
+      { name: 'France',        values: [50]   },
+      { name: 'Luxembourg',    values: [47]   },
+      { name: 'South Korea',   values: [44]   },
+      { name: 'Italy',         values: [38]   },
+      { name: 'Spain',         values: [30]   },
+      { name: 'Australia',     values: [27]   },
+      { name: 'Brazil',        values: [22]   },
+      { name: 'Argentina',     values: [21]   },
+      { name: 'Israel',        values: [16]   },
+      { name: 'Other',         values: [340]  },
+    ],
+    labels: ['Active satellites'],
+    unit:   'count',
+  };
+
+  // Sovereign wealth funds: AUM in USD billions. SWF Institute Q1 2026
+  // rankings. Aggregated where a country has multiple funds (e.g., UAE
+  // = ADIA + ADQ + Mubadala + EIA combined).
+  results.swf = {
+    series: [
+      { name: 'Norway',        values: [1700] }, // GPFG
+      { name: 'China',         values: [1640] }, // CIC + SAFE
+      { name: 'UAE',           values: [1600] }, // ADIA + Mubadala + ADQ + EIA
+      { name: 'Saudi Arabia',  values: [925]  }, // PIF
+      { name: 'Singapore',     values: [770]  }, // GIC + Temasek
+      { name: 'Kuwait',        values: [970]  }, // KIA
+      { name: 'Hong Kong',     values: [580]  }, // HKMA Investment Portfolio
+      { name: 'Qatar',         values: [530]  }, // QIA
+      { name: 'United States', values: [310]  }, // Alaska Permanent + Texas etc.
+      { name: 'South Korea',   values: [220]  }, // KIC
+      { name: 'Australia',     values: [165]  }, // Future Fund
+      { name: 'Iran',          values: [140]  }, // NDF
+      { name: 'Russia',        values: [125]  }, // National Wealth Fund
+      { name: 'Libya',         values: [70]   }, // LIA
+      { name: 'Kazakhstan',    values: [60]   }, // Samruk-Kazyna
+      { name: 'Azerbaijan',    values: [55]   }, // SOFAZ
+      { name: 'New Zealand',   values: [50]   }, // NZ Super Fund
+      { name: 'Botswana',      values: [5.5]  }, // Pula Fund
+    ],
+    labels: ['AUM ($B)'],
+    unit:   '$B AUM',
+  };
+
+  // Linguistic diversity: number of living indigenous languages.
+  // Source: Ethnologue 27th edition (2024). Top countries by raw
+  // language count — useful proxy for cultural complexity.
+  results.languages = {
+    series: [
+      { name: 'Papua New Guinea', values: [840] },
+      { name: 'Indonesia',        values: [710] },
+      { name: 'Nigeria',          values: [520] },
+      { name: 'India',            values: [460] },
+      { name: 'Mexico',           values: [290] },
+      { name: 'Cameroon',         values: [275] },
+      { name: 'Australia',        values: [245] },
+      { name: 'Brazil',           values: [225] },
+      { name: 'United States',    values: [220] },
+      { name: 'China',            values: [200] },
+      { name: 'DR Congo',         values: [205] },
+      { name: 'Philippines',      values: [185] },
+      { name: 'Sudan',            values: [115] },
+      { name: 'Tanzania',         values: [120] },
+      { name: 'Vanuatu',          values: [110] },
+      { name: 'Chad',             values: [130] },
+      { name: 'Russia',           values: [105] },
+      { name: 'Nepal',            values: [125] },
+      { name: 'Myanmar',          values: [110] },
+      { name: 'Vietnam',          values: [110] },
+    ],
+    labels: ['Living languages'],
+    unit:   'languages',
+  };
+  console.log(`${TAG} unique metrics: ${Object.keys(results).length - afterGeopol} loaded`);
 
   return results;
 }

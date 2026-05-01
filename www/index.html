@@ -44514,6 +44514,17 @@ body.ticker-active .gTickerLabel {
           // Diagnostic — heatmap segment that didn't fire. Helps debug
           // future editor/manifest issues without silently swallowing.
           console.warn(`[briefing/heatmap] seg ${idx} NOT firing — hasMedia=${hasMedia} hmQ="${hmQ}" hmResolved=${!!hmResolved}`);
+        } else if (mediaType === 'twitter_post' || mediaType === 'twitter_video') {
+          // Same diagnostic for twitter takeovers. The most common
+          // failure mode is the editor's enrichment data not being
+          // synced onto the segment, leaving tweetUrl null so hasMedia
+          // fails. Surfacing the gate state at console makes those
+          // bugs reproducible from the user's browser inspector.
+          console.warn(`[briefing/twitter] seg ${idx} NOT firing — hasMedia=${hasMedia} tweetUrl="${tweetUrl}" fm.enabled=${fm?.enabled ?? '(no fm)'} mediaType=${mediaType}`);
+        } else if (fm && !hasMedia) {
+          // Generic featured-takeover that wanted to fire but had no
+          // payload. Catches future media types added past today.
+          console.warn(`[briefing/featured] seg ${idx} NOT firing — mediaType=${mediaType} fm.enabled=${fm?.enabled} ytId=${ytId} tweetUrl=${tweetUrl}`);
         }
       }
 

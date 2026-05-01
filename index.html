@@ -8800,12 +8800,23 @@ button.arcCtxSegDot,
       z-index: 20;
       box-shadow: 0 4px 12px rgba(0,0,0,0.5);
     }
-    .nfNationChip:hover .nfNationLabel,
-    .nfNationChip:focus-within .nfNationLabel { opacity: 1; }
-    /* Suppress chip labels during the tutorial — see www/index.html. */
-    body.tutorial-active .nfNationChip:hover .nfNationLabel,
-    body.tutorial-active .nfNationChip:focus-within .nfNationLabel,
-    body.tutorial-active .nfNationLabel { opacity: 0 !important; }
+    /* Inline .nfNationLabel — the per-chip label span — used to render
+       directly on hover via the rules below. That worked in contexts
+       without ancestor overflow clipping (e.g. the cluster detail
+       panel header). On thread/lines feed cards the chip lives inside
+       .nfThreadCardNations, which has overflow-y:auto for chip-row
+       scrolling — that overflow swallows the absolute-positioned
+       upward-extending label. The fix is to render every chip's
+       hover tooltip through a single body-level portal element
+       (#nfNationLabelPortal) created in the JS init below. The inline
+       span stays in the DOM as the source-of-truth for the country
+       name (read by the portal) but is never visually rendered. */
+    .nfNationLabel { display: none !important; }
+    /* Tutorial-active still suppresses tooltips by hiding the portal —
+       the portal init checks document.body.classList for tutorial mode
+       before showing. CSS rule below is a belt-and-suspenders
+       additional gate. */
+    body.tutorial-active #nfNationLabelPortal { opacity: 0 !important; }
 
     /* Sort */
     .nfSortSeg {
@@ -12337,6 +12348,114 @@ window._ytEmbedUrl = function(videoId, opts) {
   if (Number.isFinite(opts.end)   && opts.end   > 0) p.set('end',   String(Math.floor(opts.end)));
   return `https://www.youtube-nocookie.com/embed/${videoId}?${p}`;
 };
+
+/* ── Flag-chip hover tooltip — body-level portal ─────────────────────
+   The inline .nfNationLabel inside each chip is rendered above the
+   chip via position:absolute. That works when no ancestor clips,
+   but on thread/lines feed cards the chip's parent
+   .nfThreadCardNations has overflow-y:auto (chip-row scrolling),
+   which clips the upward-extending tooltip and the country name
+   never appears.
+
+   Fix: a single body-appended portal element renders the tooltip
+   with position:fixed, bypassing every ancestor's overflow context.
+   One delegated mouseover/mouseout pair on document handles every
+   .nfNationChip on the page (cards AND detail panels), so adding
+   new chip render sites later automatically inherits the tooltip
+   without per-site wiring. The inline span is hidden by CSS and
+   used only as a name-source.
+
+   Touch / focus-within parity: focusin / focusout mirror mouse
+   events so keyboard users still get the tooltip on tab. Tutorial
+   suppression checks body.tutorial-active before showing. */
+(function initNationChipTooltipPortal() {
+  if (typeof document === 'undefined') return;
+  let portal = null;
+  let hideTimer = null;
+
+  function ensurePortal() {
+    if (portal) return portal;
+    portal = document.createElement('div');
+    portal.id = 'nfNationLabelPortal';
+    portal.style.cssText = [
+      'position: fixed',
+      'pointer-events: none',
+      'padding: 4px 8px',
+      'background: rgba(5,7,12,0.95)',
+      'border: 1px solid rgba(255,255,255,0.18)',
+      'border-radius: 6px',
+      'font-size: 10px',
+      'font-weight: 500',
+      'color: rgba(255,255,255,0.92)',
+      'white-space: nowrap',
+      'z-index: 9999',
+      'opacity: 0',
+      'transform: translate(-50%, -100%)',
+      'transition: opacity 0.12s ease',
+      'box-shadow: 0 4px 12px rgba(0,0,0,0.5)',
+      'max-width: 280px',
+    ].join(';');
+    document.body.appendChild(portal);
+    return portal;
+  }
+
+  function chipName(chip) {
+    // Priority: aria-label (always set by the chip render) → inline
+    // .nfNationLabel text → ISO code as last resort.
+    return chip.getAttribute('aria-label')
+      || chip.querySelector('.nfNationLabel')?.textContent?.trim()
+      || chip.querySelector('.nfNationCode')?.textContent?.trim()
+      || '';
+  }
+
+  function show(chip) {
+    if (document.body.classList.contains('tutorial-active')) return;
+    const name = chipName(chip);
+    if (!name) return;
+    const p = ensurePortal();
+    p.textContent = name;
+    const r = chip.getBoundingClientRect();
+    // Position 6px above the chip, centered horizontally on it.
+    p.style.left = `${r.left + r.width / 2}px`;
+    p.style.top  = `${r.top - 6}px`;
+    p.style.opacity = '1';
+    if (hideTimer) { clearTimeout(hideTimer); hideTimer = null; }
+  }
+
+  function hide() {
+    if (!portal) return;
+    // Tiny delay so a fast mouse traversal between adjacent chips
+    // hides + reshows without a flicker (we cancel the timer in show).
+    if (hideTimer) clearTimeout(hideTimer);
+    hideTimer = setTimeout(() => {
+      if (portal) portal.style.opacity = '0';
+    }, 60);
+  }
+
+  // Capture phase so we beat any mouseover.stopPropagation set on
+  // ancestors (the cards themselves bind mousedown/click handlers
+  // that may interfere if propagation were standard-phase).
+  document.addEventListener('mouseover', (e) => {
+    const chip = e.target.closest?.('.nfNationChip');
+    if (chip) show(chip);
+  }, true);
+  document.addEventListener('mouseout', (e) => {
+    const chip = e.target.closest?.('.nfNationChip');
+    if (chip) hide();
+  }, true);
+  document.addEventListener('focusin', (e) => {
+    const chip = e.target.closest?.('.nfNationChip');
+    if (chip) show(chip);
+  });
+  document.addEventListener('focusout', (e) => {
+    const chip = e.target.closest?.('.nfNationChip');
+    if (chip) hide();
+  });
+  // Hide on scroll/resize so the floating tooltip doesn't drift away
+  // from its anchor chip when the page state changes.
+  window.addEventListener('scroll',  () => hide(), { passive: true, capture: true });
+  window.addEventListener('resize',  () => hide(), { passive: true });
+})();
 
 /* ── Global helper: source-bias badge (used by multiple panels) ── */
 window.sourceBiasBadgeHTML = function(bias) {
@@ -17820,6 +17939,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // Disable hover labels when flow mode is active
         const flowControlsVisible = document.getElementById("flowControls")?.classList.contains("visible");
         if (flowControlsVisible) { hideHoverCard(); return; }
+
+        // Disable hover labels while the country/city disambiguation fan is up.
+        // The fan is a list of candidate destinations the user is actively
+        // choosing from; firing a hover card for whatever node sits under the
+        // cursor as it moves across the fan reads as visual noise on top of
+        // the fan's own labels and competes for attention with the user's
+        // selection. Same suppression idea as flow-mode above — different
+        // floating UI surface, same "user is mid-action, don't interrupt"
+        // rule. Re-enabled the moment the fan dismisses (.visible class drops).
+        const fanVisible = document.getElementById("countryFan")?.classList.contains("visible");
+        if (fanVisible) { hideHoverCard(); return; }
 
         if (window.briefingActive) { hideHoverCard(); return; }
         if (panelOpen || currentViewMode === "transportation") { hideHoverCard(); return; }
@@ -41074,6 +41204,11 @@ body.ticker-active .gTickerLabel {
           }, triggerDelayMs));
         } else if (mediaType === 'heatmap') {
           console.warn(`[briefing/heatmap] seg ${idx} NOT firing — hasMedia=${hasMedia} hmQ="${hmQ}" hmResolved=${!!hmResolved}`);
+        } else if (mediaType === 'twitter_post' || mediaType === 'twitter_video') {
+          // Twitter no-fire diagnostic — see www/index.html for rationale.
+          console.warn(`[briefing/twitter] seg ${idx} NOT firing — hasMedia=${hasMedia} tweetUrl="${tweetUrl}" fm.enabled=${fm?.enabled ?? '(no fm)'} mediaType=${mediaType}`);
+        } else if (fm && !hasMedia) {
+          console.warn(`[briefing/featured] seg ${idx} NOT firing — mediaType=${mediaType} fm.enabled=${fm?.enabled} ytId=${ytId} tweetUrl=${tweetUrl}`);
         }
       }
 
