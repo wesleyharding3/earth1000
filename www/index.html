@@ -7917,25 +7917,29 @@ button.arcCtxSegDot,
       min-height: auto !important;
       overflow: visible;
     }
+    /* Globe panel: same natural-height + parent-scroll model as Sources.
+       Used to clip its own content with overflow:hidden + an inner
+       overflow-y:auto scroller — that meant the page-level scroll on
+       .stats-row stopped at the Globe panel's edge, with a second
+       scroll surface inside. Switching both layers to natural height
+       lets one continuous scroll on .stats-row carry the user from
+       the view-toggle pills all the way through every gs-category,
+       which is what the user wants ("allow overflow to be scrollable
+       on this tab"). */
+    #statsGlobePanel {
+      flex: 0 0 auto !important;
+      min-height: auto !important;
+      overflow: visible;
+    }
     .stats-panel-scroll {
       display: flex;
       flex-direction: column;
       gap: 16px;
       padding-bottom: 40px;
     }
-    /* Globe panel keeps its own scroll since it has different layout needs */
     #statsGlobePanel .stats-panel-scroll {
-      flex: 1 1 0;
-      min-height: 0;
-      overflow-y: auto;
-      overscroll-behavior: contain;
-      -webkit-overflow-scrolling: touch;
-      scrollbar-width: thin;
-      scrollbar-color: rgba(74,184,255,0.2) transparent;
+      overflow: visible;
     }
-    #statsGlobePanel .stats-panel-scroll::-webkit-scrollbar { width: 5px; }
-    #statsGlobePanel .stats-panel-scroll::-webkit-scrollbar-track { background: transparent; }
-    #statsGlobePanel .stats-panel-scroll::-webkit-scrollbar-thumb { background: rgba(74,184,255,0.2); border-radius: 3px; }
 
     .si-section {
       background: #10141c;
@@ -8021,12 +8025,31 @@ button.arcCtxSegDot,
       background: linear-gradient(180deg, rgba(255,255,255,0.025) 0%, transparent 100%);
       cursor: pointer; user-select: none;
       display: flex; align-items: center; justify-content: space-between;
+      gap: 10px;
+      /* Lock the collapsed header to a single line so the title never
+         wraps and pushes the chevron off-screen. The inner .gs-cat-title
+         span carries the flex+ellipsis fallback for absurdly narrow
+         viewports — none of our titles need it on real devices, but it
+         keeps the chevron column anchored. */
+      white-space: nowrap;
+    }
+    .gs-category-header .gs-cat-title {
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     .gs-category-header::after {
       content: '▾'; font-size: 10px; color: rgba(74,184,255,0.4);
       transition: transform 0.25s;
+      flex-shrink: 0;
     }
     .gs-category.collapsed .gs-category-header::after { transform: rotate(-90deg); }
+    /* Collapsed: header-only — body fully hidden so the section reads
+       as a single-row "bar" listing only the title.
+       Expanded: body visible, content shows in full with no inner clip
+       (the panel-level scroll on .stats-row takes care of long content). */
+    .gs-category.collapsed .gs-category-header { border-bottom-color: transparent; }
     .gs-category.collapsed .gs-category-body { display: none; }
     .gs-category-body { padding: 14px 18px; }
 
@@ -14074,41 +14097,47 @@ window.__arcCtxSegmented = (function() {
         </div>
       </div>
 
-      <!-- ── Globe Statistics Panel ── -->
+      <!-- ── Globe Statistics Panel ──
+           Each category starts collapsed so the user lands on a clean
+           list of titled bars and expands the ones they care about.
+           Mirrors the Sources panel's collapse-by-default model so both
+           tabs feel consistent. The .gs-cat-title span makes the header
+           text a flex item with min-width:0 so the chevron never gets
+           pushed off, even on narrow viewports. -->
       <div class="stats-panel" id="statsGlobePanel" style="display:none;">
         <div class="stats-panel-scroll">
-          <div class="gs-category" id="gsCommodities">
-            <div class="gs-category-header">Commodities &amp; Resources</div>
+          <div class="gs-category collapsed" id="gsCommodities">
+            <div class="gs-category-header"><span class="gs-cat-title">Commodities &amp; Resources</span></div>
             <div class="gs-category-body">
               <div class="gs-grid" id="gsCommoditiesGrid"></div>
             </div>
           </div>
-          <div class="gs-category" id="gsEconomic">
-            <div class="gs-category-header">Economic Indicators</div>
+          <div class="gs-category collapsed" id="gsEconomic">
+            <div class="gs-category-header"><span class="gs-cat-title">Economic Indicators</span></div>
             <div class="gs-category-body">
               <div class="gs-grid" id="gsEconomicGrid"></div>
             </div>
           </div>
-          <div class="gs-category" id="gsDemographics">
-            <div class="gs-category-header">Demographics</div>
+          <div class="gs-category collapsed" id="gsDemographics">
+            <div class="gs-category-header"><span class="gs-cat-title">Demographics</span></div>
             <div class="gs-category-body">
               <div class="gs-grid" id="gsDemographicsGrid"></div>
             </div>
           </div>
-          <div class="gs-category" id="gsGeopolitical">
-            <div class="gs-category-header">Geopolitical</div>
+          <div class="gs-category collapsed" id="gsGeopolitical">
+            <div class="gs-category-header"><span class="gs-cat-title">Geopolitical</span></div>
             <div class="gs-category-body">
               <div class="gs-grid" id="gsGeopoliticalGrid"></div>
             </div>
           </div>
-          <div class="gs-category" id="gsEnergy">
-            <div class="gs-category-header">Energy &amp; Environment</div>
+          <div class="gs-category collapsed" id="gsEnergy">
+            <div class="gs-category-header"><span class="gs-cat-title">Energy &amp; Environment</span></div>
             <div class="gs-category-body">
               <div class="gs-grid" id="gsEnergyGrid"></div>
             </div>
           </div>
-          <div class="gs-category" id="gsUnique">
-            <div class="gs-category-header">Unique Metrics</div>
+          <div class="gs-category collapsed" id="gsUnique">
+            <div class="gs-category-header"><span class="gs-cat-title">Unique Metrics</span></div>
             <div class="gs-category-body">
               <div class="gs-grid" id="gsUniqueGrid"></div>
             </div>
@@ -29909,11 +29938,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
           //      without a real ($-burning) Claude call. _mockCleanup
           //      stashed on the chapter object so onExit can tear it
           //      down — that's why this beat's `do` is a `function`
-          //      not an arrow.
+          //      not an arrow. pulse(body) fires the same gold halo
+          //      ring chapter 5 uses around its deep-read body, so
+          //      the visual cue for "this is the AI synthesis" is
+          //      consistent across the two AI-context demo chapters.
           { at: 13000, do: function () {
               const body = document.getElementById('arcCtxBody');
               if (body) {
                 this._mockCleanup = streamMockAnalysis(body, MOCK_FLOWS_CONTEXT, 1300);
+                pulse(body);
               }
             }
           },
@@ -46860,6 +46893,12 @@ body.ticker-active .gTickerLabel {
   function closeNodePanel() {
     if (_typewriterAbort) { _typewriterAbort(); _typewriterAbort = null; }
     _stopCdTimelinePulse();
+    // Tear down the Activity histogram so its play-loop interval and
+    // resize observers don't leak across panel re-opens.
+    if (detailEl.__cdDensityHandle) {
+      try { detailEl.__cdDensityHandle.destroy(); } catch (_) {}
+      detailEl.__cdDensityHandle = null;
+    }
     detailEl.classList.remove("open", "cdMaximized", "cdMinimized");
     cdSnapState = "default";
     detailEl.style.height = "";
@@ -47173,6 +47212,22 @@ body.ticker-active .gTickerLabel {
             </button>
           </div>
         </div>
+        ${isTimeline ? `
+        <!-- Activity histogram — mounts the same density ruler used in
+             the floating flowCtxCard footer (daily article-volume bars
+             + glow underlay + playhead + peak markers). Sits directly
+             under Analysis so the reader sees WHEN coverage spiked
+             before they read WHAT each event was below. Lines (timelines)
+             only — short-lived threads produce too-flat histograms to
+             be useful. Mount/destroy is handled in openNodePanel /
+             closeNodePanel; the host div is just a slot. -->
+        <div class="cdSection" id="cdDensitySection">
+          <div class="cdSectionLabel">
+            <svg class="cdSectionIcon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M2 14h12M4 10v4M7 6v8M10 8v6M13 3v11" stroke-linecap="round"/></svg>
+            Activity
+          </div>
+          <div id="cdDensityHost"></div>
+        </div>` : ''}
         <!-- Timeline / Events — moved directly below Analysis so the
              chronological narrative reads as a continuation of the
              synthesis, not buried after the View-on-Globe + Data
@@ -47398,6 +47453,38 @@ body.ticker-active .gTickerLabel {
     if (isTimeline) {
       const tlLabel = document.querySelector('#cdTimelineSection .cdSectionLabel');
       if (tlLabel) tlLabel.lastChild.textContent = ' Events';
+    }
+
+    // Mount the Activity histogram for lines. Same self-contained ruler
+    // component the floating flowCtxCard footer uses — different host,
+    // same /api/timelines/:id/density data path. Idempotent across
+    // re-opens: destroy any prior handle stashed on detailEl before
+    // remounting. Threads skip this entirely (no Activity section in
+    // the template).
+    if (isTimeline && threadId) {
+      try {
+        if (detailEl.__cdDensityHandle) {
+          try { detailEl.__cdDensityHandle.destroy(); } catch (_) {}
+          detailEl.__cdDensityHandle = null;
+        }
+        const host = document.getElementById('cdDensityHost');
+        if (host && typeof window.renderDensityRuler === 'function') {
+          detailEl.__cdDensityHandle = window.renderDensityRuler(host, threadId, {
+            inline: true,
+            // Clicking a peak marker opens the day's top article in the
+            // existing article detail panel — matches the flowCtxCard
+            // mount's behaviour so the ruler feels consistent across
+            // both surfaces.
+            onPeakOpen: (articleId) => {
+              if (articleId && window.openArticleDetail) {
+                try { window.openArticleDetail({ id: articleId }, { type: 'density-ruler' }); } catch (_) {}
+              }
+            },
+          });
+        }
+      } catch (e) {
+        console.warn('Activity histogram mount failed:', e);
+      }
     }
 
     // Render the Events / Thread-Timeline section:

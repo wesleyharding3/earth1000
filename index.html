@@ -7191,25 +7191,23 @@ button.arcCtxSegDot,
       min-height: auto !important;
       overflow: visible;
     }
+    /* Globe panel: natural-height + parent-scroll, same model as Sources.
+       See www/index.html for the full rationale (one continuous scroll
+       on .stats-row instead of a nested scroller inside the panel). */
+    #statsGlobePanel {
+      flex: 0 0 auto !important;
+      min-height: auto !important;
+      overflow: visible;
+    }
     .stats-panel-scroll {
       display: flex;
       flex-direction: column;
       gap: 16px;
       padding-bottom: 40px;
     }
-    /* Globe panel keeps its own scroll since it has different layout needs */
     #statsGlobePanel .stats-panel-scroll {
-      flex: 1 1 0;
-      min-height: 0;
-      overflow-y: auto;
-      overscroll-behavior: contain;
-      -webkit-overflow-scrolling: touch;
-      scrollbar-width: thin;
-      scrollbar-color: rgba(74,184,255,0.2) transparent;
+      overflow: visible;
     }
-    #statsGlobePanel .stats-panel-scroll::-webkit-scrollbar { width: 5px; }
-    #statsGlobePanel .stats-panel-scroll::-webkit-scrollbar-track { background: transparent; }
-    #statsGlobePanel .stats-panel-scroll::-webkit-scrollbar-thumb { background: rgba(74,184,255,0.2); border-radius: 3px; }
 
     /* Source Intelligence sections */
     .si-section {
@@ -7297,12 +7295,24 @@ button.arcCtxSegDot,
       background: linear-gradient(180deg, rgba(255,255,255,0.025) 0%, transparent 100%);
       cursor: pointer; user-select: none;
       display: flex; align-items: center; justify-content: space-between;
+      gap: 10px;
+      /* Lock the header to one line so the title fully shows without
+         pushing the chevron off — see www/index.html for full notes. */
+      white-space: nowrap;
+    }
+    .gs-category-header .gs-cat-title {
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
     .gs-category-header::after {
       content: '▾'; font-size: 10px; color: rgba(74,184,255,0.4);
       transition: transform 0.25s;
+      flex-shrink: 0;
     }
     .gs-category.collapsed .gs-category-header::after { transform: rotate(-90deg); }
+    .gs-category.collapsed .gs-category-header { border-bottom-color: transparent; }
     .gs-category.collapsed .gs-category-body { display: none; }
     .gs-category-body { padding: 14px 18px; }
 
@@ -12987,47 +12997,49 @@ window.__arcCtxSegmented = (function() {
         </div>
       </div>
 
-      <!-- ── Globe Statistics Panel ── -->
+      <!-- ── Globe Statistics Panel ──
+           Categories start collapsed so the user lands on a clean list
+           of titled bars. See www/index.html for full rationale. -->
       <div class="stats-panel" id="statsGlobePanel" style="display:none;">
         <div class="stats-panel-scroll">
 
-          <div class="gs-category" id="gsCommodities">
-            <div class="gs-category-header">Commodities &amp; Resources</div>
+          <div class="gs-category collapsed" id="gsCommodities">
+            <div class="gs-category-header"><span class="gs-cat-title">Commodities &amp; Resources</span></div>
             <div class="gs-category-body">
               <div class="gs-grid" id="gsCommoditiesGrid"></div>
             </div>
           </div>
 
-          <div class="gs-category" id="gsEconomic">
-            <div class="gs-category-header">Economic Indicators</div>
+          <div class="gs-category collapsed" id="gsEconomic">
+            <div class="gs-category-header"><span class="gs-cat-title">Economic Indicators</span></div>
             <div class="gs-category-body">
               <div class="gs-grid" id="gsEconomicGrid"></div>
             </div>
           </div>
 
-          <div class="gs-category" id="gsDemographics">
-            <div class="gs-category-header">Demographics</div>
+          <div class="gs-category collapsed" id="gsDemographics">
+            <div class="gs-category-header"><span class="gs-cat-title">Demographics</span></div>
             <div class="gs-category-body">
               <div class="gs-grid" id="gsDemographicsGrid"></div>
             </div>
           </div>
 
-          <div class="gs-category" id="gsGeopolitical">
-            <div class="gs-category-header">Geopolitical</div>
+          <div class="gs-category collapsed" id="gsGeopolitical">
+            <div class="gs-category-header"><span class="gs-cat-title">Geopolitical</span></div>
             <div class="gs-category-body">
               <div class="gs-grid" id="gsGeopoliticalGrid"></div>
             </div>
           </div>
 
-          <div class="gs-category" id="gsEnergy">
-            <div class="gs-category-header">Energy &amp; Environment</div>
+          <div class="gs-category collapsed" id="gsEnergy">
+            <div class="gs-category-header"><span class="gs-cat-title">Energy &amp; Environment</span></div>
             <div class="gs-category-body">
               <div class="gs-grid" id="gsEnergyGrid"></div>
             </div>
           </div>
 
-          <div class="gs-category" id="gsUnique">
-            <div class="gs-category-header">Unique Metrics</div>
+          <div class="gs-category collapsed" id="gsUnique">
+            <div class="gs-category-header"><span class="gs-cat-title">Unique Metrics</span></div>
             <div class="gs-category-body">
               <div class="gs-grid" id="gsUniqueGrid"></div>
             </div>
@@ -27804,6 +27816,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
               const body = document.getElementById('arcCtxBody');
               if (body) {
                 this._mockCleanup = streamMockAnalysis(body, MOCK_FLOWS_CONTEXT, 1300);
+                // Pulse halo on the AI context body while it streams — matches
+                // chapter 5's deep-read demo on cdSummaryBody so the two
+                // AI-context chapters feel visually consistent.
+                pulse(body);
               }
             }
           },
@@ -43271,6 +43287,12 @@ body.ticker-active .gTickerLabel {
   function closeNodePanel() {
     if (_typewriterAbort) { _typewriterAbort(); _typewriterAbort = null; }
     _stopCdTimelinePulse();
+    // Tear down the Activity histogram so its play-loop interval and
+    // resize observers don't leak across panel re-opens.
+    if (detailEl.__cdDensityHandle) {
+      try { detailEl.__cdDensityHandle.destroy(); } catch (_) {}
+      detailEl.__cdDensityHandle = null;
+    }
     detailEl.classList.remove("open", "cdMaximized", "cdMinimized");
     cdSnapState = "default";
     detailEl.style.height = "";
@@ -43568,6 +43590,16 @@ body.ticker-active .gTickerLabel {
             </button>
           </div>
         </div>
+        ${isTimeline ? `
+        <!-- Activity histogram — see www/index.html for full rationale.
+             Lines only; threads skip this section. -->
+        <div class="cdSection" id="cdDensitySection">
+          <div class="cdSectionLabel">
+            <svg class="cdSectionIcon" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3"><path d="M2 14h12M4 10v4M7 6v8M10 8v6M13 3v11" stroke-linecap="round"/></svg>
+            Activity
+          </div>
+          <div id="cdDensityHost"></div>
+        </div>` : ''}
         <!-- Timeline / Events — directly below Analysis. See www/index.html. -->
         <div class="cdSection" id="cdTimelineSection">
           <div class="cdSectionLabel">
@@ -43747,6 +43779,31 @@ body.ticker-active .gTickerLabel {
     if (isTimeline) {
       const tlLabel = document.querySelector('#cdTimelineSection .cdSectionLabel');
       if (tlLabel) tlLabel.lastChild.textContent = ' Events';
+    }
+
+    // Mount the Activity histogram for lines. Same self-contained ruler
+    // component the floating flowCtxCard footer uses — different host,
+    // same data path. Idempotent across re-opens.
+    if (isTimeline && threadId) {
+      try {
+        if (detailEl.__cdDensityHandle) {
+          try { detailEl.__cdDensityHandle.destroy(); } catch (_) {}
+          detailEl.__cdDensityHandle = null;
+        }
+        const host = document.getElementById('cdDensityHost');
+        if (host && typeof window.renderDensityRuler === 'function') {
+          detailEl.__cdDensityHandle = window.renderDensityRuler(host, threadId, {
+            inline: true,
+            onPeakOpen: (articleId) => {
+              if (articleId && window.openArticleDetail) {
+                try { window.openArticleDetail({ id: articleId }, { type: 'density-ruler' }); } catch (_) {}
+              }
+            },
+          });
+        }
+      } catch (e) {
+        console.warn('Activity histogram mount failed:', e);
+      }
     }
 
     // Events section:
