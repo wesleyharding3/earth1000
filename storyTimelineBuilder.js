@@ -178,7 +178,12 @@ const ENTITY_CAP          = 6;
 const KEYWORD_CAP         = 8;
 
 const ATTACH_THRESHOLD    = 6.0;   // thread links to this timeline
-const REAWAKEN_THRESHOLD  = 9.0;   // VERY HIGH overlap → reactivate dormant
+// 7.0 was 9.0 — that bar was essentially "perfect match" and almost no
+// dormant Line could clear it, so reactivation was effectively dead. 7.0
+// is still meaningfully stricter than ATTACH_THRESHOLD (6.0): a thread
+// has to overlap a dormant Line by more than the bar to attach to a
+// fresh active Line. Tunable from here if reactivation gets too noisy.
+const REAWAKEN_THRESHOLD  = 7.0;   // HIGH overlap → reactivate dormant
 
 // ─── Event extraction ────────────────────────────────────────────────────────
 const EVENT_MIN_ARTICLES_PER_DAY = 2;   // skip days with 1 isolated article
@@ -214,9 +219,15 @@ const UMBRELLA_ATTACH_CAP_PER_LINE    = 50;   // max new articles attached per L
 //   (c) ≥4 keywords                    = 4.0
 //   (d) any combination w/ entity hits  (entity weight is 2.5 each)
 const UMBRELLA_ATTACH_THRESHOLD       = 4.0;
-// Dormant Lines do NOT participate — per product decision, dormant stays
-// thread-only for reawakening. Cooling Lines with fresh umbrella articles
-// are restored to 'active'.
+// Dormant Lines now ALSO participate. Previously dormant was thread-only
+// for reawakening, but the bar (REAWAKEN_THRESHOLD=9.0) was so strict
+// almost nothing could come back. Letting umbrella articles also touch
+// dormant Lines means a story that picks up coverage again organically
+// gets restored to active without waiting for a new thread to graduate
+// with near-perfect overlap. Both cooling and dormant flip to active
+// when umbrella articles attach (transition handled in runArticleUmbrellaPhase
+// below). The article-attach threshold (4.0) plus mandatory entity/nation
+// signal keeps low-quality reactivations out.
 
 // ─── Line quality gate (runs every build — first run = one-time sweep) ────────
 // A Line is KEPT if it clears either rule:
@@ -235,9 +246,20 @@ const UMBRELLA_ATTACH_THRESHOLD       = 4.0;
 const GATE_MIN_THREADS_MULTI   = 2;
 const GATE_MIN_SPAN_DAYS       = 14;
 const GATE_MIN_WEEKS_MULTI     = 3;
-const GATE_CARVEOUT_MIN_ART    = 50;
-const GATE_CARVEOUT_MIN_WEEKS  = 4;
-const GATE_GRACE_HOURS         = 72;   // new Lines get 3 days before the gate bites
+// Single-thread carveout eased so legit big-story single-thread Lines
+// can survive without waiting weeks. Was: 50 articles + 4 active weeks.
+// New: 25 articles + 2 active weeks. A breaking-story Line with 25+
+// articles in 2 active weeks is signal enough to keep alive while it
+// grows companion threads. Tighten back if low-quality singles slip in.
+const GATE_CARVEOUT_MIN_ART    = 25;
+const GATE_CARVEOUT_MIN_WEEKS  = 2;
+// Grace 72h → 336h (14d). Reason: a thread that graduates and creates a
+// fresh single-thread Line previously had only 3 days to either grow to
+// 50 articles or get a sibling thread. Most legit big-story Lines need
+// longer than that. 14d also gives the carve-out's 2-active-weeks rule
+// time to actually accumulate. After grace, the (now-eased) carveout
+// keeps single-thread Lines alive at lower thresholds.
+const GATE_GRACE_HOURS         = 336;
 
 // ─── Stopwords for title tokenization ─────────────────────────────────────────
 const TITLE_STOPWORDS = new Set([
@@ -1211,13 +1233,19 @@ function _isConnectionExhausted(err) {
 }
 
 async function runArticleUmbrellaPhase(metrics, elapsed) {
-  // 1. Load active + cooling Lines
+  // 1. Load active + cooling + dormant Lines.
+  // Dormant added here in tandem with the constants comment above —
+  // letting umbrella articles wake dormant Lines is the dominant path
+  // for reactivation now that REAWAKEN_THRESHOLD=7 is still rare to clear
+  // on a thread-promotion alone. Status order ensures active+cooling are
+  // processed first when DB throttling kicks in.
   const { rows: lines } = await pool.query(`
     SELECT id, title, status, importance, keywords, primary_nations,
            primary_category, geographic_scope, first_seen_at, last_updated_at
     FROM story_timelines
-    WHERE status IN ('active', 'cooling')
-    ORDER BY status, last_updated_at DESC
+    WHERE status IN ('active', 'cooling', 'dormant')
+    ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'cooling' THEN 1 ELSE 2 END,
+             last_updated_at DESC
   `);
   metrics.umbrellaLinesScanned = lines.length;
   if (!lines.length) {
@@ -1357,6 +1385,7 @@ async function runArticleUmbrellaPhase(metrics, elapsed) {
       scored.sort((a, b) => b.score - a.score);
       const toAttach = scored.slice(0, UMBRELLA_ATTACH_CAP_PER_LINE);
       const wasCooling = (tl.status === 'cooling');
+      const wasDormant = (tl.status === 'dormant');
 
       const tx = await pool.connect();
       try {
@@ -1374,13 +1403,18 @@ async function runArticleUmbrellaPhase(metrics, elapsed) {
           ON CONFLICT (timeline_id, article_id) DO NOTHING
         `, [tl.id, ids, rels]);
 
-        // Bump last_updated_at and recount article_count. Cooling → active
-        // if we attached anything. Dormant never participates here.
+        // Bump last_updated_at and recount article_count. Both cooling
+        // AND dormant flip to active when umbrella articles attach —
+        // dormant inclusion is the dominant reactivation path now (see
+        // the constants comment above for rationale). last_reawakened_at
+        // is set so we can distinguish "stayed active" from
+        // "reactivated this run" downstream.
         await tx.query(`
           UPDATE story_timelines
-             SET last_updated_at = NOW(),
-                 status          = CASE WHEN status = 'cooling' THEN 'active' ELSE status END,
-                 article_count   = (SELECT COUNT(*) FROM story_timeline_articles WHERE timeline_id = $1)
+             SET last_updated_at    = NOW(),
+                 last_reawakened_at = CASE WHEN status IN ('cooling','dormant') THEN NOW() ELSE last_reawakened_at END,
+                 status             = CASE WHEN status IN ('cooling','dormant') THEN 'active' ELSE status END,
+                 article_count      = (SELECT COUNT(*) FROM story_timeline_articles WHERE timeline_id = $1)
            WHERE id = $1
         `, [tl.id]);
 
@@ -1395,16 +1429,17 @@ async function runArticleUmbrellaPhase(metrics, elapsed) {
       metrics.umbrellaArticlesAttached += toAttach.length;
       metrics.umbrellaLinesRefreshed += 1;
       if (wasCooling) metrics.umbrellaCoolingRestored += 1;
+      if (wasDormant) metrics.umbrellaDormantRestored = (metrics.umbrellaDormantRestored || 0) + 1;
 
       // Successful Line iteration — reset the connection-error counter
       // so a single transient blip earlier doesn't trigger an early
       // bail when the cluster actually recovered.
       _consecutiveConnErrs = 0;
 
-      if (toAttach.length >= 5 || wasCooling) {
+      if (toAttach.length >= 5 || wasCooling || wasDormant) {
         console.log(
           `   ↳ umbrella: +${toAttach.length} articles → "${(tl.title||'').slice(0,55)}"` +
-          (wasCooling ? ' [cooling→active]' : '')
+          (wasCooling ? ' [cooling→active]' : wasDormant ? ' [dormant→active]' : '')
         );
       }
     } catch (err) {

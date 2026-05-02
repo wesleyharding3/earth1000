@@ -110,16 +110,32 @@ function pickIsos() {
   return DEFAULT_TOP_ISOS.slice(0, TOP_N);
 }
 
-async function warmFlow(direction, country) {
+// /api/flows runs two completely different SQL queries depending on mode:
+//   aggregate  — grouped by (src,dst) with COUNT — limit 500 — used by the
+//                summary-arc view of the news flows panel.
+//   individual — raw flow rows with timestamps — limit 2000 — used by the
+//                Time Series animation. This is what the panel defaults to.
+// They have different cache keys, so warming one doesn't help the other.
+// We warm both per (country, direction) — 4 requests per country.
+const MODES = [
+  { name: 'aggregate',  limit: '500'  },
+  { name: 'individual', limit: '2000' },
+];
+
+async function warmFlow(direction, country, mode) {
   const today = new Date();
   const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
   const params = new URLSearchParams({
-    mode:        'aggregate',
+    mode:        mode.name,
     view_mode:   'country',
-    limit:       '500',
+    limit:       mode.limit,
     from_date:   isoDate(weekAgo),
     to_date:     isoDate(today),
     [direction === 'about' ? 'about_country' : 'from_country']: String(country.id),
+    // Tell the server we're a prewarm — it bumps SQL timeout 30s → 60s.
+    // Top-mention countries' about-direction queries can take 40–55s on
+    // cold buffer; user-facing requests stay capped at 30s.
+    prewarm:     '1',
   });
   const url = `${API_URL}/api/flows?${params.toString()}`;
   const t0 = Date.now();
@@ -127,27 +143,39 @@ async function warmFlow(direction, country) {
   try {
     res = await fetchWithTimeout(url);
   } catch (e) {
-    return { direction, country, ms: Date.now() - t0, err: e.message };
+    return { direction, mode: mode.name, country, ms: Date.now() - t0, err: e.message };
   }
   const ms = Date.now() - t0;
-  if (!res.ok) return { direction, country, ms, err: `HTTP ${res.status}` };
+  if (!res.ok) return { direction, mode: mode.name, country, ms, err: `HTTP ${res.status}` };
   await res.text().catch(() => {});
-  return { direction, country, ms };
+  return { direction, mode: mode.name, country, ms };
 }
 
 async function processOne(country) {
-  // about + from in parallel — different routes, no pool conflict between
-  // them (the server runs each in its own pg connection with its own
-  // statement_timeout). Within-country parallelism is fine.
-  const [aboutR, fromR] = await Promise.allSettled([
-    warmFlow('about', country),
-    warmFlow('from',  country),
-  ]);
-  return {
-    country,
-    about: aboutR.status === 'fulfilled' ? aboutR.value : { err: aboutR.reason?.message || 'unknown', ms: 0 },
-    from:  fromR.status  === 'fulfilled' ? fromR.value  : { err: fromR.reason?.message  || 'unknown', ms: 0 },
-  };
+  // 4 sub-requests per country: (about, from) × (aggregate, individual).
+  // Run all 4 in parallel — they hit different cache keys, no pool
+  // conflict (each runs in its own pg connection with its own
+  // statement_timeout). Within-country parallelism keeps run time
+  // reasonable: 50 countries × 4 requests × ~10s avg sequenced =
+  // ~33min. With 4-way parallelism per country: 50 × ~10s = ~8min.
+  const tasks = [];
+  for (const dir of ['about', 'from']) {
+    for (const mode of MODES) {
+      tasks.push(warmFlow(dir, country, mode));
+    }
+  }
+  const results = await Promise.allSettled(tasks);
+  const out = { country, results: {} };
+  for (const r of results) {
+    if (r.status === 'fulfilled') {
+      const k = `${r.value.direction}/${r.value.mode}`;
+      out.results[k] = r.value.err ? { err: r.value.err, ms: r.value.ms } : { ms: r.value.ms };
+    } else {
+      // shouldn't happen — warmFlow catches and returns
+      out.results['?'] = { err: r.reason?.message || 'unknown', ms: 0 };
+    }
+  }
+  return out;
 }
 
 async function main() {
@@ -186,21 +214,37 @@ async function main() {
     const out = await Promise.all(batch.map(processOne));
     results.push(...out);
     for (const r of out) {
-      const aboutTag = r.about.err ? `ERR ${r.about.err}` : `${r.about.ms}ms`;
-      const fromTag  = r.from.err  ? `ERR ${r.from.err}`  : `${r.from.ms}ms`;
-      console.log(`${TAG}   ${r.country.iso} ${(r.country.name || '').padEnd(20)} about=${aboutTag.padEnd(14)} from=${fromTag}`);
+      const fmt = (k) => {
+        const v = r.results[k];
+        if (!v) return '—';
+        return v.err ? `ERR ${v.err}` : `${v.ms}ms`;
+      };
+      console.log(
+        `${TAG}   ${r.country.iso} ${(r.country.name || '').padEnd(20)} ` +
+        `agg(about=${fmt('about/aggregate').padEnd(14)} from=${fmt('from/aggregate').padEnd(14)}) ` +
+        `ind(about=${fmt('about/individual').padEnd(14)} from=${fmt('from/individual').padEnd(14)})`
+      );
     }
   }
 
-  const aboutOk = results.filter(r => !r.about.err).length;
-  const fromOk  = results.filter(r => !r.from.err).length;
-  const totalMs = results.reduce((s, r) => s + (r.about.ms || 0) + (r.from.ms || 0), 0);
-  console.log(`\n${TAG} done in ${((Date.now() - t0) / 1000).toFixed(1)}s — about_ok=${aboutOk}/${results.length} from_ok=${fromOk}/${results.length} total_query_ms=${totalMs}`);
+  // Aggregate stats by (direction, mode) so we can spot which combos
+  // are still slow even after the prewarm flag deploys.
+  const subRequests = results.flatMap(r => Object.entries(r.results)
+    .map(([key, v]) => ({ key, ok: !v.err, ms: v.ms || 0 })));
+  const okCount = subRequests.filter(s => s.ok).length;
+  const totalMs = subRequests.reduce((s, x) => s + x.ms, 0);
+  const byKey = {};
+  for (const s of subRequests) {
+    byKey[s.key] = byKey[s.key] || { ok: 0, total: 0 };
+    byKey[s.key].total++;
+    if (s.ok) byKey[s.key].ok++;
+  }
+  const breakdown = Object.entries(byKey)
+    .map(([k, v]) => `${k}=${v.ok}/${v.total}`).join(' ');
+  console.log(`\n${TAG} done in ${((Date.now() - t0) / 1000).toFixed(1)}s — ${okCount}/${subRequests.length} ok ${breakdown} total_query_ms=${totalMs}`);
 
-  // Non-zero exit only if EVERY query failed (API likely down).
-  const totalOk = aboutOk + fromOk;
-  const totalCount = results.length * 2;
-  if (totalCount > 0 && totalOk === 0) process.exit(1);
+  // Non-zero exit only if EVERY sub-request failed (API likely down).
+  if (subRequests.length > 0 && okCount === 0) process.exit(1);
 }
 
 main().catch(err => { console.error(`${TAG} fatal:`, err); process.exit(1); });

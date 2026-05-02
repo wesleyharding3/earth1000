@@ -104,9 +104,11 @@ async function warmHeatmap(keyword) {
 async function warmFlows(keyword) {
   const today = new Date();
   const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
+  // prewarm=1 — server bumps SQL timeout 30s → 60s for this request only.
+  // User-facing requests stay capped at 30s.
   const url = `${API_URL}/api/flows?mode=aggregate&view_mode=country&limit=500`
             + `&from_date=${isoDate(weekAgo)}&to_date=${isoDate(today)}`
-            + `&keyword=${encodeURIComponent(keyword)}`;
+            + `&keyword=${encodeURIComponent(keyword)}&prewarm=1`;
   const t0 = Date.now();
   const r = await fetchWithTimeout(url);
   const ms = Date.now() - t0;

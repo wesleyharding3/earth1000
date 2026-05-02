@@ -2670,6 +2670,17 @@ app.get("/api/flows", heavyLimiter, async (req, res) => {
     let viewMode = req.query.view_mode || "country";  // country, city, region/regions
     // Normalize "regions" to "region"
     if (viewMode === "regions") viewMode = "region";
+
+    // Prewarm flag: when prewarmCountryFlowsCron / prewarmThreadFlowsCron
+    // hits this endpoint, it sets ?prewarm=1 to ask for a longer SQL
+    // timeout (60s vs the user-facing 30s). Top-mention countries like
+    // US/RU/CN can take 40–55s on cold buffer to aggregate their full
+    // article_locations join set; the prewarm runs at 4 AM with no user
+    // waiting, so we can afford to spend longer there. Real users still
+    // get the aggressive 30s cap so an unfortunate cold-cache hit
+    // doesn't make them stare at a spinner indefinitely.
+    const _isPrewarm = req.query.prewarm === '1';
+    const _flowStatementTimeoutMs = _isPrewarm ? 60_000 : 30_000;
     const maxLimit = mode === "aggregate" ? 2500 : 2500;
     const limit = Math.min(parseInt(req.query.limit) || 800, maxLimit);
     const normalize = req.query.normalize !== "false"; // default true
@@ -2982,7 +2993,7 @@ app.get("/api/flows", heavyLimiter, async (req, res) => {
       let rows;
       try {
         await client.query("BEGIN");
-        await client.query("SET LOCAL statement_timeout = 30000");
+        await client.query(`SET LOCAL statement_timeout = ${_flowStatementTimeoutMs}`);
         ({ rows } = await client.query(aggregateQuery, params));
         await client.query("COMMIT");
       } catch (e) {
@@ -3057,7 +3068,7 @@ app.get("/api/flows", heavyLimiter, async (req, res) => {
       let rows;
       try {
         await client.query("BEGIN");
-        await client.query("SET LOCAL statement_timeout = 30000");
+        await client.query(`SET LOCAL statement_timeout = ${_flowStatementTimeoutMs}`);
         ({ rows } = await client.query(`
         SELECT
           a.id,
