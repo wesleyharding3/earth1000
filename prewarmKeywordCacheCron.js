@@ -36,6 +36,15 @@ require('dotenv').config({ override: true });
 const API_URL    = (process.env.API_URL || 'http://localhost:3000').replace(/\/$/, '');
 const TIMEOUT_MS = parseInt(process.env.PREWARM_TIMEOUT_MS || '12000', 10);
 
+// Loud warning when running on a separate host (Render Cron, k8s job, etc.)
+// without API_URL set — the default localhost:3000 won't resolve and every
+// keyword will fail with ENOTFOUND in milliseconds, looking like a real bug.
+if (!process.env.API_URL) {
+  console.warn('[prewarm-kw] WARNING: API_URL not set — defaulting to http://localhost:3000.');
+  console.warn('[prewarm-kw]          On Render Cron / external schedulers, set API_URL to your API host');
+  console.warn('[prewarm-kw]          (e.g. https://earth-wjr6.onrender.com) or every request will fail.');
+}
+
 // Default top-30. Hand-curated from typical news traffic; tune via env.
 // Lowercased — both endpoints lowercase server-side.
 const DEFAULT_KEYWORDS = [
