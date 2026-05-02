@@ -55276,6 +55276,41 @@ body.ticker-active .gTickerLabel {
     window.visualViewport.addEventListener('scroll', applyShift);
   }
   window.addEventListener('orientationchange', applyShift);
+
+  // Capacitor / iOS native fallback. visualViewport can be unreliable
+  // inside WKWebView; the @capacitor/keyboard plugin emits
+  // `keyboardWillShow` with the exact keyboard height, which is the
+  // most trustworthy signal on iOS. Requires `npx cap sync ios` after
+  // the capacitor.config.json change so Keyboard.resize=none is active —
+  // otherwise iOS still resizes the webview and these events fire but
+  // visualViewport already matches (no shift needed).
+  const KbdPlugin = (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Keyboard) || null;
+  if (KbdPlugin) {
+    let nativeKbdHeight = 0;
+    KbdPlugin.addListener('keyboardWillShow', info => {
+      nativeKbdHeight = (info && info.keyboardHeight) || 0;
+      if (activePanel && nativeKbdHeight > 0) {
+        activePanel.style.setProperty('--kbd-shift', `${nativeKbdHeight}px`);
+        activePanel.classList.add('kbd-open');
+      }
+    });
+    KbdPlugin.addListener('keyboardDidShow', info => {
+      // Re-apply if the height changed mid-animation (rare but possible
+      // on iPad / external keyboards).
+      const h = (info && info.keyboardHeight) || nativeKbdHeight;
+      if (activePanel && h > 0) {
+        activePanel.style.setProperty('--kbd-shift', `${h}px`);
+        activePanel.classList.add('kbd-open');
+      }
+    });
+    KbdPlugin.addListener('keyboardWillHide', () => {
+      nativeKbdHeight = 0;
+      if (activePanel) {
+        activePanel.classList.remove('kbd-open');
+        activePanel.style.removeProperty('--kbd-shift');
+      }
+    });
+  }
 })();
 </script>
 

@@ -184,20 +184,36 @@ async function main() {
 // large nations (US, UK, Iran) from collapsing every thread that mentions
 // them into one giant cluster, while still surfacing same-event threads
 // across mismatched categories.
+//
+// BIG-STORY EXCEPTION: when BOTH threads in a pair are part of a big
+// breaking story (importance ≥ 8 OR article_count ≥ 50), the threshold
+// drops to 1 keyword OR 2 title tokens, AND keyword matching switches
+// from exact to substring (so "sanctions" hits "sanctions escalation").
+// Reason: big-story threads share so many surface words that the 2/3
+// thresholds + the "iran"/"war" stopwords combined to leave nearly
+// nothing to match on. Multiple Iran-Hormuz threads were being missed
+// — same story, different paraphrase, never clustered, never merged.
 function buildClusters(threads) {
   const parent = new Map(threads.map(t => [t.id, t.id]));
   const find = (x) => { while (parent.get(x) !== x) { parent.set(x, parent.get(parent.get(x))); x = parent.get(x); } return x; };
   const union = (a, b) => { const ra = find(a), rb = find(b); if (ra !== rb) parent.set(ra, rb); };
 
-  // Common stop-words and category-noise tokens to ignore when computing
-  // overlap. Without this, "war", "trade", "election" connect every thread
-  // about the same superpower.
+  // Common English stop-words to ignore when computing overlap. The list
+  // used to also include topical words like "iran" and "war" — that turned
+  // out to backfire: nation overlap is already a hard prerequisite, so
+  // "iran" appearing in titles is a *useful* confirmatory signal, not
+  // noise. Pruned + de-duplicated. If a topical word ever DOES start
+  // collapsing unrelated threads, add it back here rather than gating on
+  // primary_category (which has its own noise problems — see Kenya
+  // marathon bug above).
   const STOPWORDS = new Set([
+    // Function words / connectors
     'the','and','for','with','from','into','that','this','these','those',
-    'about','over','after','before','amid','near','part','while',
+    'about','over','after','before','amid','near','part','while','vs','versus',
+    // Pronouns / aux verbs that survived the length>=4 filter
     'said','says','will','have','been','their','its','his','her','our',
-    'iran','war','news','world','update','breaking','latest','update','daily',
-    'amid','vs','versus'
+    // News-headline filler that almost never carries topic signal
+    'news','world','update','breaking','latest','daily',
   ]);
   const tokens = (s) =>
     new Set(String(s || '')
@@ -214,6 +230,11 @@ function buildClusters(threads) {
     return s;
   };
 
+  // Treat a thread as part of a "big breaking story" if importance is
+  // top-tier or it's already absorbed a substantial article volume. Big-
+  // story pairs get a lower clustering bar — see comment block above.
+  const isBigStory = t => (t.importance || 0) >= 8 || (t.article_count || 0) >= 50;
+
   // Pre-compute features once per thread.
   const feats = new Map();
   for (const t of threads) {
@@ -221,7 +242,25 @@ function buildClusters(threads) {
       isos:   new Set(sanitizeIsos(t.primary_nations || [])),
       kws:    kwSet(t),
       titleT: tokens(t.title),
+      big:    isBigStory(t),
     });
+  }
+
+  // Substring-match version of keyword overlap. "sanctions" matches
+  // "sanctions escalation"; "Strait of Hormuz" matches "Hormuz blockade"
+  // (via the shorter substring). Length floor 5 prevents short common
+  // fragments like "the", "for" from over-matching.
+  function kwOverlapSubstring(setA, setB) {
+    let count = 0;
+    for (const ka of setA) {
+      for (const kb of setB) {
+        if (ka === kb) { count++; break; }
+        if (ka.length >= 5 && kb.length >= 5 && (ka.includes(kb) || kb.includes(ka))) {
+          count++; break;
+        }
+      }
+    }
+    return count;
   }
 
   for (let i = 0; i < threads.length; i++) {
@@ -238,13 +277,19 @@ function buildClusters(threads) {
       for (const iso of fb.isos) if (fa.isos.has(iso)) { nationHit = true; break; }
       if (!nationHit) continue;
 
-      // (b) Specific overlap — keywords and title tokens.
-      let kwOverlap = 0;
-      for (const k of fb.kws) if (fa.kws.has(k)) kwOverlap++;
+      // (b) Specific overlap — keywords and title tokens. For big-story
+      // pairs, use substring keyword matching + lower thresholds (1 / 2)
+      // so paraphrased iran/ukraine/election threads actually cluster.
+      const bigPair = fa.big && fb.big;
+      const kwOverlap    = bigPair
+        ? kwOverlapSubstring(fa.kws, fb.kws)
+        : (() => { let c = 0; for (const k of fb.kws) if (fa.kws.has(k)) c++; return c; })();
       let titleOverlap = 0;
       for (const tk of fb.titleT) if (fa.titleT.has(tk)) titleOverlap++;
 
-      if (kwOverlap >= 2 || titleOverlap >= 3) union(a.id, b.id);
+      const kwThresh    = bigPair ? 1 : 2;
+      const titleThresh = bigPair ? 2 : 3;
+      if (kwOverlap >= kwThresh || titleOverlap >= titleThresh) union(a.id, b.id);
     }
   }
   const groups = new Map();

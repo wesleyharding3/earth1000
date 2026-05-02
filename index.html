@@ -49917,6 +49917,36 @@ body.ticker-active .gTickerLabel {
     window.visualViewport.addEventListener('scroll', applyShift);
   }
   window.addEventListener('orientationchange', applyShift);
+
+  // Capacitor iOS fallback — visualViewport is flaky in WKWebView, the
+  // @capacitor/keyboard plugin gives a rock-solid keyboardHeight. No-op
+  // on web (window.Capacitor is undefined). See www/index.html for full
+  // rationale.
+  const KbdPlugin = (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Keyboard) || null;
+  if (KbdPlugin) {
+    let nativeKbdHeight = 0;
+    KbdPlugin.addListener('keyboardWillShow', info => {
+      nativeKbdHeight = (info && info.keyboardHeight) || 0;
+      if (activePanel && nativeKbdHeight > 0) {
+        activePanel.style.setProperty('--kbd-shift', `${nativeKbdHeight}px`);
+        activePanel.classList.add('kbd-open');
+      }
+    });
+    KbdPlugin.addListener('keyboardDidShow', info => {
+      const h = (info && info.keyboardHeight) || nativeKbdHeight;
+      if (activePanel && h > 0) {
+        activePanel.style.setProperty('--kbd-shift', `${h}px`);
+        activePanel.classList.add('kbd-open');
+      }
+    });
+    KbdPlugin.addListener('keyboardWillHide', () => {
+      nativeKbdHeight = 0;
+      if (activePanel) {
+        activePanel.classList.remove('kbd-open');
+        activePanel.style.removeProperty('--kbd-shift');
+      }
+    });
+  }
 })();
 </script>
 
