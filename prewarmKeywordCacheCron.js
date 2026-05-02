@@ -33,8 +33,18 @@
 
 require('dotenv').config({ override: true });
 
-const API_URL    = (process.env.API_URL || 'http://localhost:3000').replace(/\/$/, '');
-const TIMEOUT_MS = parseInt(process.env.PREWARM_TIMEOUT_MS || '12000', 10);
+const API_URL     = (process.env.API_URL || 'http://localhost:3000').replace(/\/$/, '');
+// 60s — cold-buffer flows queries on a hot keyword can take 8–10s, plus
+// network RTT. Anything shorter just kills our own in-flight requests
+// and looks like a fetch error in the logs (was 12s, surfaced as
+// "This operation was aborted" all over the run).
+const TIMEOUT_MS  = parseInt(process.env.PREWARM_TIMEOUT_MS || '60000', 10);
+// Serialize by default. Concurrency >1 saturates the API's small pg pool
+// (each flows query holds a connection for up to 10s under
+// SET LOCAL statement_timeout = 10000); follow-on requests then queue
+// past our own fetch timeout and abort. Override with PREWARM_CONCURRENCY
+// if you've sized the pool generously and tested it.
+const CONCURRENCY = Math.max(1, parseInt(process.env.PREWARM_CONCURRENCY || '1', 10));
 
 // Loud warning when running on a separate host (Render Cron, k8s job, etc.)
 // without API_URL set — the default localhost:3000 won't resolve and every
@@ -112,12 +122,11 @@ async function warmOne(keyword) {
 
 async function main() {
   const t0 = Date.now();
-  console.log(`${TAG} start ${new Date().toISOString()} api=${API_URL} keywords=${KEYWORDS.length}`);
+  console.log(`${TAG} start ${new Date().toISOString()} api=${API_URL} keywords=${KEYWORDS.length} concurrency=${CONCURRENCY} timeout=${TIMEOUT_MS}ms`);
 
-  // Process keywords in small batches so we don't slam the server with
-  // 30 simultaneous flow queries (each holds a pool connection for up
-  // to 10s). Concurrency 4 = at most 8 in-flight requests (4 hm + 4 fl).
-  const CONCURRENCY = 4;
+  // Process keywords in small batches. Default concurrency is 1 — see
+  // the const declaration at the top for why parallelism saturates the
+  // API's pg pool and triggers cascading aborts.
   const results = [];
   for (let i = 0; i < KEYWORDS.length; i += CONCURRENCY) {
     const batch = KEYWORDS.slice(i, i + CONCURRENCY);
