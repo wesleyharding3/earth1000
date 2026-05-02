@@ -90,6 +90,38 @@ function fetchWithTimeout(url) {
     .finally(() => clearTimeout(t));
 }
 
+// Core feeds whose 55m TTL needs the every-10-min cadence we run on.
+// Longer-TTL feeds live in the cron whose schedule matches their refresh
+// rate (threads/latest + sources-stats → prewarm-thread-flows every 2h;
+// timelines/latest → prewarm-countries daily) so we don't waste 144
+// daily refreshes on data that updates twice.
+const CORE_FEEDS = [
+  '/api/articles/recent',
+  '/api/news/search',
+];
+
+async function warmCoreFeeds() {
+  console.log(`${TAG} core feeds: warming ${CORE_FEEDS.length} base endpoints…`);
+  const results = [];
+  for (const path of CORE_FEEDS) {
+    const url = `${API_URL}${path}`;
+    const t0 = Date.now();
+    try {
+      const r = await fetchWithTimeout(url);
+      const ms = Date.now() - t0;
+      const tag = r.ok ? `${ms}ms` : `ERR HTTP ${r.status} (${ms}ms)`;
+      console.log(`${TAG}   ${path.padEnd(28)} [${tag}]`);
+      await r.text().catch(() => {});
+      results.push({ path, ok: r.ok, ms });
+    } catch (e) {
+      const ms = Date.now() - t0;
+      console.log(`${TAG}   ${path.padEnd(28)} [ERR ${e.message} (${ms}ms)]`);
+      results.push({ path, ok: false, ms, err: e.message });
+    }
+  }
+  return results;
+}
+
 async function warmHeatmap(keyword) {
   // prewarm=1 — server bumps SQL timeout 30s → 60s for this request only.
   // User-facing requests stay capped at 30s.
@@ -141,6 +173,14 @@ async function main() {
   const t0 = Date.now();
   console.log(`${TAG} start ${new Date().toISOString()} api=${API_URL} keywords=${KEYWORDS.length} concurrency=${CONCURRENCY} timeout=${TIMEOUT_MS}ms`);
 
+  // Phase 0 — warm the core feeds (threads/latest, timelines/latest,
+  // sources-stats, articles/recent, news/search). These load on every
+  // page open and aren't covered by any other prewarmer.
+  const coreResults = await warmCoreFeeds();
+  const coreOk = coreResults.filter(r => r.ok).length;
+
+  // Phase 1 — keyword loop.
+  console.log(`${TAG} keywords: warming ${KEYWORDS.length} keyword × (heatmap, flows)…`);
   // Process keywords in small batches. Default concurrency is 1 — see
   // the const declaration at the top for why parallelism saturates the
   // API's pg pool and triggers cascading aborts.
@@ -159,13 +199,14 @@ async function main() {
   for (const r of results) {
     console.log(`${TAG}   ${r.keyword.padEnd(16)} hm=${r.heatmap.padEnd(12)} fl=${r.flows}`);
   }
-  console.log(`${TAG} done in ${((Date.now() - t0) / 1000).toFixed(1)}s — full_ok=${okCount} partial=${partialOk} hm_ok=${hmOkCount}/${results.length} fl_ok=${flOkCount}/${results.length}`);
+  console.log(`${TAG} done in ${((Date.now() - t0) / 1000).toFixed(1)}s — core_ok=${coreOk}/${coreResults.length} kw_full_ok=${okCount} kw_partial=${partialOk} hm_ok=${hmOkCount}/${results.length} fl_ok=${flOkCount}/${results.length}`);
 
-  // Non-zero exit ONLY if every sub-request of every keyword failed —
-  // i.e. zero useful work happened. A run where heatmap timed out but
-  // flows succeeded is still a productive cache-warmer; don't paint
-  // the cron service red over partial failures.
-  if (results.length > 0 && hmOkCount === 0 && flOkCount === 0) process.exit(1);
+  // Non-zero exit ONLY if EVERY sub-request failed — core feeds, keyword
+  // heatmaps, AND keyword flows. A run where any one category produced
+  // useful cache writes is still productive.
+  const anyOk = coreOk > 0 || hmOkCount > 0 || flOkCount > 0;
+  const totalAttempts = coreResults.length + results.length;
+  if (totalAttempts > 0 && !anyOk) process.exit(1);
 }
 
 main().catch(err => { console.error(`${TAG} fatal:`, err); process.exit(1); });

@@ -208,6 +208,24 @@ async function main() {
   }
   console.log(`${TAG} resolved ${countries.length} countries: ${countries.map(c => c.iso).join(',')}`);
 
+  // Phase 0 — also warm /api/timelines/latest. TTL is 22h and the
+  // timeline builder cron runs once daily; this cron's daily cadence
+  // is the natural match. (Other 10-min and 2h core feeds are
+  // handled by prewarm-keywords and prewarm-thread-flows respectively.)
+  console.log(`${TAG} core feed: warming /api/timelines/latest…`);
+  let coreOk = 0;
+  try {
+    const tl0 = Date.now();
+    const tlRes = await fetchWithTimeout(`${API_URL}/api/timelines/latest`);
+    const tlMs = Date.now() - tl0;
+    if (tlRes.ok) { coreOk = 1; console.log(`${TAG}   /api/timelines/latest [${tlMs}ms]`); }
+    else { console.log(`${TAG}   /api/timelines/latest [ERR HTTP ${tlRes.status} (${tlMs}ms)]`); }
+    await tlRes.text().catch(() => {});
+  } catch (e) {
+    console.log(`${TAG}   /api/timelines/latest [ERR ${e.message}]`);
+  }
+  console.log('');
+
   const results = [];
   for (let i = 0; i < countries.length; i += CONCURRENCY) {
     const batch = countries.slice(i, i + CONCURRENCY);

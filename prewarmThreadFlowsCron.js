@@ -114,9 +114,46 @@ async function processBatch(items, kind) {
   return results;
 }
 
+// Core feeds that match this cron's 2h cadence — not in keyword cron
+// because they don't need to refresh every 10 min, and not in country
+// cron because that's only daily and TTL would expire mid-day.
+//   /api/threads/latest    TTL 1h45m, thread builder runs every 2h
+//   /api/news/sources-stats TTL 11h, source stats cron runs 2x/day
+const CORE_FEEDS = [
+  '/api/threads/latest',
+  '/api/news/sources-stats',
+];
+
+async function warmCoreFeeds() {
+  console.log(`${TAG} core feeds: warming ${CORE_FEEDS.length} base endpoints…`);
+  const out = [];
+  for (const path of CORE_FEEDS) {
+    const url = `${API_URL}${path}`;
+    const t0 = Date.now();
+    try {
+      const r = await fetchWithTimeout(url);
+      const ms = Date.now() - t0;
+      const tag = r.ok ? `${ms}ms` : `ERR HTTP ${r.status} (${ms}ms)`;
+      console.log(`${TAG}   ${path.padEnd(28)} [${tag}]`);
+      await r.text().catch(() => {});
+      out.push({ path, ok: r.ok, ms });
+    } catch (e) {
+      const ms = Date.now() - t0;
+      console.log(`${TAG}   ${path.padEnd(28)} [ERR ${e.message} (${ms}ms)]`);
+      out.push({ path, ok: false, ms, err: e.message });
+    }
+  }
+  return out;
+}
+
 async function main() {
   const t0 = Date.now();
   console.log(`${TAG} start ${new Date().toISOString()} api=${API_URL} threads=${THREAD_LIMIT} timelines=${TIMELINE_LIMIT} concurrency=${CONCURRENCY} timeout=${TIMEOUT_MS}ms`);
+
+  // Phase 0 — core feeds whose cadence matches this cron (2h)
+  const coreResults = await warmCoreFeeds();
+  const coreOk = coreResults.filter(r => r.ok).length;
+  console.log('');
 
   let threads = [], timelines = [];
   try {
@@ -138,13 +175,13 @@ async function main() {
   const lOk = timelineResults.filter(r => !r.err).length;
   const totalMs = [...threadResults, ...timelineResults].reduce((s, r) => s + (r.ms || 0), 0);
 
-  console.log(`\n${TAG} done in ${((Date.now() - t0) / 1000).toFixed(1)}s — threads_ok=${tOk}/${threadResults.length} timelines_ok=${lOk}/${timelineResults.length} total_query_ms=${totalMs}`);
+  console.log(`\n${TAG} done in ${((Date.now() - t0) / 1000).toFixed(1)}s — core_ok=${coreOk}/${coreResults.length} threads_ok=${tOk}/${threadResults.length} timelines_ok=${lOk}/${timelineResults.length} total_query_ms=${totalMs}`);
 
   // Non-zero exit only on catastrophic failure (every single sub-request
-  // failed). Partial failures are normal — one slow item shouldn't turn
-  // the cron service red.
-  const totalCount = threadResults.length + timelineResults.length;
-  const totalOk    = tOk + lOk;
+  // including core feeds failed). Partial failures are normal — one slow
+  // item shouldn't turn the cron service red.
+  const totalCount = coreResults.length + threadResults.length + timelineResults.length;
+  const totalOk    = coreOk + tOk + lOk;
   if (totalCount > 0 && totalOk === 0) process.exit(1);
 }
 
