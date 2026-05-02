@@ -6989,6 +6989,11 @@ app.get("/api/heatmap", heavyLimiter, async (req, res) => {
     const days     = Math.min(Math.max(isNaN(daysRaw) ? 7 : daysRaw, 1), 90);
     const fromIso  = req.query.from || null;
     const toIso    = req.query.to   || null;
+    // prewarm flag — same pattern as /api/flows. Cron passes ?prewarm=1
+    // to get a longer SQL timeout. User-facing requests stay capped at
+    // 30s so a slow cold-cache miss doesn't make a user wait indefinitely.
+    const _isPrewarm = req.query.prewarm === '1';
+    const _heatmapStatementTimeoutMs = _isPrewarm ? 60_000 : 30_000;
 
     const bucketExpr =
       bucket === "hour" ? `date_trunc('hour', a.published_at)` :
@@ -7085,14 +7090,26 @@ app.get("/api/heatmap", heavyLimiter, async (req, res) => {
       }
 
       if (keyword) {
-        params.push(keyword.toLowerCase().trim());
+        // The previous correlated EXISTS (`WHERE ak.article_id = a.id`)
+        // was the same shape that took flows + news/search down to 90s
+        // queries. Postgres re-evaluated the subquery once per outer
+        // article — even on lightweight keywords like "xi jinping" the
+        // heatmap was hitting the 90s timeout. Switching to an
+        // uncorrelated IN(subquery) lets Postgres compute the matching
+        // article_id set ONCE via the article_keywords indexes
+        // (idx_ak_normalized for exact, idx_ak_keyword_gin for prefix
+        // via to_tsquery 'kw:*'), then probe the outer query against
+        // that set. Same fix already shipped to /api/flows and
+        // /api/news/search.
+        const kwLc = keyword.toLowerCase().trim();
+        params.push(kwLc);
         const kwExact = `$${params.length}`;
-        params.push(`${keyword.toLowerCase().trim()}%`);
-        const kwPrefix = `$${params.length}`;
-        where.push(`EXISTS (
-          SELECT 1 FROM article_keywords ak
-          WHERE ak.article_id = a.id
-          AND (ak.normalized_keyword = ${kwExact} OR ak.keyword ILIKE ${kwPrefix})
+        params.push(kwLc + ':*');
+        const kwTs = `$${params.length}`;
+        where.push(`a.id IN (
+          SELECT ak.article_id FROM article_keywords ak
+          WHERE ak.normalized_keyword = ${kwExact}
+             OR to_tsvector('simple', ak.keyword) @@ to_tsquery('simple', ${kwTs})
         )`);
       }
 
@@ -7158,7 +7175,14 @@ app.get("/api/heatmap", heavyLimiter, async (req, res) => {
       async function _heatmapQuery(sql) {
         const c = await pool.connect();
         try {
-          await c.query(`SET statement_timeout = 90000`);
+          // Bumped down from 90s default to 30s for users (60s for
+          // prewarm). The 90s ceiling was masking the underlying
+          // correlated-EXISTS bug — every cold-cache request waited
+          // the full 90s. With the uncorrelated subquery rewrite above,
+          // typical cold-cache queries now finish in 1–10s and 30s is
+          // ample headroom; user-facing requests no longer face minute-
+          // scale waits even on a worst-case miss.
+          await c.query(`SET statement_timeout = ${_heatmapStatementTimeoutMs}`);
           const r = await c.query(sql, params);
           return r.rows;
         } catch (e) {

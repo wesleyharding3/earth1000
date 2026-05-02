@@ -91,7 +91,9 @@ function fetchWithTimeout(url) {
 }
 
 async function warmHeatmap(keyword) {
-  const url = `${API_URL}/api/heatmap?keyword=${encodeURIComponent(keyword)}&days=7&mode=coverage&bucket=none`;
+  // prewarm=1 — server bumps SQL timeout 30s → 60s for this request only.
+  // User-facing requests stay capped at 30s.
+  const url = `${API_URL}/api/heatmap?keyword=${encodeURIComponent(keyword)}&days=7&mode=coverage&bucket=none&prewarm=1`;
   const t0 = Date.now();
   const r = await fetchWithTimeout(url);
   const ms = Date.now() - t0;
