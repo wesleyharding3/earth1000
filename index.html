@@ -49826,6 +49826,101 @@ body.ticker-active .gTickerLabel {
 </script>
 
 <!-- ═══════════════════════════════════════════════════════════════════════
+     KEYBOARD-AVOIDANCE for the heatmap + news-flows keyword inputs.
+     Mobile Safari shrinks the visual viewport when the on-screen keyboard
+     appears, dragging the globe canvas / ticker with it. This module
+     listens for focus on the two keyword inputs and lifts only that
+     panel above the keyboard via a CSS variable. Same script as
+     www/index.html — see capacitor.config.json (Keyboard.resize=none)
+     for the iOS-native side.
+═══════════════════════════════════════════════════════════════════════ -->
+<style>
+  /* See www/index.html for full rationale — lift the panel + cap its
+     max-height so the keyword input stays visible above the keyboard
+     and the globe/ticker stay put. */
+  #flowControls.kbd-open {
+    bottom: calc(var(--page-nav-height) + var(--global-ticker-height) + var(--global-ticker-gap) + 34px + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom) + var(--kbd-shift, 0px));
+    max-height: max(220px, calc(100vh - var(--kbd-shift, 0px) - 70px));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    transition: bottom 220ms cubic-bezier(0.32, 0.72, 0, 1),
+                max-height 220ms cubic-bezier(0.32, 0.72, 0, 1),
+                opacity 0.3s ease,
+                transform 0.4s cubic-bezier(0.32, 0.72, 0, 1),
+                left 0.4s cubic-bezier(0.32, 0.72, 0, 1),
+                min-width 0.4s cubic-bezier(0.32, 0.72, 0, 1),
+                max-width 0.4s cubic-bezier(0.32, 0.72, 0, 1);
+  }
+  #semHeatPanel.kbd-open {
+    bottom: calc(120px + var(--kbd-shift, 0px));
+    max-height: max(220px, calc(100vh - 244px - var(--kbd-shift, 0px)));
+    transition: bottom 220ms cubic-bezier(0.32, 0.72, 0, 1),
+                max-height 220ms cubic-bezier(0.32, 0.72, 0, 1);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    #flowControls.kbd-open, #semHeatPanel.kbd-open { transition: none; }
+  }
+</style>
+<script>
+(function () {
+  'use strict';
+  const TARGETS = [
+    { input: '#semHeatKw',    panel: '#semHeatPanel' },
+    { input: '#flowKeyword',  panel: '#flowControls'  },
+  ];
+  let activePanel = null;
+  let activeInput = null;
+
+  function computeKbdHeight() {
+    const vv = window.visualViewport;
+    if (!vv) return 0;
+    const winH  = window.innerHeight || document.documentElement.clientHeight || 0;
+    const inset = Math.max(0, Math.round(winH - (vv.height + (vv.offsetTop || 0))));
+    return inset > 100 ? inset : 0;
+  }
+
+  function applyShift() {
+    if (!activePanel) return;
+    const kbd = computeKbdHeight();
+    if (kbd > 0) {
+      activePanel.style.setProperty('--kbd-shift', `${kbd}px`);
+      activePanel.classList.add('kbd-open');
+    } else {
+      activePanel.classList.remove('kbd-open');
+      activePanel.style.removeProperty('--kbd-shift');
+    }
+  }
+  function clearShift() {
+    if (!activePanel) return;
+    activePanel.classList.remove('kbd-open');
+    activePanel.style.removeProperty('--kbd-shift');
+  }
+
+  document.addEventListener('focusin', e => {
+    const match = TARGETS.find(t => e.target.matches?.(t.input));
+    if (!match) return;
+    activeInput = e.target;
+    activePanel = document.querySelector(match.panel);
+    applyShift();
+    requestAnimationFrame(applyShift);
+  }, true);
+
+  document.addEventListener('focusout', e => {
+    if (e.target !== activeInput) return;
+    clearShift();
+    activeInput = null;
+    activePanel = null;
+  }, true);
+
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', applyShift);
+    window.visualViewport.addEventListener('scroll', applyShift);
+  }
+  window.addEventListener('orientationchange', applyShift);
+})();
+</script>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
      INTRO TUTORIAL — 15-second orientation hook for first-time visitors
      Plays once per device (localStorage flag), aborts on any non-intro tap,
      muted by default with a "tap for sound" pill (iOS autoplay-with-sound
