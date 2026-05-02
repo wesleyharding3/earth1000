@@ -2481,18 +2481,17 @@ app.get("/api/news/search", searchLimiter, async (req, res) => {
 
     // 55m — see news/search default-path comment above (article fetcher hourly)
     const cachedSlice = await ttlCached(filterCacheKey, 3_300_000, async () => {
-      // Cap at 10s. Without it, runaway keyword scans (the bug behind the
-      // 45s "Failed to fetch" the user reported) ran until Render's gateway
-      // dropped the connection, returning no response at all. With SET LOCAL
-      // statement_timeout, Postgres aborts at 10s, the catch fires, and we
-      // return a clean degraded response the frontend can surface as an
-      // error message instead of an indefinite spinner. BEGIN/COMMIT
-      // wrapper because SET LOCAL outside a transaction is a silent no-op.
+      // Cap at 30s. Originally 10s to fail fast on runaway keyword scans,
+      // but 10s was too aggressive for cold-buffer queries on hot keywords
+      // ("trump", "ukraine") that legitimately need 12–25s. Bumping to 30s
+      // is still well under the client's 45s fetch timeout, and post-cache
+      // every user reads in <10ms anyway. After cache warms up via the
+      // prewarm cron, this ceiling rarely kicks in.
       const client = await pool.connect();
       let rows;
       try {
         await client.query('BEGIN');
-        await client.query('SET LOCAL statement_timeout = 10000');
+        await client.query('SET LOCAL statement_timeout = 30000');
         const result = await client.query(filteredQuery, params);
         await client.query('COMMIT');
         rows = result.rows;
@@ -2973,17 +2972,17 @@ app.get("/api/flows", heavyLimiter, async (req, res) => {
       // Wrapping SET LOCAL + SELECT in a real transaction so the cap
       // actually applies. ROLLBACK on error so the connection returns
       // to the pool clean, no half-open transaction state.
-      // Cap at 10s (was 6s). Cold-start queries on Render with a hot
-      // keyword like "trump" sometimes take 7–8s on a cold buffer cache;
-      // the old 6s timeout aborted them, returning {error:"Failed to
-      // fetch flows"} and the user retried — taking another cold miss.
-      // 10s lets the warmup query through; the cache then absorbs subsequent
-      // hits at <10ms.
+      // Cap at 30s. History: 6s → 10s (covered hot keyword cold-misses) →
+      // 30s (now also covers about_country=US/IN/etc cold-misses on the
+      // article_locations join — those take 12–25s on cold buffer for
+      // top-mention destinations). 30s is still under the client's 45s
+      // fetch timeout, and the prewarm cron means real users almost
+      // always hit warm cache (<10ms) regardless.
       const client = await pool.connect();
       let rows;
       try {
         await client.query("BEGIN");
-        await client.query("SET LOCAL statement_timeout = 10000");
+        await client.query("SET LOCAL statement_timeout = 30000");
         ({ rows } = await client.query(aggregateQuery, params));
         await client.query("COMMIT");
       } catch (e) {
@@ -3052,13 +3051,13 @@ app.get("/api/flows", heavyLimiter, async (req, res) => {
       }
 
       // See aggregate-mode block above for the BEGIN/COMMIT rationale —
-      // SET LOCAL outside a transaction is a silent no-op. 10s cap to
-      // match aggregate mode (see rationale above).
+      // SET LOCAL outside a transaction is a silent no-op. 30s cap to
+      // match aggregate mode.
       const client = await pool.connect();
       let rows;
       try {
         await client.query("BEGIN");
-        await client.query("SET LOCAL statement_timeout = 10000");
+        await client.query("SET LOCAL statement_timeout = 30000");
         ({ rows } = await client.query(`
         SELECT
           a.id,
