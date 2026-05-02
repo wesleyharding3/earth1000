@@ -11,41 +11,42 @@
  * Russia all aggregate against millions of article_locations rows and
  * regularly bump the 45s client timeout.
  *
- * Companion to prewarmKeywordCacheCron.js, which covers keyword-filtered
- * queries. This one covers country-filtered queries — the OTHER major
- * cold-cache axis on the flows endpoint.
+ * Companion to prewarmKeywordCacheCron.js (keyword pre-warming) and
+ * prewarmThreadFlowsCron.js (thread/timeline flow pre-warming). All three
+ * are pure-HTTP — no direct PG connection. Production was hitting
+ * Postgres connection cap when crons opened pg pools (error 53300:
+ * "remaining connection slots are reserved for roles with the SUPERUSER
+ * attribute"), so this discovers the country list via /api/countries/all
+ * (which is itself cached 24h) and never touches the DB directly.
  *
- * Country selection: dynamically picks the 50 ISOs most-mentioned in
- * article_locations over the last 30 days. Stable enough day-to-day to
- * give consistent cache coverage; reactive enough that emerging stories
- * (Sudan, Niger, etc.) make it onto the warm list as their coverage grows.
+ * Country selection: a curated list of the top-50 ISOs by typical news
+ * mention volume — ordered roughly by 30-day article frequency in the
+ * earth00 corpus. Stable enough that the static list works fine; if you
+ * need to retune, just edit DEFAULT_TOP_ISOS below or override via
+ * PREWARM_COUNTRY_ISOS env var.
  *
- * Cadence: daily is fine if you also bump the flows cache TTL to >24h
- * for these queries. With the current 600s TTL, a daily run only keeps
- * the cache warm for the first 10 min of each day — so either run more
- * often (every ~10 min) or bump the TTL. The cron itself doesn't enforce
- * either; that's a deployment-side choice.
+ * Cadence: daily, paired with /api/flows TTL of 22h for country-only
+ * queries (set in server.js). Matches the cron cadence so the cache is
+ * always warm when users tap.
  *
  * Env vars:
  *   API_URL                    base URL of the API (default: http://localhost:3000)
  *   PREWARM_COUNTRY_LIMIT      override top-N count (default: 50)
- *   PREWARM_TIMEOUT_MS         per-request timeout (default: 60000)
+ *   PREWARM_COUNTRY_ISOS       comma-separated ISO list to override defaults
+ *   PREWARM_TIMEOUT_MS         per-request timeout (default: 95000)
  *   PREWARM_CONCURRENCY        parallel requests (default: 1, serialize)
  *
  * Run:
- *   node prewarmCountryFlowsCron.js                 # warms top 50 about + from
- *   PREWARM_COUNTRY_LIMIT=20 node prewarmCountryFlowsCron.js  # smaller pass
+ *   node prewarmCountryFlowsCron.js
  *
  * Wire to a daily Render Cron / system cron:
- *   `15 4 * * * cd /app && node prewarmCountryFlowsCron.js`
+ *   `35 4 * * * cd /app && node prewarmCountryFlowsCron.js`
  */
 
-process.env.DB_POOL_MAX = '2';
 require('dotenv').config({ override: true });
-const pool = require('./db');
 
 const API_URL     = (process.env.API_URL || 'http://localhost:3000').replace(/\/$/, '');
-const TIMEOUT_MS  = parseInt(process.env.PREWARM_TIMEOUT_MS  || '60000', 10);
+const TIMEOUT_MS  = parseInt(process.env.PREWARM_TIMEOUT_MS  || '95000', 10);
 const CONCURRENCY = Math.max(1, parseInt(process.env.PREWARM_CONCURRENCY || '1', 10));
 const TOP_N       = Math.max(1, parseInt(process.env.PREWARM_COUNTRY_LIMIT || '50', 10));
 
@@ -56,7 +57,19 @@ if (!process.env.API_URL) {
   console.warn(`${TAG}          On Render Cron, set API_URL=https://earth-wjr6.onrender.com.`);
 }
 
-function isoDate(d) { return d.toISOString().slice(0, 10); }
+// Top-50 ISO codes by typical news mention volume, hand-curated for
+// stability. Tunable per-run via PREWARM_COUNTRY_ISOS env var. If you
+// later want this to be DB-driven (top by recent article_locations),
+// the right place is a server-side endpoint /api/countries/top-mentioned
+// that the cron can hit; doing it client-side here would force the cron
+// to open a PG pool which we just removed.
+const DEFAULT_TOP_ISOS = [
+  'US','GB','RU','CN','IR','IL','UA','IN','DE','FR',
+  'BR','JP','IT','ES','MX','CA','AU','KR','TR','NG',
+  'ZA','EG','SA','PK','ID','AR','PL','NL','SE','CH',
+  'AE','QA','KW','SY','LB','IQ','AF','YE','JO','OM',
+  'GR','KE','ET','MA','VE','CO','PE','TH','VN','PH',
+];
 
 function fetchWithTimeout(url) {
   const ctrl = new AbortController();
@@ -64,22 +77,34 @@ function fetchWithTimeout(url) {
   return fetch(url, { signal: ctrl.signal }).finally(() => clearTimeout(t));
 }
 
-// Pull the top-N countries (by id, with iso) ranked by recent article_locations
-// mentions. 30-day window keeps the list responsive to emerging stories
-// without thrashing day-to-day.
-async function pickTopCountries(n) {
-  const { rows } = await pool.query(`
-    SELECT c.id, c.iso_code AS iso, c.name, COUNT(DISTINCT al.article_id)::int AS mentions
-      FROM article_locations al
-      JOIN countries c ON c.id = al.country_id
-      JOIN news_articles a ON a.id = al.article_id
-     WHERE a.published_at > NOW() - INTERVAL '30 days'
-       AND c.iso_code IS NOT NULL AND length(c.iso_code) = 2
-     GROUP BY c.id, c.iso_code, c.name
-     ORDER BY mentions DESC
-     LIMIT $1
-  `, [n]);
-  return rows;
+async function fetchJSON(url) {
+  const res = await fetchWithTimeout(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+function isoDate(d) { return d.toISOString().slice(0, 10); }
+
+// Resolve ISO → country_id via /api/countries/all (server-cached 24h, so
+// this is one cheap HTTP call per cron run).
+async function resolveIsoMap() {
+  const data = await fetchJSON(`${API_URL}/api/countries/all`);
+  const arr = Array.isArray(data) ? data : (data?.countries || data?.data || []);
+  const map = new Map();
+  for (const c of arr) {
+    const iso = String(c.iso_code || c.iso || '').toUpperCase();
+    const id  = c.id;
+    if (iso && id) map.set(iso, { id, name: c.name || iso });
+  }
+  return map;
+}
+
+function pickIsos() {
+  if (process.env.PREWARM_COUNTRY_ISOS) {
+    return process.env.PREWARM_COUNTRY_ISOS
+      .split(',').map(s => s.trim().toUpperCase()).filter(Boolean);
+  }
+  return DEFAULT_TOP_ISOS.slice(0, TOP_N);
 }
 
 async function warmFlow(direction, country) {
@@ -103,7 +128,6 @@ async function warmFlow(direction, country) {
   }
   const ms = Date.now() - t0;
   if (!res.ok) return { direction, country, ms, err: `HTTP ${res.status}` };
-  // Drain so the connection closes cleanly.
   await res.text().catch(() => {});
   return { direction, country, ms };
 }
@@ -127,13 +151,31 @@ async function main() {
   const t0 = Date.now();
   console.log(`${TAG} start ${new Date().toISOString()} api=${API_URL} top=${TOP_N} concurrency=${CONCURRENCY} timeout=${TIMEOUT_MS}ms`);
 
-  const countries = await pickTopCountries(TOP_N);
+  let isoMap;
+  try {
+    isoMap = await resolveIsoMap();
+  } catch (err) {
+    console.error(`${TAG} fatal: countries/all fetch failed (${err.message}). Verify API_URL is reachable.`);
+    process.exit(1);
+  }
+
+  const requestedIsos = pickIsos();
+  const countries = requestedIsos
+    .map(iso => {
+      const m = isoMap.get(iso);
+      return m ? { iso, id: m.id, name: m.name } : null;
+    })
+    .filter(Boolean);
+
   if (!countries.length) {
-    console.log(`${TAG} no countries found — exiting`);
-    await pool.end();
+    console.log(`${TAG} no countries resolved — exiting`);
     return;
   }
-  console.log(`${TAG} top ${countries.length} countries: ${countries.map(c => c.iso).join(',')}`);
+  const missing = requestedIsos.filter(iso => !isoMap.has(iso));
+  if (missing.length) {
+    console.warn(`${TAG} skipped ${missing.length} unresolved ISOs: ${missing.join(',')}`);
+  }
+  console.log(`${TAG} resolved ${countries.length} countries: ${countries.map(c => c.iso).join(',')}`);
 
   const results = [];
   for (let i = 0; i < countries.length; i += CONCURRENCY) {
@@ -152,10 +194,10 @@ async function main() {
   const totalMs = results.reduce((s, r) => s + (r.about.ms || 0) + (r.from.ms || 0), 0);
   console.log(`\n${TAG} done in ${((Date.now() - t0) / 1000).toFixed(1)}s — about_ok=${aboutOk}/${results.length} from_ok=${fromOk}/${results.length} total_query_ms=${totalMs}`);
 
-  // Non-zero exit only if EVERY query failed (API likely down). Per-country
-  // failures are fine; cron monitoring should care about catastrophic only.
-  if (aboutOk === 0 && fromOk === 0) process.exit(1);
-  await pool.end();
+  // Non-zero exit only if EVERY query failed (API likely down).
+  const totalOk = aboutOk + fromOk;
+  const totalCount = results.length * 2;
+  if (totalCount > 0 && totalOk === 0) process.exit(1);
 }
 
 main().catch(err => { console.error(`${TAG} fatal:`, err); process.exit(1); });

@@ -5,44 +5,37 @@
  * prewarmThreadFlowsCron.js
  *
  * Pre-warms /api/flows/thread/:id and /api/flows/timeline/:id for the
- * top active+cooling threads and timelines by importance × article
- * volume. Runs at the thread builder's cadence (every 2 hours) so the
- * flow-arc cache (TTL 1h45m) is always warm when the user taps a card.
+ * top active+cooling threads and timelines. Runs at the thread builder's
+ * cadence (every 2 hours) so the flow-arc cache (TTL 1h45m) is always
+ * warm when the user taps a card.
  *
- * Why this matters: when a user clicks a thread, the globe needs to draw
- * its flow arcs. Cold-cache fetch + the multi-CTE _buildTieredFlows query
- * is the bulk of the perceived "arc lag". Cache miss on a popular thread
- * costs every user 1–3s of pre-render delay; hitting the same threads on
- * a cron schedule absorbs that cost in the background.
- *
- * What gets prewarmed:
- *   • Top THREAD_LIMIT threads (default 50) — status in (active, cooling),
- *     ranked by importance DESC × article_count DESC.
- *   • Top TIMELINE_LIMIT timelines (default 20) — same predicate.
- *
- * Cadence: ideally run every 2h (matches thread builder). Cache TTL is
- * 1h45m so each run refreshes the cache cleanly before it can expire.
+ * Why pure HTTP, no DB pool: production was hitting Postgres connection
+ * cap ("remaining connection slots are reserved for roles with the
+ * SUPERUSER attribute" — error 53300) when crons opened their own pg
+ * pools. So this cron discovers the top-N items via /api/threads/latest
+ * and /api/timelines/latest, which are themselves cached, and pays no
+ * direct PG connection. Mirrors the all-HTTP pattern of
+ * prewarmKeywordCacheCron.js.
  *
  * Env vars:
  *   API_URL                    base URL of the API (default: http://localhost:3000)
  *   PREWARM_THREAD_LIMIT       override top-N threads (default: 50)
  *   PREWARM_TIMELINE_LIMIT     override top-N timelines (default: 20)
- *   PREWARM_TIMEOUT_MS         per-request timeout (default: 60000)
+ *   PREWARM_TIMEOUT_MS         per-request timeout (default: 95000 — matches
+ *                              heatmap's 90s server-side SQL timeout + 5s buffer)
  *   PREWARM_CONCURRENCY        parallel requests (default: 1)
  *
  * Run:
  *   node prewarmThreadFlowsCron.js
  *
- * Wire to a 2h Render Cron / system cron:
- *   `0 *\/2 * * * cd /app && node prewarmThreadFlowsCron.js`
+ * Wire to a 2h Render Cron:
+ *   `5 *\/2 * * * cd /app && node prewarmThreadFlowsCron.js`
  */
 
-process.env.DB_POOL_MAX = '2';
 require('dotenv').config({ override: true });
-const pool = require('./db');
 
 const API_URL        = (process.env.API_URL || 'http://localhost:3000').replace(/\/$/, '');
-const TIMEOUT_MS     = parseInt(process.env.PREWARM_TIMEOUT_MS    || '60000', 10);
+const TIMEOUT_MS     = parseInt(process.env.PREWARM_TIMEOUT_MS    || '95000', 10);
 const CONCURRENCY    = Math.max(1, parseInt(process.env.PREWARM_CONCURRENCY    || '1',  10));
 const THREAD_LIMIT   = Math.max(1, parseInt(process.env.PREWARM_THREAD_LIMIT   || '50', 10));
 const TIMELINE_LIMIT = Math.max(1, parseInt(process.env.PREWARM_TIMELINE_LIMIT || '20', 10));
@@ -60,35 +53,35 @@ function fetchWithTimeout(url) {
   return fetch(url, { signal: ctrl.signal }).finally(() => clearTimeout(t));
 }
 
-// Top threads by recent relevance: status filter is the same as
-// /api/threads/latest (active + cooling), ranking mirrors importance ×
-// article volume so a 9-importance / 200-article thread wins over a
-// 9-importance / 5-article one.
+async function fetchJSON(url) {
+  const res = await fetchWithTimeout(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+
+// Top items via /api/{threads,timelines}/latest — these endpoints already
+// rank by importance × article_count and apply the active/cooling filter,
+// which is exactly what we want to prewarm.
 async function pickTopThreads(n) {
-  const { rows } = await pool.query(`
-    SELECT id, title, importance, article_count
-      FROM story_threads
-     WHERE status IN ('active','cooling')
-       AND article_count >= 2
-       AND COALESCE(scope, 'global') = 'global'
-     ORDER BY importance DESC NULLS LAST,
-              article_count DESC
-     LIMIT $1
-  `, [n]);
-  return rows;
+  const data = await fetchJSON(`${API_URL}/api/threads/latest?limit=${n}`);
+  const arr = Array.isArray(data) ? data : (data?.threads || data?.data || []);
+  return arr.slice(0, n).map(t => ({
+    id: t.thread_id || t.id,
+    title: t.title,
+    importance: t.importance,
+    article_count: t.article_count,
+  })).filter(t => t.id);
 }
 
 async function pickTopTimelines(n) {
-  const { rows } = await pool.query(`
-    SELECT id, title, importance, article_count
-      FROM story_timelines
-     WHERE status IN ('active','cooling')
-       AND article_count >= 2
-     ORDER BY importance DESC NULLS LAST,
-              article_count DESC
-     LIMIT $1
-  `, [n]);
-  return rows;
+  const data = await fetchJSON(`${API_URL}/api/timelines/latest?limit=${n}`);
+  const arr = Array.isArray(data) ? data : (data?.timelines || data?.data || []);
+  return arr.slice(0, n).map(t => ({
+    id: t.timeline_id || t.id,
+    title: t.title,
+    importance: t.importance,
+    article_count: t.article_count,
+  })).filter(t => t.id);
 }
 
 async function warmFlow(kind, id) {
@@ -125,10 +118,16 @@ async function main() {
   const t0 = Date.now();
   console.log(`${TAG} start ${new Date().toISOString()} api=${API_URL} threads=${THREAD_LIMIT} timelines=${TIMELINE_LIMIT} concurrency=${CONCURRENCY} timeout=${TIMEOUT_MS}ms`);
 
-  const [threads, timelines] = await Promise.all([
-    pickTopThreads(THREAD_LIMIT),
-    pickTopTimelines(TIMELINE_LIMIT),
-  ]);
+  let threads = [], timelines = [];
+  try {
+    [threads, timelines] = await Promise.all([
+      pickTopThreads(THREAD_LIMIT),
+      pickTopTimelines(TIMELINE_LIMIT),
+    ]);
+  } catch (err) {
+    console.error(`${TAG} fatal: discovery failed (${err.message}). Verify API_URL is reachable.`);
+    process.exit(1);
+  }
   console.log(`${TAG} loaded ${threads.length} threads + ${timelines.length} timelines\n`);
 
   const threadResults   = await processBatch(threads,   'thread');
@@ -136,16 +135,17 @@ async function main() {
   const timelineResults = await processBatch(timelines, 'timeline');
 
   const tOk = threadResults.filter(r => !r.err).length;
-  const tErr = threadResults.length - tOk;
   const lOk = timelineResults.filter(r => !r.err).length;
-  const lErr = timelineResults.length - lOk;
   const totalMs = [...threadResults, ...timelineResults].reduce((s, r) => s + (r.ms || 0), 0);
 
   console.log(`\n${TAG} done in ${((Date.now() - t0) / 1000).toFixed(1)}s — threads_ok=${tOk}/${threadResults.length} timelines_ok=${lOk}/${timelineResults.length} total_query_ms=${totalMs}`);
 
-  // Non-zero exit only on catastrophic failure (everything failed → API down).
-  if (tOk === 0 && lOk === 0 && (threadResults.length + timelineResults.length) > 0) process.exit(1);
-  await pool.end();
+  // Non-zero exit only on catastrophic failure (every single sub-request
+  // failed). Partial failures are normal — one slow item shouldn't turn
+  // the cron service red.
+  const totalCount = threadResults.length + timelineResults.length;
+  const totalOk    = tOk + lOk;
+  if (totalCount > 0 && totalOk === 0) process.exit(1);
 }
 
 main().catch(err => { console.error(`${TAG} fatal:`, err); process.exit(1); });

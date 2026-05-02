@@ -36,9 +36,15 @@ require('dotenv').config({ override: true });
 const API_URL     = (process.env.API_URL || 'http://localhost:3000').replace(/\/$/, '');
 // 60s — cold-buffer flows queries on a hot keyword can take 8–10s, plus
 // network RTT. Anything shorter just kills our own in-flight requests
-// and looks like a fetch error in the logs (was 12s, surfaced as
-// "This operation was aborted" all over the run).
-const TIMEOUT_MS  = parseInt(process.env.PREWARM_TIMEOUT_MS || '60000', 10);
+// and looks like a fetch error in the logs.
+//
+// Bumped 60s → 95s after observing every heatmap call abort at 60s.
+// Reason: the heatmap endpoint sets ITS OWN server-side SQL timeout of
+// 90s (see server.js _heatmapQuery → SET statement_timeout = 90000),
+// which is longer than our previous 60s. We need to wait longer than
+// the server is willing to spend, otherwise we cancel its work for it.
+// 95s = 90s server cap + 5s network/serialize buffer.
+const TIMEOUT_MS  = parseInt(process.env.PREWARM_TIMEOUT_MS || '95000', 10);
 // Serialize by default. Concurrency >1 saturates the API's small pg pool
 // (each flows query holds a connection for up to 10s under
 // SET LOCAL statement_timeout = 10000); follow-on requests then queue
@@ -116,6 +122,13 @@ async function warmOne(keyword) {
     keyword,
     heatmap: hm.status === 'fulfilled' ? `${hm.value}ms` : `ERR ${hm.reason?.message || hm.reason}`,
     flows:   fl.status === 'fulfilled' ? `${fl.value}ms` : `ERR ${fl.reason?.message || fl.reason}`,
+    // Track sub-requests independently so exit-code logic doesn't mark a
+    // keyword as a total failure just because ONE of two sub-requests
+    // failed (e.g., a hot keyword's flow query times out at the server's
+    // 10s SQL cap but its heatmap completes fine — we still warmed
+    // something useful, no need to fail the whole cron).
+    hmOk:    hm.status === 'fulfilled',
+    flOk:    fl.status === 'fulfilled',
     ok:      hm.status === 'fulfilled' && fl.status === 'fulfilled',
   };
 }
@@ -135,15 +148,20 @@ async function main() {
   }
 
   const okCount   = results.filter(r => r.ok).length;
-  const errCount  = results.length - okCount;
+  const partialOk = results.filter(r => !r.ok && (r.hmOk || r.flOk)).length;
+  const hmOkCount = results.filter(r => r.hmOk).length;
+  const flOkCount = results.filter(r => r.flOk).length;
+  const allFail   = results.filter(r => !r.hmOk && !r.flOk).length;
   for (const r of results) {
     console.log(`${TAG}   ${r.keyword.padEnd(16)} hm=${r.heatmap.padEnd(12)} fl=${r.flows}`);
   }
-  console.log(`${TAG} done in ${((Date.now() - t0) / 1000).toFixed(1)}s — ok=${okCount} err=${errCount}`);
+  console.log(`${TAG} done in ${((Date.now() - t0) / 1000).toFixed(1)}s — full_ok=${okCount} partial=${partialOk} hm_ok=${hmOkCount}/${results.length} fl_ok=${flOkCount}/${results.length}`);
 
-  // Non-zero exit if every single keyword failed — that means the API is
-  // down, not a per-keyword issue. Cron monitoring picks this up.
-  if (okCount === 0 && results.length > 0) process.exit(1);
+  // Non-zero exit ONLY if every sub-request of every keyword failed —
+  // i.e. zero useful work happened. A run where heatmap timed out but
+  // flows succeeded is still a productive cache-warmer; don't paint
+  // the cron service red over partial failures.
+  if (results.length > 0 && hmOkCount === 0 && flOkCount === 0) process.exit(1);
 }
 
 main().catch(err => { console.error(`${TAG} fatal:`, err); process.exit(1); });
