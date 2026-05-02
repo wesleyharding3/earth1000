@@ -30,6 +30,30 @@ require("dotenv").config();
 const pool = require("./db");
 const Anthropic = require("@anthropic-ai/sdk");
 const { normalizeRecentKeywords } = require("./keywordNormalizer");
+const { computeNationsForItem, enforceDisjointAndCapped } = require("./nationDesignations");
+
+// Recompute primary/secondary nations from the thread's full article corpus
+// via article_locations. Called after every INSERT/UPDATE so the arrays
+// stay in sync with what the articles actually mention. Bails on empty
+// extractor results to avoid blanking out a thread when article_locations
+// is missing rows. Failure is logged and swallowed — the thread row already
+// has the previous values, the next builder run will retry.
+async function recomputeAndPersistNations(threadId) {
+  try {
+    const { primary, secondary, mentions } =
+      await computeNationsForItem(pool, 'thread', threadId);
+    if (!mentions.length) return; // no extractor data → keep existing
+    await pool.query(
+      `UPDATE story_threads
+          SET primary_nations   = $2::text[],
+              secondary_nations = $3::text[]
+        WHERE id = $1`,
+      [threadId, primary, secondary]
+    );
+  } catch (err) {
+    console.warn(`   ⚠ recomputeNations(${threadId}) failed: ${err.message}`);
+  }
+}
 
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -1301,11 +1325,13 @@ async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()
           refreshIds.add(threadId);
         }
 
-        // Update existing thread — merge incoming country codes into the
-        // thread's existing primary/secondary nation arrays so a thread's
-        // geographic scope grows as new articles add new actors.
-        const primaryIsos   = sanitizeIsos(def.primary_nations);
-        const secondaryIsos = sanitizeIsos(def.secondary_nations);
+        // Update existing thread. Keywords still grow via SQL union (they're
+        // a free-form bag). Nations are NOT unioned anymore — that pattern
+        // ballooned primary_nations to 7-22 entries with hallucinated
+        // countries (Iran on Sinaloa threads, EU everywhere). Instead we
+        // INSERT the new articles first, then call recomputeNationsForItem
+        // below which derives primary/secondary from article_locations
+        // ground truth and caps at PRIMARY_CAP (4) / SECONDARY_CAP (12).
         await pool.query(`
           UPDATE story_threads
           SET last_updated_at = NOW(),
@@ -1313,18 +1339,13 @@ async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()
               article_count   = article_count + $2,
               keywords        = (
                 SELECT ARRAY(SELECT DISTINCT unnest(keywords || $3::text[]))
-              ),
-              primary_nations = (
-                SELECT ARRAY(SELECT DISTINCT unnest(COALESCE(primary_nations,   ARRAY[]::text[]) || $5::text[]))
-              ),
-              secondary_nations = (
-                SELECT ARRAY(SELECT DISTINCT unnest(COALESCE(secondary_nations, ARRAY[]::text[]) || $6::text[]))
               )
           WHERE id = $4
-        `, [def.importance, def.article_ids.length, def.keywords || [], threadId, primaryIsos, secondaryIsos]);
+        `, [def.importance, def.article_ids.length, def.keywords || [], threadId]);
 
         await insertArticles(threadId, def.article_ids, def.anchor_article_id, def.importance, validIdSet);
         await recomputeBreakingSignal(threadId);
+        await recomputeAndPersistNations(threadId);
         if (current) {
           existingThreadMap.set(threadId, {
             ...current,
@@ -1343,8 +1364,14 @@ async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()
         // started with NULL and only a minority got back-filled later by
         // deep enrichment. Visible symptom: new threads rendered with no
         // country badges in the UI.
-        const primaryIsos   = sanitizeIsos(def.primary_nations);
-        const secondaryIsos = sanitizeIsos(def.secondary_nations);
+        // enforceDisjointAndCapped: Claude regularly returns the same ISO
+        // in both primary AND secondary (e.g. primary=[IR,US], secondary=
+        // [US,IL]). The plain sanitizeIsos call only deduped within each
+        // array, not between them. Using the shared helper ensures
+        // primary wins, secondary is the disjoint remainder, and both
+        // respect the caps (4 / 12).
+        const { primary: primaryIsos, secondary: secondaryIsos } =
+          enforceDisjointAndCapped(def.primary_nations, def.secondary_nations);
         const { rows } = await pool.query(`
           INSERT INTO story_threads
             (title, description, primary_category, geographic_scope,

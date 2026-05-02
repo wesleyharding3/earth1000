@@ -12156,21 +12156,26 @@ window.fmtDate = function(d) {
   const _apiInflight = new Map(); // url → Promise
   const MAX_ENTRIES = 120;
 
-  // Default TTLs by endpoint pattern (ms)
+  // Default TTLs by endpoint pattern (ms). Each TTL sits just under the
+  // cadence of whatever cron produces the underlying data — see the
+  // server-side ttlCached calls for the matching values. Frontend cache
+  // is per-tab; bumping these reduces redundant API hits while a single
+  // user navigates without sacrificing freshness (cache misses naturally
+  // happen on tab reopen / hard refresh).
   const TTL_MAP = [
-    ['/api/threads/latest',    180000],  // 3 min
-    ['/api/timelines/latest',  180000],  // 3 min
-    ['/api/news/search',       120000],  // 2 min
-    ['/api/articles/recent',    60000],  // 1 min
-    ['/api/flows',             120000],  // 2 min
-    ['/api/countries/all',     600000],  // 10 min
-    ['/api/cities/all',        600000],  // 10 min
-    ['/api/news/sources-stats',300000],  // 5 min
-    ['/api/threads/by-country', 90000],  // 90s
-    ['/api/sentiment/country',  90000],  // 90s
-    ['/api/articles/by-ids',    90000],  // 90s
-    ['/api/heatmap/',          120000],  // 2 min
-    ['/api/leader-tweets',     120000],  // 2 min
+    ['/api/threads/latest',     6_300_000],  // 1h45m — thread builder runs every 2h
+    ['/api/timelines/latest',  79_200_000],  // 22h   — timeline builder runs daily
+    ['/api/news/search',        3_300_000],  // 55m   — article fetcher hourly
+    ['/api/articles/recent',    3_300_000],  // 55m   — article fetcher hourly
+    ['/api/flows',              3_300_000],  // 55m   — server applies its own conditional 22h for country-only
+    ['/api/countries/all',     86_400_000],  // 24h   — essentially static
+    ['/api/cities/all',        86_400_000],  // 24h   — essentially static
+    ['/api/news/sources-stats',39_600_000],  // 11h   — source stats cron 2x/day
+    ['/api/threads/by-country', 6_300_000],  // 1h45m — thread builder every 2h
+    ['/api/sentiment/country',  3_300_000],  // 55m   — derived from articles
+    ['/api/articles/by-ids',   86_400_000],  // 24h   — articles are immutable once published
+    ['/api/heatmap/',           1_500_000],  // 25m   — heatmap cron every 30m
+    ['/api/leader-tweets',      3_300_000],  // 55m   — tied to fetcher cycle
   ];
 
   function getTtl(url) {
@@ -24646,8 +24651,26 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }
 
     } catch(e) {
-      console.error("Flow load error:", e);
-      document.getElementById("flowStats").innerHTML = `<span style="color:#ff6b6b">Failed to load</span> — <span style="cursor:pointer;text-decoration:underline;opacity:0.7" onclick="loadFlows()">retry</span>`;
+      // AbortError fires when the global 45s fetch timeout
+      // (LONG_TIMEOUT_PATTERNS at index.html:12133) trips because the
+      // server query took longer than that. It's NOT a server-side bug
+      // — the query is genuinely slow on this filter combo. Show a
+      // narrower-your-filters message instead of the generic
+      // "Failed to load" so the user knows what to try next.
+      // Don't console.error a timeout either — it's expected behavior,
+      // not a code defect, and was spamming the console under contention.
+      const isAbort = e?.name === 'AbortError' || /aborted/i.test(e?.message || '');
+      if (isAbort) {
+        console.warn("Flow load timed out (45s):", e.message);
+        document.getElementById("flowStats").innerHTML =
+          `<span style="color:#ffa040">Took too long</span> — try a narrower filter or shorter date range. ` +
+          `<span style="cursor:pointer;text-decoration:underline;opacity:0.7" onclick="loadFlows()">retry</span>`;
+      } else {
+        console.error("Flow load error:", e);
+        document.getElementById("flowStats").innerHTML =
+          `<span style="color:#ff6b6b">Failed to load</span> — ` +
+          `<span style="cursor:pointer;text-decoration:underline;opacity:0.7" onclick="loadFlows()">retry</span>`;
+      }
     } finally {
       if (_loadBtn) _loadBtn.textContent = 'Load';
     }
@@ -49837,28 +49860,33 @@ body.ticker-active .gTickerLabel {
 <style>
   /* See www/index.html for full rationale — lift the panel + cap its
      max-height so the keyword input stays visible above the keyboard
-     and the globe/ticker stay put. */
-  #flowControls.kbd-open {
-    bottom: calc(var(--page-nav-height) + var(--global-ticker-height) + var(--global-ticker-gap) + 34px + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom) + var(--kbd-shift, 0px));
+     and the globe/ticker stay put.
+     `body` prefix bumps specificity above `body.ticker-active
+     #flowControls` (which sets bottom on its own). Without that prefix
+     the .kbd-open rule loses the cascade whenever the ticker is on. */
+  body #flowControls.kbd-open {
+    /* !important — see www/index.html for rationale (specificity tie with
+       body.ticker-active #flowControls). */
+    /* See www/index.html for full rationale — JS sets bottom inline,
+       no bottom transition (would get stuck mid-interpolation). */
+    bottom: calc(var(--page-nav-height) + var(--global-ticker-height) + var(--global-ticker-gap) + 34px + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom) + var(--kbd-shift, 0px)) !important;
     max-height: max(220px, calc(100vh - var(--kbd-shift, 0px) - 70px));
     overflow-y: auto;
     overscroll-behavior: contain;
-    transition: bottom 220ms cubic-bezier(0.32, 0.72, 0, 1),
-                max-height 220ms cubic-bezier(0.32, 0.72, 0, 1),
+    transition: max-height 220ms cubic-bezier(0.32, 0.72, 0, 1),
                 opacity 0.3s ease,
                 transform 0.4s cubic-bezier(0.32, 0.72, 0, 1),
                 left 0.4s cubic-bezier(0.32, 0.72, 0, 1),
                 min-width 0.4s cubic-bezier(0.32, 0.72, 0, 1),
                 max-width 0.4s cubic-bezier(0.32, 0.72, 0, 1);
   }
-  #semHeatPanel.kbd-open {
+  body #semHeatPanel.kbd-open {
     bottom: calc(120px + var(--kbd-shift, 0px));
     max-height: max(220px, calc(100vh - 244px - var(--kbd-shift, 0px)));
-    transition: bottom 220ms cubic-bezier(0.32, 0.72, 0, 1),
-                max-height 220ms cubic-bezier(0.32, 0.72, 0, 1);
+    transition: max-height 220ms cubic-bezier(0.32, 0.72, 0, 1);
   }
   @media (prefers-reduced-motion: reduce) {
-    #flowControls.kbd-open, #semHeatPanel.kbd-open { transition: none; }
+    body #flowControls.kbd-open, body #semHeatPanel.kbd-open { transition: none; }
   }
 </style>
 <script>
@@ -49879,21 +49907,29 @@ body.ticker-active .gTickerLabel {
     return inset > 100 ? inset : 0;
   }
 
+  // See www/index.html for full rationale — set bottom inline directly
+  // because the CSS cascade kept losing to body.ticker-active rules.
   function applyShift() {
     if (!activePanel) return;
     const kbd = computeKbdHeight();
     if (kbd > 0) {
+      if (!activePanel.dataset.kbdBaseBottom) {
+        activePanel.dataset.kbdBaseBottom = getComputedStyle(activePanel).bottom;
+      }
+      const base = parseFloat(activePanel.dataset.kbdBaseBottom) || 0;
       activePanel.style.setProperty('--kbd-shift', `${kbd}px`);
+      activePanel.style.setProperty('bottom', `${base + kbd}px`, 'important');
       activePanel.classList.add('kbd-open');
     } else {
-      activePanel.classList.remove('kbd-open');
-      activePanel.style.removeProperty('--kbd-shift');
+      clearShift();
     }
   }
   function clearShift() {
     if (!activePanel) return;
     activePanel.classList.remove('kbd-open');
     activePanel.style.removeProperty('--kbd-shift');
+    activePanel.style.removeProperty('bottom');
+    delete activePanel.dataset.kbdBaseBottom;
   }
 
   document.addEventListener('focusin', e => {

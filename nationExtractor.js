@@ -96,8 +96,13 @@ const COUNTRY_ALIASES = {
   "people's republic of china": 'CN',
   'mainland china':      'CN',
 
-  'eu':                  'EU',
-  'european union':      'EU',
+  // 'eu' / 'european union' deliberately NOT mapped to a country code.
+  // EU is not a country in our `countries` table, so any "EU" value that
+  // landed in primary_nations could only have arrived via blind dedup
+  // unions and never had a real article_locations row backing it. The
+  // story's actual countries (FR, DE, IT, ES, …) are extracted via
+  // their own names + demonyms below; that's the data that should reach
+  // the thread's nation arrays.
 
   // Disambiguators for the ambiguous-name guard. These force-resolve the
   // ambiguous word to its country meaning when the explicit phrase is used.

@@ -13158,21 +13158,22 @@ window.fmtDate = function(d) {
   const _apiInflight = new Map(); // url → Promise
   const MAX_ENTRIES = 120;
 
-  // Default TTLs by endpoint pattern (ms)
+  // Default TTLs by endpoint pattern (ms). See index.html for full
+  // rationale — each TTL aligned to the producing cron's cadence.
   const TTL_MAP = [
-    ['/api/threads/latest',    180000],  // 3 min
-    ['/api/timelines/latest',  180000],  // 3 min
-    ['/api/news/search',       120000],  // 2 min
-    ['/api/articles/recent',    60000],  // 1 min
-    ['/api/flows',             120000],  // 2 min
-    ['/api/countries/all',     600000],  // 10 min
-    ['/api/cities/all',        600000],  // 10 min
-    ['/api/news/sources-stats',300000],  // 5 min
-    ['/api/threads/by-country', 90000],  // 90s
-    ['/api/sentiment/country',  90000],  // 90s
-    ['/api/articles/by-ids',    90000],  // 90s
-    ['/api/heatmap/',          120000],  // 2 min
-    ['/api/leader-tweets',     120000],  // 2 min
+    ['/api/threads/latest',     6_300_000],  // 1h45m — thread builder every 2h
+    ['/api/timelines/latest',  79_200_000],  // 22h   — timeline builder daily
+    ['/api/news/search',        3_300_000],  // 55m   — article fetcher hourly
+    ['/api/articles/recent',    3_300_000],  // 55m   — article fetcher hourly
+    ['/api/flows',              3_300_000],  // 55m   — server bumps to 22h for country-only
+    ['/api/countries/all',     86_400_000],  // 24h   — static
+    ['/api/cities/all',        86_400_000],  // 24h   — static
+    ['/api/news/sources-stats',39_600_000],  // 11h   — source stats 2x/day
+    ['/api/threads/by-country', 6_300_000],  // 1h45m — thread builder every 2h
+    ['/api/sentiment/country',  3_300_000],  // 55m   — article-derived
+    ['/api/articles/by-ids',   86_400_000],  // 24h   — immutable
+    ['/api/heatmap/',           1_500_000],  // 25m   — heatmap cron every 30m
+    ['/api/leader-tweets',      3_300_000],  // 55m   — fetcher cycle
   ];
 
   function getTtl(url) {
@@ -26415,8 +26416,21 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }
 
     } catch(e) {
-      console.error("Flow load error:", e);
-      document.getElementById("flowStats").innerHTML = `<span style="color:#ff6b6b">Failed to load</span> — <span style="cursor:pointer;text-decoration:underline;opacity:0.7" onclick="loadFlows()">retry</span>`;
+      // See index.html for full rationale — distinguish AbortError
+      // (45s client timeout, query genuinely slow) from a real failure
+      // and tell the user what to try.
+      const isAbort = e?.name === 'AbortError' || /aborted/i.test(e?.message || '');
+      if (isAbort) {
+        console.warn("Flow load timed out (45s):", e.message);
+        document.getElementById("flowStats").innerHTML =
+          `<span style="color:#ffa040">Took too long</span> — try a narrower filter or shorter date range. ` +
+          `<span style="cursor:pointer;text-decoration:underline;opacity:0.7" onclick="loadFlows()">retry</span>`;
+      } else {
+        console.error("Flow load error:", e);
+        document.getElementById("flowStats").innerHTML =
+          `<span style="color:#ff6b6b">Failed to load</span> — ` +
+          `<span style="cursor:pointer;text-decoration:underline;opacity:0.7" onclick="loadFlows()">retry</span>`;
+      }
     } finally {
       if (_loadBtn) _loadBtn.textContent = 'Load';
     }
@@ -55177,35 +55191,54 @@ body.ticker-active .gTickerLabel {
            area. Internal content scrolls inside the smaller box — the
            keyword input lives near the top of each panel so it stays
            visible. The globe + ticker stay put because we never touch
-           --app-height. */
-  #flowControls.kbd-open {
-    bottom: calc(var(--page-nav-height) + var(--global-ticker-height) + var(--global-ticker-gap) + 34px + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom) + var(--kbd-shift, 0px));
+           --app-height.
+     `body #flowControls.kbd-open` rather than `#flowControls.kbd-open`
+     because `body.ticker-active #flowControls` (line ~1754) sets its
+     own `bottom` and was winning specificity against the .kbd-open
+     class — that's why the panel wasn't shifting on iOS even after
+     the cap sync. Same reason for the body-prefixed semHeatPanel rule
+     below. */
+  body #flowControls.kbd-open {
+    /* !important because `body.ticker-active #flowControls` (line ~1754)
+       ties our specificity at (1,1,1) and the cascade was picking the
+       earlier rule. Tested in the preview with ticker-active forced —
+       without !important the `bottom` stays at the base ticker-active
+       value instead of shifting by --kbd-shift. */
+    /* JS now sets `bottom` inline + !important via the keyboard module —
+       the CSS rule below would lose to body.ticker-active #flowControls
+       on specificity, and the bottom transition was getting stuck mid-
+       interpolation in testing. We keep the calc here as a documented
+       intent; the inline value wins anyway. */
+    bottom: calc(var(--page-nav-height) + var(--global-ticker-height) + var(--global-ticker-gap) + 34px + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom) + var(--kbd-shift, 0px)) !important;
     /* Reserve ~70px at the top for the iOS status bar / safe area + a
        breathing margin. min-height floor so a tall keyboard on a small
        phone doesn't crush the panel below usable. */
     max-height: max(220px, calc(100vh - var(--kbd-shift, 0px) - 70px));
     overflow-y: auto;
     overscroll-behavior: contain;
-    transition: bottom 220ms cubic-bezier(0.32, 0.72, 0, 1),
-                max-height 220ms cubic-bezier(0.32, 0.72, 0, 1),
+    /* No transition on `bottom` — the inline-style snap is intentional
+       (bottom transitions on this element kept getting stuck mid-flight
+       during preview testing, leaving the panel at its base value).
+       max-height still animates so the resize is smooth. */
+    transition: max-height 220ms cubic-bezier(0.32, 0.72, 0, 1),
                 opacity 0.3s ease,
                 transform 0.4s cubic-bezier(0.32, 0.72, 0, 1),
                 left 0.4s cubic-bezier(0.32, 0.72, 0, 1),
                 min-width 0.4s cubic-bezier(0.32, 0.72, 0, 1),
                 max-width 0.4s cubic-bezier(0.32, 0.72, 0, 1);
   }
-  #semHeatPanel.kbd-open {
+  body #semHeatPanel.kbd-open {
     bottom: calc(120px + var(--kbd-shift, 0px));
     /* The base rule already sets max-height: calc(100vh - 244px). Subtract
        the keyboard height on top of that so the panel never overlaps the
        keyboard or the top safe area. */
     max-height: max(220px, calc(100vh - 244px - var(--kbd-shift, 0px)));
-    transition: bottom 220ms cubic-bezier(0.32, 0.72, 0, 1),
-                max-height 220ms cubic-bezier(0.32, 0.72, 0, 1);
+    /* See #flowControls.kbd-open — no bottom transition; JS snaps it. */
+    transition: max-height 220ms cubic-bezier(0.32, 0.72, 0, 1);
   }
   /* Reduced-motion: skip the transition. */
   @media (prefers-reduced-motion: reduce) {
-    #flowControls.kbd-open, #semHeatPanel.kbd-open { transition: none; }
+    body #flowControls.kbd-open, body #semHeatPanel.kbd-open { transition: none; }
   }
 </style>
 <script>
@@ -55233,15 +55266,27 @@ body.ticker-active .gTickerLabel {
     return inset > 100 ? inset : 0;
   }
 
+  // Set the panel's `bottom` inline directly. Going through .kbd-open CSS
+  // alone hit a specificity tie with `body.ticker-active #flowControls`
+  // AND a transition-interpolation glitch that left the value stuck mid-
+  // animation. Inline + !important sidesteps both. We still toggle the
+  // .kbd-open class so the max-height + overflow rules in CSS apply.
   function applyShift() {
     if (!activePanel) return;
     const kbd = computeKbdHeight();
     if (kbd > 0) {
+      // Cache the panel's natural (un-shifted) bottom on first lift so we
+      // can restore exactly when the keyboard hides — avoids drift if the
+      // computed bottom changes during the keyboard session.
+      if (!activePanel.dataset.kbdBaseBottom) {
+        activePanel.dataset.kbdBaseBottom = getComputedStyle(activePanel).bottom;
+      }
+      const base = parseFloat(activePanel.dataset.kbdBaseBottom) || 0;
       activePanel.style.setProperty('--kbd-shift', `${kbd}px`);
+      activePanel.style.setProperty('bottom', `${base + kbd}px`, 'important');
       activePanel.classList.add('kbd-open');
     } else {
-      activePanel.classList.remove('kbd-open');
-      activePanel.style.removeProperty('--kbd-shift');
+      clearShift();
     }
   }
 
@@ -55249,6 +55294,8 @@ body.ticker-active .gTickerLabel {
     if (!activePanel) return;
     activePanel.classList.remove('kbd-open');
     activePanel.style.removeProperty('--kbd-shift');
+    activePanel.style.removeProperty('bottom');
+    delete activePanel.dataset.kbdBaseBottom;
   }
 
   document.addEventListener('focusin', e => {

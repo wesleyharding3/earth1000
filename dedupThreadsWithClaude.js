@@ -36,6 +36,7 @@ process.env.DB_POOL_MAX = "3";
 require("dotenv").config({ override: true });
 const pool = require("./db");
 const Anthropic = require("@anthropic-ai/sdk");
+const { computeNationsFromArticles, PRIMARY_CAP, SECONDARY_CAP } = require("./nationDesignations");
 
 // Inline (intentionally — avoids a circular require with storyThreadBuilder
 // once it imports THIS module for in-cron dedup). Mirrors the canonical
@@ -479,12 +480,30 @@ async function mergeThread(winner, loser) {
      ON CONFLICT DO NOTHING
   `, [winner.id, loser.id]);
 
-  // Recount winner, union keywords + nations
+  // Keywords still get unioned (they're a free-form bag, not a tightly-
+  // capped semantic field). Nations get RECOMPUTED from the merged
+  // article corpus instead — the previous blind union is what was
+  // ballooning primary_nations to 7-22 entries with countries that no
+  // article ever mentioned.
   const winnerKws = new Set((winner.keywords || []).map(k => String(k || '').trim().toLowerCase()).filter(Boolean));
   (loser.keywords || []).forEach(k => winnerKws.add(String(k || '').trim().toLowerCase()));
   const mergedKeywords = [...winnerKws];
-  const mergedPrimary = [...new Set([...(winner.primary_nations || []), ...(loser.primary_nations || [])])];
-  const mergedSecondary = [...new Set([...(winner.secondary_nations || []), ...(loser.secondary_nations || [])])];
+
+  // Pull the merged article set, run it through article_locations to get
+  // ground truth. computeNationsFromArticles caps at PRIMARY_CAP (4) /
+  // SECONDARY_CAP (12) and ranks by distinct-article mention count.
+  const { rows: artRows } = await pool.query(
+    `SELECT article_id FROM story_thread_articles WHERE thread_id = $1`,
+    [winner.id]
+  );
+  const { primary: nextPrimary, secondary: nextSecondary, mentions } =
+    await computeNationsFromArticles(pool, artRows.map(r => r.article_id));
+
+  // Safety net: if article_locations is empty for everything in the merged
+  // set (extractor was offline / older articles never tagged), keep the
+  // winner's existing arrays rather than blanking the thread out.
+  const mergedPrimary   = mentions.length ? nextPrimary   : (winner.primary_nations   || []);
+  const mergedSecondary = mentions.length ? nextSecondary : (winner.secondary_nations || []);
 
   await pool.query(`
     UPDATE story_threads

@@ -1270,7 +1270,8 @@ app.post('/api/badges/seen', async (req, res) => {
 ========================================= */
 app.get("/api/cities", async (req, res) => {
   try {
-    const rows = await ttlCached('cities:all', 300_000, async () => {
+    // 24h — cities table is essentially static (geographic boundaries don't shift)
+    const rows = await ttlCached('cities:all', 86_400_000, async () => {
       const result = await pool.query(`
         SELECT
           c.id,
@@ -1305,7 +1306,8 @@ app.get("/api/cities", async (req, res) => {
 ========================================= */
 app.get("/api/countries", async (req, res) => {
   try {
-    const rows = await ttlCached('countries:all', 300_000, async () => {
+    // 24h — countries list is essentially static
+    const rows = await ttlCached('countries:all', 86_400_000, async () => {
       const result = await pool.query(`
         SELECT id, name, flag, slug, iso_code, latitude AS lat, longitude AS lon, population, gdp
         FROM countries
@@ -1540,7 +1542,8 @@ app.get("/api/news/country/:countryId/global", async (req, res) => {
 ========================================= */
 app.get("/api/tags", async (req, res) => {
   try {
-    const rows = await ttlCached('tags:all', 300_000, async () => {
+    // 24h — tags list changes weekly+
+    const rows = await ttlCached('tags:all', 86_400_000, async () => {
       const result = await pool.query(`
         SELECT id, name FROM tags ORDER BY id ASC
       `);
@@ -2198,7 +2201,10 @@ app.get("/api/news/search", searchLimiter, async (req, res) => {
     const effectiveLimit = limit || 24;
     if (isDefaultQuery) {
       const cacheKey = `news/search:default:v9:${effectiveLimit}:${offset}`;
-      let cached = await ttlCached(cacheKey, 60_000, async () => {
+      // 55m — articles ingest hourly via the fetcher cron, so refreshing
+      // every minute was wasted compute. 55m sits just under the cron
+      // cadence; a request right after the fetcher always re-runs.
+      let cached = await ttlCached(cacheKey, 3_300_000, async () => {
         return await _executeNewsSearch({ effectiveLimit, offset });
       });
       // ── Last-good fallback ──────────────────────────────────────────
@@ -2473,7 +2479,8 @@ app.get("/api/news/search", searchLimiter, async (req, res) => {
       `:from=${fromKey}:about=${aboutKey}:kw=${keyword || ''}` +
       `:fd=${fromDate || ''}:td=${toDate || ''}:tag=${tagQ}`;
 
-    const cachedSlice = await ttlCached(filterCacheKey, 60_000, async () => {
+    // 55m — see news/search default-path comment above (article fetcher hourly)
+    const cachedSlice = await ttlCached(filterCacheKey, 3_300_000, async () => {
       // Cap at 10s. Without it, runaway keyword scans (the bug behind the
       // 45s "Failed to fetch" the user reported) ran until Render's gateway
       // dropped the connection, returning no response at all. With SET LOCAL
@@ -2606,7 +2613,8 @@ app.get("/api/keyword-suggestions", searchLimiter, async (req, res) => {
     // Cache key includes the types filter so distinct callers don't
     // accidentally serve each other's narrower / wider result sets.
     const cacheKey = `kw-suggest:${q}:${limit}:${typesRaw || 'all'}`;
-    const results = await ttlCached(cacheKey, 120_000, async () => {
+    // 55m — keyword normalizer cron runs hourly; 2m TTL was 30× under
+    const results = await ttlCached(cacheKey, 3_300_000, async () => {
       // Three sources, run in parallel. Each is gated on the caller's
       // `types` filter so we don't burn a query for a result the caller
       // told us to drop. `noop` returns an empty rows shape so the
@@ -2677,13 +2685,19 @@ app.get("/api/flows", heavyLimiter, async (req, res) => {
     const keyword      = req.query.keyword?.trim()      || null;
 
     // ── TTL cache for flows — keyed by all filter params ──────────────
-    // 600s (10 min) instead of 180s. News-flow aggregations don't need
-    // sub-3-min freshness for the user-facing globe; the cron-driven
-    // article ingestion runs slower than that anyway, and hot keywords
-    // (trump, ukraine, etc.) are the bulk of traffic — keeping them
-    // warmer cuts cold-miss frequency dramatically.
+    // TTL is now CONDITIONAL on filter shape because different scopes
+    // refresh on very different cadences:
+    //   • country-only (no keyword, no city)  → 22h. Pre-warmed daily by
+    //     prewarmCountryFlowsCron.js; arcs are stable hour-to-hour. The
+    //     daily cron only pays off if TTL exceeds 24h-minus-cron-jitter.
+    //   • keyword or anything else            → 55m. Article fetcher runs
+    //     hourly; 55m sits just under that so each fetcher tick triggers
+    //     exactly one refresh per hot key.
     const _flowCacheKey = `flows:${mode}:${viewMode}:${limit}:${fromDate||''}:${toDate||''}:${fromCountry||''}:${fromCity||''}:${aboutCountry||''}:${aboutCity||''}:${keyword||''}:${normalize}`;
-    const _flowResult = await ttlCached(_flowCacheKey, 600_000, async () => {
+    const _flowTtl = (!keyword && !fromCity && !aboutCity && (fromCountry || aboutCountry))
+      ? 79_200_000   // 22h — country-aggregate, prewarmed daily
+      : 3_300_000;   // 55m — keyword / city / unfiltered
+    const _flowResult = await ttlCached(_flowCacheKey, _flowTtl, async () => {
 
     // Build dynamic WHERE conditions
     const conditions = [];
@@ -3274,7 +3288,9 @@ app.get("/api/flows/article/:id", async (req, res) => {
     const articleId = parseInt(req.params.id, 10);
     if (!articleId) return res.status(400).json({ error: "Invalid article ID" });
 
-    const _cached = await ttlCached(`flows/article:${articleId}`, 60_000, async () => {
+    // 55m — flows/article depends on the article's location set, which is
+    // populated at ingest time by the hourly fetcher.
+    const _cached = await ttlCached(`flows/article:${articleId}`, 3_300_000, async () => {
     const { rows } = await pool.query(`
       SELECT
         a.id AS article_id,
@@ -3391,7 +3407,8 @@ app.get("/api/flows/route-articles", searchLimiter, async (req, res) => {
     if (!srcId || !dstId) return res.status(400).json({ error: "src_id and dst_id required" });
 
     const cacheKey = `route-articles:${srcType}:${srcId}:${dstType}:${dstId}:${fromDate||''}:${toDate||''}:${limit}`;
-    const result = await ttlCached(cacheKey, 60_000, async () => {
+    // 55m — route-articles depends on hourly article ingest
+    const result = await ttlCached(cacheKey, 3_300_000, async () => {
       const params = [];
       const where = ['al.routing_type IN (\'content\', \'source\')'];
 
@@ -3463,7 +3480,8 @@ app.get("/api/flows/thread/:id", async (req, res) => {
     const threadId = parseInt(req.params.id, 10);
     if (!threadId) return res.status(400).json({ error: "Invalid thread ID" });
 
-    const _cached = await ttlCached(`flows/thread:${threadId}`, 300_000, async () => {
+    // 1h45m — thread builder cron runs every 2h
+    const _cached = await ttlCached(`flows/thread:${threadId}`, 6_300_000, async () => {
       return await _buildTieredFlows({
         kind: 'thread',
         id: threadId,
@@ -3721,7 +3739,8 @@ app.get("/api/threads/:id/articles", async (req, res) => {
     const threadId = parseInt(req.params.id, 10);
     if (!threadId) return res.status(400).json({ error: "Invalid thread ID" });
 
-    const _cached = await ttlCached(`threads/${threadId}/articles`, 180_000, async () => {
+    // 1h45m — thread builder cron runs every 2h
+    const _cached = await ttlCached(`threads/${threadId}/articles`, 6_300_000, async () => {
       // src = article's home country (publisher / origin).
       // dst = primary destination country this article is ABOUT, pulled from
       //       article_locations with 'content' routing preferred over 'source'.
@@ -7364,7 +7383,8 @@ app.get("/api/timelines/latest", async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit, 10) || 100, 500);
     const _cacheKey = `timelines/latest:${limit}`;
-    const _cached = await ttlCached(_cacheKey, 60_000, async () => {
+    // 22h — timeline builder cron runs once daily
+    const _cached = await ttlCached(_cacheKey, 79_200_000, async () => {
       // Use article-derived recency (not last_updated_at) — see the
       // long comment in /api/threads/latest for the rationale.
       // Timelines have the same skew problem: cosmetic operations bump
@@ -7762,7 +7782,8 @@ app.get("/api/flows/timeline/:id", async (req, res) => {
     const timelineId = parseInt(req.params.id, 10);
     if (!timelineId) return res.status(400).json({ error: "Invalid timeline ID" });
 
-    const _cached = await ttlCached(`flows/timeline:${timelineId}`, 300_000, async () => {
+    // 22h — timeline builder cron runs once daily
+    const _cached = await ttlCached(`flows/timeline:${timelineId}`, 79_200_000, async () => {
       return await _buildTieredFlows({
         kind: 'timeline',
         id: timelineId,
@@ -7902,7 +7923,8 @@ app.get("/api/sentiment/country/:iso", async (req, res) => {
     const limit = Math.min(parseInt(req.query.limit, 10) || 150, 300);
     const days  = Math.min(parseInt(req.query.days, 10)  || 7,   30);
 
-    const cached = await ttlCached(`sentiment/country:${iso}:${days}:${limit}`, 45_000, async () => {
+    // 55m — sentiment derives from articles directly; tracks fetcher hourly
+    const cached = await ttlCached(`sentiment/country:${iso}:${days}:${limit}`, 3_300_000, async () => {
       const { rows } = await pool.query(`
         SELECT
           a.id,
@@ -8068,7 +8090,8 @@ app.get("/api/threads/by-country/:iso", async (req, res) => {
     //    primary_nations=[iso], so skip the entity-mention CTE entirely
     //    and just filter story_threads directly.
     if (scope === 'local') {
-      const rows = await ttlCached(`threads/local-by-country:${iso}:${days}:${limit}`, 45_000, async () => {
+      // 1h45m — thread builder cron every 2h
+      const rows = await ttlCached(`threads/local-by-country:${iso}:${days}:${limit}`, 6_300_000, async () => {
         const { rows } = await pool.query(`
           SELECT
             t.id                    AS thread_id,
@@ -8132,7 +8155,8 @@ app.get("/api/threads/by-country/:iso", async (req, res) => {
       return res.json(rows);
     }
 
-    const rows = await ttlCached(`threads/by-country:${iso}:${days}:${limit}`, 45_000, async () => {
+    // 1h45m — thread builder cron every 2h
+    const rows = await ttlCached(`threads/by-country:${iso}:${days}:${limit}`, 6_300_000, async () => {
     const { rows } = await pool.query(`
       WITH candidate_articles AS (
         SELECT
@@ -8372,14 +8396,12 @@ app.get("/api/threads/latest", async (req, res) => {
     const fromDate = req.query.from_date || null;  // ISO date string e.g. "2026-03-01"
     const toDate   = req.query.to_date   || null;
 
-    // 30s in-memory TTL — coalesces concurrent requests for the same
-    // (limit, from, to) tuple into one query. New threads still surface
-    // within the next refresh window.
-    // 2-minute TTL — thread data doesn't change fast enough to justify
-    // hammering the DB every 30s. The builder runs once/day and articles
-    // trickle in; 2 min is plenty fresh for a feed.
+    // 1h45m TTL — thread builder cron runs every 2 hours, so the prior
+    // 3 min was 35× under-cached. 1h45m sits just under the cron cadence
+    // so the cache always expires before the next build. Comment about
+    // the builder running once/day was outdated — it's every 2h.
     const _cacheKey = `threads/latest:${limit}:${fromDate || ''}:${toDate || ''}`;
-    const _cached = await ttlCached(_cacheKey, 180_000, async () => {  // 3 min (was 2)
+    const _cached = await ttlCached(_cacheKey, 6_300_000, async () => {
 
     // Step 1: get threads — single fast query on story_threads only,
     // no JOINs, no regex, no correlated subqueries.
@@ -8739,7 +8761,9 @@ app.post("/api/cluster-node/summary", aiLimiter, async (req, res) => {
   }
 
   try {
-    const cached = await ttlCached(cacheKey, 600_000, async () => {
+    // 11h — Claude-derived cluster summary; deterministic per input.
+    // Bumped from 10m once we confirmed the keyword stats cron runs 2x/day.
+    const cached = await ttlCached(cacheKey, 39_600_000, async () => {
     // Deep article search: fetch articles for this thread or timeline with
     // full context. Ordering anchors/recency prefers the most narratively
     // representative sample when truncated to 30.
@@ -9519,7 +9543,10 @@ app.get("/api/articles/recent", async (req, res) => {
     // the DB with ORDER BY RANDOM() across the full recent corpus on every
     // page open. We instead bound the candidate set to the newest few
     // hundred/thousand rows, then shuffle within that smaller pool.
-    const rows = await ttlCached(`articles/recent:${limit}:${hours}`, 60_000, async () => {  // 60s (was 20s)
+    // 55m — articles ingest hourly via the fetcher cron. Was 60s, but no
+    // amount of cache freshness can show articles before the fetcher
+    // produces them; 55m matches the actual data-arrival cadence.
+    const rows = await ttlCached(`articles/recent:${limit}:${hours}`, 3_300_000, async () => {
       const { rows } = await pool.query(`
         WITH recent_pool AS (
           SELECT a.id
@@ -11204,7 +11231,8 @@ app.post("/api/translate", aiLimiter, async (req, res) => {
       .digest('hex').slice(0, 16);
     const _cacheKey = `translate:${_inputHash}`;
 
-    const { translatedTitle, translatedSummary } = await ttlCached(_cacheKey, 600_000, async () => {
+    // 24h — translations are deterministic per input hash; effectively static.
+    const { translatedTitle, translatedSummary } = await ttlCached(_cacheKey, 86_400_000, async () => {
       let tt = null, ts = null;
       if (needsClaudeFallback) {
         // Claude Haiku fallback for unsupported DeepL languages
@@ -11392,12 +11420,13 @@ app.post("/api/keywords/explain", aiLimiter, async (req, res) => {
 
   try {
     const kwLower = String(keyword).toLowerCase().trim();
-    // 10-minute cache — same keyword hit by multiple users in a short
-    // window shares one Claude call. checkKwExplanation already counted
-    // this user's daily quota above.
+    // 11h cache — keyword stats cron runs 2x/day, so the underlying
+    // keyword_analytics rollup refreshes at most every 12h. Was 10m;
+    // bumped to align with that cadence so multi-user keyword traffic
+    // shares one Claude call across the whole half-day window.
     const cacheKey = `kw-explain-v2:${kwLower}`;
 
-    const payload = await ttlCached(cacheKey, 600_000, async () => {
+    const payload = await ttlCached(cacheKey, 39_600_000, async () => {
       // 1. Pull precomputed rollup from keyword_analytics.
       const { rows: kwRows } = await pool.query(`
         SELECT keyword, display_keyword, total_mentions, recent_mentions,
@@ -12893,7 +12922,8 @@ app.get("/api/stats/location", async (req, res) => {
 ========================================= */
 app.get("/api/news/sources-stats", async (req, res) => {
   try {
-    const data = await ttlCached('sources-stats:all', 300_000, async () => {
+    // 11h — source stats cron runs 2x/day
+    const data = await ttlCached('sources-stats:all', 39_600_000, async () => {
       // Read from DB cache (populated by sourcesStatsCron.js)
       const dbCached = await getDbKeywordCache("sources-stats", "global", 1440); // 24h max staleness
       if (dbCached) return dbCached;
@@ -12968,7 +12998,8 @@ app.get("/api/globe-stats", async (req, res) => {
     // shortens the "I just ran the cron, why doesn't it show up yet"
     // window. Cloudflare's s-maxage=120 still caps front-end visibility
     // at ~2 min total — see the cacheControlByPath table.
-    const data = await ttlCached('globe-stats:all', 90_000, async () => {
+    // 22h — globe stats cron runs once daily
+    const data = await ttlCached('globe-stats:all', 79_200_000, async () => {
       // Read from DB cache (populated by globeStatsCron.js)
       const dbCached = await getDbKeywordCache("globe-stats", "global", 1440); // 24h max staleness
       if (dbCached) return dbCached;
@@ -13615,7 +13646,8 @@ app.get('/api/leader-tweets', async (req, res) => {
 
   const cacheKey = `leader-tweets:${iso || 'all'}:${limit}`;
   try {
-    const cached = ttlCached(cacheKey, 60_000, async () => {
+    // 55m — leader tweets are tied to the article fetcher's hourly cycle
+    const cached = ttlCached(cacheKey, 3_300_000, async () => {
       const q = iso
         ? `SELECT id, tweet_id, tweet_url, twitter_handle, leader_name, leader_title,
                   country, iso_code, tweet_text, oembed_html, pinned, created_at
