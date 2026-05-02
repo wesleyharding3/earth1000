@@ -1790,24 +1790,35 @@ body.ticker-active #flowControls {
   0%, 100% {
     box-shadow:
       0 8px 40px rgba(0,0,0,0.4),
-      inset 0 1px 0 rgba(255,255,255,0.07),
+      0 0 12px 2px rgba(180,200,255,0.10),
+      inset 0 1px 1px 0 rgba(255,255,255,0.30),
+      inset 1px 0 1px 0 rgba(255,255,255,0.10),
+      inset -1px 0 1px 0 rgba(255,255,255,0.10),
+      inset 0 -8px 20px -10px rgba(0,0,0,0.10),
       0 0 0 1px rgba(0,220,130,0.10),
       0 0 14px rgba(0,220,130,0.07);
   }
   50% {
     box-shadow:
       0 8px 40px rgba(0,0,0,0.4),
-      inset 0 1px 0 rgba(255,255,255,0.11),
+      0 0 12px 2px rgba(180,200,255,0.10),
+      inset 0 1px 1px 0 rgba(255,255,255,0.34),
+      inset 1px 0 1px 0 rgba(255,255,255,0.12),
+      inset -1px 0 1px 0 rgba(255,255,255,0.12),
+      inset 0 -8px 20px -10px rgba(0,0,0,0.10),
       0 0 0 1px rgba(0,220,130,0.38),
       0 0 30px rgba(0,220,130,0.22);
   }
 }
 
 .flowPanel {
-  background: rgba(6, 10, 20, 0.30);
-      backdrop-filter: blur(6px);
-      -webkit-backdrop-filter: blur(6px);
-  border: 1px solid rgba(255,255,255,0.12);
+  background:
+    radial-gradient(ellipse 120% 60% at 30% 0%, rgba(255,255,255,0.12) 0%, transparent 60%),
+    radial-gradient(ellipse 80% 50% at 80% 10%, rgba(200,220,255,0.08) 0%, transparent 50%),
+    linear-gradient(180deg, rgba(255,255,255,0.07) 0%, rgba(6,10,20,0.20) 40%, rgba(6,10,20,0.32) 100%);
+  backdrop-filter: blur(18px) saturate(1.3);
+  -webkit-backdrop-filter: blur(18px) saturate(1.3);
+  border: none;
   border-radius: 20px;
   padding: 32px 18px 14px 18px;
   display: flex;
@@ -1816,7 +1827,7 @@ body.ticker-active #flowControls {
   width: 100%;
   box-sizing: border-box;
   box-shadow: 0 8px 40px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.07);
-  -webkit-  position: relative;
+  position: relative;
   overflow: hidden;
   animation: flowBorderPulse 2.9s ease-in-out infinite;
   /* Animate collapse/expand so the arc list can glide into the freed space
@@ -4693,13 +4704,21 @@ button.arcCtxSegDot,
       gap: 6px;
       padding: 20px 12px 10px;
       border-radius: 16px;
-      background: rgba(10, 10, 14, 0.62);
-      border: 1px solid rgba(255, 190, 80, 0.22);
-      backdrop-filter: blur(20px);
-      -webkit-backdrop-filter: blur(20px);
+      overflow: hidden;
+      background:
+        radial-gradient(ellipse 120% 60% at 30% 0%, rgba(255,255,255,0.13) 0%, transparent 60%),
+        radial-gradient(ellipse 80% 50% at 80% 10%, rgba(200,220,255,0.09) 0%, transparent 50%),
+        linear-gradient(180deg, rgba(255,255,255,0.07) 0%, rgba(10,10,14,0.50) 40%, rgba(10,10,14,0.65) 100%);
+      border: none;
+      backdrop-filter: blur(18px) saturate(1.3);
+      -webkit-backdrop-filter: blur(18px) saturate(1.3);
       box-shadow:
         0 8px 32px rgba(0, 0, 0, 0.55),
-        inset 0 1px 0 rgba(255, 255, 255, 0.06);
+        0 0 12px 2px rgba(255, 190, 80, 0.12),
+        inset 0 1px 1px 0 rgba(255, 255, 255, 0.30),
+        inset 1px 0 1px 0 rgba(255, 255, 255, 0.10),
+        inset -1px 0 1px 0 rgba(255, 255, 255, 0.10),
+        inset 0 -8px 20px -10px rgba(0, 0, 0, 0.20);
       pointer-events: auto;
       max-width: min(200px, calc(100vw - 32px));
     }
@@ -11129,6 +11148,20 @@ button.arcCtxSegDot,
       .btnTooltip {
         left: 0; transform: none;
         max-width: calc(100vw - 24px);
+      }
+      /* Settings + account icons sit at the very top-left of the screen
+         (left: 8px). Their tooltips, anchored at left:0 of the button,
+         start ~8px from the screen edge — fine in portrait, but on
+         iPhone landscape with the notch on the left edge the tooltip's
+         leading edge ends up *under* the notch. Push the tooltip right
+         by (safe-area-inset-left − 8px) so it always clears the notch
+         and respects the OS safe area. max() with 0 makes it a no-op
+         in portrait where the inset is 0. max-width also shrinks by
+         the inset so the tooltip never overflows the right side. */
+      #settingsToggle .btnTooltip,
+      #accountBtn .btnTooltip {
+        margin-left: max(0px, env(safe-area-inset-left, 0px) - 8px);
+        max-width: calc(100vw - 24px - env(safe-area-inset-left, 0px) - env(safe-area-inset-right, 0px));
       }
       /* Show on tap via .tooltip-visible class instead of :hover */
       .iconBtn:hover .btnTooltip { opacity: 0; transition-delay: 0s; }
@@ -31337,10 +31370,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
     function release() {
       clearTimeout(timer); timer = null;
       if (activeBtn) {
-        hide();
-        // 50ms guard: long-press → release → click event fires almost
-        // immediately. Keeping suppressClick true through that frame
-        // eats the click; resetting after the click handler runs.
+        // Tooltip stays visible after release — the user explicitly
+        // wanted "go until they click elsewhere," so we no longer hide
+        // here. The 50ms suppressClick guard is still needed because
+        // pointerup is followed by a synthetic click on the source
+        // button; without suppression, that click would either fire
+        // the button's action OR (with the new outside-dismiss
+        // handler below) immediately dismiss the tooltip the user
+        // just summoned.
         setTimeout(() => { suppressClick = false; }, 50);
       } else {
         suppressClick = false;
@@ -31352,18 +31389,37 @@ const settingsToggle     = document.getElementById("settingsToggle");
     // viewport entirely (e.g. user drags off-screen) — treat as cancel.
     document.addEventListener('pointerleave',  release, { passive: true });
 
-    // Capture-phase click suppressor — runs BEFORE button handlers so
-    // we can preventDefault/stopPropagation cleanly when a long-press
-    // just fired. Without capture, the button's own handler would
-    // sometimes win the race.
+    // Capture-phase click handler — combines two responsibilities:
+    //   1. While suppressClick is true (the brief window after a long-
+    //      press release), eat the click on the source button so its
+    //      action doesn't fire from the long-press tap. Existing
+    //      behavior, unchanged.
+    //   2. Once suppressClick has cleared, any subsequent click hides
+    //      the tooltip ("go until they click elsewhere"). Click action
+    //      is allowed to proceed — we hide but don't preventDefault.
+    //      A click on the same data-hold-tip button (or its tooltip)
+    //      also hides the tooltip; the user can re-summon by long-
+    //      pressing again. Capture phase ensures this fires before
+    //      any button-level click handlers.
     document.addEventListener('click', (e) => {
-      if (!suppressClick) return;
-      const btn = e.target?.closest?.('[data-hold-tip]');
-      if (btn) {
-        e.stopPropagation();
-        e.preventDefault();
+      if (suppressClick) {
+        const btn = e.target?.closest?.('[data-hold-tip]');
+        if (btn) {
+          e.stopPropagation();
+          e.preventDefault();
+        }
+        return;
+      }
+      if (activeBtn) {
+        hide();
       }
     }, true);
+
+    // A scroll, viewport resize, or browser back / page-visibility
+    // change all invalidate the tooltip's anchor. Hide cleanly.
+    window.addEventListener('scroll',     () => { if (activeBtn) hide(); }, { passive: true, capture: true });
+    window.addEventListener('resize',     () => { if (activeBtn) hide(); }, { passive: true });
+    document.addEventListener('visibilitychange', () => { if (document.hidden && activeBtn) hide(); });
   })();
   </script>
 
@@ -42791,11 +42847,22 @@ body.ticker-active .gTickerLabel {
   display: inline-flex; align-items: center; gap: 10px;
   padding: 8px 12px;
   border-radius: 999px;
-  background: rgba(7,12,22,0.68);
-  border: 1px solid rgba(255,255,255,0.14);
-  box-shadow: 0 16px 34px rgba(0,0,0,0.34);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  position: relative;
+  overflow: hidden;
+  background:
+    radial-gradient(ellipse 120% 60% at 30% 0%, rgba(255,255,255,0.14) 0%, transparent 60%),
+    radial-gradient(ellipse 80% 50% at 80% 10%, rgba(200,220,255,0.10) 0%, transparent 50%),
+    linear-gradient(180deg, rgba(255,255,255,0.08) 0%, rgba(7,12,22,0.55) 40%, rgba(7,12,22,0.70) 100%);
+  border: none;
+  box-shadow:
+    0 16px 34px rgba(0,0,0,0.34),
+    0 0 12px 2px rgba(180,200,255,0.10),
+    inset 0 1px 1px 0 rgba(255,255,255,0.30),
+    inset 1px 0 1px 0 rgba(255,255,255,0.10),
+    inset -1px 0 1px 0 rgba(255,255,255,0.10),
+    inset 0 -2px 6px -2px rgba(0,0,0,0.12);
+  backdrop-filter: blur(18px) saturate(1.3);
+  -webkit-backdrop-filter: blur(18px) saturate(1.3);
 }
 /* Seek slider row beneath the pill */
 .bSeekWrap {
@@ -55068,6 +55135,304 @@ body.ticker-active .gTickerLabel {
       _routeShareUrl(window.location.href);
     }
   });
+})();
+</script>
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     INTRO TUTORIAL — 15-second orientation hook for first-time visitors.
+     See index.html for full rationale; mobile copy uses './audio/intro/'.
+═══════════════════════════════════════════════════════════════════════ -->
+<style>
+  #introOverlay {
+    position: fixed; inset: 0; z-index: 5050;
+    pointer-events: none;
+    font-family: inherit;
+  }
+  #introCaption {
+    position: absolute;
+    top: 88px; left: 50%;
+    transform: translate(-50%, -8px);
+    background: rgba(8, 12, 18, 0.82);
+    -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+    color: #f3f6fc;
+    padding: 11px 20px;
+    border-radius: 14px;
+    font-size: 14.5px; font-weight: 500; line-height: 1.4;
+    letter-spacing: 0.01em;
+    max-width: min(560px, 88vw);
+    text-align: center;
+    border: 1px solid rgba(96, 200, 255, 0.18);
+    box-shadow: 0 4px 24px rgba(0,0,0,0.3);
+    opacity: 0;
+    transition: opacity 280ms ease, transform 280ms ease;
+    pointer-events: none;
+  }
+  #introCaption.show { opacity: 1; transform: translate(-50%, 0); }
+
+  #introUnmuteBtn {
+    position: absolute;
+    bottom: 100px; right: 16px;
+    background: rgba(96, 200, 255, 0.18);
+    border: 1px solid rgba(96, 200, 255, 0.5);
+    color: #f3f6fc;
+    padding: 7px 13px;
+    border-radius: 16px;
+    font-size: 12px; font-weight: 500;
+    pointer-events: auto;
+    cursor: pointer;
+    -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+    font-family: inherit;
+  }
+
+  @keyframes intro-glow-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(96, 200, 255, 0); }
+    50%      { box-shadow: 0 0 0 6px rgba(96, 200, 255, 0.55),
+                           0 0 18px 4px rgba(96, 200, 255, 0.4); }
+  }
+  .intro-glow {
+    animation: intro-glow-pulse 1.4s ease-in-out infinite;
+    border-radius: 12px;
+    position: relative; z-index: 1;
+  }
+
+  #introTourCard {
+    position: absolute;
+    bottom: 100px; left: 50%;
+    transform: translate(-50%, 24px);
+    width: min(360px, 88vw);
+    background: rgba(10, 14, 22, 0.94);
+    -webkit-backdrop-filter: blur(18px); backdrop-filter: blur(18px);
+    border: 1px solid rgba(96, 200, 255, 0.28);
+    border-radius: 16px;
+    padding: 16px 18px;
+    pointer-events: auto;
+    opacity: 0;
+    transition: opacity 320ms ease, transform 320ms ease;
+    box-shadow: 0 8px 36px rgba(0,0,0,0.45);
+  }
+  #introTourCard.show { opacity: 1; transform: translate(-50%, 0); }
+  .introTourCardTitle {
+    font-size: 15px; font-weight: 600;
+    color: #f3f6fc;
+    margin-bottom: 4px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .introTourCardSub {
+    font-size: 12.5px; color: rgba(243, 246, 252, 0.62);
+    margin-bottom: 14px; line-height: 1.4;
+  }
+  .introTourCardBtns { display: flex; gap: 8px; }
+  .introTourBtn {
+    flex: 1;
+    padding: 9px 12px;
+    border-radius: 10px;
+    font-size: 13px; font-weight: 500;
+    cursor: pointer;
+    font-family: inherit;
+    transition: filter 180ms ease, background 180ms ease;
+  }
+  .introTourBtn:active { filter: brightness(1.18); }
+  .introTourBtnPrimary {
+    background: linear-gradient(180deg, rgba(96, 200, 255, 0.26), rgba(96, 200, 255, 0.14));
+    color: #d4ecff;
+    border: 1px solid rgba(96, 200, 255, 0.5);
+  }
+  .introTourBtnSecondary {
+    background: rgba(255, 255, 255, 0.06);
+    color: rgba(243, 246, 252, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    #introCaption, #introTourCard { transition: opacity 200ms ease; }
+    .intro-glow { animation: none; box-shadow: 0 0 0 4px rgba(96, 200, 255, 0.45); }
+  }
+</style>
+
+<script>
+(function () {
+  'use strict';
+
+  const STORAGE_KEY = '__earthIntroSeen';
+  // Mobile (Capacitor) bundles the app from www/, so the audio path is
+  // relative to www/. The web copy in /index.html uses './www/audio/intro/'.
+  const AUDIO_URL   = './audio/intro/welcome.mp3';
+  const START_DELAY = 3500;
+  const HARD_END    = 16000;
+
+  const BEATS = [
+    { at:     0, text: "Here's the globe — tap any country or city to dive in.",                         glow: '[data-page="1"]' },
+    { at:  5000, text: "Over here's your news tab — every story we're tracking.",                         glow: '[data-page="2"]' },
+    { at:  9500, text: "And the stats view shows what the world is talking about — and where.",          glow: '[data-page="0"]' },
+    { at: 14000, text: "That's it. Start exploring.",                                                     glow: null              },
+  ];
+  const CARD_AT = 15500;
+
+  let aborted = false;
+  let timers  = [];
+  let audio   = null;
+  let removeWatch = null;
+
+  function cleanup({ keepCard = false } = {}) {
+    if (aborted) return;
+    aborted = true;
+    timers.forEach(clearTimeout); timers = [];
+    if (audio) { try { audio.pause(); audio.src = ''; } catch (_) {} audio = null; }
+    if (removeWatch) { try { removeWatch(); } catch (_) {} removeWatch = null; }
+    document.querySelectorAll('.intro-glow').forEach(el => el.classList.remove('intro-glow'));
+    if (!keepCard) {
+      const o = document.getElementById('introOverlay');
+      if (o) o.remove();
+    }
+  }
+
+  function markSeen() {
+    try { localStorage.setItem(STORAGE_KEY, '1'); } catch (_) {}
+  }
+
+  function watchOutsideInteraction() {
+    function onInteract(e) {
+      if (e.target.closest('#introOverlay')) return;
+      markSeen();
+      cleanup();
+    }
+    const opts = { capture: true, passive: true };
+    document.addEventListener('mousedown',  onInteract, opts);
+    document.addEventListener('touchstart', onInteract, opts);
+    return () => {
+      document.removeEventListener('mousedown',  onInteract, opts);
+      document.removeEventListener('touchstart', onInteract, opts);
+    };
+  }
+
+  function setCaption(captionEl, text) {
+    captionEl.classList.remove('show');
+    void captionEl.offsetWidth;
+    captionEl.textContent = text;
+    captionEl.classList.add('show');
+  }
+  function setGlow(selector) {
+    document.querySelectorAll('.intro-glow').forEach(el => el.classList.remove('intro-glow'));
+    if (selector) {
+      const el = document.querySelector(selector);
+      if (el) el.classList.add('intro-glow');
+    }
+  }
+
+  function showTourCard() {
+    const overlay = document.getElementById('introOverlay');
+    if (!overlay) return;
+    const cap = overlay.querySelector('#introCaption');
+    if (cap) cap.classList.remove('show');
+
+    const card = document.createElement('div');
+    card.id = 'introTourCard';
+    card.innerHTML =
+      '<div class="introTourCardTitle">▶ Take the full 2-minute tour</div>' +
+      '<div class="introTourCardSub">Threads, flow arcs, briefings — the whole thing.</div>' +
+      '<div class="introTourCardBtns">' +
+        '<button class="introTourBtn introTourBtnPrimary" id="introTourStart">Start tour</button>' +
+        '<button class="introTourBtn introTourBtnSecondary" id="introTourLater">Not now</button>' +
+      '</div>';
+    overlay.appendChild(card);
+    requestAnimationFrame(() => card.classList.add('show'));
+
+    overlay.querySelector('#introTourStart').addEventListener('click', () => {
+      markSeen();
+      overlay.remove();
+      try { window.__startTutorialReel?.(); } catch (_) {}
+    });
+    overlay.querySelector('#introTourLater').addEventListener('click', () => {
+      markSeen();
+      overlay.remove();
+    });
+
+    setTimeout(() => {
+      const c = document.getElementById('introTourCard');
+      if (c) { markSeen(); document.getElementById('introOverlay')?.remove(); }
+    }, 30000);
+  }
+
+  function play() {
+    if (document.getElementById('introOverlay')) return;
+    aborted = false;
+    timers  = [];
+
+    const overlay = document.createElement('div');
+    overlay.id = 'introOverlay';
+    overlay.innerHTML =
+      '<div id="introCaption" aria-live="polite"></div>' +
+      '<button id="introUnmuteBtn" type="button" aria-label="Tap to play voiceover">🔊 tap for sound</button>';
+    document.body.appendChild(overlay);
+
+    const captionEl = overlay.querySelector('#introCaption');
+    const unmuteBtn = overlay.querySelector('#introUnmuteBtn');
+
+    audio = new Audio(AUDIO_URL);
+    audio.muted   = true;
+    audio.preload = 'auto';
+    audio.play().catch(() => {});
+
+    let unmuted = false;
+    function unmute() {
+      if (unmuted || !audio) return;
+      unmuted = true;
+      try { audio.muted = false; audio.play(); } catch (_) {}
+      unmuteBtn.style.display = 'none';
+    }
+    unmuteBtn.addEventListener('click', e => { e.stopPropagation(); unmute(); });
+
+    BEATS.forEach(b => {
+      timers.push(setTimeout(() => {
+        if (aborted) return;
+        setCaption(captionEl, b.text);
+        setGlow(b.glow);
+      }, b.at));
+    });
+
+    timers.push(setTimeout(() => {
+      if (aborted) return;
+      setGlow(null);
+      showTourCard();
+      markSeen();
+    }, CARD_AT));
+
+    timers.push(setTimeout(() => {
+      if (captionEl) captionEl.classList.remove('show');
+    }, HARD_END));
+
+    removeWatch = watchOutsideInteraction();
+  }
+
+  function maybeStart() {
+    try { if (localStorage.getItem(STORAGE_KEY)) return; } catch (_) {}
+    if (document.hidden) {
+      const onVis = () => {
+        if (!document.hidden) { document.removeEventListener('visibilitychange', onVis); maybeStart(); }
+      };
+      document.addEventListener('visibilitychange', onVis);
+      return;
+    }
+    setTimeout(() => {
+      if (document.hidden) return;
+      try { if (localStorage.getItem(STORAGE_KEY)) return; } catch (_) {}
+      play();
+    }, START_DELAY);
+  }
+
+  window.__playIntroTutorial = function (force = true) {
+    if (force) { try { localStorage.removeItem(STORAGE_KEY); } catch (_) {} }
+    timers.forEach(clearTimeout); timers = [];
+    document.getElementById('introOverlay')?.remove();
+    aborted = false;
+    play();
+  };
+
+  if (document.readyState === 'loading') {
+    window.addEventListener('DOMContentLoaded', maybeStart);
+  } else {
+    maybeStart();
+  }
 })();
 </script>
 

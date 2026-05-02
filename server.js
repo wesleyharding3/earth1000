@@ -2648,8 +2648,13 @@ app.get("/api/flows", heavyLimiter, async (req, res) => {
     const keyword      = req.query.keyword?.trim()      || null;
 
     // ── TTL cache for flows — keyed by all filter params ──────────────
+    // 600s (10 min) instead of 180s. News-flow aggregations don't need
+    // sub-3-min freshness for the user-facing globe; the cron-driven
+    // article ingestion runs slower than that anyway, and hot keywords
+    // (trump, ukraine, etc.) are the bulk of traffic — keeping them
+    // warmer cuts cold-miss frequency dramatically.
     const _flowCacheKey = `flows:${mode}:${viewMode}:${limit}:${fromDate||''}:${toDate||''}:${fromCountry||''}:${fromCity||''}:${aboutCountry||''}:${aboutCity||''}:${keyword||''}:${normalize}`;
-    const _flowResult = await ttlCached(_flowCacheKey, 180_000, async () => {
+    const _flowResult = await ttlCached(_flowCacheKey, 600_000, async () => {
 
     // Build dynamic WHERE conditions
     const conditions = [];
@@ -2925,11 +2930,17 @@ app.get("/api/flows", heavyLimiter, async (req, res) => {
       // Wrapping SET LOCAL + SELECT in a real transaction so the cap
       // actually applies. ROLLBACK on error so the connection returns
       // to the pool clean, no half-open transaction state.
+      // Cap at 10s (was 6s). Cold-start queries on Render with a hot
+      // keyword like "trump" sometimes take 7–8s on a cold buffer cache;
+      // the old 6s timeout aborted them, returning {error:"Failed to
+      // fetch flows"} and the user retried — taking another cold miss.
+      // 10s lets the warmup query through; the cache then absorbs subsequent
+      // hits at <10ms.
       const client = await pool.connect();
       let rows;
       try {
         await client.query("BEGIN");
-        await client.query("SET LOCAL statement_timeout = 6000");
+        await client.query("SET LOCAL statement_timeout = 10000");
         ({ rows } = await client.query(aggregateQuery, params));
         await client.query("COMMIT");
       } catch (e) {
@@ -2998,12 +3009,13 @@ app.get("/api/flows", heavyLimiter, async (req, res) => {
       }
 
       // See aggregate-mode block above for the BEGIN/COMMIT rationale —
-      // SET LOCAL outside a transaction is a silent no-op.
+      // SET LOCAL outside a transaction is a silent no-op. 10s cap to
+      // match aggregate mode (see rationale above).
       const client = await pool.connect();
       let rows;
       try {
         await client.query("BEGIN");
-        await client.query("SET LOCAL statement_timeout = 6000");
+        await client.query("SET LOCAL statement_timeout = 10000");
         ({ rows } = await client.query(`
         SELECT
           a.id,
@@ -10896,22 +10908,6 @@ function _coverageTrendCaption(rows) {
 
   return _STATIC_COVERAGE_CAPTION;
 }
-
-// POST /api/briefing/location — on-demand briefing for a city or country node
-app.post("/api/briefing/location", async (req, res) => {
-  const { type, id, name, voiceover = false, sourceFilter = 'mix', voiceId } = req.body || {};
-  if (!type || !id || !name) return res.status(400).json({ error: "type, id, and name are required" });
-  if (!["city", "country"].includes(type)) return res.status(400).json({ error: "type must be 'city' or 'country'" });
-  const validFilters = ['local', 'mix', 'global'];
-  const filter = validFilters.includes(sourceFilter) ? sourceFilter : 'mix';
-  try {
-    const ep = await generateLocationBriefing({ type, id: parseInt(id), name, voiceover: !!voiceover, sourceFilter: filter, voiceId: voiceId || null });
-    res.json(ep);
-  } catch (err) {
-    console.error("[briefing/location]", err.message);
-    res.status(500).json({ error: err.message || "Failed to generate location briefing" });
-  }
-});
 
 // POST /api/briefing/custom — custom briefing with from/about/keyword filters.
 // Available to all paid tiers, gated by the credit ledger (debits 200

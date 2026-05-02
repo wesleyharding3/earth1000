@@ -1,0 +1,131 @@
+#!/usr/bin/env node
+'use strict';
+
+/**
+ * prewarmKeywordCacheCron.js
+ *
+ * Hits /api/heatmap and /api/flows for the top news keywords on the
+ * standard 7-day window so the in-memory TTL caches stay warm. Both
+ * endpoints already cache results (heatmap: 60s + stale-while-revalidate,
+ * flows: 600s); this cron just makes sure the user never pays the cold-
+ * miss latency for the highest-traffic queries.
+ *
+ * For "trump" + 7 days the cold latency is ~3–5s on flows and ~1s on
+ * heatmap. With this cron running every 5 minutes (recommended cadence
+ * given flows' 600s TTL — slightly faster than expiry to bridge any
+ * cron drift), the user-facing requests are always cache hits at <10ms.
+ *
+ * Why HTTP and not direct DB calls:
+ *   This script runs as a separate Node process, so it can't share the
+ *   in-memory TTL cache with the server. Firing real HTTP requests is
+ *   the only way to populate the running server's cache.
+ *
+ * Env vars:
+ *   API_URL              base URL of the API (default: http://localhost:3000)
+ *   PREWARM_KEYWORDS     comma-separated keyword list (overrides defaults)
+ *   PREWARM_TIMEOUT_MS   per-request timeout (default: 12000)
+ *
+ * Run:  node prewarmKeywordCacheCron.js
+ *
+ * Wire to Render Cron / system cron at every 5 minutes:
+ *   `* /5 * * * * cd /app && node prewarmKeywordCacheCron.js`
+ */
+
+require('dotenv').config({ override: true });
+
+const API_URL    = (process.env.API_URL || 'http://localhost:3000').replace(/\/$/, '');
+const TIMEOUT_MS = parseInt(process.env.PREWARM_TIMEOUT_MS || '12000', 10);
+
+// Default top-30. Hand-curated from typical news traffic; tune via env.
+// Lowercased — both endpoints lowercase server-side.
+const DEFAULT_KEYWORDS = [
+  'trump', 'biden', 'putin', 'xi jinping',
+  'ukraine', 'russia', 'china', 'israel', 'gaza', 'iran',
+  'north korea', 'taiwan', 'india', 'pakistan',
+  'climate', 'ai', 'bitcoin', 'crypto',
+  'election', 'inflation', 'fed', 'interest rates',
+  'immigration', 'border',
+  'supreme court', 'congress',
+  'nato', 'eu',
+  'oil', 'opec',
+];
+
+const KEYWORDS = (process.env.PREWARM_KEYWORDS
+  ? process.env.PREWARM_KEYWORDS.split(',').map(s => s.trim()).filter(Boolean)
+  : DEFAULT_KEYWORDS);
+
+const TAG = '[prewarm-kw]';
+
+function isoDate(d) { return d.toISOString().slice(0, 10); }
+
+function fetchWithTimeout(url) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+  return fetch(url, { signal: ctrl.signal })
+    .finally(() => clearTimeout(t));
+}
+
+async function warmHeatmap(keyword) {
+  const url = `${API_URL}/api/heatmap?keyword=${encodeURIComponent(keyword)}&days=7&mode=coverage&bucket=none`;
+  const t0 = Date.now();
+  const r = await fetchWithTimeout(url);
+  const ms = Date.now() - t0;
+  if (!r.ok) throw new Error(`heatmap ${r.status} (${ms}ms)`);
+  // Drain the body so the connection closes cleanly; we don't need the data.
+  await r.text().catch(() => {});
+  return ms;
+}
+
+async function warmFlows(keyword) {
+  const today = new Date();
+  const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
+  const url = `${API_URL}/api/flows?mode=aggregate&view_mode=country&limit=500`
+            + `&from_date=${isoDate(weekAgo)}&to_date=${isoDate(today)}`
+            + `&keyword=${encodeURIComponent(keyword)}`;
+  const t0 = Date.now();
+  const r = await fetchWithTimeout(url);
+  const ms = Date.now() - t0;
+  if (!r.ok) throw new Error(`flows ${r.status} (${ms}ms)`);
+  await r.text().catch(() => {});
+  return ms;
+}
+
+async function warmOne(keyword) {
+  // Run heatmap + flows in parallel — they hit different routes.
+  const [hm, fl] = await Promise.allSettled([warmHeatmap(keyword), warmFlows(keyword)]);
+  return {
+    keyword,
+    heatmap: hm.status === 'fulfilled' ? `${hm.value}ms` : `ERR ${hm.reason?.message || hm.reason}`,
+    flows:   fl.status === 'fulfilled' ? `${fl.value}ms` : `ERR ${fl.reason?.message || fl.reason}`,
+    ok:      hm.status === 'fulfilled' && fl.status === 'fulfilled',
+  };
+}
+
+async function main() {
+  const t0 = Date.now();
+  console.log(`${TAG} start ${new Date().toISOString()} api=${API_URL} keywords=${KEYWORDS.length}`);
+
+  // Process keywords in small batches so we don't slam the server with
+  // 30 simultaneous flow queries (each holds a pool connection for up
+  // to 10s). Concurrency 4 = at most 8 in-flight requests (4 hm + 4 fl).
+  const CONCURRENCY = 4;
+  const results = [];
+  for (let i = 0; i < KEYWORDS.length; i += CONCURRENCY) {
+    const batch = KEYWORDS.slice(i, i + CONCURRENCY);
+    const out = await Promise.all(batch.map(warmOne));
+    results.push(...out);
+  }
+
+  const okCount   = results.filter(r => r.ok).length;
+  const errCount  = results.length - okCount;
+  for (const r of results) {
+    console.log(`${TAG}   ${r.keyword.padEnd(16)} hm=${r.heatmap.padEnd(12)} fl=${r.flows}`);
+  }
+  console.log(`${TAG} done in ${((Date.now() - t0) / 1000).toFixed(1)}s — ok=${okCount} err=${errCount}`);
+
+  // Non-zero exit if every single keyword failed — that means the API is
+  // down, not a per-keyword issue. Cron monitoring picks this up.
+  if (okCount === 0 && results.length > 0) process.exit(1);
+}
+
+main().catch(err => { console.error(`${TAG} fatal:`, err); process.exit(1); });

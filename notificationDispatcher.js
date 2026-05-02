@@ -39,7 +39,15 @@ process.env.DB_POOL_MAX = "2";
 const pool       = require('./db');
 const apns       = require('./apnsClient');
 
-const DAILY_LOOKBACK_HOURS = 4;     // briefings from the last 4h are eligible
+// Daily briefings are generated once per day; the eligibility window
+// has to span at least that interval so the cron can recover from any
+// missed runs. The previous 4h window meant a briefing finalized at
+// 4 AM became ineligible at 8 AM — and if APNs / env / cron itself
+// had any hiccup during those 4 hours, the day's notification was
+// permanently lost (no replay path). Bumped to 26h so a full day of
+// daily-briefing pushes have a chance to deliver, with the dedup_key
+// in notification_log preventing duplicate sends.
+const DAILY_LOOKBACK_HOURS = 26;    // briefings from the last 26h are eligible
 const THREAD_LOOKBACK_HOURS = 1;    // thread updates from the last hour
 const MAX_NOTIFICATIONS_PER_RUN = 500; // safety brake per pass
 
@@ -183,12 +191,19 @@ async function dispatchDailyBriefings(now) {
   // Find ready GLOBAL briefings (user_id IS NULL = the daily one we ship
   // to every user, not a per-user custom briefing). Exclude episodes
   // already enqueued at the cohort level by their stable id.
+  //
+  // Column note: briefing_episodes uses `generated_at` (set when the
+  // generator promotes status to 'ready'), NOT `created_at`. The
+  // earlier version of this query referenced a non-existent column and
+  // every dispatcher run threw "column does not exist" — which the
+  // outer try/catch caught silently, making every notification run
+  // exit code 1 with no briefings ever sent. Fixed now.
   const { rows: episodes } = await pool.query(
     `SELECT id, headline, target_date FROM briefing_episodes
        WHERE status = 'ready'
          AND user_id IS NULL
-         AND created_at > $1
-       ORDER BY created_at ASC
+         AND generated_at > $1
+       ORDER BY generated_at ASC
        LIMIT 5`,
     [since]
   );
