@@ -32113,18 +32113,30 @@ const settingsToggle     = document.getElementById("settingsToggle");
             ? _prefetchedData.data : data;
           _prefetchedData = null;
           loading = false; spinRow.classList.remove("on"); resetSearchBtn();
+          // See index.html for full rationale — surface degraded responses
+          // as a real error message instead of an empty grid, and don't
+          // retry (same query will fail the same way).
+          if (resolved && resolved.degraded) {
+            _fetchRetries = 0;
+            _prefetchOffset = -1;
+            if (!articles.length) grid.innerHTML = errState({ degraded: true, keyword: lastKeyword });
+            return;
+          }
           applyPageData(resolved);
         })
         .catch(err => {
           loading = false; spinRow.classList.remove("on"); resetSearchBtn();
           console.error("Search error:", err);
-          if (_fetchRetries < MAX_FETCH_RETRIES) {
+          // Only retry on network errors. HTTP 500s deserve immediate feedback —
+          // see index.html for rationale.
+          const isHttp = /^HTTP \d+/.test(err.message || '');
+          if (!isHttp && _fetchRetries < MAX_FETCH_RETRIES) {
             _fetchRetries++;
             console.log(`Retrying feed fetch (${_fetchRetries}/${MAX_FETCH_RETRIES})…`);
             setTimeout(fetchPage, 3000);
           } else {
             _fetchRetries = 0;
-            if (!articles.length) grid.innerHTML = errState();
+            if (!articles.length) grid.innerHTML = errState({ degraded: false, keyword: lastKeyword });
           }
         });
     }
@@ -32997,7 +33009,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
         <div class="el-dots"><span></span><span></span><span></span></div>
       </div></div>`;
     }
-    function errState() { return `<div class="nfEmpty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><span>Request failed</span></div>`; }
+    function errState(opts) {
+      const o = opts || {};
+      const headline = o.degraded ? 'Search took too long' : 'Request failed';
+      const sub      = o.degraded
+        ? `Your query for "${o.keyword || ''}" timed out. Try a narrower keyword or a smaller date range.`
+        : 'Check your connection and try again.';
+      return `<div class="nfEmpty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg><span>${headline}</span>${sub ? `<small style="display:block;margin-top:6px;opacity:0.65;font-size:11px;">${sub.replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))}</small>` : ''}</div>`;
+    }
 
     // ══════════════════════════════════════════════════════════════════
     // Title Shimmer Animation — roaming light within Statistics & News Feed titles

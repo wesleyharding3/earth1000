@@ -2262,18 +2262,33 @@ app.get("/api/news/search", searchLimiter, async (req, res) => {
     }
 
     if (keyword) {
-      params.push(`%${keyword}%`);
-      const kwParam = params.length;
-      params.push(keyword.toLowerCase().trim());
+      // The OLD version did `COALESCE(title) ILIKE '%kw%' OR COALESCE(summary)
+      // ILIKE '%kw%' OR EXISTS(... WHERE ak.article_id = a.id AND ak.keyword
+      // ILIKE '%kw%' OR ak.normalized_keyword = ?)`. Three problems made it
+      // hang past Render's 45s gateway:
+      //   1. Leading-wildcard ILIKE on title/summary forces seqscan over
+      //      the whole 7-day pool (~150K rows) — no index is usable.
+      //   2. EXISTS was correlated to the outer row (`= a.id`), firing the
+      //      subquery once per candidate.
+      //   3. ak.keyword ILIKE '%kw%' inside the EXISTS adds another non-
+      //      indexable scan against article_keywords (~tens of millions of
+      //      rows).
+      // Same fix the flows endpoint already uses (see line ~2700): drop the
+      // title/summary text scan entirely (article_keywords IS the curated
+      // index for this lookup) and convert EXISTS into an UNCORRELATED
+      // IN (subquery) so the keyword set is computed once. Hits both
+      // idx_ak_normalized (exact) and idx_ak_keyword_gin (prefix via
+      // tsquery 'kw:*'). Fast-keyword case (single-word "trump") drops from
+      // 45s+timeout → ~1–2s.
+      const kwLc = keyword.toLowerCase().trim();
+      params.push(kwLc);
       const exactKwParam = params.length;
-      conditions.push(`(
-        COALESCE(a.translated_title, a.title) ILIKE $${kwParam}
-        OR COALESCE(a.translated_summary, a.summary) ILIKE $${kwParam}
-        OR EXISTS (
-          SELECT 1 FROM article_keywords ak
-          WHERE ak.article_id = a.id
-          AND (ak.keyword ILIKE $${kwParam} OR ak.normalized_keyword = $${exactKwParam})
-        )
+      params.push(kwLc + ':*');
+      const tsKwParam = params.length;
+      conditions.push(`a.id IN (
+        SELECT ak.article_id FROM article_keywords ak
+        WHERE ak.normalized_keyword = $${exactKwParam}
+           OR to_tsvector('simple', ak.keyword) @@ to_tsquery('simple', $${tsKwParam})
       )`);
     }
 
@@ -2459,13 +2474,27 @@ app.get("/api/news/search", searchLimiter, async (req, res) => {
       `:fd=${fromDate || ''}:td=${toDate || ''}:tag=${tagQ}`;
 
     const cachedSlice = await ttlCached(filterCacheKey, 60_000, async () => {
+      // Cap at 10s. Without it, runaway keyword scans (the bug behind the
+      // 45s "Failed to fetch" the user reported) ran until Render's gateway
+      // dropped the connection, returning no response at all. With SET LOCAL
+      // statement_timeout, Postgres aborts at 10s, the catch fires, and we
+      // return a clean degraded response the frontend can surface as an
+      // error message instead of an indefinite spinner. BEGIN/COMMIT
+      // wrapper because SET LOCAL outside a transaction is a silent no-op.
+      const client = await pool.connect();
       let rows;
       try {
-        const result = await pool.query(filteredQuery, params);
+        await client.query('BEGIN');
+        await client.query('SET LOCAL statement_timeout = 10000');
+        const result = await client.query(filteredQuery, params);
+        await client.query('COMMIT');
         rows = result.rows;
       } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
         console.warn('[news/search] Filtered query failed:', err.message);
         rows = [];
+      } finally {
+        client.release();
       }
 
       const hasMore = rows.length > effectiveLimit;
