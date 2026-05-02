@@ -88,7 +88,10 @@ function isoDate(d) { return d.toISOString().slice(0, 10); }
 // Resolve ISO → country_id via /api/countries/all (server-cached 24h, so
 // this is one cheap HTTP call per cron run).
 async function resolveIsoMap() {
-  const data = await fetchJSON(`${API_URL}/api/countries/all`);
+  // Endpoint is /api/countries (not /api/countries/all — that path 404s).
+  // The internal in-process cache key is 'countries:all', which is what
+  // confused me — that's the cache key, not the URL.
+  const data = await fetchJSON(`${API_URL}/api/countries`);
   const arr = Array.isArray(data) ? data : (data?.countries || data?.data || []);
   const map = new Map();
   for (const c of arr) {
