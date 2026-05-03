@@ -200,9 +200,23 @@
       position: relative;
       display: flex; flex-direction: column; align-items: center;
     }
-    .el-panel-loader.el-node-loader .el-panel-inner {
-      transform: translate(22px, -44px);
+    /* Country / city panel loader — was small (82px globe) with a
+       translate(22px, -44px) offset that pushed it off-center. Bumped
+       to ~130px and removed the offset so it sits cleanly centered in
+       the panel area. */
+    .el-panel-loader.el-node-loader {
+      min-height: calc(var(--app-height, 100vh) - 240px);
+      place-self: center stretch;
     }
+    .el-panel-loader.el-node-loader .el-panel-inner {
+      transform: none;
+    }
+    .el-panel-loader.el-node-loader .el-globe-wrap .el-globe { width: 130px; height: 130px; }
+    .el-panel-loader.el-node-loader .el-e { font-size: 68px; bottom: 7px; left: 4px; }
+    .el-panel-loader.el-node-loader .el-dots { margin-top: 12px; gap: 7px; }
+    .el-panel-loader.el-node-loader .el-dots span { width: 6px; height: 6px; }
+    /* Default (any other surface using .el-panel-loader without a more
+       specific variant) keeps the small footprint. */
     .el-panel-loader .el-globe-wrap .el-globe { width: 82px; height: 82px; }
     .el-panel-loader .el-e { font-size: 42px; bottom: 5px; left: 3px; }
     .el-panel-loader .el-dots { margin-top: 10px; gap: 5px; }
@@ -1666,26 +1680,9 @@
   box-shadow: 0 0 14px rgba(0,200,120,0.25);
 }
 
-/* ── Heatmap ⇄ News-Flows mutex visual disable ────────────────────
-   The two top-nav toggle buttons (heatmap, news-flows) can't have
-   their panels open simultaneously — the JS click handlers gate the
-   active button so the inactive panel can't be reached. These CSS
-   rules surface the gated state visually so users see the button
-   is "not available right now" rather than discovering it via a
-   silent no-op or only-on-tap toast. */
-body.sem-heatmap-active #flowModeBtn,
-body.news-flows-active #semHeatToggleBtn {
-  opacity: 0.35;
-  cursor: not-allowed;
-  filter: saturate(0.4);
-}
-body.sem-heatmap-active #flowModeBtn:hover,
-body.news-flows-active #semHeatToggleBtn:hover {
-  /* Suppress hover ramp-up so the dim state stays consistent under
-     pointer move / focus. The click handler's toast is the only
-     indication something happened. */
-  transform: none;
-}
+/* (Removed) Heatmap ⇄ News-Flows mutex visual disable. The toggle
+   handlers now auto-close the other surface when one is opened, so
+   both buttons should always read as active and clickable. */
 
 /* ── Flow Controls Panel ── */
 #flowControls {
@@ -5409,7 +5406,13 @@ button.arcCtxSegDot,
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 65%;
+  /* Was 65% — long country names ("United Arab Emirates", "Democratic
+     Republic of the Congo") got cut off mid-word. Footer parent already
+     reserves 44px on the right for the translate btn, so 100% means the
+     origin can span up to the translate btn before ellipsizing. The
+     date sits on the same flex row when there's room and wraps below
+     when the country is unusually long. */
+  max-width: 100%;
   display: flex;
   align-items: center;
   gap: 5px;
@@ -7577,6 +7580,9 @@ button.arcCtxSegDot,
       -webkit-overflow-scrolling: touch;
       overscroll-behavior: contain;
       touch-action: pan-y;
+      /* Bottom padding so the last row of cards clears the page-nav +
+         ticker + safe-area stack instead of being hidden under it. */
+      padding-bottom: calc(var(--page-nav-height) + var(--global-ticker-height) + var(--global-ticker-gap) + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom) + 16px);
     }
 
     #articlesViewport::-webkit-scrollbar { width: 5px; }
@@ -20249,20 +20255,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
             </div>
           </div>
           ${'' /* Facts bar + dedicated local-threads strip removed —
-                     local threads now render inline as cards at the top
-                     of the article list with a "LOCAL THREAD" label. */}
-          ${false ? `<div class="cpLocalThreadsStrip" id="cpLocalThreadsStrip" data-iso="${(node.iso_code || node.country_iso || '').toUpperCase()}">
-            <div class="cpLocalThreadsHeader">
-              <span class="cpLocalThreadsLabel">
-                <span class="cpLocalThreadsDot"></span>
-                Local threads
-              </span>
-              <span class="cpLocalThreadsSub">domestic stories from ${node.name}</span>
-            </div>
-            <div class="cpLocalThreadsScroller" id="cpLocalThreadsScroller">
-              <div class="cpLocalThreadsLoading">Loading…</div>
-            </div>
-          </div>` : ''}
+                     localStoryBuilder is suspended, so local threads
+                     never appear inline. */}
           <div class="panelControlsRow1">
             <div class="panelSortRow">
               <div class="panelSortSegment">
@@ -20354,35 +20348,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
           window.addEventListener('resize', onResize, { passive: true });
         }
 
-        // Local threads — populated by the IIFE below, prepended to the
-        // article-card list by renderCards. Country panels only.
-        let localThreads = [];
+        // Local-threads inline cards removed — localStoryBuilder is
+        // suspended and no new local threads are being produced.
+        // _countryIsoForThreads is still used by the localThreadCardHTML
+        // hero-iso fallback, kept for any cached panel state.
         const _countryIsoForThreads = (!isCity ? (node.iso_code || node.country_iso || '') : '').toString().toUpperCase();
-
-        // ── Local threads (country panels only) ──
-        // Fetches scope='local' threads for this country and pushes them
-        // into the `localThreads` array, then re-renders the article grid
-        // so the threads appear as cards at the top of the list with a
-        // "LOCAL THREAD" label. No separate strip widget — the threads
-        // sit inline with the articles.
-        if (!isCity && _countryIsoForThreads) {
-          (async function loadLocalThreads() {
-            try {
-              const API = window.__API || 'https://earth-wjr6.onrender.com';
-              const res = await fetch(`${API}/api/threads/by-country/${encodeURIComponent(_countryIsoForThreads)}?scope=local&days=14&limit=15`);
-              if (!res.ok) return;
-              const threads = await res.json();
-              if (Array.isArray(threads) && threads.length) {
-                localThreads = threads;
-                // If the article grid has already rendered, refresh it so
-                // the threads slot in at the top.
-                if (typeof renderCards === 'function') renderCards();
-              }
-            } catch (err) {
-              console.warn('[localThreads]', err.message);
-            }
-          })();
-        }
 
         // ── Search filter ──
         const panelSearchInput = panel.querySelector("#panelSearchInput");
@@ -20825,39 +20795,23 @@ const settingsToggle     = document.getElementById("settingsToggle");
             );
           });
           // Local threads only belong in the LOCAL + ARTICLE view of the
-          // country panel. Suppress them under:
-          //   - currentSort === "global" (they're domestic by definition;
-          //     a "global news for this country" view shouldn't surface
-          //     country-internal thread clusters)
-          //   - mediaFilter.video-only (threads are article clusters, not
-          //     videos — toggling Video should hide them entirely)
-          // Without this guard, threads stayed pinned at the top of every
-          // view because renderCards re-rendered them unconditionally.
-          const threadsAllowed = currentSort === "local" && mediaFilter.article;
-          const sourceThreads = threadsAllowed ? (localThreads || []) : [];
-          // Filter local threads through the same search query — title +
-          // description text searched case-insensitively.
-          const filteredThreads = sourceThreads.filter(t => {
-            if (!filterQuery) return true;
-            return (
-              (t.title || "").toLowerCase().includes(filterQuery) ||
-              (t.description || "").toLowerCase().includes(filterQuery)
-            );
-          });
-          if (!filtered.length && !filteredThreads.length && !loading) {
+          // Local-thread inline cards removed — localStoryBuilder is
+          // suspended. Render only article cards.
+          if (!filtered.length && !loading) {
             const emptyLabel = (filterQuery || hasMediaNarrowing) ? "No matching items." : "No recent articles.";
             const emptyHint = (filterQuery || hasMediaNarrowing) ? "<br><span style='opacity:0.5;font-size:11px;font-weight:400;'>Try broadening your filters.</span>" : "";
             track.innerHTML = `<div style="grid-column:1/-1;padding:20px;opacity:0.4;font-size:13px;">${emptyLabel}${emptyHint}</div>`;
             return;
           }
-          // Local threads first, then articles. Threads use the same
-          // .articleCard footprint so the grid stays even.
-          const threadsHtml  = filteredThreads.map(localThreadCardHTML).join("");
-          const articlesHtml = filtered.map(articleCardHTML).join("");
-          track.innerHTML = threadsHtml + articlesHtml;
+          track.innerHTML = filtered.map(articleCardHTML).join("");
         }
 
-        let offset = 0, limit = 12, loading = false, hasMore = true;
+        // Was limit=12. Bumped to 60: fewer pagination round-trips while
+        // scrolling, and the prewarm-feed cron now warms ?limit=120 so the
+        // first page (offset=0, limit=60) is a guaranteed cache hit.
+        // Subsequent pages (offset=60, limit=60) are also a cache hit until
+        // the user scrolls past 120 articles.
+        let offset = 0, limit = 60, loading = false, hasMore = true;
         track.innerHTML = skeletonCards(8);
 
         function loadMore() {
@@ -26535,13 +26489,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
   flowModeBtn.addEventListener("click", (e) => {
     e.stopPropagation();
-    // Mutex: heatmap and news-flows can't coexist on screen. If heatmap
-    // is active, this button is functionally disabled — surface a toast
-    // hint instead of silently doing nothing. The CSS dim further
-    // signals "not available right now".
+    // Mutex: heatmap and news-flows can't coexist on screen — but instead
+    // of refusing the click when heatmap is open, auto-close it so the
+    // user gets a one-click switch in either direction.
     if (window.__semHeatActive && !flowModeOpen) {
-      window.__showToast?.('Close heatmap first');
-      return;
+      try { window.__semHeatClose?.(); } catch (_) {}
     }
     flowModeOpen = !flowModeOpen;
     flowModeBtn.classList.toggle("active", flowModeOpen);
@@ -51625,18 +51577,13 @@ body.ticker-active .gTickerLabel {
     return openInspectorAt(lat, lon, localPoint || null);
   };
 
-  // Toggle handler for the top-nav heatmap button. Gated against
-  // news-flows (the two surfaces are mutex'd) — when the news-flows
-  // panel is open, this no-ops with a toast hint instead of opening
-  // the heatmap on top of it. CSS additionally dims the button via
-  // body.news-flows-active so the disabled state reads visually.
+  // Toggle handler for the top-nav heatmap button. The two surfaces
+  // are mutex'd, but instead of refusing the click when news-flows is
+  // open, we let __semHeatOpen below auto-close flows — the user gets
+  // a one-click switch between heatmap and flows in either direction.
   window.__semHeatToggleBtnClick = function () {
     if (window.__semHeatActive) {
       window.__semHeatClose?.();
-      return;
-    }
-    if (document.body.classList.contains('news-flows-active')) {
-      window.__showToast?.('Close news flows first');
       return;
     }
     window.__semHeatOpen?.();

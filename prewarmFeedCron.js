@@ -156,21 +156,27 @@ async function main() {
     .filter(Boolean);
 
   // Phase 1 — country feeds (local + global) for top N.
-  // limit=12&offset=0 matches the front-end exactly (see index.html
-  // ~19249: `let offset = 0, limit = 12`). Cache key is parameterised by
-  // limit/offset, so prewarm MUST use the same shape or we just populate
-  // a key no user will hit. Also: unlimited LIMIT against the US country
-  // returns enormous result sets and was 500-ing the global handler.
-  const FEED_QS = '?limit=12&offset=0';
+  // The front-end paginates at limit=60 (see index.html ~19289), and the
+  // cache is keyed by (limit, offset) — so we MUST warm the exact shape
+  // the user requests. Two pages × two surfaces = first 120 articles per
+  // country are guaranteed cache hits during infinite scroll.
+  const FEED_PAGES = ['?limit=60&offset=0', '?limit=60&offset=60'];
   console.log(`${TAG} phase 1: warming local + global feeds for ${countries.length} countries…`);
   let countryOk = 0;
   for (let i = 0; i < countries.length; i += CONCURRENCY) {
     const batch = countries.slice(i, i + CONCURRENCY);
     const out = await Promise.all(batch.map(async c => {
-      const [local, global] = await Promise.all([
-        warm('local',  `${API_URL}/api/news/country/${c.id}${FEED_QS}`),
-        warm('global', `${API_URL}/api/news/country/${c.id}/global${FEED_QS}`),
-      ]);
+      // Warm both pages for both surfaces (4 requests per country).
+      const tasks = [];
+      for (const qs of FEED_PAGES) {
+        tasks.push(warm('local',  `${API_URL}/api/news/country/${c.id}${qs}`));
+        tasks.push(warm('global', `${API_URL}/api/news/country/${c.id}/global${qs}`));
+      }
+      const results = await Promise.all(tasks);
+      // Flatten into local/global summary so the existing log format still
+      // works — report the worst (slowest / errored) per surface.
+      const local  = results.filter(r => r.label === 'local').reduce((a, r) => a.err || (r.ms > (a.ms || 0)) ? r : a, results[0]);
+      const global = results.filter(r => r.label === 'global').reduce((a, r) => a.err || (r.ms > (a.ms || 0)) ? r : a, results[1]);
       return { c, local, global };
     }));
     for (const r of out) {
@@ -196,10 +202,14 @@ async function main() {
       for (let i = 0; i < cities.length; i += CONCURRENCY) {
         const batch = cities.slice(i, i + CONCURRENCY);
         const out = await Promise.all(batch.map(async c => {
-          const [local, global] = await Promise.all([
-            warm('local',  `${API_URL}/api/news/city/${c.id}${FEED_QS}`),
-            warm('global', `${API_URL}/api/news/city/${c.id}/global${FEED_QS}`),
-          ]);
+          const tasks = [];
+          for (const qs of FEED_PAGES) {
+            tasks.push(warm('local',  `${API_URL}/api/news/city/${c.id}${qs}`));
+            tasks.push(warm('global', `${API_URL}/api/news/city/${c.id}/global${qs}`));
+          }
+          const results = await Promise.all(tasks);
+          const local  = results.filter(r => r.label === 'local').reduce((a, r) => a.err || (r.ms > (a.ms || 0)) ? r : a, results[0]);
+          const global = results.filter(r => r.label === 'global').reduce((a, r) => a.err || (r.ms > (a.ms || 0)) ? r : a, results[1]);
           return { c, local, global };
         }));
         for (const r of out) {
