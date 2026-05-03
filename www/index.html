@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <title>Earth00</title>
   <meta name="description" content="Real-time global news intelligence on an interactive 3D globe. Track stories, flow arcs, and briefings across every country.">
   <meta property="og:type" content="website">
@@ -17756,8 +17756,15 @@ function computeCityTiers(cities) {
           focusLocked = false;
         }
         
-        const dx = (e.touches[0].clientX - touchPrevX) * 0.005;
-        const dy = (e.touches[0].clientY - touchPrevY) * 0.005;
+        // Zoom-aware drag sensitivity: at the default zoom of ~3.0 the
+        // 0.005 multiplier feels right; when zoomed in close (D=1.5) the
+        // globe fills more of the screen so a pixel of drag should rotate
+        // less, and when zoomed out (D=6) it should rotate more. Linear
+        // scaling keeps the touched surface point near the finger across
+        // the full zoom range.
+        const _dragZoomScale = Math.max(0.4, Math.min(2.0, camera.position.z / 3.0));
+        const dx = (e.touches[0].clientX - touchPrevX) * 0.005 * _dragZoomScale;
+        const dy = (e.touches[0].clientY - touchPrevY) * 0.005 * _dragZoomScale;
         if (Math.abs(dx) > 0.002 || Math.abs(dy) > 0.002) touchTapMoved = true;
         applyYaw(dx);
         applyTilt(dy);
@@ -17846,8 +17853,10 @@ function computeCityTiers(cities) {
           focusLocked = false;
         }
         
-        const deltaX = (e.clientX - prevX) * 0.005;
-        const deltaY = (e.clientY - prevY) * 0.005;
+        // Zoom-aware drag sensitivity — see touch handler for rationale.
+        const _dragZoomScale = Math.max(0.4, Math.min(2.0, camera.position.z / 3.0));
+        const deltaX = (e.clientX - prevX) * 0.005 * _dragZoomScale;
+        const deltaY = (e.clientY - prevY) * 0.005 * _dragZoomScale;
         applyYaw(deltaX); applyTilt(deltaY);
         rebuildGlobeQuat();
         // EMA-smooth the drag velocity for inertia on release
@@ -21041,7 +21050,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
         }
         
         if (e.ctrlKey) { zoomVelocity += e.deltaY * 0.00045; return; }
-        const rotateSpeed = 0.003;
+        // Zoom-aware rotate sensitivity for trackpad two-finger drag —
+        // matches the touch + mouse handlers' scaling.
+        const _rotateZoomScale = Math.max(0.4, Math.min(2.0, camera.position.z / 3.0));
+        const rotateSpeed = 0.003 * _rotateZoomScale;
         yawVelocity  += e.deltaX * rotateSpeed;
         tiltVelocity += e.deltaY * rotateSpeed * 0.6;
       }, { passive: false });
