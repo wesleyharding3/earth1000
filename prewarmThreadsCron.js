@@ -172,7 +172,12 @@ async function main() {
     const out = await Promise.all(batch.map(processThread));
     allResults.push(...out);
     for (const r of out) {
-      const tags = r.results.map(x => `${x.label}=${x.err ? 'ERR' : x.ms + 'ms'}`).join(' ');
+      // Surface the actual error string (truncated) instead of bare "ERR" —
+      // the previous compact format hid whether failures were HTTP 5xx,
+      // HTTP 504, network resets, or the 95s client abort.
+      const tags = r.results.map(x => x.err
+        ? `${x.label}=ERR(${String(x.err).slice(0, 30)})`
+        : `${x.label}=${x.ms}ms`).join(' ');
       const titleTrim = (r.t.title || '').slice(0, 50);
       console.log(`${TAG}   #${String(r.t.id).padStart(6)} imp=${r.t.importance} arts=${String(r.t.article_count).padStart(4)} ${tags}  ${titleTrim}`);
     }

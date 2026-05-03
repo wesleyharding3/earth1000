@@ -134,7 +134,9 @@ async function main() {
     const out = await Promise.all(batch.map(processLine));
     allResults.push(...out);
     for (const r of out) {
-      const tags = r.results.map(x => `${x.label}=${x.err ? 'ERR' : x.ms + 'ms'}`).join(' ');
+      const tags = r.results.map(x => x.err
+        ? `${x.label}=ERR(${String(x.err).slice(0, 30)})`
+        : `${x.label}=${x.ms}ms`).join(' ');
       const titleTrim = (r.t.title || '').slice(0, 50);
       console.log(`${TAG}   #${String(r.t.id).padStart(5)} imp=${r.t.importance} arts=${String(r.t.article_count).padStart(4)} ${tags}  ${titleTrim}`);
     }

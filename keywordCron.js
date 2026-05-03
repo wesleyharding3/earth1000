@@ -47,25 +47,46 @@ function isDateLikeKeyword(keyword) {
   return value ? DATE_LIKE_KEYWORD_PATTERNS.some((pattern) => pattern.test(value)) : false;
 }
 
-// Stopwords: prefetched once per cron run, passed to the trending/rising
-// queries as a text[] param. Replaces a per-row NOT EXISTS subquery (which
-// blew the 90s statement_timeout when keyword_daily_stats hit several
-// hundred thousand rows in the global date window) with a hash anti-join
-// against an in-memory array. Stopwords table is small (<1k entries).
+// Stopwords: prefetched once per cron run.
 async function loadStopwords() {
   const { rows } = await pool.query(`SELECT word FROM stopwords`);
   return rows.map(r => r.word).filter(Boolean);
 }
 
+// Materialise stopwords into a session temp table with a PK index. Originally
+// tried `WHERE NOT (k.keyword = ANY($::text[]))` with the array as a param,
+// but with 26k stopwords Postgres treated it as a giant per-row OR list and
+// blew the statement_timeout. The temp-table form is a real hash anti-join
+// — 26k hash entries built once, O(1) probe per keyword_daily_stats row.
+// Uses a per-pid table name so trending/rising can share the pool without
+// stepping on each other if Postgres reuses the same backend.
+async function ensureStopwordsTable(client, stopwords) {
+  const tableName = `_kw_stopwords_${process.pid}`;
+  await client.query(`DROP TABLE IF EXISTS ${tableName}`);
+  await client.query(`CREATE TEMP TABLE ${tableName} (word text PRIMARY KEY)`);
+  // Bulk insert via unnest — single round-trip, server-side expansion.
+  if (stopwords.length) {
+    await client.query(
+      `INSERT INTO ${tableName}(word) SELECT unnest($1::text[]) ON CONFLICT DO NOTHING`,
+      [stopwords]
+    );
+  }
+  return tableName;
+}
+
 // ── Trending ────────────────────────────────────────────────────────────────
 // Top keywords by total mention volume over the last N days (global only).
 async function computeTrending({ days = 7, limit = 50, stopwords = [] } = {}) {
-  // Bounded long-running aggregation. 90s ceiling so overlapping cron
-  // invocations can't compound their slot occupation; the partial covering
-  // index idx_kds_global_date_keyword_cover handles the date+global scan.
+  // Bumped 90s → 300s. Original 90s was scoped to prevent overlapping cron
+  // invocations from compounding slot occupation, but trending/rising are
+  // already sequenced (and run at independent schedules), so the overlap
+  // concern doesn't apply. 300s gives headroom for the GROUP BY across a
+  // full week's global window.
   const client = await pool.connect();
   try {
-    await client.query("SET statement_timeout = '90s'");
+    await client.query("SET statement_timeout = '300s'");
+    const swTable = await ensureStopwordsTable(client, stopwords);
+    const t0 = Date.now();
     const { rows } = await client.query(`
       SELECT
         k.keyword,
@@ -75,12 +96,13 @@ async function computeTrending({ days = 7, limit = 50, stopwords = [] } = {}) {
       WHERE k.date              >= CURRENT_DATE - $1::int
         AND k.source_country_id IS NULL
         AND k.about_country_id  IS NULL
-        AND NOT (k.keyword = ANY($3::text[]))
+        AND NOT EXISTS (SELECT 1 FROM ${swTable} sw WHERE sw.word = k.keyword)
       GROUP BY k.keyword
       HAVING SUM(k.total_count) >= 3
       ORDER BY mentions DESC, k.keyword ASC
       LIMIT $2
-    `, [days, limit, stopwords]);
+    `, [days, limit]);
+    console.log(`[keywordCron] trending query: ${rows.length} rows in ${elapsed(t0)}`);
     return rows;
   } finally {
     client.release();
@@ -90,10 +112,12 @@ async function computeTrending({ days = 7, limit = 50, stopwords = [] } = {}) {
 // ── Rising ──────────────────────────────────────────────────────────────────
 // Keywords whose recent velocity is significantly above their baseline rate.
 async function computeRising({ days = 3, baselineDays = 14, limit = 30, stopwords = [] } = {}) {
-  // Same 90 s bound as computeTrending — see comment there.
+  // Same 300s bound as computeTrending — see comment there.
   const client = await pool.connect();
   try {
-    await client.query("SET statement_timeout = '90s'");
+    await client.query("SET statement_timeout = '300s'");
+    const swTable = await ensureStopwordsTable(client, stopwords);
+    const t0 = Date.now();
     const { rows } = await client.query(`
     WITH recent AS (
       SELECT k.keyword, SUM(k.total_count)::bigint AS recent_count
@@ -101,7 +125,7 @@ async function computeRising({ days = 3, baselineDays = 14, limit = 30, stopword
       WHERE k.date              >= CURRENT_DATE - $1::int
         AND k.source_country_id IS NULL
         AND k.about_country_id  IS NULL
-        AND NOT (k.keyword = ANY($4::text[]))
+        AND NOT EXISTS (SELECT 1 FROM ${swTable} sw WHERE sw.word = k.keyword)
       GROUP BY k.keyword
       HAVING SUM(k.total_count) >= 2
     ),
@@ -112,7 +136,7 @@ async function computeRising({ days = 3, baselineDays = 14, limit = 30, stopword
         AND k.date               < CURRENT_DATE - $1::int
         AND k.source_country_id IS NULL
         AND k.about_country_id  IS NULL
-        AND NOT (k.keyword = ANY($4::text[]))
+        AND NOT EXISTS (SELECT 1 FROM ${swTable} sw WHERE sw.word = k.keyword)
       GROUP BY k.keyword
     )
     SELECT
@@ -132,7 +156,8 @@ async function computeRising({ days = 3, baselineDays = 14, limit = 30, stopword
     WHERE r.recent_count >= 2
     ORDER BY momentum DESC, r.recent_count DESC, r.keyword ASC
     LIMIT $3
-    `, [days, baselineDays, limit, stopwords]);
+    `, [days, baselineDays, limit]);
+    console.log(`[keywordCron] rising query: ${rows.length} rows in ${elapsed(t0)}`);
     return rows.filter((row) => !isDateLikeKeyword(row && row.keyword));
   } finally {
     client.release();
