@@ -157,8 +157,10 @@ async function warmFlow(direction, country, mode) {
     return { direction, mode: mode.name, country, ms: Date.now() - t0, err: e.message };
   }
   const ms = Date.now() - t0;
+  // Cancel body — server cache is populated before res.json() runs,
+  // so we don't need to download the (large) flow payload.
+  try { await res.body?.cancel?.(); } catch {}
   if (!res.ok) return { direction, mode: mode.name, country, ms, err: `HTTP ${res.status}` };
-  await res.text().catch(() => {});
   return { direction, mode: mode.name, country, ms };
 }
 

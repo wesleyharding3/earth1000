@@ -101,9 +101,10 @@ async function warmHeatmap(keyword) {
   const t0 = Date.now();
   const r = await fetchWithTimeout(url);
   const ms = Date.now() - t0;
+  // Cancel body — server cache is populated before res.json() runs,
+  // so we don't need to download the heatmap payload (large JSON).
+  try { await r.body?.cancel?.(); } catch {}
   if (!r.ok) throw new Error(`heatmap ${r.status} (${ms}ms)`);
-  // Drain the body so the connection closes cleanly; we don't need the data.
-  await r.text().catch(() => {});
   return ms;
 }
 
@@ -118,8 +119,8 @@ async function warmFlows(keyword) {
   const t0 = Date.now();
   const r = await fetchWithTimeout(url);
   const ms = Date.now() - t0;
+  try { await r.body?.cancel?.(); } catch {}
   if (!r.ok) throw new Error(`flows ${r.status} (${ms}ms)`);
-  await r.text().catch(() => {});
   return ms;
 }
 

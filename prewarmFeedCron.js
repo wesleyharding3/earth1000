@@ -111,8 +111,12 @@ async function warm(label, url) {
   try {
     const r = await fetchWithTimeout(url);
     const ms = Date.now() - t0;
+    // Cancel body stream — the server's ttlCached() populates the cache
+    // INSIDE the callback before res.json() runs, so by the time we get
+    // headers the cache is warm. Reading the body just buffers MBs of
+    // JSON we don't need (US global feed alone OOMs Render's 512MB cap).
+    try { await r.body?.cancel?.(); } catch {}
     if (!r.ok) return { label, ms, err: `HTTP ${r.status}` };
-    await r.text().catch(() => {});
     return { label, ms };
   } catch (e) {
     return { label, ms: Date.now() - t0, err: e.message };

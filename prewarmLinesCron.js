@@ -75,8 +75,10 @@ async function warm(label, url) {
   try {
     const r = await fetchWithTimeout(url);
     const ms = Date.now() - t0;
+    // Cancel body — server cache is populated before res.json() runs,
+    // so we don't need to download the response (would OOM on big feeds).
+    try { await r.body?.cancel?.(); } catch {}
     if (!r.ok) return { label, ms, err: `HTTP ${r.status}` };
-    await r.text().catch(() => {});
     return { label, ms };
   } catch (e) {
     return { label, ms: Date.now() - t0, err: e.message };

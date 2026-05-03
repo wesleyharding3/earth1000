@@ -2,7 +2,7 @@
 'use strict';
 
 /**
- * prewarmThreadFlowsCron.js
+ * prewarmThreadsCron.js
  *
  * Owns ALL thread surface warming. Runs at the thread builder's cadence
  * (every 2 hours) so all per-thread caches (TTL 1h45m) stay warm for
@@ -34,7 +34,7 @@
  *   PREWARM_CONCURRENCY        parallel threads (default: 1)
  *
  * Run:
- *   node prewarmThreadFlowsCron.js
+ *   node prewarmThreadsCron.js
  *
  * Wire to a 2h Render Cron — schedule: 5 past every 2nd hour
  *   (cron expression: 5  STAR/2  STAR  STAR  STAR  — STAR = literal asterisk)
@@ -87,8 +87,10 @@ async function warm(label, url) {
   try {
     const r = await fetchWithTimeout(url);
     const ms = Date.now() - t0;
+    // Cancel body — server cache is populated before res.json() runs,
+    // so we don't need to download the response (would OOM on big feeds).
+    try { await r.body?.cancel?.(); } catch {}
     if (!r.ok) return { label, ms, err: `HTTP ${r.status}` };
-    await r.text().catch(() => {});
     return { label, ms };
   } catch (e) {
     return { label, ms: Date.now() - t0, err: e.message };
@@ -132,9 +134,9 @@ async function warmCoreFeeds() {
     try {
       const r = await fetchWithTimeout(url);
       const ms = Date.now() - t0;
+      try { await r.body?.cancel?.(); } catch {}
       const tag = r.ok ? `${ms}ms` : `ERR HTTP ${r.status} (${ms}ms)`;
       console.log(`${TAG}   ${path.padEnd(28)} [${tag}]`);
-      await r.text().catch(() => {});
       out.push({ path, ok: r.ok, ms });
     } catch (e) {
       const ms = Date.now() - t0;
