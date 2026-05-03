@@ -84,11 +84,18 @@ function _buildTools() {
     },
     {
       name: 'decline_question',
-      description: 'Decline the question — use when it is biased, unanswerable, or has no meaningful per-country mapping.',
+      description: 'Decline the question. Categorise the decline via `kind` so the system can pick the right next step. If you decline because the question is well-formed but you cannot reach the 85% confidence floor on enough countries to make a useful heatmap, set kind="low_data" — the system will then re-prompt you for a best-effort ESTIMATE that the user is told may contain errors.',
       input_schema: {
         type: 'object',
-        required: ['reason'],
-        properties: { reason: { type: 'string', description: 'Brief, neutral explanation shown to the user.' } },
+        required: ['reason', 'kind'],
+        properties: {
+          reason: { type: 'string', description: 'Brief, neutral explanation shown to the user.' },
+          kind: {
+            type: 'string',
+            enum: ['biased', 'no_mapping', 'dangerous', 'low_data', 'other'],
+            description: 'Category of decline. "biased" = value-loaded / opinion-laden. "no_mapping" = the question has no objective per-country answer. "dangerous" = harmful content. "low_data" = the question IS well-formed and HAS a per-country mapping, but you do not have enough confident data — system will re-prompt you for an estimate. "other" = anything else.',
+          },
+        },
       },
     },
   ];
@@ -252,9 +259,10 @@ function _extractFirstPass(claudeResp, mode, rawQuestion, isoSet) {
     err.code = 'NO_TOOL_CALL';
     throw err;
   }
-  const payload = { legend: null, unit: null, source_note: null, values: [], refusal: null };
+  const payload = { legend: null, unit: null, source_note: null, values: [], refusal: null, refusalKind: null };
   if (toolUse.name === 'decline_question') {
     payload.refusal = String(toolUse.input?.reason || 'Question cannot be answered as a heatmap.');
+    payload.refusalKind = String(toolUse.input?.kind || 'other').toLowerCase();
     return { payload, seen: new Set() };
   }
   if (toolUse.name === 'set_country_values') {
@@ -377,6 +385,71 @@ Call set_country_values with ONLY the additional countries.`;
   }
 }
 
+// ── Estimate fallback (low-data refusals only) ─────────────────────────
+// When the first pass declines with kind='low_data' — the question is
+// well-formed but Claude couldn't reach the 85% confidence floor — we
+// re-prompt with the confidence requirement explicitly DROPPED, forcing
+// the model to produce its best estimate. The result is tagged with a
+// prominent "ESTIMATE — may contain errors" prefix in source_note so
+// the user knows the values are not authoritative.
+//
+// We do NOT do this for other decline kinds (biased / no_mapping /
+// dangerous) — those should stay declined.
+async function _estimateFallbackPass(rawQuestion, mode, isoCatalog, isoSet, tools) {
+  const claude = _getClient();
+  const userMsg = `Your previous strict-pass answer to "${rawQuestion}" (mode: ${mode}) was declined with kind="low_data" — meaning the question is well-formed and HAS a per-country mapping, but you couldn't reach the 85% confidence floor on enough countries.
+
+The user has now been told that the next response is an ESTIMATE and may contain errors. Drop the 85% confidence floor entirely. Provide your best estimate for as many countries as you can — interpolations from regional averages, low-confidence published figures, and informed guesses are all acceptable as long as you have ANY reasonable basis.
+
+Use web_search aggressively (up to 6 calls) to find ANY data, even imperfect or partial. Estimate the rest from regional patterns or known anchors.
+
+Call set_country_values. Do NOT call decline_question on this attempt — the user has already accepted that the answer will be an estimate.`;
+
+  const resp = await claude.messages.create({
+    model:       'claude-sonnet-4-5-20250929',
+    max_tokens:  12000,
+    system:      _buildSystemPrompt(isoCatalog, mode),
+    tools,
+    tool_choice: { type: 'tool', name: 'set_country_values' },
+    messages:    [{ role: 'user', content: userMsg }],
+  });
+  const toolUse = (resp.content || []).find(b => b.type === 'tool_use' && b.name === 'set_country_values');
+  if (!toolUse) return null;
+
+  const raw = toolUse.input || {};
+  const payload = {
+    legend:      String(raw.legend || rawQuestion).slice(0, 120),
+    unit:        raw.unit ? String(raw.unit).slice(0, 16) : (mode === 'percent' ? '%' : (mode === 'rank' ? 'rank' : '')),
+    source_note: String(raw.source_note || 'AI estimate — verify before citing').slice(0, 240),
+    values:      [],
+    refusal:     null,
+    refusalKind: null,
+  };
+  const seen = new Set();
+  const arr = Array.isArray(raw.values) ? raw.values : [];
+  for (const v of arr) {
+    const iso = String(v.iso || '').toUpperCase().trim();
+    const num = Number(v.value);
+    if (!iso || !isoSet.has(iso))    continue;
+    if (!Number.isFinite(num))       continue;
+    if (seen.has(iso))               continue;
+    seen.add(iso);
+    payload.values.push({ iso, value: num });
+  }
+  if (!payload.values.length) return null;
+  return { payload, seen };
+}
+
+// Prepend the estimate caveat to source_note so the front-end's existing
+// note surface (#semHeatAskNote, italic warm-amber) declares it. Capped
+// at 240 chars total to fit the column.
+function _markAsEstimate(payload) {
+  const prefix = '⚠ ESTIMATE — may contain errors. ';
+  const existing = payload.source_note || '';
+  if (existing.startsWith(prefix)) return;
+  payload.source_note = `${prefix}${existing}`.slice(0, 240);
+}
+
 // ── Public API ──────────────────────────────────────────────────────────
 async function resolveHeatmap(question, mode, opts = {}) {
   const rawQuestion = String(question || '').trim();
@@ -393,6 +466,10 @@ async function resolveHeatmap(question, mode, opts = {}) {
   if (!opts.forceFresh) {
     const row = await _cacheLookup(questionHash, m);
     if (row) {
+      // Detect estimate from the source_note prefix that _markAsEstimate
+      // wrote on the original miss-path resolve. No schema change needed.
+      const isEstimate = typeof row.source_note === 'string' &&
+                          row.source_note.startsWith('⚠ ESTIMATE — may contain errors.');
       return {
         question:    rawQuestion,
         mode:        row.mode,
@@ -401,6 +478,7 @@ async function resolveHeatmap(question, mode, opts = {}) {
         source_note: row.source_note,
         values:      row.values,
         refusal:     row.refusal,
+        is_estimate: isEstimate,
         source:      row.source,        // 'claude' | 'curated'
         cache:       'hit',
       };
@@ -413,14 +491,37 @@ async function resolveHeatmap(question, mode, opts = {}) {
 
   // 3. First-pass Claude call.
   const firstResp = await _firstPass(rawQuestion, m, isoCatalog, tools);
-  const { payload, seen } = _extractFirstPass(firstResp, m, rawQuestion, isoSet);
+  let { payload, seen } = _extractFirstPass(firstResp, m, rawQuestion, isoSet);
 
-  // 4. Optional second-pass fill-in for rank/binary truncation.
-  if (!opts.skipFillIn && !payload.refusal) {
+  // 4. Estimate fallback — only when first pass declined with kind='low_data'.
+  // Other decline kinds (biased / no_mapping / dangerous) stay declined.
+  let isEstimate = false;
+  if (payload.refusal && payload.refusalKind === 'low_data') {
+    try {
+      const fallback = await _estimateFallbackPass(rawQuestion, m, isoCatalog, isoSet, tools);
+      if (fallback) {
+        payload = fallback.payload;
+        seen    = fallback.seen;
+        isEstimate = true;
+        _markAsEstimate(payload);
+      }
+      // If fallback returned null, the original refusal stands.
+    } catch (err) {
+      console.warn(`[heatmapResolver] estimate fallback failed: ${err.message}`);
+      // Original refusal stands.
+    }
+  }
+
+  // 5. Optional second-pass fill-in for rank/binary truncation.
+  // Skip on estimate path — fill-in's prompt re-asserts the 85% confidence
+  // floor, which contradicts the estimate intent.
+  if (!opts.skipFillIn && !payload.refusal && !isEstimate) {
     await _fillInPass({ payload, seen, mode: m, rawQuestion, countryRows, isoSet, isoCatalog, tools });
   }
 
-  // 5. Persist to cache (UPSERT).
+  // 6. Persist to cache (UPSERT). The estimate caveat is encoded in
+  // source_note so cache replays preserve the declaration without a
+  // schema change to heatmap_qa_cache.
   await _cacheWrite(questionHash, rawQuestion, m, payload);
 
   return {
@@ -431,6 +532,7 @@ async function resolveHeatmap(question, mode, opts = {}) {
     source_note: payload.source_note,
     values:      payload.values,
     refusal:     payload.refusal,
+    is_estimate: isEstimate,
     source:      'claude',
     cache:       'miss',
   };

@@ -13189,6 +13189,11 @@ app.post("/api/heatmap/ask", aiLimiter, async (req, res) => {
           `UPDATE heatmap_qa_cache SET hit_count = hit_count + 1, last_hit_at = NOW() WHERE id = $1`,
           [row.id]
         ).catch(() => {});
+        // Detect estimate replays from the source_note prefix written
+        // by heatmapResolver._markAsEstimate. Keeps the response shape
+        // consistent with the resolver's miss-path return.
+        const isEstimate = typeof row.source_note === 'string' &&
+                            row.source_note.startsWith('⚠ ESTIMATE — may contain errors.');
         return res.json({
           question:    rawQuestion,
           mode:        row.mode,
@@ -13197,6 +13202,7 @@ app.post("/api/heatmap/ask", aiLimiter, async (req, res) => {
           source_note: row.source_note,
           values:      row.values,
           refusal:     row.refusal,
+          is_estimate: isEstimate,
           source:      row.source,
           cache:       'hit',
         });

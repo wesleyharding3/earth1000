@@ -6558,6 +6558,21 @@ button.arcCtxSegDot,
 .semHeatStats { font-size: 10px; color: rgba(255,255,255,0.5); padding-top: 6px; border-top: 1px solid rgba(255,255,255,0.06); line-height: 1.5; }
 .semHeatStats b { color: rgba(255,210,150,0.95); font-weight: 700; }
 
+/* Heatmap Ask-AI: when the resolver had to fall back to an estimate
+   pass (Claude declined the strict pass with kind='low_data'), the
+   source_note carries an "⚠ ESTIMATE" prefix. Front-end toggles
+   .is-estimate on #semHeatAskNote so the caveat reads as a clear
+   warning instead of the muted italic note style. */
+#semHeatAskNote.is-estimate {
+  /* !important to override the inline styles on the markup (font-size:9px;
+     color:rgba(255,200,140,0.75); font-style:italic). Inline beats class
+     selectors otherwise. */
+  font-size: 10px !important;
+  font-weight: 700 !important;
+  font-style: normal !important;
+  color: rgba(255, 180, 80, 1) !important;
+}
+
 .semHeatLegend { display: flex; align-items: center; gap: 6px; font-size: 10px; color: rgba(255,255,255,0.55); }
 .semHeatLegendBar { flex: 1; height: 8px; border-radius: 4px; background: linear-gradient(to right, #e74c3c, #f1c40f, #2ecc71); }
 .semHeatLegendBar.coverage { background: linear-gradient(to right, rgba(60,140,255,0.2), rgba(60,180,255,0.55), rgba(120,230,255,1)); }
@@ -9893,6 +9908,12 @@ button.arcCtxSegDot,
 
     /* ── Multi-select country picker ── */
     .nfMultiWrap { position: relative; z-index: 2; }
+    /* When a wrap's dropdown is open, lift the WHOLE wrap above its
+       siblings so the dropdown panel paints over (and receives clicks
+       from) adjacent .nfField elements. The dropdown's own z-index is
+       local to .nfMultiWrap's stacking context — it can't escape the
+       wrap's z-index of 2 relative to sibling wraps without help. */
+    .nfMultiWrap:has(.nfMultiDrop.open) { z-index: 1000; }
 
     .nfMultiBtn {
       width: 100%; min-height: max(26px, calc(26px * var(--mobile-control-scale)));
@@ -9943,9 +9964,14 @@ button.arcCtxSegDot,
     }
     .nfChipX:hover { opacity: 1; }
 
-    /* Dropdown panel */
+    /* Dropdown panel — opens UPWARD from the button so the keyboard
+       (which appears when the user taps the dropdown's search input)
+       can never cut off the country list. Was top: calc(100% + 5px)
+       which placed it below the button → keyboard would clip the
+       bottom of the list. max-height is now viewport-aware so the
+       panel never extends past the top safe area on short screens. */
     .nfMultiDrop {
-      position: absolute; top: calc(100% + 5px); left: 0;
+      position: absolute; bottom: calc(100% + 5px); left: 0;
       width: 100%;
       min-width: 220px;
       background: rgba(4,7,13,0.99);
@@ -9955,7 +9981,10 @@ button.arcCtxSegDot,
       box-shadow: 0 8px 32px rgba(0,0,0,0.85), 0 0 24px rgba(255,140,30,0.07);
       z-index: 100;
       overflow: hidden;
-      max-height: 310px;
+      /* 200px ≈ top safe area + page chrome above the builder row.
+         On a typical phone (vp 800, kbd 350): min(310, 250) = 250.
+         Without keyboard: min(310, 600) = 310. */
+      max-height: min(310px, calc(100vh - var(--kbd-shift, 0px) - 200px));
     }
     .nfMultiDrop.open { display: flex; }
 
@@ -11013,16 +11042,22 @@ button.arcCtxSegDot,
         overflow-x: visible !important;
         gap: 6px !important;
       }
+      /* All Topics + Bias buttons — shrunk + capped so they sit neatly
+         next to one another instead of expanding to ~50% each (which
+         was overflowing once gap + media-toggles + search were also
+         on the row, making the two buttons visually intersect). */
       .nfTagWrap,
       .nfBiasWrap {
-        flex: 1 1 calc(50% - 3px);
-        min-width: 0;
+        flex: 0 1 130px;
+        min-width: 90px;
+        max-width: 140px;
       }
       .nfTagBtn,
       .nfBiasBtn {
         width: 100%;
         height: 30px !important;
         font-size: 10px !important;
+        padding: 0 8px !important;
         justify-content: center;
       }
       .nfTagDropdown {
@@ -50103,8 +50138,17 @@ body.ticker-active .gTickerLabel {
     if (status) status.textContent = `${pts.length} countries · ${state.qaLegend}`;
     const note = document.getElementById('semHeatAskNote');
     if (note) {
-      if (state.qaSourceNote) { note.textContent = state.qaSourceNote; note.style.display = ''; }
-      else { note.textContent = ''; note.style.display = 'none'; }
+      if (state.qaSourceNote) {
+        note.textContent = state.qaSourceNote;
+        note.style.display = '';
+        // Promote estimate notes to a brighter, bolder, non-italic style so
+        // the caveat reads as a warning rather than muted attribution.
+        note.classList.toggle('is-estimate', state.qaSourceNote.startsWith('⚠ ESTIMATE'));
+      } else {
+        note.textContent = '';
+        note.style.display = 'none';
+        note.classList.remove('is-estimate');
+      }
     }
   };
 
