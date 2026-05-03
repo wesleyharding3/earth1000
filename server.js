@@ -7492,9 +7492,10 @@ app.get("/api/timelines/latest", async (req, res) => {
         WHERE t.status IN ('active','cooling','dormant')
           AND (t.article_count >= 2 OR COALESCE(t.is_manual, FALSE) = TRUE)
         ORDER BY
-          -- Status first: active → dormant → cooling. Importance second.
-          -- See /api/threads/latest for full rationale.
-          CASE t.status WHEN 'active' THEN 0 WHEN 'dormant' THEN 1 WHEN 'cooling' THEN 2 ELSE 3 END,
+          -- Status first: active → cooling → dormant. Importance second.
+          -- (Lines bucket independently from threads — threads still order
+          -- active → dormant → cooling, by older request.)
+          CASE t.status WHEN 'active' THEN 0 WHEN 'cooling' THEN 1 WHEN 'dormant' THEN 2 ELSE 3 END,
           t.importance DESC NULLS LAST,
           CASE WHEN t.primary_category IN ('politics','military','diplomacy','economy','conflict') THEN 0
                WHEN t.primary_category IN ('environment','climate') THEN 2

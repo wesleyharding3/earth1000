@@ -191,11 +191,12 @@ const EVENT_LOOKBACK_DAYS        = 21;  // day-clusters older than this are stab
 const EVENT_MAX_DAYS_PER_RUN     = 40;  // cap Claude spend per run
 
 // ─── Cooldown ────────────────────────────────────────────────────────────────
-// Lines represent historical trends — some legitimately move slowly. Doubled
-// the active→cooling threshold from 30 to 60 so Lines don't prematurely
-// drift to cooling between coverage bursts. Dormant threshold unchanged.
-const COOLING_AFTER_DAYS = 60;
-const DORMANT_AFTER_DAYS = 90;
+// Per-request: active → cooling after 1 week of no updates, cooling →
+// dormant after another 2 months (60 days). The dormant threshold is
+// measured from last_updated_at (not from the cooling transition), so
+// dormant kicks in at 7+60 = 67 days since the last update.
+const COOLING_AFTER_DAYS = 7;
+const DORMANT_AFTER_DAYS = 67;
 
 // ─── Article Umbrella phase ──────────────────────────────────────────────────
 // Beyond thread promotions, recent articles matching a Line's umbrella

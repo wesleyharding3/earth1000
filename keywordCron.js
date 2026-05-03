@@ -71,6 +71,12 @@ async function ensureStopwordsTable(client, stopwords) {
       [stopwords]
     );
   }
+  // ANALYZE so the planner knows the real row count (~26k). Without this it
+  // assumes the default ~10 rows for an empty pg_statistic entry and picks
+  // a nested-loop anti-join — that was the dominant cost in rising
+  // (the table is genuinely big enough that the planner needs accurate stats
+  // to choose a hash anti-join over a per-row index probe).
+  await client.query(`ANALYZE ${tableName}`);
   return tableName;
 }
 
@@ -118,43 +124,38 @@ async function computeRising({ days = 3, baselineDays = 14, limit = 30, stopword
     await client.query("SET statement_timeout = '300s'");
     const swTable = await ensureStopwordsTable(client, stopwords);
     const t0 = Date.now();
+    // Single 17-day scan with FILTER aggregates instead of two CTEs that
+    // each scanned + grouped independently and then joined. Cuts the work
+    // roughly in half — one index scan, one HashAggregate, one anti-join,
+    // no JOIN. Same semantics as the old recent/baseline split.
     const { rows } = await client.query(`
-    WITH recent AS (
-      SELECT k.keyword, SUM(k.total_count)::bigint AS recent_count
-      FROM keyword_daily_stats k
-      WHERE k.date              >= CURRENT_DATE - $1::int
-        AND k.source_country_id IS NULL
-        AND k.about_country_id  IS NULL
-        AND NOT EXISTS (SELECT 1 FROM ${swTable} sw WHERE sw.word = k.keyword)
-      GROUP BY k.keyword
-      HAVING SUM(k.total_count) >= 2
-    ),
-    baseline AS (
-      SELECT k.keyword, SUM(k.total_count)::bigint AS baseline_count
+    WITH combined AS (
+      SELECT
+        k.keyword,
+        SUM(k.total_count) FILTER (WHERE k.date >= CURRENT_DATE - $1::int)::bigint AS recent_count,
+        SUM(k.total_count) FILTER (WHERE k.date <  CURRENT_DATE - $1::int)::bigint AS baseline_count
       FROM keyword_daily_stats k
       WHERE k.date              >= CURRENT_DATE - ($1::int + $2::int)
-        AND k.date               < CURRENT_DATE - $1::int
         AND k.source_country_id IS NULL
         AND k.about_country_id  IS NULL
         AND NOT EXISTS (SELECT 1 FROM ${swTable} sw WHERE sw.word = k.keyword)
       GROUP BY k.keyword
+      HAVING SUM(k.total_count) FILTER (WHERE k.date >= CURRENT_DATE - $1::int) >= 2
     )
     SELECT
-      r.keyword,
-      r.recent_count,
-      COALESCE(b.baseline_count, 0) AS baseline_count,
+      c.keyword,
+      c.recent_count,
+      COALESCE(c.baseline_count, 0) AS baseline_count,
       CASE
-        WHEN COALESCE(b.baseline_count, 0) = 0
-          THEN r.recent_count * 10
+        WHEN COALESCE(c.baseline_count, 0) = 0
+          THEN c.recent_count * 10
         ELSE ROUND(
-          (r.recent_count::numeric / b.baseline_count::numeric)
+          (c.recent_count::numeric / c.baseline_count::numeric)
           * ($2::numeric / $1::numeric) * 100
         ) / 100
       END AS momentum
-    FROM recent r
-    LEFT JOIN baseline b USING (keyword)
-    WHERE r.recent_count >= 2
-    ORDER BY momentum DESC, r.recent_count DESC, r.keyword ASC
+    FROM combined c
+    ORDER BY momentum DESC, c.recent_count DESC, c.keyword ASC
     LIMIT $3
     `, [days, baselineDays, limit]);
     console.log(`[keywordCron] rising query: ${rows.length} rows in ${elapsed(t0)}`);
