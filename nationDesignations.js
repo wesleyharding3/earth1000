@@ -4,12 +4,18 @@
  * nationDesignations.js — single source of truth for how a thread's (or
  * timeline's) `primary_nations` / `secondary_nations` arrays are derived.
  *
- * Source of truth: the `article_locations` table — populated by the nation
- * extractor from each article's title + summary. A country goes in the
- * thread's nation arrays iff at least one constituent article actually
- * mentions it. The previous design unioned arrays during dedup merges
- * without re-validation, which let "Iran" and "EU" stick to threads
- * about Sinaloa cartels, Hungarian elections, etc.
+ * Source of truth: the `article_locations` table, FILTERED to
+ * `routing_type = 'content'` — populated by locationRouter.js when a
+ * country/city is explicitly NAMED in an article's title or summary.
+ *
+ * Source-routed rows (`routing_type = 'source'`) are deliberately
+ * EXCLUDED. Those mark the publisher's home country (city-level
+ * publishers only) — useful for local-feed indexing but not for thread
+ * subject derivation. A Singapore newspaper writing about Sinaloa was
+ * adding Singapore to primary_nations purely on publisher origin, even
+ * though Singapore is never named in any constituent article. The
+ * comment "iff actually mentions it" was always the intent — the SQL
+ * just wasn't enforcing it.
  *
  *   PRIMARY_CAP   = 4   — the spec's intended limit for "central actors"
  *   SECONDARY_CAP = 12  — generous, captures tangential mentions a story
@@ -49,6 +55,8 @@ async function computeNationsFromArticles(pool, articleIds) {
       FROM article_locations al
       JOIN countries c ON c.id = al.country_id
      WHERE al.article_id = ANY($1::int[])
+       AND al.routing_type = 'content'   -- only count subject mentions,
+                                         -- not publisher origin (source)
        AND c.iso_code IS NOT NULL
        AND length(c.iso_code) = 2
      GROUP BY c.iso_code
