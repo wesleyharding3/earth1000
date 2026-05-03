@@ -9784,22 +9784,28 @@ button.arcCtxSegDot,
 
     /* ── Bias filter ── */
     .nfBiasWrap { position: relative; flex-shrink: 0; }
+    /* Visually identical to .nfTagBtn so the two buttons read as a
+       symmetric pair anchoring the filter row's left + right edges.
+       Was a different (taller, brighter, lowercase) treatment. */
     .nfBiasBtn {
-      height: 28px; padding: 0 10px;
-      border-radius: 14px;
-      border: 1px solid rgba(255,180,80,0.16);
-      background: rgba(255,180,80,0.04);
-      color: rgba(255,200,130,0.6);
-      font-size: 11px; font-weight: 600; font-family: inherit;
-      cursor: pointer; white-space: nowrap;
       display: flex; align-items: center; gap: 6px;
-      transition: background 0.14s, border-color 0.14s, color 0.14s;
-      user-select: none;
+      height: 26px; padding: 0 10px;
+      border-radius: 13px;
+      background: rgba(255,180,80,0.05);
+      border: 1px solid rgba(255,180,80,0.18);
+      color: rgba(255,180,80,0.55);
+      font-size: 9px; font-weight: 700;
+      letter-spacing: 0.10em; text-transform: uppercase;
+      cursor: pointer; user-select: none; white-space: nowrap;
+      transition: border-color 0.2s, color 0.2s, box-shadow 0.2s;
+      font-family: inherit;
     }
+    .nfBiasBtn:hover { border-color: rgba(255,180,80,0.38); color: rgba(255,200,100,0.85); box-shadow: 0 0 10px rgba(255,140,30,0.12); }
+    /* `.filtered` mirrors `.nfTagBtn.active` — same active-state look. */
     .nfBiasBtn.filtered {
-      background: rgba(255,180,80,0.13);
-      border-color: rgba(255,180,80,0.45);
-      color: rgba(255,210,120,0.95);
+      border-color: rgba(255,180,80,0.55);
+      color: rgba(255,210,110,0.95);
+      box-shadow: 0 0 14px rgba(255,140,30,0.20);
     }
     .nfBiasBtn svg { width: 9px; height: 9px; flex-shrink: 0; transition: transform 0.15s; }
     .nfBiasBtn.open svg { transform: rotate(180deg); }
@@ -11083,11 +11089,11 @@ button.arcCtxSegDot,
         max-width: 140px;
       }
       .nfBiasWrap {
+        /* margin-left:auto pushes the bias wrapper to the right edge of
+           the filter row, mirroring the categories wrapper on the left.
+           Same flex sizing as categories (above) keeps them visually
+           symmetric. */
         margin-left: auto;
-        /* Right safe-area inset on iPhone — keeps the button off the
-           home-indicator side rail when the device is in landscape /
-           split-view layouts. */
-        margin-right: env(safe-area-inset-right, 0px);
       }
       .nfTagBtn,
       .nfBiasBtn {
@@ -11102,7 +11108,9 @@ button.arcCtxSegDot,
         top: auto !important; bottom: 60px;
         left: 8px !important; right: 8px !important;
         width: auto !important;
-        max-height: 50vh !important;
+        /* Cap so the dropdown's top edge never crosses the iOS top
+           safe-area (status bar / dynamic island). */
+        max-height: min(50vh, calc(100vh - 60px - env(safe-area-inset-top, 0px) - 16px)) !important;
         z-index: 210 !important;
       }
       .nfBiasDrop {
@@ -11111,7 +11119,8 @@ button.arcCtxSegDot,
         left: 8px !important; right: 8px !important;
         width: auto !important;
         min-width: 0 !important;
-        max-height: 50vh !important;
+        /* Same safe-area-aware cap as .nfTagDropdown above. */
+        max-height: min(50vh, calc(100vh - 60px - env(safe-area-inset-top, 0px) - 16px)) !important;
         z-index: 210 !important;
       }
       .nfMediaToggles {
