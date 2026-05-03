@@ -4,30 +4,22 @@
 /**
  * prewarmCountryFlowsCron.js
  *
- * Once-daily long-running job that pre-warms /api/flows responses for
- * the top 50 most-relevant countries, both as `about_country` (flows TO
- * the country) and `from_country` (flows FROM the country). These are
- * the queries that hit cold-DB latency hardest — Indonesia, India, US,
- * Russia all aggregate against millions of article_locations rows and
- * regularly bump the 45s client timeout.
+ * Once-daily job that pre-warms /api/flows responses for the top 100
+ * countries, both as `about_country` (flows TO the country) and
+ * `from_country` (flows FROM the country). These are the queries that
+ * hit cold-DB latency hardest — US, RU, CN, IN aggregate across millions
+ * of article_locations rows and regularly bump the 45s client timeout.
  *
- * Companion to prewarmKeywordCacheCron.js (keyword pre-warming) and
- * prewarmThreadFlowsCron.js (thread/timeline flow pre-warming). All three
- * are pure-HTTP — no direct PG connection. Production was hitting
- * Postgres connection cap when crons opened pg pools (error 53300:
- * "remaining connection slots are reserved for roles with the SUPERUSER
- * attribute"), so this discovers the country list via /api/countries/all
- * (which is itself cached 24h) and never touches the DB directly.
- *
- * Country selection: a curated list of the top-50 ISOs by typical news
- * mention volume — ordered roughly by 30-day article frequency in the
- * earth00 corpus. Stable enough that the static list works fine; if you
- * need to retune, just edit DEFAULT_TOP_ISOS below or override via
- * PREWARM_COUNTRY_ISOS env var.
+ * Pure HTTP — no DB pool. Discovers ISOs via /api/countries (24h cached).
  *
  * Cadence: daily, paired with /api/flows TTL of 22h for country-only
- * queries (set in server.js). Matches the cron cadence so the cache is
- * always warm when users tap.
+ * queries. Matches the cron so the cache is always warm when users tap.
+ *
+ * Companion crons (separation of concerns):
+ *   prewarmFeedCron.js          → all feed surfaces (hourly)
+ *   prewarmThreadFlowsCron.js   → all thread surfaces (every 2h)
+ *   prewarmLinesCron.js         → all line/timeline surfaces (daily)
+ *   prewarmKeywordCacheCron.js  → keyword heatmap + flows (every 10m)
  *
  * Env vars:
  *   API_URL                    base URL of the API (default: http://localhost:3000)
@@ -115,40 +107,11 @@ async function resolveIsoMap() {
   return map;
 }
 
-// How many top cities to warm per run. Cities are way more numerous than
-// countries (~hundreds), so we cap to keep the cron under Render's 30min
-// budget. Top-N picked by population (a proxy for "user is most likely
-// to tap this city").
-// 50 default — covers all major metros plus a meaningful long tail. Tunable
-// with PREWARM_CITY_LIMIT env var. Each city adds 2 requests (local + global
-// feed); 50 cities = 100 requests, ~5 min sequential at 3s avg.
-const CITY_LIMIT = Math.max(0, parseInt(process.env.PREWARM_CITY_LIMIT || '50', 10));
-
-// Pull the top-N cities by population from /api/cities (24h-cached, cheap).
-async function pickTopCities(n) {
-  if (n <= 0) return [];
-  const data = await fetchJSON(`${API_URL}/api/cities`);
-  const arr = Array.isArray(data) ? data : (data?.cities || data?.data || []);
-  return arr
-    .filter(c => c && c.id)
-    .sort((a, b) => (Number(b.population) || 0) - (Number(a.population) || 0))
-    .slice(0, n)
-    .map(c => ({ id: c.id, name: c.name, population: c.population || 0 }));
-}
-
-// Warm a single feed endpoint and return its timing.
-async function warmFeed(label, url) {
-  const t0 = Date.now();
-  try {
-    const r = await fetchWithTimeout(url);
-    const ms = Date.now() - t0;
-    if (!r.ok) return { label, ms, err: `HTTP ${r.status}` };
-    await r.text().catch(() => {});
-    return { label, ms };
-  } catch (e) {
-    return { label, ms: Date.now() - t0, err: e.message };
-  }
-}
+// NOTE: country/city local + global news feeds and /api/timelines/latest
+// were previously warmed here. They've moved:
+//   country/city feeds → prewarmFeedCron.js (hourly — matches article fetcher)
+//   timelines/latest    → prewarmLinesCron.js (daily — matches line builder)
+// This cron is now country-flow-arcs ONLY.
 
 function pickIsos() {
   if (process.env.PREWARM_COUNTRY_ISOS) {
@@ -256,67 +219,6 @@ async function main() {
   }
   console.log(`${TAG} resolved ${countries.length} countries: ${countries.map(c => c.iso).join(',')}`);
 
-  // Phase 0 — warm /api/timelines/latest (22h TTL, daily timeline
-  // builder — cadence matches this cron).
-  console.log(`${TAG} core feed: warming /api/timelines/latest…`);
-  let coreOk = 0;
-  try {
-    const tl0 = Date.now();
-    const tlRes = await fetchWithTimeout(`${API_URL}/api/timelines/latest`);
-    const tlMs = Date.now() - tl0;
-    if (tlRes.ok) { coreOk = 1; console.log(`${TAG}   /api/timelines/latest [${tlMs}ms]`); }
-    else { console.log(`${TAG}   /api/timelines/latest [ERR HTTP ${tlRes.status} (${tlMs}ms)]`); }
-    await tlRes.text().catch(() => {});
-  } catch (e) {
-    console.log(`${TAG}   /api/timelines/latest [ERR ${e.message}]`);
-  }
-  console.log('');
-
-  // Phase 1 — country feeds (local + global) for the same top-50 set.
-  // 100 requests, but each is cheap (60s in-process cache means a single
-  // SQL run per country per cron). Sequential to keep pool gentle.
-  console.log(`${TAG} country feeds: warming local + global for ${countries.length} countries…`);
-  let countryFeedOk = 0;
-  for (const c of countries) {
-    const local  = await warmFeed('local',  `${API_URL}/api/news/country/${c.id}`);
-    const global = await warmFeed('global', `${API_URL}/api/news/country/${c.id}/global`);
-    if (!local.err)  countryFeedOk++;
-    if (!global.err) countryFeedOk++;
-    const lTag = local.err  ? `ERR ${local.err}`  : `${local.ms}ms`;
-    const gTag = global.err ? `ERR ${global.err}` : `${global.ms}ms`;
-    console.log(`${TAG}   ${c.iso} ${(c.name || '').padEnd(20)} local=${lTag.padEnd(14)} global=${gTag}`);
-  }
-  console.log('');
-
-  // Phase 2 — city feeds (local + global) for the top CITY_LIMIT
-  // cities by population. Cities have NO server-side cache before the
-  // companion server.js change, so before the deploy these warmings do
-  // nothing. Post-deploy they fill the same per-feed in-process cache.
-  let cityFeedOk = 0;
-  let cityResults = [];
-  if (CITY_LIMIT > 0) {
-    let cities = [];
-    try {
-      cities = await pickTopCities(CITY_LIMIT);
-    } catch (err) {
-      console.warn(`${TAG} city discovery failed (${err.message}). Skipping city phase.`);
-    }
-    if (cities.length) {
-      console.log(`${TAG} city feeds: warming local + global for top ${cities.length} cities by population…`);
-      for (const c of cities) {
-        const local  = await warmFeed('local',  `${API_URL}/api/news/city/${c.id}`);
-        const global = await warmFeed('global', `${API_URL}/api/news/city/${c.id}/global`);
-        if (!local.err)  cityFeedOk++;
-        if (!global.err) cityFeedOk++;
-        cityResults.push({ city: c, local, global });
-        const lTag = local.err  ? `ERR ${local.err}`  : `${local.ms}ms`;
-        const gTag = global.err ? `ERR ${global.err}` : `${global.ms}ms`;
-        console.log(`${TAG}   ${(c.name || '').padEnd(20)} pop=${String(c.population).padStart(8)} local=${lTag.padEnd(14)} global=${gTag}`);
-      }
-      console.log('');
-    }
-  }
-
   const results = [];
   for (let i = 0; i < countries.length; i += CONCURRENCY) {
     const batch = countries.slice(i, i + CONCURRENCY);
@@ -350,22 +252,14 @@ async function main() {
   }
   const breakdown = Object.entries(byKey)
     .map(([k, v]) => `${k}=${v.ok}/${v.total}`).join(' ');
-  const countryFeedTotal = countries.length * 2;
-  const cityFeedTotal    = cityResults.length * 2;
   console.log(
     `\n${TAG} done in ${((Date.now() - t0) / 1000).toFixed(1)}s — ` +
-    `core_ok=${coreOk}/1 ` +
-    `country_feeds_ok=${countryFeedOk}/${countryFeedTotal} ` +
-    `city_feeds_ok=${cityFeedOk}/${cityFeedTotal} ` +
     `flows_ok=${okCount}/${subRequests.length} (${breakdown}) ` +
     `total_flow_ms=${totalMs}`
   );
 
-  // Non-zero exit only if EVERY sub-request across every phase failed
-  // (API likely down). Partial failures across phases are normal.
-  const totalAttempts = 1 + countryFeedTotal + cityFeedTotal + subRequests.length;
-  const totalOk       = coreOk + countryFeedOk + cityFeedOk + okCount;
-  if (totalAttempts > 0 && totalOk === 0) process.exit(1);
+  // Non-zero exit only if every flow sub-request failed (API likely down).
+  if (subRequests.length > 0 && okCount === 0) process.exit(1);
 }
 
 main().catch(err => { console.error(`${TAG} fatal:`, err); process.exit(1); });

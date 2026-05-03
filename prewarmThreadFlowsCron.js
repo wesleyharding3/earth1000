@@ -4,43 +4,50 @@
 /**
  * prewarmThreadFlowsCron.js
  *
- * Pre-warms /api/flows/thread/:id and /api/flows/timeline/:id for the
- * top active+cooling threads and timelines. Runs at the thread builder's
- * cadence (every 2 hours) so the flow-arc cache (TTL 1h45m) is always
- * warm when the user taps a card.
+ * Owns ALL thread surface warming. Runs at the thread builder's cadence
+ * (every 2 hours) so all per-thread caches (TTL 1h45m) stay warm for
+ * any user tapping a thread card.
  *
- * Why pure HTTP, no DB pool: production was hitting Postgres connection
- * cap ("remaining connection slots are reserved for roles with the
- * SUPERUSER attribute" — error 53300) when crons opened their own pg
- * pools. So this cron discovers the top-N items via /api/threads/latest
- * and /api/timelines/latest, which are themselves cached, and pays no
- * direct PG connection. Mirrors the all-HTTP pattern of
- * prewarmKeywordCacheCron.js.
+ * What it warms (per top 50 active+cooling thread):
+ *   • /api/threads/:id/articles        (article list inside the thread)
+ *   • /api/threads/:id/timeline        (event spine)
+ *   • /api/threads/:id/panels          (data panels / pie graph)
+ *   • /api/flows/thread/:id            (flow arcs)
+ *
+ * Plus core 2h-cadence feeds:
+ *   • /api/threads/latest              (the cards list)
+ *   • /api/news/sources-stats          (source stats)
+ *
+ * Pure HTTP — no DB. Discovers top threads via /api/threads/latest,
+ * which is itself cached, so no direct PG connection. This avoids the
+ * 53300 connection-cap errors we hit when crons opened their own pools.
+ *
+ * Note: timeline (line) flow arcs and line detail endpoints are NOT
+ * warmed here — those are the line builder's domain (daily, midnight UTC)
+ * and live in prewarmLinesCron.js. Warming them here at 2h cadence
+ * would waste 12 cycles a day on data that only changes once.
  *
  * Env vars:
  *   API_URL                    base URL of the API (default: http://localhost:3000)
  *   PREWARM_THREAD_LIMIT       override top-N threads (default: 50)
- *   PREWARM_TIMELINE_LIMIT     override top-N timelines (default: 20)
- *   PREWARM_TIMEOUT_MS         per-request timeout (default: 95000 — matches
- *                              heatmap's 90s server-side SQL timeout + 5s buffer)
- *   PREWARM_CONCURRENCY        parallel requests (default: 1)
+ *   PREWARM_TIMEOUT_MS         per-request timeout (default: 95000)
+ *   PREWARM_CONCURRENCY        parallel threads (default: 1)
  *
  * Run:
  *   node prewarmThreadFlowsCron.js
  *
- * Wire to a 2h Render Cron:
- *   `5 *\/2 * * * cd /app && node prewarmThreadFlowsCron.js`
+ * Wire to a 2h Render Cron — schedule: 5 past every 2nd hour
+ *   (cron expression: 5  STAR/2  STAR  STAR  STAR  — STAR = literal asterisk)
  */
 
 require('dotenv').config({ override: true });
 
-const API_URL        = (process.env.API_URL || 'http://localhost:3000').replace(/\/$/, '');
-const TIMEOUT_MS     = parseInt(process.env.PREWARM_TIMEOUT_MS    || '95000', 10);
-const CONCURRENCY    = Math.max(1, parseInt(process.env.PREWARM_CONCURRENCY    || '1',  10));
-const THREAD_LIMIT   = Math.max(1, parseInt(process.env.PREWARM_THREAD_LIMIT   || '50', 10));
-const TIMELINE_LIMIT = Math.max(1, parseInt(process.env.PREWARM_TIMELINE_LIMIT || '20', 10));
+const API_URL      = (process.env.API_URL || 'http://localhost:3000').replace(/\/$/, '');
+const TIMEOUT_MS   = parseInt(process.env.PREWARM_TIMEOUT_MS  || '95000', 10);
+const CONCURRENCY  = Math.max(1, parseInt(process.env.PREWARM_CONCURRENCY || '1', 10));
+const THREAD_LIMIT = Math.max(1, parseInt(process.env.PREWARM_THREAD_LIMIT || '50', 10));
 
-const TAG = '[prewarm-thread-flows]';
+const TAG = '[prewarm-threads]';
 
 if (!process.env.API_URL) {
   console.warn(`${TAG} WARNING: API_URL not set — defaulting to http://localhost:3000.`);
@@ -59,11 +66,13 @@ async function fetchJSON(url) {
   return res.json();
 }
 
-// Top items via /api/{threads,timelines}/latest — these endpoints already
-// rank by importance × article_count and apply the active/cooling filter,
-// which is exactly what we want to prewarm.
 async function pickTopThreads(n) {
-  const data = await fetchJSON(`${API_URL}/api/threads/latest?limit=${n}`);
+  let data;
+  try {
+    data = await fetchJSON(`${API_URL}/api/threads/latest?limit=${n}`);
+  } catch (e) {
+    throw new Error(`/api/threads/latest?limit=${n}: ${e.message}`);
+  }
   const arr = Array.isArray(data) ? data : (data?.threads || data?.data || []);
   return arr.slice(0, n).map(t => ({
     id: t.thread_id || t.id,
@@ -73,52 +82,42 @@ async function pickTopThreads(n) {
   })).filter(t => t.id);
 }
 
-async function pickTopTimelines(n) {
-  const data = await fetchJSON(`${API_URL}/api/timelines/latest?limit=${n}`);
-  const arr = Array.isArray(data) ? data : (data?.timelines || data?.data || []);
-  return arr.slice(0, n).map(t => ({
-    id: t.timeline_id || t.id,
-    title: t.title,
-    importance: t.importance,
-    article_count: t.article_count,
-  })).filter(t => t.id);
-}
-
-async function warmFlow(kind, id) {
-  const url = `${API_URL}/api/flows/${kind}/${id}`;
+async function warm(label, url) {
   const t0 = Date.now();
-  let res;
   try {
-    res = await fetchWithTimeout(url);
+    const r = await fetchWithTimeout(url);
+    const ms = Date.now() - t0;
+    if (!r.ok) return { label, ms, err: `HTTP ${r.status}` };
+    await r.text().catch(() => {});
+    return { label, ms };
   } catch (e) {
-    return { kind, id, ms: Date.now() - t0, err: e.message };
+    return { label, ms: Date.now() - t0, err: e.message };
   }
-  const ms = Date.now() - t0;
-  if (!res.ok) return { kind, id, ms, err: `HTTP ${res.status}` };
-  await res.text().catch(() => {});
-  return { kind, id, ms };
 }
 
-async function processBatch(items, kind) {
-  const results = [];
-  for (let i = 0; i < items.length; i += CONCURRENCY) {
-    const batch = items.slice(i, i + CONCURRENCY);
-    const out = await Promise.all(batch.map(it => warmFlow(kind, it.id).then(r => ({ ...r, item: it }))));
-    results.push(...out);
-    for (const r of out) {
-      const tag = r.err ? `ERR ${r.err}` : `${r.ms}ms`;
-      const titleTrim = (r.item.title || '').slice(0, 60);
-      console.log(`${TAG}   ${kind} #${String(r.id).padStart(6)} imp=${r.item.importance} arts=${String(r.item.article_count).padStart(4)} [${tag}] ${titleTrim}`);
-    }
-  }
-  return results;
+const PER_THREAD_ENDPOINTS = [
+  { label: 'articles', path: 'articles' },
+  { label: 'timeline', path: 'timeline' },
+  { label: 'panels',   path: 'panels'   },
+  { label: 'flows',    path: '__flows'  },  // special-case: /api/flows/thread/:id
+];
+
+async function processThread(t) {
+  // Run all 4 sub-requests in parallel for this thread — different
+  // routes, no pool collision (server enforces per-route timeouts).
+  const tasks = PER_THREAD_ENDPOINTS.map(ep => {
+    const url = ep.path === '__flows'
+      ? `${API_URL}/api/flows/thread/${t.id}`
+      : `${API_URL}/api/threads/${t.id}/${ep.path}`;
+    return warm(ep.label, url);
+  });
+  const results = await Promise.all(tasks);
+  return { t, results };
 }
 
-// Core feeds that match this cron's 2h cadence — not in keyword cron
-// because they don't need to refresh every 10 min, and not in country
-// cron because that's only daily and TTL would expire mid-day.
-//   /api/threads/latest    TTL 1h45m, thread builder runs every 2h
-//   /api/news/sources-stats TTL 11h, source stats cron runs 2x/day
+// Core 2h-cadence feeds — match this cron's schedule.
+//   /api/threads/latest      TTL 1h45m, thread builder runs every 2h
+//   /api/news/sources-stats  TTL 11h, source stats cron runs 2x/day
 const CORE_FEEDS = [
   '/api/threads/latest',
   '/api/news/sources-stats',
@@ -148,40 +147,54 @@ async function warmCoreFeeds() {
 
 async function main() {
   const t0 = Date.now();
-  console.log(`${TAG} start ${new Date().toISOString()} api=${API_URL} threads=${THREAD_LIMIT} timelines=${TIMELINE_LIMIT} concurrency=${CONCURRENCY} timeout=${TIMEOUT_MS}ms`);
+  console.log(`${TAG} start ${new Date().toISOString()} api=${API_URL} threads=${THREAD_LIMIT} concurrency=${CONCURRENCY} timeout=${TIMEOUT_MS}ms`);
 
-  // Phase 0 — core feeds whose cadence matches this cron (2h)
+  // Phase 0 — core feeds (threads/latest, sources-stats)
   const coreResults = await warmCoreFeeds();
   const coreOk = coreResults.filter(r => r.ok).length;
   console.log('');
 
-  let threads = [], timelines = [];
+  // Phase 1 — discover top N + warm all detail endpoints per thread
+  let threads = [];
   try {
-    [threads, timelines] = await Promise.all([
-      pickTopThreads(THREAD_LIMIT),
-      pickTopTimelines(TIMELINE_LIMIT),
-    ]);
+    threads = await pickTopThreads(THREAD_LIMIT);
   } catch (err) {
     console.error(`${TAG} fatal: discovery failed (${err.message}). Verify API_URL is reachable.`);
     process.exit(1);
   }
-  console.log(`${TAG} loaded ${threads.length} threads + ${timelines.length} timelines\n`);
+  console.log(`${TAG} phase 1: warming ${PER_THREAD_ENDPOINTS.length} detail endpoints for ${threads.length} threads…`);
 
-  const threadResults   = await processBatch(threads,   'thread');
-  console.log('');
-  const timelineResults = await processBatch(timelines, 'timeline');
+  const allResults = [];
+  for (let i = 0; i < threads.length; i += CONCURRENCY) {
+    const batch = threads.slice(i, i + CONCURRENCY);
+    const out = await Promise.all(batch.map(processThread));
+    allResults.push(...out);
+    for (const r of out) {
+      const tags = r.results.map(x => `${x.label}=${x.err ? 'ERR' : x.ms + 'ms'}`).join(' ');
+      const titleTrim = (r.t.title || '').slice(0, 50);
+      console.log(`${TAG}   #${String(r.t.id).padStart(6)} imp=${r.t.importance} arts=${String(r.t.article_count).padStart(4)} ${tags}  ${titleTrim}`);
+    }
+  }
 
-  const tOk = threadResults.filter(r => !r.err).length;
-  const lOk = timelineResults.filter(r => !r.err).length;
-  const totalMs = [...threadResults, ...timelineResults].reduce((s, r) => s + (r.ms || 0), 0);
+  // Aggregate
+  const subRequests = allResults.flatMap(r => r.results);
+  const ok = subRequests.filter(r => !r.err).length;
+  const totalMs = subRequests.reduce((s, r) => s + (r.ms || 0), 0);
 
-  console.log(`\n${TAG} done in ${((Date.now() - t0) / 1000).toFixed(1)}s — core_ok=${coreOk}/${coreResults.length} threads_ok=${tOk}/${threadResults.length} timelines_ok=${lOk}/${timelineResults.length} total_query_ms=${totalMs}`);
+  // Per-endpoint breakdown
+  const byLabel = {};
+  for (const r of subRequests) {
+    byLabel[r.label] = byLabel[r.label] || { ok: 0, total: 0 };
+    byLabel[r.label].total++;
+    if (!r.err) byLabel[r.label].ok++;
+  }
+  const breakdown = Object.entries(byLabel).map(([k, v]) => `${k}=${v.ok}/${v.total}`).join(' ');
 
-  // Non-zero exit only on catastrophic failure (every single sub-request
-  // including core feeds failed). Partial failures are normal — one slow
-  // item shouldn't turn the cron service red.
-  const totalCount = coreResults.length + threadResults.length + timelineResults.length;
-  const totalOk    = coreOk + tOk + lOk;
+  console.log(`\n${TAG} done in ${((Date.now() - t0) / 1000).toFixed(1)}s — core_ok=${coreOk}/${coreResults.length} threads_ok=${ok}/${subRequests.length} (${breakdown}) total_query_ms=${totalMs}`);
+
+  // Non-zero exit only on catastrophic failure
+  const totalCount = coreResults.length + subRequests.length;
+  const totalOk    = coreOk + ok;
   if (totalCount > 0 && totalOk === 0) process.exit(1);
 }
 

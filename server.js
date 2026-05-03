@@ -4003,6 +4003,9 @@ app.get("/api/threads/:id/timeline", async (req, res) => {
     const threadId = parseInt(req.params.id, 10);
     if (!threadId) return res.status(400).json({ error: "Invalid thread ID" });
 
+    // 1h45m TTL — matches thread builder cron (every 2h). Was uncached;
+    // added so prewarm-threads cron actually populates something.
+    const _cached = await ttlCached(`threads/${threadId}/timeline`, 6_300_000, async () => {
     const { rows } = await pool.query(`
       SELECT
         a.id,
@@ -4047,12 +4050,14 @@ app.get("/api/threads/:id/timeline", async (req, res) => {
       mentionedIsos: r.mentioned_isos || []
     }));
 
-    res.json({
+    return {
       threadId,
       totalArticles: timeline.length,
       countries: [...allCountries],
       timeline
-    });
+    };
+    }); // end ttlCached
+    res.json(_cached);
   } catch (err) {
     console.error("[threads/timeline]", err.message);
     res.status(500).json({ error: "Failed to fetch thread timeline", detail: req.user?.is_admin ? err.message : undefined });
@@ -7634,6 +7639,9 @@ app.get("/api/timelines/:id/articles", async (req, res) => {
   try {
     const timelineId = parseInt(req.params.id, 10);
     if (!timelineId) return res.status(400).json({ error: "Invalid timeline ID" });
+    // 22h TTL — timeline builder cron runs once daily. Was uncached;
+    // added so prewarm-lines cron actually populates something.
+    const _cached = await ttlCached(`timelines/${timelineId}/articles`, 79_200_000, async () => {
     const { rows } = await pool.query(`
       SELECT
         a.id,
@@ -7660,7 +7668,9 @@ app.get("/api/timelines/:id/articles", async (req, res) => {
       ORDER BY sta.parabolic_weight DESC, a.published_at DESC
       LIMIT 200
     `, [timelineId]);
-    res.json({ articles: rows });
+    return { articles: rows };
+    }); // end ttlCached
+    res.json(_cached);
   } catch (err) {
     console.error("[timelines/articles]", err.message);
     res.status(500).json({ error: "Failed to fetch timeline articles" });
@@ -7680,6 +7690,8 @@ app.get("/api/timelines/:id/events", async (req, res) => {
   try {
     const timelineId = parseInt(req.params.id, 10);
     if (!timelineId) return res.status(400).json({ error: "Invalid timeline ID" });
+    // 22h TTL — timeline builder cron runs once daily.
+    const _cached = await ttlCached(`timelines/${timelineId}/events`, 79_200_000, async () => {
     const { rows } = await pool.query(`
       SELECT
         ste.id,
@@ -7708,7 +7720,9 @@ app.get("/api/timelines/:id/events", async (req, res) => {
       ORDER BY ste.event_date DESC, ste.id DESC
       LIMIT 200
     `, [timelineId]);
-    res.json({ events: rows });
+    return { events: rows };
+    }); // end ttlCached
+    res.json(_cached);
   } catch (err) {
     console.error("[timelines/events]", err.message);
     res.status(500).json({ error: "Failed to fetch timeline events" });
@@ -7728,6 +7742,8 @@ app.get("/api/timelines/:id/density", async (req, res) => {
     const timelineId = parseInt(req.params.id, 10);
     if (!timelineId) return res.status(400).json({ error: "Invalid timeline ID" });
 
+    // 22h TTL — timeline builder cron runs once daily.
+    const _cached = await ttlCached(`timelines/${timelineId}/density`, 79_200_000, async () => {
     // Determine the timeline's active window from its articles, so the
     // ruler covers the real coverage span (not the DB insert range).
     const { rows: spanRows } = await pool.query(`
@@ -7743,7 +7759,7 @@ app.get("/api/timelines/:id/density", async (req, res) => {
 
     const span = spanRows[0];
     if (!span || !span.start_date || !span.end_date || span.total === 0) {
-      return res.json({ bucket: 'day', start_date: null, end_date: null, buckets: [] });
+      return { bucket: 'day', start_date: null, end_date: null, buckets: [] };
     }
 
     const startDate = new Date(span.start_date);
@@ -7789,7 +7805,7 @@ app.get("/api/timelines/:id/density", async (req, res) => {
       ORDER BY c.bucket_date ASC
     `, [timelineId, truncUnit]);
 
-    res.json({
+    return {
       bucket,
       start_date: span.start_date,
       end_date:   span.end_date,
@@ -7800,7 +7816,9 @@ app.get("/api/timelines/:id/density", async (req, res) => {
         top_headline:   r.top_headline,
         top_article_id: r.top_article_id,
       })),
-    });
+    };
+    }); // end ttlCached
+    res.json(_cached);
   } catch (err) {
     console.error("[timelines/density]", err.message);
     res.status(500).json({ error: "Failed to fetch timeline density" });
@@ -7819,6 +7837,8 @@ app.get("/api/timelines/:id/threads", async (req, res) => {
   try {
     const timelineId = parseInt(req.params.id, 10);
     if (!timelineId) return res.status(400).json({ error: "Invalid timeline ID" });
+    // 22h TTL — timeline builder cron runs once daily.
+    const _cached = await ttlCached(`timelines/${timelineId}/threads`, 79_200_000, async () => {
     const { rows } = await pool.query(`
       SELECT
         t.id AS thread_id,
@@ -7838,7 +7858,9 @@ app.get("/api/timelines/:id/threads", async (req, res) => {
       ORDER BY t.last_updated_at DESC NULLS LAST, t.importance DESC
       LIMIT 100
     `, [timelineId]);
-    res.json({ threads: rows });
+    return { threads: rows };
+    }); // end ttlCached
+    res.json(_cached);
   } catch (err) {
     console.error("[timelines/threads]", err.message);
     res.status(500).json({ error: "Failed to fetch timeline threads" });
@@ -10854,12 +10876,16 @@ app.get("/api/threads/:threadId/panels", async (req, res) => {
   try {
     const threadId = parseInt(req.params.threadId, 10);
     if (!Number.isFinite(threadId)) return res.status(400).json({ error: "bad id" });
-    const [coverage, rows] = await Promise.all([
-      computeCoveragePiePanel(pool, { type: 'thread', id: threadId }),
-      dataPanels.loadPanels(pool, { type: 'thread', id: threadId }),
-    ]);
-    const panels = [...(coverage ? [coverage] : []), ...rows];
-    res.json({ thread_id: threadId, panels, count: panels.length });
+    // 1h45m TTL — thread builder cron runs every 2h.
+    const _cached = await ttlCached(`threads/${threadId}/panels`, 6_300_000, async () => {
+      const [coverage, rows] = await Promise.all([
+        computeCoveragePiePanel(pool, { type: 'thread', id: threadId }),
+        dataPanels.loadPanels(pool, { type: 'thread', id: threadId }),
+      ]);
+      const panels = [...(coverage ? [coverage] : []), ...rows];
+      return { thread_id: threadId, panels, count: panels.length };
+    });
+    res.json(_cached);
   } catch (err) {
     console.error("[threads/panels]", err.message);
     res.status(500).json({ error: "Failed to load thread panels" });
@@ -10872,9 +10898,13 @@ app.get("/api/timelines/:timelineId/panels", async (req, res) => {
   try {
     const timelineId = parseInt(req.params.timelineId, 10);
     if (!Number.isFinite(timelineId)) return res.status(400).json({ error: "bad id" });
-    const coverage = await computeCoveragePiePanel(pool, { type: 'timeline', id: timelineId });
-    const panels = coverage ? [coverage] : [];
-    res.json({ timeline_id: timelineId, panels, count: panels.length });
+    // 22h TTL — timeline builder cron runs once daily.
+    const _cached = await ttlCached(`timelines/${timelineId}/panels`, 79_200_000, async () => {
+      const coverage = await computeCoveragePiePanel(pool, { type: 'timeline', id: timelineId });
+      const panels = coverage ? [coverage] : [];
+      return { timeline_id: timelineId, panels, count: panels.length };
+    });
+    res.json(_cached);
   } catch (err) {
     console.error("[timelines/panels]", err.message);
     res.status(500).json({ error: "Failed to load timeline panels" });
@@ -13575,23 +13605,19 @@ const PORT = process.env.PORT || 3000;
 });
 
 // ── Keyword cache refresh ─────────────────────────────────────────────────
-// keywordCron.js calls pool.end() so it must run as a child process.
-// Run once at startup (60s delay so DB pool settles) then every 4 hours.
-function runKeywordCron(label = "") {
-  const tag = label ? `[keywordCron${label}]` : "[keywordCron]";
-  console.log(`${tag} starting...`);
-  const proc = spawn(process.execPath, [path.join(__dirname, "keywordCron.js")], {
-    env: process.env,
-    stdio: ["ignore", "pipe", "pipe"]
-  });
-  proc.stdout.on("data", d => process.stdout.write(d));
-  proc.stderr.on("data", d => process.stderr.write(d));
-  proc.on("exit", code => console.log(`${tag} exited (code ${code})`));
-  proc.on("error", err => console.error(`${tag} spawn error: ${err.message}`));
-}
-
-setTimeout(() => runKeywordCron(" startup"), 10_000);           // ~10s after boot
-setInterval(() => runKeywordCron(), 4 * 60 * 60 * 1000).unref?.(); // every 4h
+// keywordCron.js is now scheduled as TWO separate Render Cron jobs:
+//   cron:kw-intel-trending  →  `0 2 * * *`     (nightly 2 AM UTC)
+//   cron:kw-intel-rising    →  `0 *\/4 * * *`   (every 4h)
+// (npm scripts in package.json; cadence per the file's own header docs.)
+//
+// Previously the web service spawned the cron itself at boot + every 4h
+// via setInterval. That worked, but had brittle failure modes — every
+// deploy reset the timer, errors were swallowed in stdout noise, and on
+// Render free-tier the service sleeping would pause the interval. Moving
+// scheduling to Render Cron (its own VM, its own retry policy, separate
+// alerts) matches the pattern already used for storyThreadBuilder /
+// storyTimelineBuilder / globeStatsCron / sourcesStatsCron — see comments
+// just below.
 
 // ── Story builder automation ─────────────────────────────────────────────
 // Both builders call pool.end() when done, so they must run as child
