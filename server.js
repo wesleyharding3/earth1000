@@ -1361,7 +1361,8 @@ app.get("/api/news/city/:cityId", async (req, res) => {
     // gap during the prewarm work and added so the prewarm-countries
     // cron can actually populate something useful for the city path.
     const cacheKey = `city-feed:v1:${cityId}:${limit || 'all'}:${offset}:${tagId || 'none'}:${ambient ? 'amb' : 'std'}`;
-    const ttlMs = ambient ? 300_000 : 60_000;
+    // 55 min TTL — matches hourly article fetcher + hourly prewarm-feed cron.
+    const ttlMs = ambient ? 300_000 : 3_300_000;
     const ranked = await ttlCached(cacheKey, ttlMs, () =>
       getRankedCityArticles(cityId, { limit, offset, tagId, ambient })
     );
@@ -1389,7 +1390,8 @@ app.get("/api/news/city/:cityId/global", async (req, res) => {
     // a.city_id directly, so cold queries are typically slower than
     // the local variant — caching matters even more here.
     const cacheKey = `city-feed-global:v1:${cityId}:${limit || 'all'}:${offset}:${tagId || 'none'}`;
-    const cached = await ttlCached(cacheKey, 60_000, async () => {
+    // 55 min TTL — matches hourly article fetcher + hourly prewarm-feed cron.
+    const cached = await ttlCached(cacheKey, 3_300_000, async () => {
 
     const tagJoin  = tagId ? `JOIN article_tags at ON at.article_id = a.id` : "";
     const tagWhere = tagId ? `AND at.tag_id = ${tagId}` : "";
@@ -1472,15 +1474,16 @@ app.get("/api/news/country/:countryId", async (req, res) => {
     const tagId  = req.query.tag ? parseInt(req.query.tag) : null;
     const ambient = req.query.ambient === "1" || req.query.ambient === "true";
 
-    // TTL cache so concurrent fan-out on the same feed (many clients hitting
-    // the same Cloudflare origin on cache miss) collapses to one DB query.
-    // Ambient feeds are a passive spotlight rotation — they don't need
-    // to-the-second freshness, so we cache them for 5 min. Non-ambient
-    // feeds stay on the 60s TTL that matches the Cloudflare s-maxage.
-    // Ambient buckets were the dominant source of 3-second cold queries
-    // in the logs; the longer TTL collapses repeat page-load fan-out.
+    // TTL cache so concurrent fan-out on the same feed collapses to one DB
+    // query. Article fetcher runs hourly, so the underlying data only
+    // changes once an hour — 55 min TTL keeps users in warm cache for the
+    // whole window between fetches and is matched by prewarm-feed cron's
+    // hourly cadence (with cron drift headroom). Was 60s; that meant the
+    // cron warm decayed in a minute and 98% of user requests hit cold DB.
+    // Ambient buckets stay at the 5min cap they had — they fan out to
+    // many keys, no need for the full hourly TTL.
     const cacheKey = `country-feed:v1:${countryId}:${limit || 'all'}:${offset}:${tagId || 'none'}:${ambient ? 'amb' : 'std'}`;
-    const ttlMs = ambient ? 300_000 : 60_000;
+    const ttlMs = ambient ? 300_000 : 3_300_000;
     const ranked = await ttlCached(cacheKey, ttlMs, () =>
       getRankedArticles(countryId, { limit, offset, tagId, ambient })
     );
@@ -1507,13 +1510,11 @@ app.get("/api/news/country/:countryId/global", async (req, res) => {
     const offset = Math.max(parseInt(req.query.offset) || 0,  0);
     const tagId  = req.query.tag ? parseInt(req.query.tag) : null;
 
-    // Same caching rationale as the local-feed handler above (line ~1458).
-    // Was uncached so prewarm-countries hits to /global never populated
-    // anything — every user paid the full pool.query. Added with the same
-    // 60s std / 300s ambient pattern; ambient flag isn't part of /global
-    // so just 60s here.
+    // 55 min TTL — matches the hourly article fetcher + hourly prewarm-feed
+    // cron. Was 60s; the cron warm decayed in a minute and almost every
+    // user request paid the full DB cost.
     const cacheKey = `country-feed-global:v1:${countryId}:${limit || 'all'}:${offset}:${tagId || 'none'}`;
-    const cached = await ttlCached(cacheKey, 60_000, async () => {
+    const cached = await ttlCached(cacheKey, 3_300_000, async () => {
 
     const tagJoin  = tagId ? `JOIN article_tags at ON at.article_id = a.id` : "";
     const tagWhere = tagId ? `AND at.tag_id = ${tagId}` : "";
