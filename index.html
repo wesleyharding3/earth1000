@@ -16764,7 +16764,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const sidebarTab         = document.getElementById("sidebarTab");
       let sidebarOpen          = false;
 
-      function openSidebar()  { sidebarOpen = true;  viewSidebar.classList.add("open");    settingsToggle.classList.add("active"); }
+      function openSidebar()  {
+        sidebarOpen = true;
+        viewSidebar.classList.add("open");
+        settingsToggle.classList.add("active");
+        // Re-sync the Globe/Map projection pill on every open. Defensive
+        // against any init race where __projection or the pill DOM wasn't
+        // ready when the one-shot sync ran on script load — without this,
+        // the pill could appear blank (neither button highlighted) on iOS
+        // until the user tapped one.
+        try { window.__syncProjectionControls?.(); } catch (_) {}
+      }
       function closeSidebar() { sidebarOpen = false; viewSidebar.classList.remove("open"); settingsToggle.classList.remove("active"); }
 
       settingsToggle.addEventListener("click", (e) => { e.stopPropagation(); sidebarOpen ? closeSidebar() : openSidebar(); });
@@ -49859,6 +49869,16 @@ body.ticker-active .gTickerLabel {
   }
 
   async function _snapDispatch(blob, { url, shareTitle, shareText }) {
+    // Inline the URL at the end of the text so iMessage's data-detector
+    // auto-links it. iMessage suppresses the rich-link card whenever a
+    // file attachment is included in the share payload, which leaves the
+    // separate `url` field orphaned and the message body URL-less. By
+    // putting the URL inside `text`, the recipient sees a clickable link.
+    // Other targets (Twitter, Slack, email) keep getting the explicit
+    // `url` field so their rich rendering still works.
+    const composedText = url
+      ? `${shareText || ''}${shareText ? '\n' : ''}${url}`
+      : (shareText || '');
     // Desktop: no Capacitor — go straight to navigator.share with files
     // (works in iOS Safari + Android Chrome) or final-fallback download.
     try {
@@ -49866,7 +49886,7 @@ body.ticker-active .gTickerLabel {
       if (typeof navigator !== 'undefined' && navigator.canShare?.({ files: [file] })) {
         await navigator.share({
           title: shareTitle || 'Earth00',
-          text:  shareText  || '',
+          text:  composedText,
           url:   url || undefined,
           files: [file],
         });
@@ -49941,15 +49961,17 @@ body.ticker-active .gTickerLabel {
      #flowControls` (which sets bottom on its own). Without that prefix
      the .kbd-open rule loses the cascade whenever the ticker is on. */
   body #flowControls.kbd-open {
-    /* !important — see www/index.html for rationale (specificity tie with
-       body.ticker-active #flowControls). */
-    /* See www/index.html for full rationale — JS sets bottom inline,
-       no bottom transition (would get stuck mid-interpolation). */
-    bottom: calc(var(--page-nav-height) + var(--global-ticker-height) + var(--global-ticker-gap) + 34px + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom) + var(--kbd-shift, 0px)) !important;
-    /* Cap panel at 320px (or fit-to-fit on small phones) so it sits
-       in the middle ground between the keyboard top and the screen top
-       — was max() which let the panel grow to fill ALL space above the
-       keyboard, "shooting to the top" of the screen. */
+    /* Pin the panel's bottom 8px above the keyboard's top edge — was
+       calc(<page-nav> + <ticker> + <gap> + 34 + ... + kbd) which kept
+       the original 100+px gap between panel and screen-bottom and
+       LIFTED that whole stack above the keyboard, so the panel was
+       floating ~100px above the keyboard with empty space below.
+       Now it sits flush. !important — specificity tie with
+       body.ticker-active #flowControls. */
+    bottom: calc(var(--kbd-shift, 0px) + 8px) !important;
+    /* Cap panel at 320px so it sits in the middle ground between the
+       keyboard top and the screen top — without this it would grow
+       to fill all available space above the keyboard. */
     max-height: min(320px, calc(100vh - var(--kbd-shift, 0px) - 70px));
     overflow-y: auto;
     overscroll-behavior: contain;
@@ -49961,8 +49983,14 @@ body.ticker-active .gTickerLabel {
                 max-width 0.4s cubic-bezier(0.32, 0.72, 0, 1);
   }
   body #semHeatPanel.kbd-open {
-    bottom: calc(120px + var(--kbd-shift, 0px));
-    max-height: max(220px, calc(100vh - 244px - var(--kbd-shift, 0px)));
+    /* Pin 8px above the keyboard, same as news flows. Natural max-height
+       so the panel keeps its normal content shape — was max(220px, …)
+       which clamped it to 220px on a typical phone (kbd=350, vp=800)
+       and made the panel "lose its normal shape". Now uses available
+       space above the keyboard with a 24px top margin. */
+    bottom: calc(var(--kbd-shift, 0px) + 8px);
+    max-height: calc(100vh - var(--kbd-shift, 0px) - 24px);
+    overflow-y: auto;
     transition: max-height 220ms cubic-bezier(0.32, 0.72, 0, 1);
   }
   @media (prefers-reduced-motion: reduce) {
@@ -49991,18 +50019,17 @@ body.ticker-active .gTickerLabel {
     return inset > 100 ? inset : 0;
   }
 
-  // See www/index.html for full rationale — set bottom inline directly
-  // because the CSS cascade kept losing to body.ticker-active rules.
+  // Set bottom inline directly because the CSS cascade kept losing to
+  // body.ticker-active rules. Pin 8px above the keyboard top — was
+  // base + kbd which preserved the panel's pre-keyboard gap from the
+  // bottom and lifted the whole stack, leaving 100+px of dead space
+  // between panel-bottom and keyboard-top.
   function applyShift() {
     if (!activePanel) return;
     const kbd = computeKbdHeight();
     if (kbd > 0) {
-      if (!activePanel.dataset.kbdBaseBottom) {
-        activePanel.dataset.kbdBaseBottom = getComputedStyle(activePanel).bottom;
-      }
-      const base = parseFloat(activePanel.dataset.kbdBaseBottom) || 0;
       activePanel.style.setProperty('--kbd-shift', `${kbd}px`);
-      activePanel.style.setProperty('bottom', `${base + kbd}px`, 'important');
+      activePanel.style.setProperty('bottom', `${kbd + 8}px`, 'important');
       activePanel.classList.add('kbd-open');
     } else {
       clearShift();

@@ -17874,7 +17874,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const sidebarTab         = document.getElementById("sidebarTab");
       let sidebarOpen          = false;
 
-      function openSidebar()  { sidebarOpen = true;  viewSidebar.classList.add("open");    settingsToggle.classList.add("active"); if (window.__dismissAmbientHeadline) window.__dismissAmbientHeadline(); }
+      function openSidebar()  {
+        sidebarOpen = true;
+        viewSidebar.classList.add("open");
+        settingsToggle.classList.add("active");
+        if (window.__dismissAmbientHeadline) window.__dismissAmbientHeadline();
+        // Re-sync the Globe/Map projection pill on every open. Defensive
+        // against any init race where __projection or the pill DOM wasn't
+        // ready when the one-shot sync ran on script load — without this,
+        // the pill could appear blank (neither button highlighted) on iOS
+        // until the user tapped one.
+        try { window.__syncProjectionControls?.(); } catch (_) {}
+      }
       function closeSidebar() { sidebarOpen = false; viewSidebar.classList.remove("open"); settingsToggle.classList.remove("active"); }
 
       settingsToggle.addEventListener("click", (e) => { e.stopPropagation(); sidebarOpen ? closeSidebar() : openSidebar(); });
@@ -55024,6 +55035,17 @@ body.ticker-active .gTickerLabel {
     const Share = window.Capacitor?.Plugins?.Share;
     const isCapIos = !!(window.Capacitor?.isNativePlatform?.() && window.Capacitor.getPlatform?.() === 'ios');
 
+    // Inline the URL at the end of the text so iMessage's data-detector
+    // auto-links it. iMessage suppresses the rich-link card whenever a
+    // file attachment is included in the share payload, which leaves the
+    // separate `url` field orphaned and the message body URL-less. By
+    // putting the URL inside `text`, the recipient sees a clickable link.
+    // Other targets (Twitter, Slack, email) keep getting the explicit
+    // `url` field so their rich rendering still works.
+    const composedText = url
+      ? `${shareText || ''}${shareText ? '\n' : ''}${url}`
+      : (shareText || '');
+
     if (Filesystem && Share && isCapIos) {
       try {
         const base64 = await _snapBlobToBase64(blob);
@@ -55036,7 +55058,7 @@ body.ticker-active .gTickerLabel {
         const fileUri = result.uri;
         await Share.share({
           title: shareTitle || 'Earth00',
-          text:  shareText  || '',
+          text:  composedText,
           url:   url || undefined,
           files: [fileUri],
           dialogTitle: 'Share',
@@ -55057,7 +55079,7 @@ body.ticker-active .gTickerLabel {
       if (typeof navigator !== 'undefined' && navigator.canShare?.({ files: [file] })) {
         await navigator.share({
           title: shareTitle || 'Earth00',
-          text:  shareText  || '',
+          text:  composedText,
           url:   url || undefined,
           files: [file],
         });
@@ -55268,21 +55290,15 @@ body.ticker-active .gTickerLabel {
      the cap sync. Same reason for the body-prefixed semHeatPanel rule
      below. */
   body #flowControls.kbd-open {
-    /* !important because `body.ticker-active #flowControls` (line ~1754)
-       ties our specificity at (1,1,1) and the cascade was picking the
-       earlier rule. Tested in the preview with ticker-active forced —
-       without !important the `bottom` stays at the base ticker-active
-       value instead of shifting by --kbd-shift. */
-    /* JS now sets `bottom` inline + !important via the keyboard module —
-       the CSS rule below would lose to body.ticker-active #flowControls
-       on specificity, and the bottom transition was getting stuck mid-
-       interpolation in testing. We keep the calc here as a documented
-       intent; the inline value wins anyway. */
-    bottom: calc(var(--page-nav-height) + var(--global-ticker-height) + var(--global-ticker-gap) + 34px + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom) + var(--kbd-shift, 0px)) !important;
-    /* Cap panel at 320px (or fit-to-fit on small phones) so it sits
-       in the middle ground between the keyboard top and the screen top
-       — was max() which let the panel grow to fill ALL space above the
-       keyboard, "shooting to the top" of the screen. */
+    /* Pin 8px above the keyboard's top edge — was calc(<page-nav> +
+       <ticker> + <gap> + 34 + ... + kbd) which preserved the panel's
+       100+px gap from screen-bottom and lifted that whole stack above
+       the keyboard, leaving dead space and pushing the panel-top to
+       the very top of the screen. !important — specificity tie with
+       body.ticker-active #flowControls. */
+    bottom: calc(var(--kbd-shift, 0px) + 8px) !important;
+    /* Cap panel at 320px so news flows keeps a tight, recognizable
+       shape regardless of available space above the keyboard. */
     max-height: min(320px, calc(100vh - var(--kbd-shift, 0px) - 70px));
     overflow-y: auto;
     overscroll-behavior: contain;
@@ -55298,11 +55314,14 @@ body.ticker-active .gTickerLabel {
                 max-width 0.4s cubic-bezier(0.32, 0.72, 0, 1);
   }
   body #semHeatPanel.kbd-open {
-    bottom: calc(120px + var(--kbd-shift, 0px));
-    /* The base rule already sets max-height: calc(100vh - 244px). Subtract
-       the keyboard height on top of that so the panel never overlaps the
-       keyboard or the top safe area. */
-    max-height: max(220px, calc(100vh - 244px - var(--kbd-shift, 0px)));
+    /* Pin 8px above the keyboard, same as news flows. Natural max-height
+       so the panel keeps its normal content shape — was max(220px, …)
+       which clamped the panel to 220px on a typical phone (kbd=350,
+       vp=800), distorting its layout. Now uses the available space
+       above the keyboard with a 24px top margin. */
+    bottom: calc(var(--kbd-shift, 0px) + 8px);
+    max-height: calc(100vh - var(--kbd-shift, 0px) - 24px);
+    overflow-y: auto;
     /* See #flowControls.kbd-open — no bottom transition; JS snaps it. */
     transition: max-height 220ms cubic-bezier(0.32, 0.72, 0, 1);
   }
@@ -55349,15 +55368,12 @@ body.ticker-active .gTickerLabel {
     if (!activePanel) return;
     const kbd = computeKbdHeight();
     if (kbd > 0) {
-      // Cache the panel's natural (un-shifted) bottom on first lift so we
-      // can restore exactly when the keyboard hides — avoids drift if the
-      // computed bottom changes during the keyboard session.
-      if (!activePanel.dataset.kbdBaseBottom) {
-        activePanel.dataset.kbdBaseBottom = getComputedStyle(activePanel).bottom;
-      }
-      const base = parseFloat(activePanel.dataset.kbdBaseBottom) || 0;
+      // Pin 8px above the keyboard top — was base + kbd which preserved
+      // the panel's pre-keyboard gap from window-bottom (100+px) and
+      // lifted that whole stack above the keyboard, leaving dead space
+      // between panel-bottom and keyboard-top.
       activePanel.style.setProperty('--kbd-shift', `${kbd}px`);
-      activePanel.style.setProperty('bottom', `${base + kbd}px`, 'important');
+      activePanel.style.setProperty('bottom', `${kbd + 8}px`, 'important');
       activePanel.classList.add('kbd-open');
     } else {
       clearShift();
