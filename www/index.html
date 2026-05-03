@@ -21268,7 +21268,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
           // ─── 3c. Scale: top cap appears, then vertical line draws down ───
           const labels = labelsEl ? Array.from(labelsEl.querySelectorAll(".scaleBarLabel")) : [];
-          const LABEL_FADE_MS = 600;
+          // Was 600ms per label with full-duration stagger (no overlap) —
+          // 5 labels took ~3s total. Tightened: 320ms fade + ~50% overlap
+          // stagger gives a tighter ripple feel and ~1s total for 5 labels.
+          const LABEL_FADE_MS = 320;
           labels.forEach(lbl => {
             lbl.style.opacity = "0";
             lbl.style.transform = "translateX(6px)";
@@ -21325,7 +21328,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
           // Labels fade in sequentially — each starts after the previous
           // finishes. Runs concurrently with the compass sweep below.
           const labelCount = labels.length;
-          const LABEL_STAGGER = LABEL_FADE_MS; // next starts when previous ends
+          // Was = LABEL_FADE_MS (no overlap). Now ~50% overlap — next label
+          // starts when previous is half-faded — visible ripple, no drag.
+          const LABEL_STAGGER = Math.round(LABEL_FADE_MS * 0.5);
           const labelsDone = new Promise(resolve => {
             labels.forEach((lbl, i) => {
               setTimeout(() => {
@@ -55274,10 +55279,11 @@ body.ticker-active .gTickerLabel {
        interpolation in testing. We keep the calc here as a documented
        intent; the inline value wins anyway. */
     bottom: calc(var(--page-nav-height) + var(--global-ticker-height) + var(--global-ticker-gap) + 34px + var(--app-bottom-inset, 0px) + env(safe-area-inset-bottom) + var(--kbd-shift, 0px)) !important;
-    /* Reserve ~70px at the top for the iOS status bar / safe area + a
-       breathing margin. min-height floor so a tall keyboard on a small
-       phone doesn't crush the panel below usable. */
-    max-height: max(220px, calc(100vh - var(--kbd-shift, 0px) - 70px));
+    /* Cap panel at 320px (or fit-to-fit on small phones) so it sits
+       in the middle ground between the keyboard top and the screen top
+       — was max() which let the panel grow to fill ALL space above the
+       keyboard, "shooting to the top" of the screen. */
+    max-height: min(320px, calc(100vh - var(--kbd-shift, 0px) - 70px));
     overflow-y: auto;
     overscroll-behavior: contain;
     /* No transition on `bottom` — the inline-style snap is intentional
@@ -55313,8 +55319,12 @@ body.ticker-active .gTickerLabel {
   // panel-mounted keyword input later (e.g. a global search drawer), drop
   // it in here.
   const TARGETS = [
-    { input: '#semHeatKw',    panel: '#semHeatPanel' },
-    { input: '#flowKeyword',  panel: '#flowControls'  },
+    { input: '#semHeatKw',       panel: '#semHeatPanel' },
+    // Ask-AI tab is the DEFAULT-active tab in the heatmap panel — its
+    // input was missing here, so focusing it never lifted the panel and
+    // the field stayed behind the keyboard.
+    { input: '#semHeatAskInput', panel: '#semHeatPanel' },
+    { input: '#flowKeyword',     panel: '#flowControls'  },
   ];
 
   let activePanel = null;

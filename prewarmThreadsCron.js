@@ -4,9 +4,10 @@
 /**
  * prewarmThreadsCron.js
  *
- * Owns ALL thread surface warming. Runs at the thread builder's cadence
- * (every 2 hours) so all per-thread caches (TTL 1h45m) stay warm for
- * any user tapping a thread card.
+ * Owns ALL thread surface warming. Runs every 6h; thread builder also
+ * runs every 6h. Per-thread caches (TTL 5h45m) stay continuously warm.
+ * Schedule this cron ~30min AFTER the builder so each warm picks up the
+ * latest build (otherwise users see stale data for up to a full cycle).
  *
  * What it warms (per top 50 active+cooling thread):
  *   • /api/threads/:id/articles        (article list inside the thread)
@@ -14,9 +15,9 @@
  *   • /api/threads/:id/panels          (data panels / pie graph)
  *   • /api/flows/thread/:id            (flow arcs)
  *
- * Plus core 2h-cadence feeds:
- *   • /api/threads/latest              (the cards list)
- *   • /api/news/sources-stats          (source stats)
+ * Plus core feeds whose TTL exceeds this cron's cadence:
+ *   • /api/threads/latest              (the cards list, TTL 5h45m)
+ *   • /api/news/sources-stats          (source stats, TTL 11h)
  *
  * Pure HTTP — no DB. Discovers top threads via /api/threads/latest,
  * which is itself cached, so no direct PG connection. This avoids the
@@ -36,8 +37,8 @@
  * Run:
  *   node prewarmThreadsCron.js
  *
- * Wire to a 2h Render Cron — schedule: 5 past every 2nd hour
- *   (cron expression: 5  STAR/2  STAR  STAR  STAR  — STAR = literal asterisk)
+ * Wire to a 6h Render Cron — schedule: 5 past every 6th hour
+ *   (cron expression: 5  STAR/6  STAR  STAR  STAR  — STAR = literal asterisk)
  */
 
 require('dotenv').config({ override: true });
@@ -117,8 +118,8 @@ async function processThread(t) {
   return { t, results };
 }
 
-// Core 2h-cadence feeds — match this cron's schedule.
-//   /api/threads/latest      TTL 1h45m, thread builder runs every 2h
+// Core feeds warmed alongside per-thread surfaces.
+//   /api/threads/latest      TTL 5h45m, builder + this cron both every 6h
 //   /api/news/sources-stats  TTL 11h, source stats cron runs 2x/day
 const CORE_FEEDS = [
   '/api/threads/latest',

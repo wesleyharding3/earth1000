@@ -3534,8 +3534,9 @@ app.get("/api/flows/thread/:id", async (req, res) => {
     const threadId = parseInt(req.params.id, 10);
     if (!threadId) return res.status(400).json({ error: "Invalid thread ID" });
 
-    // 1h45m — thread builder cron runs every 2h
-    const _cached = await ttlCached(`flows/thread:${threadId}`, 6_300_000, async () => {
+    // 5h45m — thread builder + prewarm-threads cron both run every 6h.
+    // TTL just under that cadence so cache never expires between warms.
+    const _cached = await ttlCached(`flows/thread:${threadId}`, 20_700_000, async () => {
       return await _buildTieredFlows({
         kind: 'thread',
         id: threadId,
@@ -3793,8 +3794,9 @@ app.get("/api/threads/:id/articles", async (req, res) => {
     const threadId = parseInt(req.params.id, 10);
     if (!threadId) return res.status(400).json({ error: "Invalid thread ID" });
 
-    // 1h45m — thread builder cron runs every 2h
-    const _cached = await ttlCached(`threads/${threadId}/articles`, 6_300_000, async () => {
+    // 5h45m — thread builder + prewarm-threads cron both every 6h.
+    // Cache always warm between cycles.
+    const _cached = await ttlCached(`threads/${threadId}/articles`, 20_700_000, async () => {
       // src = article's home country (publisher / origin).
       // dst = primary destination country this article is ABOUT, pulled from
       //       article_locations with 'content' routing preferred over 'source'.
@@ -4010,9 +4012,9 @@ app.get("/api/threads/:id/timeline", async (req, res) => {
     const threadId = parseInt(req.params.id, 10);
     if (!threadId) return res.status(400).json({ error: "Invalid thread ID" });
 
-    // 1h45m TTL — matches thread builder cron (every 2h). Was uncached;
-    // added so prewarm-threads cron actually populates something.
-    const _cached = await ttlCached(`threads/${threadId}/timeline`, 6_300_000, async () => {
+    // 5h45m TTL — thread builder + prewarm-threads cron both every 6h.
+    // Was uncached; added so prewarm-threads cron populates it.
+    const _cached = await ttlCached(`threads/${threadId}/timeline`, 20_700_000, async () => {
     const { rows } = await pool.query(`
       SELECT
         a.id,
@@ -8190,8 +8192,8 @@ app.get("/api/threads/by-country/:iso", async (req, res) => {
     //    primary_nations=[iso], so skip the entity-mention CTE entirely
     //    and just filter story_threads directly.
     if (scope === 'local') {
-      // 1h45m — thread builder cron every 2h
-      const rows = await ttlCached(`threads/local-by-country:${iso}:${days}:${limit}`, 6_300_000, async () => {
+      // 5h45m — thread builder + prewarm-threads cron both every 6h.
+      const rows = await ttlCached(`threads/local-by-country:${iso}:${days}:${limit}`, 20_700_000, async () => {
         const { rows } = await pool.query(`
           SELECT
             t.id                    AS thread_id,
@@ -8255,8 +8257,8 @@ app.get("/api/threads/by-country/:iso", async (req, res) => {
       return res.json(rows);
     }
 
-    // 1h45m — thread builder cron every 2h
-    const rows = await ttlCached(`threads/by-country:${iso}:${days}:${limit}`, 6_300_000, async () => {
+    // 5h45m — thread builder + prewarm-threads cron both every 6h.
+    const rows = await ttlCached(`threads/by-country:${iso}:${days}:${limit}`, 20_700_000, async () => {
     const { rows } = await pool.query(`
       WITH candidate_articles AS (
         SELECT
@@ -8496,12 +8498,12 @@ app.get("/api/threads/latest", async (req, res) => {
     const fromDate = req.query.from_date || null;  // ISO date string e.g. "2026-03-01"
     const toDate   = req.query.to_date   || null;
 
-    // 1h45m TTL — thread builder cron runs every 2 hours, so the prior
-    // 3 min was 35× under-cached. 1h45m sits just under the cron cadence
-    // so the cache always expires before the next build. Comment about
-    // the builder running once/day was outdated — it's every 2h.
+    // 5h45m TTL — thread builder + prewarm-threads cron both every 6h.
+    // TTL just under that cadence so cache stays continuously warm and
+    // never expires mid-cycle. Schedule warmer ~30min AFTER builder so
+    // each warm picks up the latest build.
     const _cacheKey = `threads/latest:${limit}:${fromDate || ''}:${toDate || ''}`;
-    const _cached = await ttlCached(_cacheKey, 6_300_000, async () => {
+    const _cached = await ttlCached(_cacheKey, 20_700_000, async () => {
 
     // Step 1: get threads — single fast query on story_threads only,
     // no JOINs, no regex, no correlated subqueries.
@@ -10883,8 +10885,8 @@ app.get("/api/threads/:threadId/panels", async (req, res) => {
   try {
     const threadId = parseInt(req.params.threadId, 10);
     if (!Number.isFinite(threadId)) return res.status(400).json({ error: "bad id" });
-    // 1h45m TTL — thread builder cron runs every 2h.
-    const _cached = await ttlCached(`threads/${threadId}/panels`, 6_300_000, async () => {
+    // 5h45m TTL — thread builder + prewarm-threads cron both every 6h.
+    const _cached = await ttlCached(`threads/${threadId}/panels`, 20_700_000, async () => {
       const [coverage, rows] = await Promise.all([
         computeCoveragePiePanel(pool, { type: 'thread', id: threadId }),
         dataPanels.loadPanels(pool, { type: 'thread', id: threadId }),
