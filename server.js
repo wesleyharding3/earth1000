@@ -13123,28 +13123,35 @@ app.get("/api/news/sources-stats", async (req, res) => {
 
 /* =========================================
    Globe Statistics — /api/globe-stats
-   Pre-computed by globeStatsCron.js (every 6 hours).
-   Reads from keyword_intelligence_cache; accepts up to 24h staleness.
+   Pre-computed by globeStatsCron.js (Render Cron: once daily).
+   In-process cache TTL is 22h — sized just under one cron cycle so
+   it never expires mid-day; DB-cache row max staleness is 24h as a
+   safety net if the cron skips a run.
 ========================================= */
 app.get("/api/globe-stats", async (req, res) => {
   try {
-    // 90s server-side cache — was 10 min. The DB row is what the cron
-    // updates; the in-memory layer's only job is to absorb burst reads
-    // so we don't hit Postgres on every API call. 90s is plenty for
-    // that (the DB read is a single small JSONB row) and dramatically
-    // shortens the "I just ran the cron, why doesn't it show up yet"
-    // window. Cloudflare's s-maxage=120 still caps front-end visibility
-    // at ~2 min total — see the cacheControlByPath table.
-    // 22h — globe stats cron runs once daily
-    const data = await ttlCached('globe-stats:all', 79_200_000, async () => {
-      // Read from DB cache (populated by globeStatsCron.js)
-      const dbCached = await getDbKeywordCache("globe-stats", "global", 1440); // 24h max staleness
-      if (dbCached) return dbCached;
-
-      console.warn('[globe-stats] no cache available — returning empty');
-      return {};
-    });
-    res.json(data);
+    // Caching strategy (daily cron, no-downtime tolerance):
+    //   • In-process TTL: 24h — matches the once-daily cron cycle.
+    //   • DB max staleness: 72h — accepts the LAST successful run for
+    //     up to three days so a single skipped/failed cron run doesn't
+    //     blank the page. The in-process layer absorbs burst reads;
+    //     the DB layer is the source of truth.
+    //   • Empty results are NEVER cached — if the DB has nothing, the
+    //     next request re-probes immediately so a successful cron
+    //     surfaces within a single request after it writes.
+    const hit = _ttlCache.get('globe-stats:all');
+    if (hit && hit.expires > Date.now() && hit.value && Object.keys(hit.value).length > 0) {
+      return res.json(hit.value);
+    }
+    const dbCached = await getDbKeywordCache("globe-stats", "global", 4320); // 72h max staleness
+    if (dbCached && Object.keys(dbCached).length > 0) {
+      _ttlCache.set('globe-stats:all', { expires: Date.now() + 86_400_000, value: dbCached });
+      return res.json(dbCached);
+    }
+    // No data anywhere (cron never populated, or last write > 72h old).
+    // Return {} but do NOT cache it — next request will re-probe.
+    console.warn('[globe-stats] no cache available — returning empty');
+    return res.json({});
   } catch (err) {
     console.error("Globe stats error:", err);
     res.status(500).json({ error: "Failed to fetch globe stats" });

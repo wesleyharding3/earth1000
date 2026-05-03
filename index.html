@@ -29460,8 +29460,74 @@ const settingsToggle     = document.getElementById("settingsToggle");
         e.stopPropagation();
         const was = dropEl.classList.contains("open");
         closeAll();
-        if (!was) { dropEl.classList.add("open"); setTimeout(() => searchEl.focus(), 25); }
+        if (!was) {
+          dropEl.classList.add("open");
+          _positionMultiDrop(btnEl, dropEl);
+          setTimeout(() => searchEl.focus(), 25);
+        }
       });
+    }
+
+    // Smart positioning for the From/About country dropdowns. Uses
+    // position:fixed so the dropdown can escape the parent stacking
+    // context and clamp itself to safe-area-aware bounds. Prefers UP
+    // because the builder row sits high on the page; flips to DOWN
+    // when the panel is so high that UP can't fit MIN_HEIGHT. Always
+    // caps max-height so the top edge stays below the iOS safe-area
+    // (status bar / dynamic island).
+    function _positionMultiDrop(btn, drop) {
+      // Reset inline styles each open so direction can re-flip cleanly
+      // when the user moves the panel between calls.
+      drop.style.position  = '';
+      drop.style.top       = '';
+      drop.style.bottom    = '';
+      drop.style.left      = '';
+      drop.style.right     = '';
+      drop.style.width     = '';
+      drop.style.maxHeight = '';
+
+      const btnRect = btn.getBoundingClientRect();
+      // env(safe-area-inset-top) read via a tiny probe element. Falls
+      // back to 50px (typical iPhone status-bar + small breathing room).
+      let safeTop = 0;
+      try {
+        const probe = document.createElement('div');
+        probe.style.cssText = 'position:fixed;top:0;left:0;height:env(safe-area-inset-top,0px);visibility:hidden;pointer-events:none;';
+        document.body.appendChild(probe);
+        safeTop = probe.getBoundingClientRect().height || 0;
+        probe.remove();
+      } catch (_) {}
+      if (!safeTop) safeTop = 50;
+
+      const TOP_BREATHING    = 16;
+      const BOTTOM_BREATHING = 100; // page-nav + ticker + room for keyboard
+      const MIN_HEIGHT       = 140;
+      const DESIRED          = 310;
+
+      const spaceAbove = btnRect.top - safeTop - TOP_BREATHING;
+      const spaceBelow = window.innerHeight - btnRect.bottom - BOTTOM_BREATHING;
+
+      drop.style.position = 'fixed';
+      drop.style.left     = `${btnRect.left}px`;
+      drop.style.width    = `${Math.max(btnRect.width, 220)}px`;
+
+      if (spaceAbove >= MIN_HEIGHT) {
+        drop.style.bottom = `${window.innerHeight - btnRect.top + 5}px`;
+        drop.style.top    = 'auto';
+        drop.style.maxHeight = `${Math.min(DESIRED, spaceAbove)}px`;
+      } else if (spaceBelow >= MIN_HEIGHT) {
+        drop.style.top    = `${btnRect.bottom + 5}px`;
+        drop.style.bottom = 'auto';
+        drop.style.maxHeight = `${Math.min(DESIRED, spaceBelow)}px`;
+      } else if (spaceAbove >= spaceBelow) {
+        drop.style.bottom = `${window.innerHeight - btnRect.top + 5}px`;
+        drop.style.top    = 'auto';
+        drop.style.maxHeight = `${Math.max(spaceAbove, MIN_HEIGHT)}px`;
+      } else {
+        drop.style.top    = `${btnRect.bottom + 5}px`;
+        drop.style.bottom = 'auto';
+        drop.style.maxHeight = `${Math.max(spaceBelow, MIN_HEIGHT)}px`;
+      }
     }
 
     function refreshBtn(w) {
@@ -29603,6 +29669,39 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       renderDots(); renderDrop();
     })();
+
+    // Align the Bias button's right edge with the Videos button's right
+    // edge on mobile. On wrapped layouts the bias was right-anchored to
+    // the row right via margin-left:auto, which left it visually
+    // disconnected from the media-toggles row above it. Measuring at
+    // runtime + setting margin-right keeps the alignment correct on any
+    // viewport width without hard-coded coordinates. Skipped on desktop
+    // where there's no wrap and the natural flex order is already fine.
+    function _alignBiasToVideos() {
+      const biasWrap  = document.getElementById('nfBiasWrap');
+      const videosBtn = document.getElementById('nfMediaVideo');
+      if (!biasWrap || !videosBtn) return;
+      const isMobile = window.matchMedia('(max-width: 700px)').matches;
+      if (!isMobile) {
+        biasWrap.style.marginRight = '';
+        return;
+      }
+      const row = biasWrap.parentElement;
+      const rowRect    = row.getBoundingClientRect();
+      const videosRect = videosBtn.getBoundingClientRect();
+      // Distance from the row's right edge to the Videos button's right
+      // edge — set as margin-right on bias so its right edge ends at
+      // the same x-coordinate.
+      const offsetFromRowRight = Math.max(0, rowRect.right - videosRect.right);
+      biasWrap.style.marginRight = `${offsetFromRowRight}px`;
+    }
+    _alignBiasToVideos();
+    // Re-run on resize, orientation, and after the filter row's natural
+    // first layout settles (rAF chain catches the case where the row
+    // wraps a tick after first paint).
+    window.addEventListener('resize', _alignBiasToVideos);
+    window.addEventListener('orientationchange', _alignBiasToVideos);
+    requestAnimationFrame(() => requestAnimationFrame(_alignBiasToVideos));
 
     let textDebounce = null;
     textFilter_el.addEventListener("input", () => {

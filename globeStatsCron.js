@@ -12,8 +12,9 @@ process.env.DB_POOL_MAX = "2";
  * Pre-fetches globe statistics from external APIs (FRED, World Bank, Gold API)
  * and writes results to keyword_intelligence_cache for instant API serving.
  *
- * Recommended: run every 6 hours (data sources update daily at most).
- *   Schedule: 0 0,6,12,18 * * *
+ * Production schedule: once daily (data sources update daily at most;
+ * the API layer caches the result in-process for 22h to match).
+ *   Schedule: 0 0 * * *
  *
  * Environment variables:
  *   DATABASE_URL   — PostgreSQL connection string (required)
