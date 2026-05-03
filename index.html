@@ -19487,7 +19487,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           focusLocked = false;
         }
         
-        if (e.ctrlKey) { zoomVelocity += e.deltaY * 0.0003; return; }
+        if (e.ctrlKey) { zoomVelocity += e.deltaY * 0.00045; return; }
         const rotateSpeed = 0.003;
         yawVelocity  += e.deltaX * rotateSpeed;
         tiltVelocity += e.deltaY * rotateSpeed * 0.6;
@@ -19523,7 +19523,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           }
 
           const currentDistance = getDistance(e.touches);
-          zoomVelocity += (initialPinchDistance - currentDistance) * 0.0004;
+          zoomVelocity += (initialPinchDistance - currentDistance) * 0.0006;
           initialPinchDistance = currentDistance;
         }
       }, { passive: false });
@@ -20168,7 +20168,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       // ── Mobile globe navigation controls ─────────────────────────────────────
       window.__globeNav = {
-        zoomIn:   () => { targetZoom = Math.max(1.3, targetZoom * 0.72); },
+        zoomIn:   () => { targetZoom = Math.max(1.5, targetZoom * 0.72); },
         zoomOut:  () => { targetZoom = Math.min(8.0, targetZoom * 1.38); },
         recenter: () => {
           targetZoom = _isMobileView ? 3.6 : 3.0;
@@ -20891,7 +20891,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
         zoomVelocity *= zoomFriction;
         targetZoom += zoomVelocity;
-        targetZoom = Math.max(1.3, Math.min(6, targetZoom));
+        targetZoom = Math.max(1.5, Math.min(6, targetZoom));
         const zoomDelta = targetZoom - camera.position.z;
         // Briefing: constant slow lerp for all zoom changes (in or out).
         // Normal: zoom-out gentle, zoom-in proportional to distance.
