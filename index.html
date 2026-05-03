@@ -16650,13 +16650,14 @@ function computeCityTiers(cities) {
           focusLocked = false;
         }
         
-        // Zoom-aware drag sensitivity: at the default zoom of ~3.0 the
-        // 0.005 multiplier feels right; when zoomed in close (D=1.5) the
-        // globe fills more of the screen so a pixel of drag should rotate
-        // less, and when zoomed out (D=6) it should rotate more. Linear
-        // scaling keeps the touched surface point near the finger across
-        // the full zoom range.
-        const _dragZoomScale = Math.max(0.4, Math.min(2.0, camera.position.z / 3.0));
+        // Zoom-aware drag sensitivity. Right physics: a pixel of finger
+        // movement corresponds to roughly (D - R) world-units near the
+        // surface (R≈1 = globe radius), so rotation-per-pixel scales with
+        // (D-1), NOT D. Calibrated so mobile's default zoom of 3.6 maps
+        // to 1.0 — unchanged feel at default, distinctly slower when
+        // close. At full zoom-in (D=1.5) scale ≈ 0.19 — finger tracks
+        // closely instead of yanking the globe across the screen.
+        const _dragZoomScale = Math.max(0.18, Math.min(2.0, (camera.position.z - 1) / 2.6));
         const dx = (e.touches[0].clientX - touchPrevX) * 0.005 * _dragZoomScale;
         const dy = (e.touches[0].clientY - touchPrevY) * 0.005 * _dragZoomScale;
         if (Math.abs(dx) > 0.002 || Math.abs(dy) > 0.002) touchTapMoved = true;
@@ -16743,7 +16744,7 @@ function computeCityTiers(cities) {
         }
         
         // Zoom-aware drag sensitivity — see touch handler for rationale.
-        const _dragZoomScale = Math.max(0.4, Math.min(2.0, camera.position.z / 3.0));
+        const _dragZoomScale = Math.max(0.18, Math.min(2.0, (camera.position.z - 1) / 2.6));
         const deltaX = (e.clientX - prevX) * 0.005 * _dragZoomScale;
         const deltaY = (e.clientY - prevY) * 0.005 * _dragZoomScale;
         applyYaw(deltaX); applyTilt(deltaY);
@@ -19499,7 +19500,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (e.ctrlKey) { zoomVelocity += e.deltaY * 0.00045; return; }
         // Zoom-aware rotate sensitivity for trackpad two-finger drag —
         // matches the touch + mouse handlers' scaling.
-        const _rotateZoomScale = Math.max(0.4, Math.min(2.0, camera.position.z / 3.0));
+        const _rotateZoomScale = Math.max(0.18, Math.min(2.0, (camera.position.z - 1) / 2.6));
         const rotateSpeed = 0.003 * _rotateZoomScale;
         yawVelocity  += e.deltaX * rotateSpeed;
         tiltVelocity += e.deltaY * rotateSpeed * 0.6;
@@ -33627,6 +33628,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
     window.__flowNodeLabelRAF = requestAnimationFrame(updateFlowNodeLabels);
   }
 
+  // Scratch Vector3 instances reused across frames — replaces per-label
+  // `new THREE.Vector3(...)` and `pos.clone()` allocations in the globe
+  // branch below. With 15 labels × 60fps × 5 allocations/label that loop
+  // was generating ~4500 short-lived objects/sec, enough to provoke
+  // GC pauses that show up as flow-arc stutter.
+  let _flowLabelPos = null, _flowLabelNorm = null, _flowLabelProj = null;
+
   function updateFlowNodeLabels() {
     const container = document.getElementById("flowNodeLabels");
     if (!container) return;
@@ -33689,8 +33697,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
           label.style.opacity = "0";
           return;
         }
-        const w = label.offsetWidth  || 120;
-        const h = label.offsetHeight || 32;
+        // Cache offset dims per label — see globe branch for rationale.
+        const w = label.__cachedW || (label.__cachedW = label.offsetWidth  || 120);
+        const h = label.__cachedH || (label.__cachedH = label.offsetHeight || 32);
         visible.push({
           el: label,
           ax: sx, ay: sy,
@@ -33709,6 +33718,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // camera and projected, otherwise the facing check hides them all once
       // the user rotates the globe.
       const sceneQuat = scene?.quaternion;
+      // Lazy-init scratch vectors on first call — THREE may not be loaded
+      // at script-evaluation time but will be by the time labels appear.
+      if (!_flowLabelPos) {
+        _flowLabelPos  = new THREE.Vector3();
+        _flowLabelNorm = new THREE.Vector3();
+        _flowLabelProj = new THREE.Vector3();
+      }
+      const pos  = _flowLabelPos;
+      const norm = _flowLabelNorm;
+      const proj = _flowLabelProj;
       const camDir = new THREE.Vector3();
       camera.getWorldDirection(camDir).normalize();
 
@@ -33718,29 +33737,35 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
         const lat = node.lat * Math.PI / 180;
         const lon = -node.lon * Math.PI / 180;
-        const pos = new THREE.Vector3(
+        // Reuse pos instead of `new THREE.Vector3(...)` per label.
+        pos.set(
           GLOBE_RADIUS * Math.cos(lat) * Math.cos(lon),
           GLOBE_RADIUS * Math.sin(lat),
           GLOBE_RADIUS * Math.cos(lat) * Math.sin(lon)
         );
         if (sceneQuat) pos.applyQuaternion(sceneQuat);
 
-        const dot = -camDir.dot(pos.clone().normalize());
+        // Reuse norm scratch instead of `pos.clone().normalize()`.
+        const dot = -camDir.dot(norm.copy(pos).normalize());
         if (dot < 0.05) {
           label.style.opacity = "0";
           return;
         }
 
-        const projected = pos.clone().project(camera);
-        const sx = (projected.x + 1) / 2 * rect.width + rect.left;
-        const sy = (-projected.y + 1) / 2 * rect.height + rect.top;
+        // Reuse proj scratch instead of `pos.clone().project(camera)`.
+        proj.copy(pos).project(camera);
+        const sx = (proj.x + 1) / 2 * rect.width + rect.left;
+        const sy = (-proj.y + 1) / 2 * rect.height + rect.top;
 
         // Label's CSS `left, top` anchors where the label's invisible pointer
         // lives — its translate(-50%, -100%) + translateY(-8px) lifts the
         // visible box up and back-left from there. ax/ay is the node itself
         // (leader-line tip). hx/hy = home position for the label anchor.
-        const w = label.offsetWidth  || 120;
-        const h = label.offsetHeight || 32;
+        // Cache offset dims per label — text content is set once at create
+        // time, so dimensions don't change across frames. Reading offset*
+        // forces synchronous layout flush, which was 2-5ms × N labels/frame.
+        const w = label.__cachedW || (label.__cachedW = label.offsetWidth  || 120);
+        const h = label.__cachedH || (label.__cachedH = label.offsetHeight || 32);
         visible.push({
           el: label,
           ax: sx, ay: sy,
@@ -33752,12 +33777,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
       });
     }
 
-    // Pass 2 — separate overlapping labels along the Y axis. Six iterations
-    // converges for typical cluster counts (<15); quadratic scan is fine
-    // at this scale. Each pair gets a mutual half-push along whichever
-    // label currently sits higher.
+    // Pass 2 — separate overlapping labels along the Y axis. 3 iterations
+    // converges for typical cluster counts (<15) — the early-exit handles
+    // the common case in 1-2 iters; was 6 but the cap is just a safety
+    // net for worst-case dense clusters and rarely needed more than 3.
+    // Each pair gets a mutual half-push along whichever label sits higher.
     const PAD = 4;
-    const ITERS = 6;
+    const ITERS = 3;
     for (let iter = 0; iter < ITERS; iter++) {
       let moved = false;
       for (let i = 0; i < visible.length; i++) {
