@@ -18554,6 +18554,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // polygon hit (ocean / microstate), fall through to the old
         // centroid screen-space sweep below.
         if (currentViewMode === "country") {
+          // Mirror the polygon-layer's own click/touchend guards: don't
+          // commit a country pick when heatmap, briefing, news flows, or
+          // thread/timeline/article flow arcs (body.flow-from-card) are
+          // active. Without this, the window-level touchend pipeline
+          // bypasses the polygon layer's stopPropagation and selects a
+          // polygon anyway, yanking the user out of the active mode.
+          if (
+            window.__semHeatActive ||
+            window.briefingActive ||
+            window.__flowIsOpen?.() ||
+            document.body.classList.contains('flow-from-card')
+          ) return;
           if (window.__polygonLayer?.hitTestAt) {
             const _polyHit = window.__polygonLayer.hitTestAt(touch.clientX, touch.clientY);
             if (_polyHit?.key) {
@@ -48406,6 +48418,11 @@ body.ticker-active .gTickerLabel {
     if (window.briefingActive) return;
     // Block polygon selection entirely while flow arcs are open.
     if (window.__flowIsOpen?.()) return;
+    // Same for thread/timeline/article flow arcs (set body.flow-from-card
+    // by show{Thread,Timeline,Article}Flows). Tapping a country polygon
+    // mid-arc-view would commit a panel/focus and obscure the arcs the
+    // user is reading. Mirror the news-flows block above.
+    if (document.body.classList.contains('flow-from-card')) return;
     // Suppress the synthetic click that fires at the release point of a
     // mouse drag — otherwise rotating the globe with the cursor over a
     // country selects it on release. Only the immediately-following
@@ -48600,6 +48617,10 @@ body.ticker-active .gTickerLabel {
       if (!_ready || !isCountryView()) return;
       if (window.__semHeatActive || window.briefingActive) return;
       if (window.__flowIsOpen?.()) return;
+      // Mirror the desktop onClick block — thread/timeline/article flow
+      // arcs set body.flow-from-card; tapping a polygon during that mode
+      // pulls the user out of the arc view.
+      if (document.body.classList.contains('flow-from-card')) return;
       const t = e.changedTouches && e.changedTouches[0];
       if (!t) return;
       // Respect the shared post-drag cooloff so a rotation that ends over

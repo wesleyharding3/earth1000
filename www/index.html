@@ -20036,6 +20036,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // polygon hit (ocean / microstate), fall through to the old
         // centroid screen-space sweep below.
         if (currentViewMode === "country") {
+          // Mirror the polygon-layer's own click/touchend guards: don't
+          // commit a country pick when heatmap, briefing, news flows, or
+          // thread/timeline/article flow arcs (body.flow-from-card) are
+          // active. Otherwise the window-level touchend bypasses the
+          // polygon layer's stopPropagation and selects a polygon.
+          if (
+            window.__semHeatActive ||
+            window.briefingActive ||
+            window.__flowIsOpen?.() ||
+            document.body.classList.contains('flow-from-card')
+          ) return;
           if (window.__polygonLayer?.hitTestAt) {
             const _polyHit = window.__polygonLayer.hitTestAt(touch.clientX, touch.clientY);
             if (_polyHit?.key) {
@@ -52382,6 +52393,8 @@ body.ticker-active .gTickerLabel {
     if (window.briefingActive) return;
     // Block polygon selection entirely while flow arcs are open.
     if (window.__flowIsOpen?.()) return;
+    // Same for thread/timeline/article flow arcs (body.flow-from-card).
+    if (document.body.classList.contains('flow-from-card')) return;
     // Suppress the synthetic click that fires at the release point of a
     // mouse drag — otherwise rotating the globe with the cursor over a
     // country selects it on release. Only the immediately-following
@@ -52602,6 +52615,8 @@ body.ticker-active .gTickerLabel {
       if (!_ready || !isCountryView()) return;
       if (window.__semHeatActive || window.briefingActive) return;
       if (window.__flowIsOpen?.()) return;
+      // Same for thread/timeline/article flow arcs (body.flow-from-card).
+      if (document.body.classList.contains('flow-from-card')) return;
       const t = e.changedTouches && e.changedTouches[0];
       if (!t) return;
       if (window.__mouseDragEndTime && Date.now() - window.__mouseDragEndTime < 250) return;
