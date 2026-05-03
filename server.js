@@ -1347,12 +1347,24 @@ app.post("/api/images/resolve", async (req, res) => {
 ========================================= */
 app.get("/api/news/city/:cityId", async (req, res) => {
   try {
+    const cityId = parseInt(req.params.cityId);
+    if (!Number.isFinite(cityId)) return res.status(400).json({ error: "Invalid cityId" });
     const limit  = parseOptionalPositiveInt(req.query.limit);
     const offset = Math.max(parseInt(req.query.offset) || 0,  0);
     const tagId  = req.query.tag ? parseInt(req.query.tag) : null;
     const ambient = req.query.ambient === "1" || req.query.ambient === "true";
 
-    const ranked = await getRankedCityArticles(parseInt(req.params.cityId), { limit, offset, tagId, ambient });
+    // Mirrors the country-feed cache (line ~1458): collapses concurrent
+    // fan-out on the same city feed into one DB query. Ambient feeds get
+    // 5min, non-ambient 60s. Without this, every user-tap on a city paid
+    // a full pool.query — uncached, unlike the country path. Filed as a
+    // gap during the prewarm work and added so the prewarm-countries
+    // cron can actually populate something useful for the city path.
+    const cacheKey = `city-feed:v1:${cityId}:${limit || 'all'}:${offset}:${tagId || 'none'}:${ambient ? 'amb' : 'std'}`;
+    const ttlMs = ambient ? 300_000 : 60_000;
+    const ranked = await ttlCached(cacheKey, ttlMs, () =>
+      getRankedCityArticles(cityId, { limit, offset, tagId, ambient })
+    );
     res.json(ranked);
   } catch (err) {
     console.error("City news error:", err.message);
@@ -1365,9 +1377,18 @@ app.get("/api/news/city/:cityId", async (req, res) => {
 ========================================= */
 app.get("/api/news/city/:cityId/global", async (req, res) => {
   try {
+    const cityId = parseInt(req.params.cityId);
+    if (!Number.isFinite(cityId)) return res.status(400).json({ error: "Invalid cityId" });
     const limit  = parseOptionalPositiveInt(req.query.limit);
     const offset = Math.max(parseInt(req.query.offset) || 0,  0);
     const tagId  = req.query.tag ? parseInt(req.query.tag) : null;
+
+    // Same caching rationale as /api/news/city/:cityId above. The
+    // global variant aggregates across article_locations rather than
+    // a.city_id directly, so cold queries are typically slower than
+    // the local variant — caching matters even more here.
+    const cacheKey = `city-feed-global:v1:${cityId}:${limit || 'all'}:${offset}:${tagId || 'none'}`;
+    const cached = await ttlCached(cacheKey, 60_000, async () => {
 
     const tagJoin  = tagId ? `JOIN article_tags at ON at.article_id = a.id` : "";
     const tagWhere = tagId ? `AND at.tag_id = ${tagId}` : "";
@@ -1426,9 +1447,11 @@ app.get("/api/news/city/:cityId/global", async (req, res) => {
       ORDER BY ${tagOuter}
       ${limit ? "LIMIT $2" : ""}
       OFFSET $${limit ? 3 : 2}
-    `, limit ? [req.params.cityId, limit, offset] : [req.params.cityId, offset]);
+    `, limit ? [cityId, limit, offset] : [cityId, offset]);
 
-    res.json(rows);
+    return rows;
+    }); // end ttlCached
+    res.json(cached);
   } catch (err) {
     console.error("City global feed error:", err.message);
     res.status(500).json({ error: "Failed to fetch global city feed" });
@@ -1472,9 +1495,19 @@ app.get("/api/news/country/:countryId", async (req, res) => {
 ========================================= */
 app.get("/api/news/country/:countryId/global", async (req, res) => {
   try {
+    const countryId = parseInt(req.params.countryId);
+    if (!Number.isFinite(countryId)) return res.status(400).json({ error: "Invalid countryId" });
     const limit  = parseOptionalPositiveInt(req.query.limit);
     const offset = Math.max(parseInt(req.query.offset) || 0,  0);
     const tagId  = req.query.tag ? parseInt(req.query.tag) : null;
+
+    // Same caching rationale as the local-feed handler above (line ~1458).
+    // Was uncached so prewarm-countries hits to /global never populated
+    // anything — every user paid the full pool.query. Added with the same
+    // 60s std / 300s ambient pattern; ambient flag isn't part of /global
+    // so just 60s here.
+    const cacheKey = `country-feed-global:v1:${countryId}:${limit || 'all'}:${offset}:${tagId || 'none'}`;
+    const cached = await ttlCached(cacheKey, 60_000, async () => {
 
     const tagJoin  = tagId ? `JOIN article_tags at ON at.article_id = a.id` : "";
     const tagWhere = tagId ? `AND at.tag_id = ${tagId}` : "";
@@ -1528,9 +1561,11 @@ app.get("/api/news/country/:countryId/global", async (req, res) => {
       ORDER BY ${tagOuter}
       ${limit ? "LIMIT $2" : ""}
       OFFSET $${limit ? 3 : 2}
-    `, limit ? [req.params.countryId, limit, offset] : [req.params.countryId, offset]);
+    `, limit ? [countryId, limit, offset] : [countryId, offset]);
 
-    res.json(rows);
+    return rows;
+    }); // end ttlCached
+    res.json(cached);
   } catch (err) {
     console.error("Country global feed error:", err.message);
     res.status(500).json({ error: "Failed to fetch global country feed" });
@@ -2697,15 +2732,17 @@ app.get("/api/flows", heavyLimiter, async (req, res) => {
     // ── TTL cache for flows — keyed by all filter params ──────────────
     // TTL is now CONDITIONAL on filter shape because different scopes
     // refresh on very different cadences:
-    //   • country-only (no keyword, no city)  → 22h. Pre-warmed daily by
-    //     prewarmCountryFlowsCron.js; arcs are stable hour-to-hour. The
-    //     daily cron only pays off if TTL exceeds 24h-minus-cron-jitter.
+    //   • country-only (no keyword, no city)  → 13h. prewarmCountryFlowsCron
+    //     runs twice daily (every 12h); 13h TTL is just over the cron
+    //     interval so each user request always lands on warm cache that
+    //     was just refreshed by the most recent cron tick. 1h buffer
+    //     covers cron drift / longer-than-expected runs.
     //   • keyword or anything else            → 55m. Article fetcher runs
     //     hourly; 55m sits just under that so each fetcher tick triggers
     //     exactly one refresh per hot key.
     const _flowCacheKey = `flows:${mode}:${viewMode}:${limit}:${fromDate||''}:${toDate||''}:${fromCountry||''}:${fromCity||''}:${aboutCountry||''}:${aboutCity||''}:${keyword||''}:${normalize}`;
     const _flowTtl = (!keyword && !fromCity && !aboutCity && (fromCountry || aboutCountry))
-      ? 79_200_000   // 22h — country-aggregate, prewarmed daily
+      ? 46_800_000   // 13h — country-aggregate, prewarmed twice daily
       : 3_300_000;   // 55m — keyword / city / unfiltered
     const _flowResult = await ttlCached(_flowCacheKey, _flowTtl, async () => {
 
