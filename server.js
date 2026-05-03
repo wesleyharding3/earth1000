@@ -1379,7 +1379,8 @@ app.get("/api/news/city/:cityId/global", async (req, res) => {
   try {
     const cityId = parseInt(req.params.cityId);
     if (!Number.isFinite(cityId)) return res.status(400).json({ error: "Invalid cityId" });
-    const limit  = parseOptionalPositiveInt(req.query.limit);
+    // Same defensive cap as country/global — never run unbounded LIMIT.
+    const limit  = Math.min(parseOptionalPositiveInt(req.query.limit, 200), 500);
     const offset = Math.max(parseInt(req.query.offset) || 0,  0);
     const tagId  = req.query.tag ? parseInt(req.query.tag) : null;
 
@@ -1497,7 +1498,12 @@ app.get("/api/news/country/:countryId/global", async (req, res) => {
   try {
     const countryId = parseInt(req.params.countryId);
     if (!Number.isFinite(countryId)) return res.status(400).json({ error: "Invalid countryId" });
-    const limit  = parseOptionalPositiveInt(req.query.limit);
+    // Defensive cap — without it, a no-`limit` request against a heavy
+    // country (US, RU, CN) returns tens of thousands of rows and 500s
+    // (the prewarm-feed cron tripped this when it called with no params).
+    // 200 default is generous vs the UI's 12; 500 hard ceiling stops any
+    // caller from accidentally pulling unbounded.
+    const limit  = Math.min(parseOptionalPositiveInt(req.query.limit, 200), 500);
     const offset = Math.max(parseInt(req.query.offset) || 0,  0);
     const tagId  = req.query.tag ? parseInt(req.query.tag) : null;
 

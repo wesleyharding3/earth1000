@@ -155,15 +155,21 @@ async function main() {
     })
     .filter(Boolean);
 
-  // Phase 1 — country feeds (local + global) for top N
+  // Phase 1 — country feeds (local + global) for top N.
+  // limit=12&offset=0 matches the front-end exactly (see index.html
+  // ~19249: `let offset = 0, limit = 12`). Cache key is parameterised by
+  // limit/offset, so prewarm MUST use the same shape or we just populate
+  // a key no user will hit. Also: unlimited LIMIT against the US country
+  // returns enormous result sets and was 500-ing the global handler.
+  const FEED_QS = '?limit=12&offset=0';
   console.log(`${TAG} phase 1: warming local + global feeds for ${countries.length} countries…`);
   let countryOk = 0;
   for (let i = 0; i < countries.length; i += CONCURRENCY) {
     const batch = countries.slice(i, i + CONCURRENCY);
     const out = await Promise.all(batch.map(async c => {
       const [local, global] = await Promise.all([
-        warm('local',  `${API_URL}/api/news/country/${c.id}`),
-        warm('global', `${API_URL}/api/news/country/${c.id}/global`),
+        warm('local',  `${API_URL}/api/news/country/${c.id}${FEED_QS}`),
+        warm('global', `${API_URL}/api/news/country/${c.id}/global${FEED_QS}`),
       ]);
       return { c, local, global };
     }));
@@ -191,8 +197,8 @@ async function main() {
         const batch = cities.slice(i, i + CONCURRENCY);
         const out = await Promise.all(batch.map(async c => {
           const [local, global] = await Promise.all([
-            warm('local',  `${API_URL}/api/news/city/${c.id}`),
-            warm('global', `${API_URL}/api/news/city/${c.id}/global`),
+            warm('local',  `${API_URL}/api/news/city/${c.id}${FEED_QS}`),
+            warm('global', `${API_URL}/api/news/city/${c.id}/global${FEED_QS}`),
           ]);
           return { c, local, global };
         }));

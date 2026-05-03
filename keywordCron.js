@@ -47,19 +47,22 @@ function isDateLikeKeyword(keyword) {
   return value ? DATE_LIKE_KEYWORD_PATTERNS.some((pattern) => pattern.test(value)) : false;
 }
 
+// Stopwords: prefetched once per cron run, passed to the trending/rising
+// queries as a text[] param. Replaces a per-row NOT EXISTS subquery (which
+// blew the 90s statement_timeout when keyword_daily_stats hit several
+// hundred thousand rows in the global date window) with a hash anti-join
+// against an in-memory array. Stopwords table is small (<1k entries).
+async function loadStopwords() {
+  const { rows } = await pool.query(`SELECT word FROM stopwords`);
+  return rows.map(r => r.word).filter(Boolean);
+}
+
 // ── Trending ────────────────────────────────────────────────────────────────
 // Top keywords by total mention volume over the last N days (global only).
-async function computeTrending({ days = 7, limit = 50 } = {}) {
-  // Bounded long-running aggregation. Originally unbounded and clocking
-  // 16+ minutes; bumped down to 5 min, then to 90 s after pg_stat_activity
-  // showed two parallel "WITH recent AS …" queries from this cron holding
-  // slots for 4.6 minutes apiece (likely a cron-schedule overlap where the
-  // previous invocation hadn't finished before the next one started).
-  // 90 s is short enough that an overlapping invocation can't compound:
-  // worst case the second copy of trending/rising fails fast and the
-  // cache stays one cycle stale. If 90 s starts failing routinely the
-  // right fix is a partial covering index, not bumping the timeout back
-  // up — the goal is to bound slot occupation.
+async function computeTrending({ days = 7, limit = 50, stopwords = [] } = {}) {
+  // Bounded long-running aggregation. 90s ceiling so overlapping cron
+  // invocations can't compound their slot occupation; the partial covering
+  // index idx_kds_global_date_keyword_cover handles the date+global scan.
   const client = await pool.connect();
   try {
     await client.query("SET statement_timeout = '90s'");
@@ -72,14 +75,12 @@ async function computeTrending({ days = 7, limit = 50 } = {}) {
       WHERE k.date              >= CURRENT_DATE - $1::int
         AND k.source_country_id IS NULL
         AND k.about_country_id  IS NULL
-        AND NOT EXISTS (
-          SELECT 1 FROM stopwords sw WHERE sw.word = k.keyword
-        )
+        AND NOT (k.keyword = ANY($3::text[]))
       GROUP BY k.keyword
       HAVING SUM(k.total_count) >= 3
       ORDER BY mentions DESC, k.keyword ASC
       LIMIT $2
-    `, [days, limit]);
+    `, [days, limit, stopwords]);
     return rows;
   } finally {
     client.release();
@@ -88,7 +89,7 @@ async function computeTrending({ days = 7, limit = 50 } = {}) {
 
 // ── Rising ──────────────────────────────────────────────────────────────────
 // Keywords whose recent velocity is significantly above their baseline rate.
-async function computeRising({ days = 3, baselineDays = 14, limit = 30 } = {}) {
+async function computeRising({ days = 3, baselineDays = 14, limit = 30, stopwords = [] } = {}) {
   // Same 90 s bound as computeTrending — see comment there.
   const client = await pool.connect();
   try {
@@ -100,7 +101,7 @@ async function computeRising({ days = 3, baselineDays = 14, limit = 30 } = {}) {
       WHERE k.date              >= CURRENT_DATE - $1::int
         AND k.source_country_id IS NULL
         AND k.about_country_id  IS NULL
-        AND NOT EXISTS (SELECT 1 FROM stopwords sw WHERE sw.word = k.keyword)
+        AND NOT (k.keyword = ANY($4::text[]))
       GROUP BY k.keyword
       HAVING SUM(k.total_count) >= 2
     ),
@@ -111,7 +112,7 @@ async function computeRising({ days = 3, baselineDays = 14, limit = 30 } = {}) {
         AND k.date               < CURRENT_DATE - $1::int
         AND k.source_country_id IS NULL
         AND k.about_country_id  IS NULL
-        AND NOT EXISTS (SELECT 1 FROM stopwords sw WHERE sw.word = k.keyword)
+        AND NOT (k.keyword = ANY($4::text[]))
       GROUP BY k.keyword
     )
     SELECT
@@ -131,7 +132,7 @@ async function computeRising({ days = 3, baselineDays = 14, limit = 30 } = {}) {
     WHERE r.recent_count >= 2
     ORDER BY momentum DESC, r.recent_count DESC, r.keyword ASC
     LIMIT $3
-    `, [days, baselineDays, limit]);
+    `, [days, baselineDays, limit, stopwords]);
     return rows.filter((row) => !isDateLikeKeyword(row && row.keyword));
   } finally {
     client.release();
@@ -163,7 +164,18 @@ async function run() {
   const t0 = Date.now();
   console.log(`[keywordCron] ${new Date().toISOString()} — starting`);
 
-  // Trending and rising are independent — if one trips the 5-minute
+  // Prefetch stopwords once and pass to both queries as text[]. Replaces
+  // a per-row NOT EXISTS subquery that was the dominant cost (and the
+  // reason both sections were tripping the 90s statement_timeout).
+  let stopwords = [];
+  try {
+    stopwords = await loadStopwords();
+    console.log(`[keywordCron] loaded ${stopwords.length} stopwords`);
+  } catch (err) {
+    console.error(`[keywordCron] stopwords load failed: ${err.message} (continuing with empty list)`);
+  }
+
+  // Trending and rising are independent — if one trips the 90s
   // statement_timeout, the other should still try. We track per-section
   // success and only exit non-zero when BOTH fail (so cache freshness
   // for the surviving section is preserved on Render).
@@ -171,7 +183,7 @@ async function run() {
   if (DO_TRENDING) {
     attempted++;
     try {
-      const results = await computeTrending();
+      const results = await computeTrending({ stopwords });
       await writeCache('trending', 'global', { keywords: results });
       console.log(`[keywordCron] trending: ${results.length} keywords cached (${elapsed(t0)})`);
       okCount++;
@@ -182,7 +194,7 @@ async function run() {
   if (DO_RISING) {
     attempted++;
     try {
-      const results = await computeRising();
+      const results = await computeRising({ stopwords });
       await writeCache('rising', 'global', { keywords: results });
       console.log(`[keywordCron] rising:   ${results.length} keywords cached (${elapsed(t0)})`);
       okCount++;
