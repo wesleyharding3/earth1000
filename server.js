@@ -1430,7 +1430,12 @@ app.get("/api/news/city/:cityId/global", async (req, res) => {
           ci.name          AS city_name,
           a.media_type,
           a.video_id,
-          a.duration_seconds${tagId ? ",\n          at.score AS score" : ""}
+          a.duration_seconds,
+          -- Top-ranked tag from scoringEngine. LATERAL aliased "att" to
+          -- avoid colliding with the outer tag-filter join (which uses
+          -- alias "at") when ?tag=X is supplied.
+          top_tag.tag_id   AS tag_id,
+          top_tag.tag_name AS tag_name${tagId ? ",\n          at.score AS score" : ""}
         FROM article_locations al
         JOIN news_articles a   ON a.id  = al.article_id
         LEFT JOIN news_sources ns ON ns.id = a.source_id
@@ -1440,6 +1445,14 @@ app.get("/api/news/city/:cityId/global", async (req, res) => {
         LEFT JOIN cities    ci ON ci.id = a.city_id
         LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
         LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
+        LEFT JOIN LATERAL (
+          SELECT t.id AS tag_id, t.name AS tag_name
+          FROM article_tags att
+          JOIN tags t ON t.id = att.tag_id
+          WHERE att.article_id = a.id
+          ORDER BY att.rank ASC
+          LIMIT 1
+        ) top_tag ON TRUE
         ${tagJoin}
         WHERE al.city_id        = $1
           AND al.routing_type   IN ('content', 'source')
@@ -1548,7 +1561,12 @@ app.get("/api/news/country/:countryId/global", async (req, res) => {
           ci.name          AS city_name,
           a.media_type,
           a.video_id,
-          a.duration_seconds${tagId ? ",\n          at.score AS score" : ""}
+          a.duration_seconds,
+          -- Top-ranked tag from scoringEngine. LATERAL aliased "att" to
+          -- avoid colliding with the outer tag-filter join (which uses
+          -- alias "at") when ?tag=X is supplied.
+          top_tag.tag_id   AS tag_id,
+          top_tag.tag_name AS tag_name${tagId ? ",\n          at.score AS score" : ""}
         FROM article_locations al
         JOIN news_articles a   ON a.id  = al.article_id
         LEFT JOIN news_sources ns ON ns.id = a.source_id
@@ -1558,6 +1576,14 @@ app.get("/api/news/country/:countryId/global", async (req, res) => {
         LEFT JOIN cities    ci ON ci.id = a.city_id
         LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
         LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
+        LEFT JOIN LATERAL (
+          SELECT t.id AS tag_id, t.name AS tag_name
+          FROM article_tags att
+          JOIN tags t ON t.id = att.tag_id
+          WHERE att.article_id = a.id
+          ORDER BY att.rank ASC
+          LIMIT 1
+        ) top_tag ON TRUE
         ${tagJoin}
         WHERE al.country_id     = $1
           AND al.routing_type   IN ('content', 'source')

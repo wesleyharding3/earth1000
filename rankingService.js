@@ -101,6 +101,12 @@ const ARTICLE_FIELDS = `
   END AS popularity_score,
   COALESCE(ns.popularity_tier,  ys.popularity_tier,  1)   AS popularity_tier,
   co.iso_code,
+  -- Top-ranked tag from scoringEngine. Surfaces the article's primary
+  -- category in the feed payload so cards can render a category badge.
+  -- LATERAL aliased "att" to avoid colliding with the outer tag-filter
+  -- join (which uses alias "at") when a caller passes ?tag=X.
+  top_tag.tag_id                                            AS tag_id,
+  top_tag.tag_name                                          AS tag_name,
   -- base_priority is the pre-computed classification score from classifyArticle.
   -- Use it directly as intensity — no need to re-sum article_tags at query time.
   COALESCE(a.base_priority, 0)                             AS intensity,
@@ -114,6 +120,14 @@ const ARTICLE_JOINS = `
   LEFT JOIN news_sources    ns ON ns.id = a.source_id
   LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
   LEFT JOIN countries       co ON co.id = a.country_id
+  LEFT JOIN LATERAL (
+    SELECT t.id AS tag_id, t.name AS tag_name
+    FROM article_tags att
+    JOIN tags t ON t.id = att.tag_id
+    WHERE att.article_id = a.id
+    ORDER BY att.rank ASC
+    LIMIT 1
+  ) top_tag ON TRUE
 `;
 
 // ─────────────────────────────────────────────────────────────

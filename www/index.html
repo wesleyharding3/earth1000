@@ -1352,7 +1352,12 @@
 .tagDropdown {
   position: absolute;
   bottom: calc(100% + 6px);
-  left: 0;
+  /* right:0 instead of left:0 — keeps the dropdown aligned to the
+     button's right edge so it never overflows past the screen's right
+     side. JS sets `bottom`/`top` inline at open time so it can flip
+     to opening DOWN when the panel is pulled high and the space above
+     the button can't fit MIN_HEIGHT. */
+  right: 0;
   width: 180px;
   max-height: min(280px, calc(var(--app-height, 100vh) * 0.38));
   overflow-y: auto;
@@ -5346,6 +5351,24 @@ button.arcCtxSegDot,
       align-items: center;
       gap: 6px;
       flex-wrap: wrap;
+    }
+
+    /* Category badge — shows the article's top-ranked tag from scoringEngine
+       (e.g., "politics", "economy"). Same visual language as the thread-card
+       category chip so feed surfaces read consistently. */
+    .articleCardCategory {
+      display: inline-block;
+      padding: 1px 6px;
+      border-radius: 4px;
+      background: rgba(80, 200, 255, 0.10);
+      border: 1px solid rgba(80, 200, 255, 0.28);
+      color: rgba(140, 220, 255, 0.85);
+      font-size: 8px;
+      font-weight: 700;
+      letter-spacing: 0.10em;
+      text-transform: uppercase;
+      flex-shrink: 0;
+      white-space: nowrap;
     }
 
     .articleCardTitle {
@@ -11049,14 +11072,22 @@ button.arcCtxSegDot,
         gap: 6px !important;
       }
       /* All Topics + Bias buttons — shrunk + capped so they sit neatly
-         next to one another instead of expanding to ~50% each (which
-         was overflowing once gap + media-toggles + search were also
-         on the row, making the two buttons visually intersect). */
+         next to one another instead of expanding to ~50% each. Bias
+         pushed flush to the right edge with margin-left:auto so the
+         space between the two reads as deliberate gap rather than the
+         bias button visually colliding with the categories button. */
       .nfTagWrap,
       .nfBiasWrap {
         flex: 0 1 130px;
         min-width: 90px;
         max-width: 140px;
+      }
+      .nfBiasWrap {
+        margin-left: auto;
+        /* Right safe-area inset on iPhone — keeps the button off the
+           home-indicator side rail when the device is in landscape /
+           split-view layouts. */
+        margin-right: env(safe-area-inset-right, 0px);
       }
       .nfTagBtn,
       .nfBiasBtn {
@@ -20433,10 +20464,49 @@ const settingsToggle     = document.getElementById("settingsToggle");
               if (!initialLoadStarted) startPanelFeedLoad();
             });
 
+        // Smart positioning — opens UP by default, shrinks max-height
+        // to whatever space is available between the button TOP and
+        // the top safe-area; if the shrunken UP dropdown wouldn't
+        // reach MIN_HEIGHT (panel pulled high so very little room
+        // above the button), flips DOWN and shrinks to fit between
+        // the button BOTTOM and the bottom safe-area instead. Inline
+        // styles cleared each open so direction can flip cleanly
+        // when the user moves the panel between calls.
+        function _positionTagDropdown() {
+          tagDropdown.style.maxHeight = '';
+          tagDropdown.style.top    = '';
+          tagDropdown.style.bottom = '';
+          const btnRect      = tagFilterBtn.getBoundingClientRect();
+          const SAFE_TOP     = 56;
+          const SAFE_BOTTOM  = 100;
+          const MIN_HEIGHT   = 140;
+          const DESIRED      = 280;
+          const spaceBelow   = window.innerHeight - btnRect.bottom - SAFE_BOTTOM;
+          const spaceAbove   = btnRect.top - SAFE_TOP;
+          if (spaceAbove >= MIN_HEIGHT) {
+            tagDropdown.style.top    = 'auto';
+            tagDropdown.style.bottom = 'calc(100% + 6px)';
+            tagDropdown.style.maxHeight = `${Math.min(DESIRED, spaceAbove)}px`;
+          } else if (spaceBelow >= MIN_HEIGHT) {
+            tagDropdown.style.top    = '48px';
+            tagDropdown.style.bottom = 'auto';
+            tagDropdown.style.maxHeight = `${Math.min(DESIRED, spaceBelow)}px`;
+          } else if (spaceAbove >= spaceBelow) {
+            tagDropdown.style.top    = 'auto';
+            tagDropdown.style.bottom = 'calc(100% + 6px)';
+            tagDropdown.style.maxHeight = `${Math.max(spaceAbove, MIN_HEIGHT)}px`;
+          } else {
+            tagDropdown.style.top    = '48px';
+            tagDropdown.style.bottom = 'auto';
+            tagDropdown.style.maxHeight = `${Math.max(spaceBelow, MIN_HEIGHT)}px`;
+          }
+        }
+
         tagFilterBtn.addEventListener("click", (e) => {
           e.stopPropagation();
           tagDropOpen = !tagDropOpen;
           tagDropdown.classList.toggle("open", tagDropOpen);
+          if (tagDropOpen) _positionTagDropdown();
         });
 
         panel.addEventListener("click", (e) => {
@@ -20493,7 +20563,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
         function articleCardHTML(article) {
           const hasImage = article.image_url && article.image_url.trim() !== "";
           const catalog  = article.catalog_image_url || '';
-          const sourceLine = `${window.sourceBiasBadgeHTML(article.source_bias)}<span>${article.source_name || ""}</span>`;
+          // Top-ranked tag from scoringEngine — surfaced as a small badge
+          // before the source. Skipped silently when classifyArticle hasn't
+          // resolved a tag (rare; mostly very fresh articles).
+          const _catBadge = article.tag_name
+            ? `<span class="articleCardCategory">${String(article.tag_name).replace(/[<>&"']/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c]))}</span>`
+            : '';
+          const sourceLine = `${_catBadge}${window.sourceBiasBadgeHTML(article.source_bias)}<span>${article.source_name || ""}</span>`;
           let imageField;
           if (hasImage) {
             imageField = `<img class="articleCardImage" src="${article.image_url}" data-catalog="${catalog}" alt="" loading="lazy" onerror="imgFallback(this,'${FLAG_CDN_BASE}${(article.iso_code || '').toLowerCase()}.png')">`;
