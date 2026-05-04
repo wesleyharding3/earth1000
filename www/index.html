@@ -53357,6 +53357,24 @@ body.ticker-active .gTickerLabel {
       <!-- Permission state banner — content set by JS at open time. -->
       <div class="npPermBanner" id="npPermBanner" style="display:none;"></div>
 
+      <!-- Inbox: recent delivered notifications. Populated by
+           loadInbox() against /api/notifications/recent. Empty/loading/
+           error states all render here. -->
+      <div class="npSection">
+        <div class="npLabel">Recent</div>
+        <div id="npInbox" style="
+          display:flex; flex-direction:column; gap:8px;
+          max-height: 320px; overflow-y: auto;
+          margin-top: 6px;
+          -webkit-overflow-scrolling: touch;
+        ">
+          <div class="npInboxEmpty" style="
+            color: rgba(255,255,255,0.4); font-size: 12px;
+            padding: 18px 8px; text-align: center;
+          ">Loading…</div>
+        </div>
+      </div>
+
       <!-- Defaults section -->
       <div class="npSection">
         <div class="npLabel">Defaults</div>
@@ -53599,6 +53617,94 @@ body.ticker-active .gTickerLabel {
         }).catch(() => {});
       }
     });
+    // Foreground delivery — iOS doesn't show a banner when the app is
+    // open. Without this, the badge increments and the alert is gone
+    // forever (no Notification Center entry, nothing in-app). Surface
+    // it as a toast that the user can tap to deep-link, and append to
+    // a local in-memory list so the inbox can show it even before the
+    // /api/notifications/recent fetch lands.
+    PN.addListener('pushNotificationReceived', (notification) => {
+      const title = String(notification?.title || '');
+      const body  = String(notification?.body  || '');
+      const data  = notification?.data || {};
+      try { _showNotifToast({ title, body, data }); } catch (e) {
+        console.warn('[notif] toast error:', e.message);
+      }
+      // Local copy — keeps the inbox responsive even when offline.
+      try {
+        _localRecentNotifications.unshift({
+          id:           `local-${Date.now()}`,
+          kind:         data.kind || 'unknown',
+          reference_id: data.reference_id || null,
+          title, body,
+          sent_at:      new Date().toISOString(),
+          opened_at:    null,
+          dedup_key:    data.dedup_key || null,
+        });
+        if (_localRecentNotifications.length > 50) _localRecentNotifications.length = 50;
+      } catch (_) {}
+    });
+  }
+
+  // ─── In-app toast for foreground push delivery ──────────────────────
+  // Top-of-screen banner that auto-dismisses after 5s. Tap to deep-link
+  // (same routing as a tray-tap via _routeFromNotificationData).
+  const _localRecentNotifications = [];
+  let _toastDismissTimer = null;
+  function _showNotifToast({ title, body, data }) {
+    let toast = document.getElementById('notifToast');
+    if (!toast) {
+      toast = document.createElement('div');
+      toast.id = 'notifToast';
+      toast.style.cssText = `
+        position: fixed;
+        top: calc(env(safe-area-inset-top, 0px) + 12px);
+        left: 12px; right: 12px;
+        z-index: 10500;
+        background: rgba(8,12,20,0.96);
+        border: 1px solid rgba(255,180,80,0.28);
+        border-radius: 14px;
+        padding: 12px 14px;
+        box-shadow: 0 12px 28px rgba(0,0,0,0.42), 0 0 18px rgba(255,140,30,0.10);
+        color: rgba(255,235,200,0.95);
+        font-size: 13px;
+        line-height: 1.35;
+        display: none;
+        cursor: pointer;
+        backdrop-filter: blur(18px);
+        transform: translateY(-12px);
+        opacity: 0;
+        transition: transform 0.28s cubic-bezier(0.22,1,0.36,1), opacity 0.22s ease;
+      `;
+      document.body.appendChild(toast);
+    }
+    toast.innerHTML =
+      `<div style="font-weight:700;letter-spacing:0.04em;color:rgba(255,210,140,1);font-size:11px;text-transform:uppercase;margin-bottom:4px;">${(title||'').replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))}</div>`
+    + `<div style="color:rgba(255,235,200,0.92);">${(body||'').replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))}</div>`;
+    toast.onclick = () => {
+      try { _routeFromNotificationData(data); } catch (_) {}
+      _dismissNotifToast();
+      if (data?.dedup_key) {
+        fetch(`${API}/api/notifications/opened`, {
+          method: 'POST', headers: _authHeaders(),
+          body: JSON.stringify({ dedup_key: data.dedup_key }),
+        }).catch(() => {});
+      }
+    };
+    toast.style.display = 'block';
+    requestAnimationFrame(() => {
+      toast.style.transform = 'translateY(0)';
+      toast.style.opacity = '1';
+    });
+    if (_toastDismissTimer) clearTimeout(_toastDismissTimer);
+    _toastDismissTimer = setTimeout(_dismissNotifToast, 5000);
+  }
+  function _dismissNotifToast() {
+    const toast = document.getElementById('notifToast');
+    if (!toast) return;
+    toast.style.transform = 'translateY(-12px)';
+    toast.style.opacity = '0';
+    setTimeout(() => { if (toast) toast.style.display = 'none'; }, 280);
   }
 
   function _routeFromNotificationData(data) {
@@ -53625,6 +53731,9 @@ body.ticker-active .gTickerLabel {
     backdrop.classList.add('open');
     await loadPreferences();
     await checkPermission();
+    // Render the in-app inbox in parallel with the rest of the panel.
+    // No await — slow network shouldn't block the panel from opening.
+    loadInbox().catch(() => {});
     renderPanel();
     // Silent auto-register: if iOS already says permission is granted
     // (often because a previous account on this device granted it),
@@ -53645,6 +53754,111 @@ body.ticker-active .gTickerLabel {
 
   function closePanel() {
     document.getElementById('notifPanelBackdrop')?.classList.remove('open');
+  }
+
+  // ─── Inbox: list of recent delivered notifications ──────────────────
+  // Fetches /api/notifications/recent and merges with any in-memory
+  // foreground-received notifications (which may not have hit the
+  // server's `delivered=true` flag yet because the dispatcher is what
+  // sets it AFTER the APNs send — and on iOS the device receives the
+  // payload directly from APNs without server round-trip). Dedup by
+  // dedup_key so a foreground-received notification doesn't double up
+  // when the next /recent fetch returns it.
+  async function loadInbox() {
+    const inbox = document.getElementById('npInbox');
+    if (!inbox) return;
+    let serverList = [];
+    try {
+      const res = await fetch(`${API}/api/notifications/recent?limit=50`, {
+        headers: _authHeaders(),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        serverList = Array.isArray(data?.notifications) ? data.notifications : [];
+      }
+    } catch (err) {
+      console.warn('[notif] inbox fetch failed:', err.message);
+    }
+    const seen = new Set(serverList.map(n => n.dedup_key).filter(Boolean));
+    const localOnly = _localRecentNotifications.filter(
+      n => !n.dedup_key || !seen.has(n.dedup_key)
+    );
+    const merged = [...localOnly, ...serverList].slice(0, 50);
+    _renderInbox(merged);
+  }
+
+  function _renderInbox(list) {
+    const inbox = document.getElementById('npInbox');
+    if (!inbox) return;
+    if (!list.length) {
+      inbox.innerHTML = `<div class="npInboxEmpty" style="
+        color: rgba(255,255,255,0.4); font-size: 12px;
+        padding: 18px 8px; text-align: center;
+      ">No notifications yet. We'll list them here when they arrive.</div>`;
+      return;
+    }
+    const KIND_ICON = {
+      briefing_daily: '📰',
+      thread_new:     '✦',
+      thread_update:  '↻',
+    };
+    const _esc = s => String(s||'').replace(/[<>&"']/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;','"':'&quot;',"'":'&#39;'}[c]));
+    inbox.innerHTML = list.map(n => {
+      const icon = KIND_ICON[n.kind] || '•';
+      const ago  = _ago(n.sent_at);
+      const isUnopened = !n.opened_at && (n.kind === 'thread_new' || n.kind === 'thread_update' || n.kind === 'briefing_daily');
+      return `
+        <div class="npInboxItem" data-dedup="${_esc(n.dedup_key||'')}" data-kind="${_esc(n.kind)}" data-ref="${_esc(n.reference_id||'')}" style="
+          display: flex; gap: 10px; align-items: flex-start;
+          padding: 10px 12px;
+          background: ${isUnopened ? 'rgba(255,180,80,0.06)' : 'rgba(255,255,255,0.03)'};
+          border: 1px solid ${isUnopened ? 'rgba(255,180,80,0.18)' : 'rgba(255,255,255,0.06)'};
+          border-radius: 10px;
+          cursor: pointer;
+          transition: background 0.15s, border-color 0.15s;
+        ">
+          <div style="flex-shrink:0;width:28px;height:28px;border-radius:8px;background:rgba(255,180,80,0.10);display:flex;align-items:center;justify-content:center;color:rgba(255,210,140,0.95);font-size:14px;">${icon}</div>
+          <div style="flex:1;min-width:0;">
+            <div style="display:flex;align-items:baseline;gap:8px;">
+              <div style="font-size:11px;font-weight:700;color:rgba(255,210,140,0.95);text-transform:uppercase;letter-spacing:0.06em;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${_esc(n.title)}</div>
+              <div style="font-size:10px;color:rgba(255,255,255,0.42);flex-shrink:0;">${ago}</div>
+            </div>
+            <div style="font-size:12px;color:rgba(255,235,200,0.78);margin-top:3px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;">${_esc(n.body)}</div>
+          </div>
+        </div>`;
+    }).join('');
+    // Wire taps — same routing as a real notification tap.
+    inbox.querySelectorAll('.npInboxItem').forEach(el => {
+      el.addEventListener('click', () => {
+        const data = {
+          kind:         el.dataset.kind,
+          reference_id: el.dataset.ref,
+          thread_id:    el.dataset.kind?.startsWith('thread') ? el.dataset.ref : null,
+          dedup_key:    el.dataset.dedup,
+        };
+        try { _routeFromNotificationData(data); } catch (_) {}
+        if (data.dedup_key) {
+          fetch(`${API}/api/notifications/opened`, {
+            method: 'POST', headers: _authHeaders(),
+            body: JSON.stringify({ dedup_key: data.dedup_key }),
+          }).catch(() => {});
+        }
+        closePanel();
+      });
+    });
+  }
+
+  function _ago(iso) {
+    if (!iso) return '';
+    const t = new Date(iso).getTime();
+    const s = Math.max(0, Math.round((Date.now() - t) / 1000));
+    if (s < 60) return `${s}s`;
+    const m = Math.round(s / 60);
+    if (m < 60) return `${m}m`;
+    const h = Math.round(m / 60);
+    if (h < 48) return `${h}h`;
+    const d = Math.round(h / 24);
+    return `${d}d`;
   }
 
   async function loadPreferences() {

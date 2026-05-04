@@ -10979,6 +10979,34 @@ app.delete("/api/notifications/subscriptions", async (req, res) => {
   }
 });
 
+// GET /api/notifications/recent
+// Returns the auth'd user's recent notifications for the in-app inbox.
+// Filters to delivered=true so failed sends don't pollute the user view
+// (the dispatcher logs failures separately for ops). 30-day window is
+// enough to see "what was that ping I missed" without unbounded growth.
+app.get("/api/notifications/recent", async (req, res) => {
+  const user = req.user?.id ? req.user : await resolveSupabaseUserFromRequest(req);
+  if (!user?.id) return res.status(401).json({ error: "Authentication required" });
+  const limit = Math.min(parseInt(req.query.limit, 10) || 50, 200);
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, kind, reference_id, title, body, sent_at, opened_at, dedup_key
+         FROM notification_log
+        WHERE user_id = $1
+          AND delivered = TRUE
+          AND sent_at > NOW() - INTERVAL '30 days'
+        ORDER BY sent_at DESC
+        LIMIT $2`,
+      [user.id, limit]
+    );
+    res.set("Cache-Control", "private, max-age=30");
+    res.json({ notifications: rows });
+  } catch (err) {
+    console.error("[notif/recent]", err.message);
+    res.status(500).json({ error: "Failed to fetch notifications" });
+  }
+});
+
 // POST /api/notifications/opened
 // Stamp opened_at on a delivery row when the user taps the notification.
 // Body: { dedup_key } from the deep-link payload.
