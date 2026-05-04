@@ -480,6 +480,115 @@ function countryVarianceRerank(articles) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// COMBINED DIVERSITY PASS (source + country in one pick)
+// ─────────────────────────────────────────────────────────────
+//
+// The two-pass form (diversityRerank → countryVarianceRerank) was buggy:
+// the country pass picks by `final_priority * recencyBonus * (1 - country
+// penalty)` and ignores source, so it undoes the source rotation done by
+// diversityRerank. Result: tag-filtered feeds (small pools, often a few
+// dominant outlets per category) showed back-to-back same-source chunks.
+//
+// This single-pass form scores each candidate with BOTH penalties applied
+// at pick time, so a high-priority article from a recently-seen source OR
+// country gets demoted instead of winning the slot.
+
+function combinedDiversityRerank(articles) {
+  if (!articles.length) return articles;
+
+  // Tighter than the legacy two-pass defaults: tag feeds have small pools
+  // and dominant outlets, so we want a stronger spread. Tune up to
+  // tighten further; tune down if niche tags start showing too few rows.
+  const SOURCE_COOLDOWN     = 5;    // hard block source for N slots
+  const COUNTRY_MAX_PENALTY = 2.0;  // soft penalty cap (was 1.5)
+  const COUNTRY_DECAY       = 0.15; // slower decay → stickier (was 0.25)
+  const COUNTRY_MAX_REPEAT  = 1;    // block country after even 1 in a row (was 2)
+
+  const getSourceKey = (a) =>
+    a.source_key
+    || (a.youtube_source_id != null ? `youtube:${a.youtube_source_id}` : null)
+    || (a.source_id != null         ? `news:${a.source_id}`             : "unknown");
+
+  const now    = Date.now();
+  const ages   = articles.map(a => now - new Date(a.published_at).getTime());
+  const maxAge = Math.max(...ages) || 1;
+
+  const pool = articles.map(a => ({
+    ...a,
+    _recencyBonus: 1 + 0.50 * (1 - (now - new Date(a.published_at).getTime()) / maxAge)
+  }));
+
+  const result = [];
+  const sourceCooldowns  = {};      // sourceKey → slots remaining
+  const countryPenalties = {};      // countryName → penalty 0..MAX
+
+  while (pool.length) {
+    // Tick source cooldowns down by 1
+    for (const src of Object.keys(sourceCooldowns)) {
+      sourceCooldowns[src]--;
+      if (sourceCooldowns[src] <= 0) delete sourceCooldowns[src];
+    }
+
+    // Country block: if the last MAX_REPEAT picks were all the same country
+    const blockedCountries = new Set();
+    if (result.length >= COUNTRY_MAX_REPEAT) {
+      const tail = result.slice(-COUNTRY_MAX_REPEAT);
+      const lastCountry = tail[0].country_name;
+      if (tail.every(a => a.country_name === lastCountry)) {
+        blockedCountries.add(lastCountry);
+      }
+    }
+
+    // Two-tier pick: prefer eligible (non-source-blocked, non-country-blocked).
+    // If none eligible, fall back to least-bad (longest source cooldown gap,
+    // then lowest country penalty).
+    let bestEligibleIdx = -1, bestEligibleScore = -Infinity;
+    let bestFallbackIdx = -1, bestFallbackScore = -Infinity, bestFallbackCd = Infinity;
+
+    for (let i = 0; i < pool.length; i++) {
+      const a = pool[i];
+      const src = getSourceKey(a);
+      const cd  = sourceCooldowns[src] || 0;
+      const countryBlocked = blockedCountries.has(a.country_name);
+      const eligible = cd === 0 && !countryBlocked;
+
+      const countryPen = countryPenalties[a.country_name] || 0;
+      const score = (a.final_priority || a.priority || 0) * a._recencyBonus * (1 - countryPen);
+
+      if (eligible) {
+        if (score > bestEligibleScore) {
+          bestEligibleScore = score;
+          bestEligibleIdx   = i;
+        }
+      } else {
+        // Fallback ranking: lowest cd wins (longest gap since source last
+        // appeared), tiebreak by score.
+        if (cd < bestFallbackCd || (cd === bestFallbackCd && score > bestFallbackScore)) {
+          bestFallbackCd    = cd;
+          bestFallbackScore = score;
+          bestFallbackIdx   = i;
+        }
+      }
+    }
+
+    const bestIdx = bestEligibleIdx !== -1 ? bestEligibleIdx : bestFallbackIdx;
+    const chosen  = pool.splice(bestIdx, 1)[0];
+    result.push(chosen);
+
+    // Update penalties for next slot
+    sourceCooldowns[getSourceKey(chosen)] = SOURCE_COOLDOWN;
+    for (const c of Object.keys(countryPenalties)) {
+      countryPenalties[c] *= (1 - COUNTRY_DECAY);
+      if (countryPenalties[c] < 0.01) delete countryPenalties[c];
+    }
+    countryPenalties[chosen.country_name] =
+      Math.min(COUNTRY_MAX_PENALTY, (countryPenalties[chosen.country_name] || 0) + COUNTRY_MAX_PENALTY);
+  }
+
+  return result;
+}
+
+// ─────────────────────────────────────────────────────────────
 // PUBLIC API
 // ─────────────────────────────────────────────────────────────
 
@@ -563,6 +672,7 @@ module.exports = {
   rankArticles,
   diversityRerank,
   countryVarianceRerank,
+  combinedDiversityRerank,
   detectTierInflation,
   FLOW_CITY_PENALTY: CONFIG.FLOW_CITY_PENALTY
 };

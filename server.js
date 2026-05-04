@@ -18,7 +18,7 @@ const { spawn } = require("child_process");
 const pool = require("./db");
 const { startArticleListener } = require("./articleListener");
 const { getRankedArticles, getRankedCityArticles, getRankedFeedArticles } = require("./rankingService");
-const { countryVarianceRerank, diversityRerank, calculatePriority, FLOW_CITY_PENALTY } = require("./priorityEngine");
+const { countryVarianceRerank, diversityRerank, combinedDiversityRerank, calculatePriority, FLOW_CITY_PENALTY } = require("./priorityEngine");
 const { translateText } = require("./translator");
 const { generateLocationBriefing } = require("./locationBriefingGenerator");
 const dataPanels = require("./dataPanelGenerator");
@@ -2592,11 +2592,14 @@ app.get("/api/news/search", searchLimiter, async (req, res) => {
         ) * (r.country_boost || 1)
       }));
 
-      // Light reranking only when we have enough rows to benefit.
-      // Two passes: publisher variance then country variance (terminal).
+      // Single-pass combined source + country diversification. The legacy
+      // two-pass form (diversityRerank → countryVarianceRerank) was buggy:
+      // the country pass ignored source, so it undid the source rotation
+      // — tag-filtered feeds (small pools, dominant outlets per category)
+      // showed back-to-back same-source chunks. combinedDiversityRerank
+      // applies BOTH penalties in one pick. See priorityEngine.js.
       if (baseResults.length >= 8) {
-        baseResults = diversityRerank(baseResults.map(r => ({ ...r, priority: r.final_priority })));
-        baseResults = countryVarianceRerank(baseResults);
+        baseResults = combinedDiversityRerank(baseResults);
       }
 
       return { results: baseResults, hasMore };
