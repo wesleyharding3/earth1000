@@ -7472,20 +7472,31 @@ button.arcCtxSegDot,
   border: 1px solid rgba(255,255,255,0.06);
 }
 .adpAnalysis > .arcCtxBody {
-  /* Fully-locked stable height. The panel never resizes during the
-     typewriter pass (loading shimmer → block typing in → settled),
-     and never jumps between blocks of different lengths in segmented
-     mode. 340px fits the worst-case ~400-character block at the
-     standard panel width with comfortable buffer; longer (rare)
-     content scrolls internally via overflow-y. Used by both the
-     article detail panel and the cluster-detail (thread/line) panel,
-     which share the .adpAnalysis wrapper. */
+  /* Locked height for the post-gate states (loading shimmer → typing →
+     settled). 340px fits the worst-case ~400-character block at the
+     standard panel width; longer content scrolls internally. The gate
+     state (.arcCtxStateGate) overrides this to button-size so the
+     pre-click container doesn't claim 340px of dead space — it
+     animates open on click via the height transition below. */
   height: 340px;
   padding: 14px 14px 16px;
   overflow-y: auto;
   overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
   overscroll-behavior: contain;
+  /* Explicit touch-action so iOS lets the inner scroll capture vertical
+     drags instead of bubbling them to the article-detail panel's drag-
+     to-dismiss handler. */
+  touch-action: pan-y;
+  transition: height 0.42s cubic-bezier(0.22, 1, 0.36, 1);
+}
+/* Gate state: container is just the button + its padding. Click handler
+   re-applies the loading/typing/settled state, which strips this class
+   and the height transitions out to 340px. Hide overflow so the inner
+   button can't scroll while the container is mid-collapse. */
+.adpAnalysis > .arcCtxBody.arcCtxStateGate {
+  height: 76px;
+  overflow: hidden;
 }
 
 .adpContextTitle {
@@ -38595,7 +38606,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
   function _adpAnalysisShowGate() {
     const body = document.getElementById('adpAnalysisBody');
     if (!body) return;
-    body.className = 'arcCtxBody arcCtxStateSettled';
+    // arcCtxStateGate collapses container to button-size; click handler
+    // (_adpAnalysisShowLoading) swaps in arcCtxStateLoading, which has
+    // no height override → CSS transition expands to 340px.
+    body.className = 'arcCtxBody arcCtxStateGate';
     body.innerHTML =
       `<button class="aiAnalysisCtaBadge"` +
               ` data-hold-tip-title="Deep Read"` +

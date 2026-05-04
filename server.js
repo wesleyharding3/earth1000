@@ -2124,10 +2124,13 @@ function _finalizeSearchResults(rows, effectiveLimit, offset) {
   const MAX_CAP = 10; // hard ceiling on the per-source relax
   const MAX_COUNTRY_CAP = effectiveLimit; // ultimate fallback = no country cap
   let chosen = [];
-  // Two-axis relax: try strict (source=2, country=base), then walk both
-  // up together. Stops at the first combination that fills the slice.
+  // Two-axis relax: try strictest first (source=1 → no source repeats
+  // per page, country=base), then walk both up together. Stops at the
+  // first combination that fills the slice. Starting at cap=1 enforces
+  // "max one article per source per page"; relax only if the pool
+  // genuinely doesn't have enough unique sources to fill the slice.
   let filled = false;
-  for (let cap = 2; cap <= MAX_CAP && !filled; cap += 1) {
+  for (let cap = 1; cap <= MAX_CAP && !filled; cap += 1) {
     for (let countryCap = COUNTRY_CAP_BASE; countryCap <= MAX_COUNTRY_CAP && !filled; countryCap += 2) {
       const sourceCounts = new Map();
       const countryCounts = new Map();

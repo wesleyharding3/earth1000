@@ -496,10 +496,13 @@ function countryVarianceRerank(articles) {
 function combinedDiversityRerank(articles) {
   if (!articles.length) return articles;
 
-  // Tighter than the legacy two-pass defaults: tag feeds have small pools
-  // and dominant outlets, so we want a stronger spread. Tune up to
-  // tighten further; tune down if niche tags start showing too few rows.
-  const SOURCE_COOLDOWN     = 5;    // hard block source for N slots
+  // STRICT source dedup: within one batch (one page of loaded articles),
+  // a source can appear at most ONCE unless the pool is exhausted of
+  // unique sources. Cooldown == articles.length means once picked, source
+  // is blocked for every remaining slot in this batch; the fallback path
+  // (line below) handles the unavoidable case where the pool has fewer
+  // distinct sources than the batch size.
+  const SOURCE_COOLDOWN     = articles.length;
   const COUNTRY_MAX_PENALTY = 2.0;  // soft penalty cap (was 1.5)
   const COUNTRY_DECAY       = 0.15; // slower decay → stickier (was 0.25)
   const COUNTRY_MAX_REPEAT  = 1;    // block country after even 1 in a row (was 2)
