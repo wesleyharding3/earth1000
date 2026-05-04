@@ -2170,11 +2170,26 @@ function _finalizeSearchResults(rows, effectiveLimit, offset) {
   const chosenVideos = chosen.filter(isVideoRow);
   const deficit      = Math.min(MIN_VIDEOS_IN_FEED, poolVideos.length) - chosenVideos.length;
   if (deficit > 0) {
-    const chosenSet      = new Set(chosen.map(r => r.id));
-    const promotableVids = poolVideos
+    const chosenSet  = new Set(chosen.map(r => r.id));
+    // Track sources currently in `chosen` AND each video we pick during
+    // this loop, so the video promotion can't re-introduce a source
+    // duplicate that the cap=1 pass just removed (e.g. swapping a BBC
+    // text article out for a BBC-YouTube video that happens to share
+    // sourceKey, or picking two videos from the same YouTube channel).
+    // The page-level "max one per source" guarantee covers ALL items,
+    // not just text articles.
+    const usedSourceKeys = new Set(chosen.map(sourceKeyOf));
+    const promotableVids = [];
+    const sortedVids = poolVideos
       .filter(v => !chosenSet.has(v.id))
-      .sort((a, b) => (b.final_priority || 0) - (a.final_priority || 0))
-      .slice(0, deficit);
+      .sort((a, b) => (b.final_priority || 0) - (a.final_priority || 0));
+    for (const v of sortedVids) {
+      if (promotableVids.length >= deficit) break;
+      const sk = sourceKeyOf(v);
+      if (usedSourceKeys.has(sk)) continue;
+      promotableVids.push(v);
+      usedSourceKeys.add(sk);
+    }
     // Sort chosen by priority ascending so we replace the weakest slots.
     // Only replace TEXT articles — never swap a video out for another
     // video, and never bump a top-ranked text article beyond slot 0.
