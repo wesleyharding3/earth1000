@@ -12527,6 +12527,11 @@ body.auth-modal-open > *:not(#authOverlay) { pointer-events: none !important; }
   border-radius: 22px; padding: 34px 30px; width: 370px;
   max-width: calc(100vw - 32px); box-shadow: 0 28px 90px rgba(0,0,0,0.75);
   position: relative;
+  /* Set by JS when the iOS keyboard opens — see auth-keyboard-shift IIFE.
+     Smooth slide-up keeps the password field above the keyboard top
+     instead of vanishing behind it. */
+  transform: translateY(0);
+  transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
 }
 #authClose {
   position: absolute; top: 14px; right: 14px; width: 28px; height: 28px;
@@ -55949,6 +55954,92 @@ body.ticker-active .gTickerLabel {
         activePanel.style.removeProperty('--kbd-shift');
       }
     });
+  }
+})();
+
+/* ─────────────────────────────────────────────────────────────────
+   Auth modal keyboard shift — separate from the bottom-anchored
+   panel system above because the auth card is centered in the
+   viewport (flex align/justify center), not anchored to bottom.
+   So instead of bumping `bottom`, we translateY the card upward by
+   exactly the overlap between the focused input and the keyboard.
+   ───────────────────────────────────────────────────────────── */
+(function authKeyboardShift() {
+  const AUTH_INPUTS = '#siEmail, #siPassword, #suEmail, #suPassword, #fpEmail';
+  let activeInput = null;
+
+  function getCard() { return document.getElementById('authCard'); }
+
+  function computeKbdHeight() {
+    const vv = window.visualViewport;
+    if (!vv) return 0;
+    const winH = window.innerHeight || document.documentElement.clientHeight || 0;
+    const inset = winH - (vv.height + vv.offsetTop);
+    // 100px floor: the same threshold the panel-shift system uses to
+    // tell apart a real keyboard (~250-340px tall) from harmless
+    // viewport jitter (e.g. address bar collapse).
+    return inset > 100 ? inset : 0;
+  }
+
+  function applyShift() {
+    const card = getCard();
+    if (!card || !activeInput) return;
+    const kbd = computeKbdHeight();
+    if (kbd <= 0) { card.style.transform = ''; return; }
+    // Find how much the focused input is hidden behind the keyboard.
+    const inputRect = activeInput.getBoundingClientRect();
+    const winH      = window.innerHeight;
+    const kbdTopY   = winH - kbd;
+    // Want the input bottom to sit at least 12px ABOVE the keyboard top.
+    const overlap   = (inputRect.bottom + 12) - kbdTopY;
+    if (overlap <= 0) { card.style.transform = ''; return; }
+    // translateY upward by overlap (negative). Clamp so we never lift
+    // the card off the top of the screen — leave 12px of breathing room
+    // below the safe-area top edge.
+    const cardRect  = card.getBoundingClientRect();
+    const sat = parseFloat(getComputedStyle(document.documentElement)
+      .getPropertyValue('--sat')) || 0;
+    const maxLift   = Math.max(0, cardRect.top - sat - 12);
+    const lift      = Math.min(overlap, maxLift);
+    card.style.transform = `translateY(-${lift}px)`;
+  }
+
+  function clearShift() {
+    const card = getCard();
+    if (card) card.style.transform = '';
+  }
+
+  document.addEventListener('focusin', e => {
+    if (!e.target.matches?.(AUTH_INPUTS)) return;
+    activeInput = e.target;
+    // Apply on the next tick so the visualViewport has a chance to
+    // settle (the keyboard slides in over ~250ms on iOS), and again
+    // when the resize event fires for live adjustment.
+    applyShift();
+    requestAnimationFrame(applyShift);
+    setTimeout(applyShift, 100);
+    setTimeout(applyShift, 280);
+  }, true);
+
+  document.addEventListener('focusout', e => {
+    if (e.target !== activeInput) return;
+    activeInput = null;
+    clearShift();
+  }, true);
+
+  if (window.visualViewport) {
+    window.visualViewport.addEventListener('resize', applyShift);
+    window.visualViewport.addEventListener('scroll', applyShift);
+  }
+  window.addEventListener('orientationchange', applyShift);
+
+  // Capacitor Keyboard plugin — most trustworthy signal on iOS WKWebView.
+  // Same fallback the panel-shift system above uses.
+  const KbdPlugin = (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.Keyboard) || null;
+  if (KbdPlugin) {
+    KbdPlugin.addListener('keyboardWillShow', () => applyShift());
+    KbdPlugin.addListener('keyboardDidShow',  () => applyShift());
+    KbdPlugin.addListener('keyboardWillHide', () => clearShift());
   }
 })();
 </script>

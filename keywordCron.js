@@ -91,7 +91,14 @@ async function ensureStopwordsTable(client, stopwords) {
 // failures; here we let the refresh run to completion.
 async function refreshMV(client, viewName) {
   const t0 = Date.now();
-  await client.query("SET LOCAL statement_timeout = 0");
+  // SET (no LOCAL) so the value persists for the rest of this session
+  // without needing an explicit transaction. The previous `SET LOCAL`
+  // form silently no-op'd because we weren't inside BEGIN/COMMIT, so
+  // the server default (300s for this client / db) still applied and
+  // REFRESH timed out at the same place the in-cron query did before.
+  // 0 = no limit; this connection is short-lived and dedicated to the
+  // refresh, so a runaway can't leak.
+  await client.query("SET statement_timeout = 0");
   await client.query(`REFRESH MATERIALIZED VIEW public.${viewName}`);
   console.log(`[keywordCron] refreshed ${viewName} in ${elapsed(t0)}`);
 }
