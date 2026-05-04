@@ -11102,6 +11102,12 @@ button.arcCtxSegDot,
         font-size: 10px !important;
         padding: 0 8px !important;
         justify-content: center;
+        /* border-box so the 100% width INCLUDES padding+border. Otherwise
+           the button's visual width = wrapper + padding + border (18px
+           overflow), which on the right-side Bias button pushes its right
+           edge past the row's right edge — visually breaking the symmetry
+           with the left-side Topics button. */
+        box-sizing: border-box;
       }
       .nfTagDropdown {
         position: fixed !important;
@@ -11109,8 +11115,12 @@ button.arcCtxSegDot,
         left: 8px !important; right: 8px !important;
         width: auto !important;
         /* Cap so the dropdown's top edge never crosses the iOS top
-           safe-area (status bar / dynamic island). */
-        max-height: min(50vh, calc(100vh - 60px - env(safe-area-inset-top, 0px) - 16px)) !important;
+           safe-area (status bar / dynamic island).
+           NOTE: #nfQueryBar has `backdrop-filter`, which makes IT (not the
+           viewport) the containing block for fixed descendants. So 100vh
+           is the wrong frame — use 100% (relative to nfQueryBar) so the
+           cap is calculated from the actual available space. */
+        max-height: calc(100% - 60px - env(safe-area-inset-top, 0px) - 16px) !important;
         z-index: 210 !important;
       }
       .nfBiasDrop {
@@ -11119,8 +11129,9 @@ button.arcCtxSegDot,
         left: 8px !important; right: 8px !important;
         width: auto !important;
         min-width: 0 !important;
-        /* Same safe-area-aware cap as .nfTagDropdown above. */
-        max-height: min(50vh, calc(100vh - 60px - env(safe-area-inset-top, 0px) - 16px)) !important;
+        /* Same safe-area-aware cap as .nfTagDropdown above (see note re:
+           backdrop-filter containing block). */
+        max-height: calc(100% - 60px - env(safe-area-inset-top, 0px) - 16px) !important;
         z-index: 210 !important;
       }
       .nfMediaToggles {
@@ -31979,6 +31990,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
       drop.style.width     = '';
       drop.style.maxHeight = '';
 
+      // #nfQueryBar has `backdrop-filter`, which makes IT (not the viewport)
+      // the containing block for `position: fixed` descendants. The math
+      // below assumes viewport-anchored positioning, so move the dropdown
+      // to <body> while open. _restoreMultiDrop puts it back on close.
+      if (drop.parentElement && drop.parentElement !== document.body) {
+        drop._origParent = drop.parentElement;
+        drop._origNextSibling = drop.nextSibling;
+        document.body.appendChild(drop);
+      }
+
       const btnRect = btn.getBoundingClientRect();
       let safeTop = 0;
       try {
@@ -32625,7 +32646,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
     });
 
     function closeAll() {
-      document.querySelectorAll(".nfMultiDrop, .nfTagDropdown").forEach(d => d.classList.remove("open"));
+      document.querySelectorAll(".nfMultiDrop, .nfTagDropdown").forEach(d => {
+        d.classList.remove("open");
+        // Restore .nfMultiDrop back to its original parent (see note in
+        // _positionMultiDrop re: backdrop-filter containing block).
+        if (d._origParent && d.parentElement !== d._origParent) {
+          d._origParent.insertBefore(d, d._origNextSibling || null);
+          d._origParent = null;
+          d._origNextSibling = null;
+        }
+        // Wipe inline styles so next open starts clean.
+        ['position','top','bottom','left','right','width','maxHeight'].forEach(p => d.style[p] = '');
+      });
     }
     document.addEventListener("click", e => {
       if (!e.target.closest(".nfMultiWrap") && !e.target.closest(".nfTagWrap")) closeAll();
