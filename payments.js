@@ -96,8 +96,50 @@ async function getTierIdByName(name) {
   return data?.id ?? null;
 }
 
+// Tier rank for downgrade-protection. Higher = better. Anything not in
+// this map is treated as rank 0 so a degenerate / unknown tier from a
+// stray webhook can never beat a real tier.
+const TIER_RANK = { free: 1, pro: 2, enterprise: 3 };
+function _tierRank(name) { return TIER_RANK[String(name || '').toLowerCase()] || 0; }
+
 async function upsertSubscription({ userId, tier, provider, providerSubId, providerCusId, periodEnd, status = 'active' }) {
   const tierId = await getTierIdByName(tier);
+
+  // ── Downgrade protection ─────────────────────────────────────────────
+  // Sandbox (and occasionally production) Apple/RevenueCat fires multiple
+  // webhooks during an upgrade — both the OLD product's RENEWAL/PRODUCT_
+  // CHANGE and the NEW product's events arrive within seconds. With a
+  // blind UPSERT the LAST writer wins, which can flip an enterprise row
+  // back down to pro just because the pro renewal arrived a few hundred
+  // ms after the enterprise upgrade. We observed this with the sandbox
+  // log line:
+  //   [revenuecat/webhook] type=PRODUCT_CHANGE product=earth00.pro.monthly tier=pro
+  //   ↑ written AFTER an earlier enterprise upgrade had landed
+  //
+  // Guard: read the current row first; if the incoming tier is LOWER and
+  // the row's status is still active and unexpired, no-op. Does NOT block
+  // status changes (cancellation, expiration) — only refuses to silently
+  // demote the tier_id of a still-active row.
+  if (status === 'active') {
+    const { data: existing } = await sba
+      .from('subscriptions')
+      .select('tier_id, status, current_period_end')
+      .eq('user_id', userId)
+      .maybeSingle();
+    if (existing?.tier_id != null && existing.status === 'active') {
+      // Compare tier ranks via name (existing.tier_id → name).
+      const existingTierName = await _tierNameById(existing.tier_id);
+      const incomingRank = _tierRank(tier);
+      const existingRank = _tierRank(existingTierName);
+      const periodActive = !existing.current_period_end
+        || new Date(existing.current_period_end) > new Date();
+      if (incomingRank > 0 && incomingRank < existingRank && periodActive) {
+        console.log(`[upsertSubscription] skipping downgrade: ${existingTierName}(rank ${existingRank}) → ${tier}(rank ${incomingRank}) for user ${userId}`);
+        return;
+      }
+    }
+  }
+
   const payload = {
     user_id:            userId,
     tier_id:            tierId,
@@ -118,6 +160,21 @@ async function upsertSubscription({ userId, tier, provider, providerSubId, provi
     .from('subscriptions')
     .upsert(payload, { onConflict: 'user_id' });
   if (error) throw new Error(`upsertSubscription: ${error.message}`);
+}
+
+// Reverse lookup for the downgrade guard. Cached for the process lifetime
+// since the subscription_tiers table is small and never changes at runtime.
+const _tierNameByIdCache = new Map();
+async function _tierNameById(id) {
+  if (_tierNameByIdCache.has(id)) return _tierNameByIdCache.get(id);
+  const { data } = await sba
+    .from('subscription_tiers')
+    .select('name')
+    .eq('id', id)
+    .maybeSingle();
+  const name = data?.name || null;
+  if (name) _tierNameByIdCache.set(id, name);
+  return name;
 }
 
 async function cancelSubscription(userId) {
