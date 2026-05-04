@@ -40373,6 +40373,50 @@ const settingsToggle     = document.getElementById("settingsToggle");
   }
   window.__pollForTierUpgrade = pollForTierUpgrade;
 
+  // Optimistic tier update from RevenueCat customerInfo. Source-of-truth
+  // for "what does the user own?" is Apple + RevenueCat, NOT our backend
+  // — the backend is just a downstream cache populated by webhook. When
+  // the webhook is slow or fails (we observed both in sandbox), the
+  // backend lags or never catches up. Reading entitlements directly off
+  // the customerInfo RevenueCat already returned synchronously makes the
+  // badge correct regardless of webhook health.
+  //
+  // Recognized entitlement IDs match what the RevenueCat dashboard uses.
+  // If you rename them in RevenueCat, update the lists below.
+  const RC_PRO_ENTITLEMENTS        = ['pro', 'Pro', 'earth00_pro'];
+  const RC_ENTERPRISE_ENTITLEMENTS = ['enterprise', 'Enterprise', 'earth00_enterprise'];
+  function _applyOptimisticTier(customerInfo) {
+    if (!customerInfo || typeof customerInfo !== 'object') return;
+    const active = customerInfo.entitlements?.active || {};
+    const activeKeys = Object.keys(active).map(k => k.toLowerCase());
+    const hasEnterprise = RC_ENTERPRISE_ENTITLEMENTS.some(e => activeKeys.includes(e.toLowerCase()));
+    const hasPro        = RC_PRO_ENTITLEMENTS.some(e => activeKeys.includes(e.toLowerCase()));
+    let inferredTier = null;
+    if (hasEnterprise)   inferredTier = 'enterprise';
+    else if (hasPro)     inferredTier = 'pro';
+    if (!inferredTier) return;
+    // Only ever upgrade from the optimistic path — never silently
+    // downgrade (a missing entitlement in customerInfo doesn't mean
+    // they lost it; could be a transient fetch glitch).
+    const currentRank = TIER_ORDER.indexOf(window.__userTier || 'free');
+    const newRank     = TIER_ORDER.indexOf(inferredTier);
+    if (newRank <= currentRank) return;
+    window.__userTier = inferredTier;
+    if (acctDpTier) {
+      acctDpTier.textContent = inferredTier === 'pro' ? 'Pro' : 'Enterprise';
+      acctDpTier.className   = `acctDpTier ${inferredTier}`;
+    }
+    try {
+      const u = currentUser || window.__currentUser;
+      _saveTierCache(u?.id, window.__isAdmin, inferredTier);
+    } catch (_) {}
+    window.__markTierReady?.();
+    if (typeof window.__updatePricingState === 'function') {
+      window.__updatePricingState();
+    }
+  }
+  window.__applyOptimisticTier = _applyOptimisticTier;
+
   function clearAuthUI() {
     window.__authToken = null;
     window.__isAdmin = false;
@@ -40810,7 +40854,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
         }
         try {
           window.__showToast?.('Restoring purchases…');
-          await Purchases.restorePurchases();
+          const restoreResult = await Purchases.restorePurchases();
+          // restorePurchases returns customerInfo directly. Same two-
+          // layered approach as the purchase path: optimistic tier flip
+          // from customerInfo (immediate, doesn't depend on our webhook),
+          // then poll the backend so server-gated APIs accept it too.
+          try { _applyOptimisticTier(restoreResult); } catch (_) {}
           // RevenueCat fires INITIAL_PURCHASE on the first restore for an
           // install, RENEWAL/UNCANCELLATION on subsequent ones — all land
           // on /revenuecat/webhook and update the DB. Poll for the row
@@ -41860,12 +41909,23 @@ const settingsToggle     = document.getElementById("settingsToggle");
           window.__showToast?.('Subscription product not available on this device.');
           return;
         }
-        await Purchases.purchaseStoreProduct({ product });
-        // Apple sheet completed. RevenueCat will hit /revenuecat/webhook
-        // momentarily; poll our tier endpoint until the row updates
-        // (sandbox webhooks can take 3-8s, sometimes longer). Single-
-        // shot refresh at T+1500 missed in practice and left the badge
-        // stuck on "Free" even though the subscription was active.
+        const purchaseResult = await Purchases.purchaseStoreProduct({ product });
+        // Apple sheet completed. Two-layered tier update so the badge
+        // flips even if our /revenuecat/webhook never lands (we observed
+        // sandbox cases where the webhook delivery silently failed and
+        // the user stayed on "Free" indefinitely despite owning an active
+        // subscription per Apple + RevenueCat):
+        //   (1) optimistic — read the entitlement directly from the
+        //       customerInfo RevenueCat returned synchronously and update
+        //       the badge + tier cache immediately. Source-of-truth is
+        //       what the user actually owns at Apple, not what our DB
+        //       happens to know about.
+        //   (2) authoritative — poll our backend for the row to land too,
+        //       so backend-gated APIs (deep analysis, etc) accept the
+        //       new tier. If the webhook eventually fires, polling
+        //       resolves; if it doesn't, _applyOptimisticTier above
+        //       still keeps the UI honest.
+        try { _applyOptimisticTier(purchaseResult?.customerInfo); } catch (_) {}
         window.__pollForTierUpgrade?.({ showToast: true });
       } catch (err) {
         if (err?.userCancelled || err?.code === '1' || err?.code === 1) return;
