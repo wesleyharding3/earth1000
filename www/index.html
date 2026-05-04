@@ -40332,6 +40332,47 @@ const settingsToggle     = document.getElementById("settingsToggle");
   }
   window.__refreshSubscriptionState = refreshSubscriptionState;
 
+  // Post-purchase polling refresh. The Apple → RevenueCat → our webhook
+  // chain takes anywhere from <1s to ~8s in sandbox; a single delayed
+  // refresh would often hit the backend BEFORE the subscription row was
+  // updated and leave the badge stuck on "Free". This polls with
+  // exponential backoff until the tier moves off 'free', the user
+  // becomes admin, or attempts run out.
+  //
+  // Usage: window.__pollForTierUpgrade({ showToast: true })  — fire-and-forget.
+  async function pollForTierUpgrade(options = {}) {
+    const user = currentUser || window.__currentUser;
+    if (!user) return;
+    const startingTier = window.__userTier || 'free';
+    // [delays in ms] — first refresh is fast, then back off so the total
+    // wait window covers ~12s (covers webhook latency on a warm
+    // RevenueCat → our server path; cold-start can rarely exceed this
+    // but a manual restore from the pricing modal recovers it).
+    const DELAYS = [800, 1500, 2500, 3500, 4000];
+    for (const wait of DELAYS) {
+      await sleep(wait);
+      await loadUserTier(user.id, { force: true });
+      await loadProfile();
+      if (typeof window.__updatePricingState === 'function') {
+        window.__updatePricingState();
+      }
+      const newTier = window.__userTier || 'free';
+      if (newTier !== 'free' && newTier !== startingTier) {
+        if (options.showToast && typeof window.__showToast === 'function') {
+          window.__showToast(`Subscription active: ${newTier}`);
+        }
+        return;
+      }
+    }
+    // Exhausted attempts. If still 'free', the webhook may have failed
+    // — surface a recoverable hint rather than silent failure.
+    const finalTier = window.__userTier || 'free';
+    if (finalTier === 'free' && options.showToast && typeof window.__showToast === 'function') {
+      window.__showToast('Purchase received. Tier sync is taking longer than usual — pull to refresh.');
+    }
+  }
+  window.__pollForTierUpgrade = pollForTierUpgrade;
+
   function clearAuthUI() {
     window.__authToken = null;
     window.__isAdmin = false;
@@ -40772,21 +40813,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
           await Purchases.restorePurchases();
           // RevenueCat fires INITIAL_PURCHASE on the first restore for an
           // install, RENEWAL/UNCANCELLATION on subsequent ones — all land
-          // on /revenuecat/webhook and update the DB. Wait briefly for
-          // the round-trip, then pull fresh tier from our backend.
-          setTimeout(() => {
-            const before = window.__userTier || 'free';
-            window.__refreshSubscriptionState?.().then(() => {
-              const after = window.__userTier || 'free';
-              if (after !== 'free' && after !== before) {
-                window.__showToast?.(`Subscription restored: ${after}`);
-              } else if (after === 'free') {
-                window.__showToast?.('No purchases to restore.');
-              } else {
-                window.__showToast?.('Already up to date.');
-              }
-            });
-          }, 1500);
+          // on /revenuecat/webhook and update the DB. Poll for the row
+          // update (single-shot at T+1500 missed under webhook latency
+          // and left users on "Free" until manual page reload).
+          const before = window.__userTier || 'free';
+          window.__pollForTierUpgrade?.().then(() => {
+            const after = window.__userTier || 'free';
+            if (after !== 'free' && after !== before) {
+              window.__showToast?.(`Subscription restored: ${after}`);
+            } else if (after === 'free') {
+              window.__showToast?.('No purchases to restore.');
+            } else {
+              window.__showToast?.('Already up to date.');
+            }
+          });
         } catch (err) {
           if (err?.userCancelled) return;
           console.error('[rc] restore failed:', err);
@@ -41822,8 +41862,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
         }
         await Purchases.purchaseStoreProduct({ product });
         // Apple sheet completed. RevenueCat will hit /revenuecat/webhook
-        // momentarily; give it a beat then refresh the tier from our DB.
-        setTimeout(() => window.__refreshSubscriptionState?.({ showToast: true }), 1500);
+        // momentarily; poll our tier endpoint until the row updates
+        // (sandbox webhooks can take 3-8s, sometimes longer). Single-
+        // shot refresh at T+1500 missed in practice and left the badge
+        // stuck on "Free" even though the subscription was active.
+        window.__pollForTierUpgrade?.({ showToast: true });
       } catch (err) {
         if (err?.userCancelled || err?.code === '1' || err?.code === 1) return;
         console.error('[rc] purchase failed:', err);
