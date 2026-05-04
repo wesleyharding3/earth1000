@@ -80,35 +80,42 @@ async function ensureStopwordsTable(client, stopwords) {
   return tableName;
 }
 
+// ── MV refresh helper ───────────────────────────────────────────────────────
+// REFRESH MATERIALIZED VIEW does the heavy aggregation that used to live
+// inline in computeTrending/computeRising. The cron path now reads from
+// the MV — see migrations/20260503_keyword_intel_materialized_views.sql.
+//
+// statement_timeout is disabled for the refresh since this is a once-daily
+// maintenance operation off the user-facing path. The previous 300s
+// ceiling on the in-cron query was the proximate cause of the rising
+// failures; here we let the refresh run to completion.
+async function refreshMV(client, viewName) {
+  const t0 = Date.now();
+  await client.query("SET LOCAL statement_timeout = 0");
+  await client.query(`REFRESH MATERIALIZED VIEW public.${viewName}`);
+  console.log(`[keywordCron] refreshed ${viewName} in ${elapsed(t0)}`);
+}
+
 // ── Trending ────────────────────────────────────────────────────────────────
 // Top keywords by total mention volume over the last N days (global only).
-async function computeTrending({ days = 7, limit = 50, stopwords = [] } = {}) {
-  // Bumped 90s → 300s. Original 90s was scoped to prevent overlapping cron
-  // invocations from compounding slot occupation, but trending/rising are
-  // already sequenced (and run at independent schedules), so the overlap
-  // concern doesn't apply. 300s gives headroom for the GROUP BY across a
-  // full week's global window.
+// Reads from the keyword_trending_global MV; refreshes it first so each
+// daily run sees a CURRENT_DATE-anchored window. Stopwords filter is
+// applied at read time (not baked into the MV) so we can update the
+// stopwords list without a migration.
+async function computeTrending({ limit = 50, stopwords = [] } = {}) {
   const client = await pool.connect();
   try {
-    await client.query("SET statement_timeout = '300s'");
+    await refreshMV(client, 'keyword_trending_global');
     const swTable = await ensureStopwordsTable(client, stopwords);
     const t0 = Date.now();
     const { rows } = await client.query(`
-      SELECT
-        k.keyword,
-        SUM(k.total_count)::bigint  AS mentions,
-        COUNT(DISTINCT k.date)::int AS days_active
-      FROM keyword_daily_stats k
-      WHERE k.date              >= CURRENT_DATE - $1::int
-        AND k.source_country_id IS NULL
-        AND k.about_country_id  IS NULL
-        AND NOT EXISTS (SELECT 1 FROM ${swTable} sw WHERE sw.word = k.keyword)
-      GROUP BY k.keyword
-      HAVING SUM(k.total_count) >= 3
-      ORDER BY mentions DESC, k.keyword ASC
-      LIMIT $2
-    `, [days, limit]);
-    console.log(`[keywordCron] trending query: ${rows.length} rows in ${elapsed(t0)}`);
+      SELECT m.keyword, m.mentions, m.days_active
+      FROM public.keyword_trending_global m
+      WHERE NOT EXISTS (SELECT 1 FROM ${swTable} sw WHERE sw.word = m.keyword)
+      ORDER BY m.mentions DESC, m.keyword ASC
+      LIMIT $1
+    `, [limit]);
+    console.log(`[keywordCron] trending read: ${rows.length} rows in ${elapsed(t0)}`);
     return rows;
   } finally {
     client.release();
@@ -117,48 +124,23 @@ async function computeTrending({ days = 7, limit = 50, stopwords = [] } = {}) {
 
 // ── Rising ──────────────────────────────────────────────────────────────────
 // Keywords whose recent velocity is significantly above their baseline rate.
-async function computeRising({ days = 3, baselineDays = 14, limit = 30, stopwords = [] } = {}) {
-  // Same 300s bound as computeTrending — see comment there.
+// Reads from the keyword_rising_global MV (same MV-refresh pattern as
+// trending). Window constants (3d recent / 14d baseline) are baked into
+// the MV definition — change them in the migration, not here.
+async function computeRising({ limit = 30, stopwords = [] } = {}) {
   const client = await pool.connect();
   try {
-    await client.query("SET statement_timeout = '300s'");
+    await refreshMV(client, 'keyword_rising_global');
     const swTable = await ensureStopwordsTable(client, stopwords);
     const t0 = Date.now();
-    // Single 17-day scan with FILTER aggregates instead of two CTEs that
-    // each scanned + grouped independently and then joined. Cuts the work
-    // roughly in half — one index scan, one HashAggregate, one anti-join,
-    // no JOIN. Same semantics as the old recent/baseline split.
     const { rows } = await client.query(`
-    WITH combined AS (
-      SELECT
-        k.keyword,
-        SUM(k.total_count) FILTER (WHERE k.date >= CURRENT_DATE - $1::int)::bigint AS recent_count,
-        SUM(k.total_count) FILTER (WHERE k.date <  CURRENT_DATE - $1::int)::bigint AS baseline_count
-      FROM keyword_daily_stats k
-      WHERE k.date              >= CURRENT_DATE - ($1::int + $2::int)
-        AND k.source_country_id IS NULL
-        AND k.about_country_id  IS NULL
-        AND NOT EXISTS (SELECT 1 FROM ${swTable} sw WHERE sw.word = k.keyword)
-      GROUP BY k.keyword
-      HAVING SUM(k.total_count) FILTER (WHERE k.date >= CURRENT_DATE - $1::int) >= 2
-    )
-    SELECT
-      c.keyword,
-      c.recent_count,
-      COALESCE(c.baseline_count, 0) AS baseline_count,
-      CASE
-        WHEN COALESCE(c.baseline_count, 0) = 0
-          THEN c.recent_count * 10
-        ELSE ROUND(
-          (c.recent_count::numeric / c.baseline_count::numeric)
-          * ($2::numeric / $1::numeric) * 100
-        ) / 100
-      END AS momentum
-    FROM combined c
-    ORDER BY momentum DESC, c.recent_count DESC, c.keyword ASC
-    LIMIT $3
-    `, [days, baselineDays, limit]);
-    console.log(`[keywordCron] rising query: ${rows.length} rows in ${elapsed(t0)}`);
+      SELECT m.keyword, m.recent_count, m.baseline_count, m.momentum
+      FROM public.keyword_rising_global m
+      WHERE NOT EXISTS (SELECT 1 FROM ${swTable} sw WHERE sw.word = m.keyword)
+      ORDER BY m.momentum DESC, m.recent_count DESC, m.keyword ASC
+      LIMIT $1
+    `, [limit]);
+    console.log(`[keywordCron] rising read: ${rows.length} rows in ${elapsed(t0)}`);
     return rows.filter((row) => !isDateLikeKeyword(row && row.keyword));
   } finally {
     client.release();
