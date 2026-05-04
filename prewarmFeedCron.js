@@ -106,6 +106,12 @@ async function pickTopCities(n) {
     .map(c => ({ id: c.id, name: c.name, population: c.population || 0 }));
 }
 
+async function fetchAllTags() {
+  const data = await fetchJSON(`${API_URL}/api/tags`);
+  const arr = Array.isArray(data) ? data : (data?.tags || data?.data || []);
+  return arr.filter(t => t && t.id).map(t => ({ id: t.id, name: t.name || `tag:${t.id}` }));
+}
+
 async function warm(label, url) {
   const t0 = Date.now();
   try {
@@ -136,6 +142,39 @@ async function main() {
   for (const r of topOf) {
     const tag = r.err ? `ERR ${r.err}` : `${r.ms}ms`;
     console.log(`${TAG}   /api/${r.label.padEnd(20)} [${tag}]`);
+  }
+  console.log('');
+
+  // Phase 0.5 — category-filtered news/search.
+  // Frontend Feed tab fetches `/api/news/search?tag=X&limit=25&offset=N`
+  // (LIMIT=25 in www/index.html). Without warming, the first user to pick
+  // any category pays the full cold-cache cost (up to the 30s
+  // statement_timeout in server.js:2562). Warm the first two pages for
+  // every tag so the "Topics" dropdown is always instant.
+  let tags = [];
+  try { tags = await fetchAllTags(); }
+  catch (err) { console.warn(`${TAG} /api/tags fetch failed (${err.message}); skipping tag phase.`); }
+  let tagOk = 0;
+  if (tags.length) {
+    const TAG_PAGES = ['&offset=0', '&offset=25'];
+    console.log(`${TAG} phase 0.5: warming category-filtered feeds for ${tags.length} tags…`);
+    for (let i = 0; i < tags.length; i += CONCURRENCY) {
+      const batch = tags.slice(i, i + CONCURRENCY);
+      const out = await Promise.all(batch.map(async t => {
+        const tasks = TAG_PAGES.map(off =>
+          warm('tag', `${API_URL}/api/news/search?tag=${t.id}&limit=25${off}`)
+        );
+        const results = await Promise.all(tasks);
+        // Worst result (slowest / errored) summarizes the row
+        const worst = results.reduce((a, r) => (r.err || (r.ms > (a.ms || 0))) ? r : a, results[0]);
+        return { t, worst, allOk: results.every(r => !r.err), results };
+      }));
+      for (const r of out) {
+        if (r.allOk) tagOk++;
+        const status = r.worst.err ? `ERR ${r.worst.err}` : `${r.worst.ms}ms`;
+        console.log(`${TAG}   tag=${String(r.t.id).padStart(4)} ${(r.t.name || '').padEnd(20)} [${status}]`);
+      }
+    }
   }
   console.log('');
 
@@ -224,9 +263,9 @@ async function main() {
   }
 
   const topOk = topOf.filter(r => !r.err).length;
-  const totalAttempts = topOf.length + countries.length * 2 + cityCount * 2;
-  const totalOk = topOk + countryOk + cityOk;
-  console.log(`\n${TAG} done in ${((Date.now() - t0) / 1000).toFixed(1)}s — top=${topOk}/${topOf.length} countries=${countryOk}/${countries.length * 2} cities=${cityOk}/${cityCount * 2}`);
+  const totalAttempts = topOf.length + tags.length + countries.length * 2 + cityCount * 2;
+  const totalOk = topOk + tagOk + countryOk + cityOk;
+  console.log(`\n${TAG} done in ${((Date.now() - t0) / 1000).toFixed(1)}s — top=${topOk}/${topOf.length} tags=${tagOk}/${tags.length} countries=${countryOk}/${countries.length * 2} cities=${cityOk}/${cityCount * 2}`);
 
   if (totalAttempts > 0 && totalOk === 0) process.exit(1);
 }

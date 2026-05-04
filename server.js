@@ -2250,6 +2250,7 @@ app.get("/api/news/search", searchLimiter, async (req, res) => {
     const keyword  = req.query.keyword?.trim() || null;
     const fromDate = req.query.from_date?.trim() || null;
     const toDate   = req.query.to_date?.trim()   || null;
+    const tagId    = req.query.tag ? parseInt(req.query.tag, 10) || null : null;
 
     // ── Fast path: default query (no filters) → serve from TTL cache ──
     // Ranking contract:
@@ -2433,14 +2434,24 @@ app.get("/api/news/search", searchLimiter, async (req, res) => {
     const poolParam = params.length + 1;
     params.push(POOL_SIZE);
 
+    // Filter to articles whose top-3 tags include the requested category.
+    // article_tags is pre-populated by scoringEngine.classifyArticle (top 3
+    // per article, ranked 1–3 with combined classification score). Same
+    // pattern as /api/news/country/:id and /api/news/city/:id.
+    const tagJoin = tagId
+      ? `JOIN article_tags at ON at.article_id = a.id AND at.tag_id = ${tagId}`
+      : "";
+    const needsDistinct = needsLocJoin || !!tagId;
+
     const filteredQuery = `
       WITH candidates AS (
-        SELECT ${needsLocJoin ? "DISTINCT ON (a.id)" : ""} a.id, a.published_at,
+        SELECT ${needsDistinct ? "DISTINCT ON (a.id)" : ""} a.id, a.published_at,
           COALESCE(a.source_id::text, 'yt:' || a.youtube_source_id::text) AS source_key
         FROM news_articles a
         ${needsLocJoin ? "JOIN article_locations al ON al.article_id = a.id" : ""}
+        ${tagJoin}
         ${whereClause}
-        ORDER BY ${needsLocJoin ? "a.id, " : ""}a.published_at DESC
+        ORDER BY ${needsDistinct ? "a.id, " : ""}a.published_at DESC
         LIMIT $${poolParam}
       ),
       source_ranked AS (
