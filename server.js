@@ -7435,28 +7435,44 @@ app.get("/api/articles/by-ids", async (req, res) => {
   try {
     const ids = (req.query.ids || "").split(",").map(Number).filter(Boolean).slice(0, 20);
     if (!ids.length) return res.json([]);
-    const { rows } = await pool.query(`
-      SELECT
-        a.id, a.title, a.translated_title, a.summary, a.translated_summary,
-        a.published_at, a.url, a.video_id, a.media_type,
-        COALESCE(a.image_url, img_a.public_url) AS image_url,
-        img_a.public_url AS catalog_image_url,
-        COALESCE(ns.name, ys.name) AS source_name,
-        ns.source_summary,
-        COALESCE(ns.bias, 'unknown') AS source_bias,
-        co.name AS country_name, co.iso_code,
-        ci.name AS city_name
-      FROM news_articles a
-      LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
-      LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
-      LEFT JOIN news_sources ns ON ns.id = a.source_id
-      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
-      LEFT JOIN countries co ON co.id = a.country_id
-      LEFT JOIN cities ci ON ci.id = a.city_id
-      WHERE a.id = ANY($1::int[])
-      ORDER BY array_position($1::int[], a.id)
-    `, [ids]);
-    res.json(rows);
+    // Cache key: sorted ID list. Same set of IDs in any order → same
+    // cache entry. The Sources tab on thread/timeline detail panels
+    // sends the SAME id set every time the same thread is opened
+    // (top_article_ids is stable until the next thread builder run),
+    // so a 5h45m TTL — matching the thread builder cadence — keeps the
+    // Sources view warm between rebuilds. order_in_response is preserved
+    // by sorting in JS after the cache hit, so different orders of the
+    // same IDs all share one DB query.
+    const sortedIds = ids.slice().sort((a, b) => a - b);
+    const cacheKey = `articles/by-ids:${sortedIds.join(',')}`;
+    const rowsByIdSorted = await ttlCached(cacheKey, 20_700_000, async () => {
+      const { rows } = await pool.query(`
+        SELECT
+          a.id, a.title, a.translated_title, a.summary, a.translated_summary,
+          a.published_at, a.url, a.video_id, a.media_type,
+          COALESCE(a.image_url, img_a.public_url) AS image_url,
+          img_a.public_url AS catalog_image_url,
+          COALESCE(ns.name, ys.name) AS source_name,
+          ns.source_summary,
+          COALESCE(ns.bias, 'unknown') AS source_bias,
+          co.name AS country_name, co.iso_code,
+          ci.name AS city_name
+        FROM news_articles a
+        LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
+        LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
+        LEFT JOIN news_sources ns ON ns.id = a.source_id
+        LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+        LEFT JOIN countries co ON co.id = a.country_id
+        LEFT JOIN cities ci ON ci.id = a.city_id
+        WHERE a.id = ANY($1::int[])
+      `, [sortedIds]);
+      return rows;
+    });
+    // Restore the caller's requested order from the cached (unordered) set.
+    const byId = new Map(rowsByIdSorted.map(r => [r.id, r]));
+    const ordered = ids.map(id => byId.get(id)).filter(Boolean);
+    res.set("Cache-Control", "public, max-age=300, s-maxage=600, stale-while-revalidate=3600");
+    res.json(ordered);
   } catch (err) {
     console.error("[articles/by-ids]", err.message);
     res.status(500).json({ error: "Failed to fetch articles" });
@@ -7469,30 +7485,42 @@ app.get("/api/articles/by-thread", async (req, res) => {
     const threadId = parseInt(req.query.thread_id, 10);
     if (!threadId) return res.status(400).json({ error: "thread_id required" });
     const limit = Math.min(parseInt(req.query.limit, 10) || 20, 40);
-    const { rows } = await pool.query(`
-      SELECT
-        a.id, a.title, a.translated_title, a.summary, a.translated_summary,
-        a.published_at, a.url, a.video_id, a.media_type,
-        COALESCE(a.image_url, img_a.public_url) AS image_url,
-        img_a.public_url AS catalog_image_url,
-        COALESCE(ns.name, ys.name) AS source_name,
-        ns.source_summary,
-        COALESCE(ns.bias, 'unknown') AS source_bias,
-        co.name AS country_name, co.iso_code,
-        ci.name AS city_name,
-        sta.relevance_score, sta.is_anchor
-      FROM story_thread_articles sta
-      JOIN news_articles a ON a.id = sta.article_id
-      LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
-      LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
-      LEFT JOIN news_sources ns ON ns.id = a.source_id
-      LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
-      LEFT JOIN countries co ON co.id = a.country_id
-      LEFT JOIN cities ci ON ci.id = a.city_id
-      WHERE sta.thread_id = $1
-      ORDER BY sta.is_anchor DESC, sta.relevance_score DESC, a.published_at DESC
-      LIMIT $2
-    `, [threadId, limit]);
+    // 5h45m TTL — same cadence as /api/threads/:id/articles and the
+    // thread builder + prewarm-threads cron. The Sources tab on the
+    // thread detail panel calls THIS endpoint (not /api/threads/:id
+    // /articles), so without a cache here every Sources view was a
+    // cold DB read. prewarm-threads now warms this exact URL shape
+    // (limit=30) for the top N threads so opening Sources is instant
+    // for any pre-warmed thread.
+    const cacheKey = `articles/by-thread:${threadId}:${limit}`;
+    const rows = await ttlCached(cacheKey, 20_700_000, async () => {
+      const { rows: r } = await pool.query(`
+        SELECT
+          a.id, a.title, a.translated_title, a.summary, a.translated_summary,
+          a.published_at, a.url, a.video_id, a.media_type,
+          COALESCE(a.image_url, img_a.public_url) AS image_url,
+          img_a.public_url AS catalog_image_url,
+          COALESCE(ns.name, ys.name) AS source_name,
+          ns.source_summary,
+          COALESCE(ns.bias, 'unknown') AS source_bias,
+          co.name AS country_name, co.iso_code,
+          ci.name AS city_name,
+          sta.relevance_score, sta.is_anchor
+        FROM story_thread_articles sta
+        JOIN news_articles a ON a.id = sta.article_id
+        LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
+        LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
+        LEFT JOIN news_sources ns ON ns.id = a.source_id
+        LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+        LEFT JOIN countries co ON co.id = a.country_id
+        LEFT JOIN cities ci ON ci.id = a.city_id
+        WHERE sta.thread_id = $1
+        ORDER BY sta.is_anchor DESC, sta.relevance_score DESC, a.published_at DESC
+        LIMIT $2
+      `, [threadId, limit]);
+      return r;
+    });
+    res.set("Cache-Control", "public, max-age=300, s-maxage=600, stale-while-revalidate=3600");
     res.json(rows);
   } catch (err) {
     console.error("[articles/by-thread]", err.message);

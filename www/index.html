@@ -7466,7 +7466,7 @@ button.arcCtxSegDot,
    gives it a rounded frame + spacing inside the article scroll. */
 .adpAnalysis {
   margin-top: 12px;
-  margin-bottom: 24px;
+  margin-bottom: 8px;
   border-radius: 14px;
   overflow: hidden;
   border: 1px solid rgba(255,255,255,0.06);
@@ -7475,11 +7475,26 @@ button.arcCtxSegDot,
   /* Locked height for the post-gate states (loading shimmer → typing →
      settled). 340px fits the worst-case ~400-character block at the
      standard panel width; longer content scrolls internally. The gate
-     state (.arcCtxStateGate) overrides this to button-size so the
-     pre-click container doesn't claim 340px of dead space — it
-     animates open on click via the height transition below. */
-  height: 340px;
-  padding: 14px 14px 16px;
+     state (.arcCtxStateGate) overrides this and the padding to button-
+     size so the pre-click container is just the button — no dead space
+     above the View-on-Globe button below. Click handler swaps in the
+     loading state, height + padding transition out to the full badge,
+     and content beneath (View on Globe, Read Full Article) gets pushed
+     down naturally by the reflow.
+     Both min-height and height pinned to 340 (and !important) because
+     the base .arcCtxBody rule sets min-height: 320 with the same
+     specificity, and during a height transition out of the gate state
+     the cascade was resolving to that 320 floor instead of our 340. */
+  height: 340px !important;
+  min-height: 340px !important;
+  /* Longhands (not the `padding` shorthand) so the per-axis transition
+     resolves correctly when leaving the gate state — Chrome's transition
+     resolver was sticking padding at 0 when the from-state used the
+     `padding` shorthand. */
+  padding-top: 14px;
+  padding-right: 14px;
+  padding-bottom: 16px;
+  padding-left: 14px;
   overflow-y: auto;
   overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
@@ -7488,15 +7503,33 @@ button.arcCtxSegDot,
      drags instead of bubbling them to the article-detail panel's drag-
      to-dismiss handler. */
   touch-action: pan-y;
+  /* Animate ONLY the height — padding snaps. We had transition issues
+     where the `padding` cascade got stuck at 0 (the gate value) even
+     after the class flipped to a non-gate state. Snapping padding while
+     the height animates is visually clean: the inside content fades in
+     as the container grows. */
   transition: height 0.42s cubic-bezier(0.22, 1, 0.36, 1);
 }
-/* Gate state: container is just the button + its padding. Click handler
-   re-applies the loading/typing/settled state, which strips this class
-   and the height transitions out to 340px. Hide overflow so the inner
-   button can't scroll while the container is mid-collapse. */
+/* Gate state: container collapses to the button's exact height with no
+   internal padding, so the gate button sits flush above the View-on-
+   Globe button. Strip the inner button's margin-top too — the wrapper's
+   margin-bottom already provides any gap to the next field. */
 .adpAnalysis > .arcCtxBody.arcCtxStateGate {
-  height: 76px;
+  /* 58px = .aiAnalysisCtaBadge's intrinsic rendered height (padding 14+14
+     + line-height + 1+1 border, plus the kerning slack on the uppercase
+     gold font). Tight wrap so the gate sits flush above View-on-Globe.
+     !important to beat the post-gate rule's pinned min-height: 340. */
+  height: 58px !important;
+  min-height: 0 !important;
+  /* Longhands match the post-gate rule — see note there. */
+  padding-top: 0;
+  padding-right: 0;
+  padding-bottom: 0;
+  padding-left: 0;
   overflow: hidden;
+}
+.adpAnalysis > .arcCtxBody.arcCtxStateGate > .aiAnalysisCtaBadge {
+  margin-top: 0;
 }
 
 .adpContextTitle {

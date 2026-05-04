@@ -287,6 +287,9 @@ async function run() {
     attachedThreads:               0,
     newTimelines:                  0,
     reawakened:                    0,
+    dormantRescanReactivated:      0,
+    dormantRescanRelinked:         0,
+    umbrellaRefreshed:             0,
     umbrellaLinesScanned:          0,
     umbrellaCandidatesScored:      0,
     umbrellaArticlesAttached:      0,
@@ -307,6 +310,15 @@ async function run() {
 
   if (!ONLY_EVENTS) {
     await runPromotionPhase(metrics, elapsed);
+  }
+
+  // Phase B.5: thread-driven dormant reactivation. Runs AFTER promotion
+  // (so threads attached this run are visible) and BEFORE the article
+  // umbrella (so any reactivations here are picked up by umbrella's
+  // active+cooling+dormant scan with their fresh keywords merged in).
+  if (!ONLY_EVENTS && !SKIP_UMBRELLA) {
+    console.log(`\n   [${elapsed()}] Phase B.5: dormant rescan via active threads...`);
+    await runDormantRescanPhase(metrics, elapsed);
   }
 
   // Article Umbrella phase runs AFTER promotion (so any newly-graduated
@@ -360,6 +372,9 @@ async function run() {
   console.log(`  attached_to_existing    : ${metrics.attachedThreads}`);
   console.log(`  new_timelines_created   : ${metrics.newTimelines}`);
   console.log(`  dormant_reawakened      : ${metrics.reawakened}`);
+  console.log(`  dormant_rescan_reactiv. : ${metrics.dormantRescanReactivated}`);
+  console.log(`  dormant_rescan_relinked : ${metrics.dormantRescanRelinked}`);
+  console.log(`  umbrella_keywords_refrh : ${metrics.umbrellaRefreshed}`);
   console.log(`  umbrella_lines_scanned  : ${metrics.umbrellaLinesScanned}`);
   console.log(`  umbrella_cands_scored   : ${metrics.umbrellaCandidatesScored}`);
   console.log(`  umbrella_articles_added : ${metrics.umbrellaArticlesAttached}`);
@@ -1186,6 +1201,156 @@ Return ONLY a JSON array, no markdown fences, no prose:
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
+//  PHASE B.5 : THREAD-DRIVEN DORMANT REACTIVATION
+//
+//  Catches dormant Lines that have currently-active thread coverage but
+//  where individual articles fall below UMBRELLA_ATTACH_THRESHOLD. Threads
+//  carry aggregated keywords/nations from many articles, so a thread-level
+//  match is a stronger signal than any one article. This is the "if there
+//  is an active thread on the same topic, wake the Line up" path.
+//
+//  Distinct from Phase B (promotion attach):
+//    - Phase B fires only on NEWLY graduated threads
+//    - Phase B.5 rescans ALL currently-active threads against dormant Lines
+//      every run, so a thread that became hot AFTER its parent Line cooled
+//      will still reactivate it
+//
+//  Threads WITHOUT a timeline_id get linked. Threads already linked stay
+//  linked (don't break existing relationships) but can still trigger
+//  reactivation of OTHER dormant lines they overlap.
+// ═════════════════════════════════════════════════════════════════════════════
+async function runDormantRescanPhase(metrics, elapsed) {
+  const { rows: threads } = await pool.query(`
+    SELECT id, title, keywords, primary_nations, importance, timeline_id
+    FROM story_threads
+    WHERE status = 'active'
+      AND last_updated_at > NOW() - INTERVAL '14 days'
+    ORDER BY last_updated_at DESC
+    LIMIT 500
+  `);
+  if (!threads.length) {
+    console.log(`   [${elapsed()}] no active threads to rescan`);
+    return;
+  }
+
+  const { rows: dormantLines } = await pool.query(`
+    SELECT id, title, status, importance, keywords, primary_nations,
+           primary_category, geographic_scope, first_seen_at, last_updated_at
+    FROM story_timelines
+    WHERE status = 'dormant'
+    ORDER BY last_updated_at DESC
+    LIMIT 500
+  `);
+  if (!dormantLines.length) {
+    console.log(`   [${elapsed()}] no dormant lines to rescan`);
+    return;
+  }
+
+  console.log(`   [${elapsed()}] scanning ${threads.length} active thread(s) against ${dormantLines.length} dormant Line(s)...`);
+
+  // Reuse the existing per-line feature builder (entities pulled from the
+  // top-N attached articles' deep-context).
+  const dormantFeatures = await buildTimelineFeatures(dormantLines);
+
+  // Track which dormant lines we've already reactivated this run so a
+  // burst of similar threads doesn't double-update the same line.
+  const reactivatedIds = new Set();
+  let reactivated = 0;
+  let relinked = 0;
+
+  for (const thread of threads) {
+    try {
+      const candNations  = new Set((thread.primary_nations || []).map(n => String(n).toUpperCase()));
+      const candKeywords = new Set((thread.keywords || []).map(normalizeKeyword).filter(Boolean));
+      const candTitleTokens = tokenizeTitle(thread.title);
+      // Skip the entity-load (loadContextForArticles) for rescan — it's
+      // the heavy DB op per thread, and keyword+nation+title overlap is
+      // enough signal to clear ATTACH_THRESHOLD on a real match. Phase B
+      // pays for entities because it's the FIRST attach decision; rescan
+      // is opportunistic catch-up.
+
+      let bestScore = 0;
+      let bestLine  = null;
+      for (const line of dormantLines) {
+        if (reactivatedIds.has(line.id)) continue;
+        const feat = dormantFeatures.get(line.id);
+        if (!feat) continue;
+
+        const natShared  = intersectCount(candNations,  feat.nations);
+        const kwShared   = Math.min(KEYWORD_CAP, intersectCount(candKeywords,  feat.keywords));
+        const ttkShared  = intersectCount(candTitleTokens, feat.titleTokens);
+        // Entities skipped — see comment above.
+        const score = natShared * W_NATION_OVERLAP
+                    + kwShared  * W_KEYWORD_OVERLAP
+                    + ttkShared * W_TITLE_TOKEN;
+
+        if (score > bestScore) {
+          bestScore = score;
+          bestLine  = line;
+        }
+      }
+
+      if (bestLine && bestScore >= ATTACH_THRESHOLD) {
+        const shouldRelink = !thread.timeline_id;
+        await reactivateDormantFromThread(thread, bestLine.id, shouldRelink);
+        reactivatedIds.add(bestLine.id);
+        reactivated++;
+        if (shouldRelink) relinked++;
+        console.log(`   ↳ REACTIVATED dormant Line "${(bestLine.title||'').slice(0,50)}" via thread "${(thread.title||'').slice(0,50)}" (score=${bestScore.toFixed(1)}${shouldRelink ? ', relinked' : ''})`);
+      }
+    } catch (err) {
+      console.warn(`   ⚠ rescan failed for thread ${thread.id}: ${err.message}`);
+    }
+  }
+
+  metrics.dormantRescanReactivated = reactivated;
+  metrics.dormantRescanRelinked    = relinked;
+  console.log(`   [${elapsed()}] dormant rescan: ${reactivated} Line(s) reactivated, ${relinked} thread(s) re-linked`);
+}
+
+async function reactivateDormantFromThread(thread, lineId, shouldRelink) {
+  const tx = await pool.connect();
+  try {
+    await tx.query('BEGIN');
+
+    if (shouldRelink) {
+      await tx.query(`UPDATE story_threads SET timeline_id = $1 WHERE id = $2`, [lineId, thread.id]);
+      // Copy thread's articles into the timeline so the Line's article
+      // count reflects this fresh evidence.
+      await tx.query(`
+        INSERT INTO story_timeline_articles (timeline_id, article_id, relevance_score, parabolic_weight, is_anchor, added_at)
+        SELECT $1, sta.article_id, sta.relevance_score, 1.0, sta.is_anchor, NOW()
+        FROM story_thread_articles sta
+        WHERE sta.thread_id = $2
+        ON CONFLICT (timeline_id, article_id) DO NOTHING
+      `, [lineId, thread.id]);
+    }
+
+    // Flip dormant → active, set last_reawakened_at, and merge the
+    // thread's keywords + nations into the Line's umbrella so future
+    // umbrella scans pick up related articles using the fresh terms.
+    await tx.query(`
+      UPDATE story_timelines
+         SET status             = 'active',
+             last_updated_at    = NOW(),
+             last_reawakened_at = NOW(),
+             importance         = GREATEST(importance, $2),
+             keywords           = ARRAY(SELECT DISTINCT unnest(keywords || $3::text[])),
+             primary_nations    = ARRAY(SELECT DISTINCT unnest(primary_nations || $4::text[])),
+             article_count      = (SELECT COUNT(*) FROM story_timeline_articles WHERE timeline_id = $1)
+       WHERE id = $1
+    `, [lineId, thread.importance || 5, thread.keywords || [], thread.primary_nations || []]);
+
+    await tx.query('COMMIT');
+  } catch (err) {
+    await tx.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    tx.release();
+  }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
 //  PHASE D : COOLDOWN
 // ═════════════════════════════════════════════════════════════════════════════
 async function runCooldownPhase() {
@@ -1233,6 +1398,60 @@ function _isConnectionExhausted(err) {
          m.includes('connect econnrefused');
 }
 
+// Refresh each Line's umbrella keywords/nations from its most recent
+// attached articles. As a story evolves over months, new actors and
+// terminology appear in coverage that the Line's STORED keyword set
+// (set when the Line was created) doesn't include. Without this refresh,
+// dormant or cooling Lines accumulate stale umbrella features and
+// stop matching current articles even when coverage is alive.
+//
+// Strategy: pull the top frequent normalized keywords from the most
+// recent N=20 attached articles and UNION them into story_timelines.
+// keywords. Keeps the union (doesn't replace) so old terms still work
+// for articles re-litigating earlier chapters of the story.
+async function refreshLineUmbrellas(lines) {
+  if (!lines.length) return 0;
+  const lineIds = lines.map(l => l.id);
+  const { rows: kwRows } = await pool.query(`
+    WITH recent_articles AS (
+      SELECT timeline_id, article_id,
+             ROW_NUMBER() OVER (PARTITION BY timeline_id ORDER BY added_at DESC) AS rn
+      FROM story_timeline_articles
+      WHERE timeline_id = ANY($1::int[])
+    )
+    SELECT ra.timeline_id, ak.normalized_keyword AS kw
+    FROM recent_articles ra
+    JOIN article_keywords ak ON ak.article_id = ra.article_id
+    WHERE ra.rn <= 20
+      AND ak.normalized_keyword IS NOT NULL
+      AND length(ak.normalized_keyword) >= 3
+    GROUP BY ra.timeline_id, ak.normalized_keyword
+    HAVING COUNT(*) >= 3
+  `, [lineIds]);
+
+  const byTimeline = new Map();
+  for (const r of kwRows) {
+    if (!byTimeline.has(r.timeline_id)) byTimeline.set(r.timeline_id, []);
+    byTimeline.get(r.timeline_id).push(r.kw);
+  }
+
+  let refreshed = 0;
+  for (const [timelineId, kws] of byTimeline) {
+    if (!kws.length) continue;
+    try {
+      await pool.query(`
+        UPDATE story_timelines
+           SET keywords = ARRAY(SELECT DISTINCT unnest(keywords || $2::text[]))
+         WHERE id = $1
+      `, [timelineId, kws]);
+      refreshed++;
+    } catch (err) {
+      console.warn(`   ⚠ umbrella refresh failed for Line ${timelineId}: ${err.message}`);
+    }
+  }
+  return refreshed;
+}
+
 async function runArticleUmbrellaPhase(metrics, elapsed) {
   // 1. Load active + cooling + dormant Lines.
   // Dormant added here in tandem with the constants comment above —
@@ -1254,6 +1473,29 @@ async function runArticleUmbrellaPhase(metrics, elapsed) {
     return;
   }
   console.log(`   [${elapsed()}] ${lines.length} Line(s) to scan for umbrella articles`);
+
+  // Refresh umbrella keywords from each Line's recent articles BEFORE
+  // building features, so the per-line feature set used for scoring
+  // includes the freshest terminology. Re-fetch lines to pick up the
+  // freshly-merged keywords into the in-memory rows.
+  const refreshedCount = await refreshLineUmbrellas(lines);
+  if (refreshedCount > 0) {
+    console.log(`   [${elapsed()}] umbrella refresh: ${refreshedCount} Line(s) merged in fresh keywords`);
+    const { rows: refreshed } = await pool.query(`
+      SELECT id, keywords, primary_nations
+      FROM story_timelines
+      WHERE id = ANY($1::int[])
+    `, [lines.map(l => l.id)]);
+    const byId = new Map(refreshed.map(r => [r.id, r]));
+    for (const l of lines) {
+      const r = byId.get(l.id);
+      if (r) {
+        l.keywords = r.keywords;
+        l.primary_nations = r.primary_nations;
+      }
+    }
+  }
+  metrics.umbrellaRefreshed = refreshedCount;
 
   // 2. Build umbrella features for every Line (entities from top-N historical
   //    articles + nations + keywords + title tokens)

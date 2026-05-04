@@ -63,21 +63,22 @@ async function main() {
 
     auditedThreads++;
     process.stdout.write(`   [${el()}] Thread ${t.id} (${articles.length} arts) "${(t.title || '').slice(0, 60)}" → Claude... `);
-    let outliers;
+    let auditResult;
     try {
-      outliers = await askClaude(t, articles);
+      auditResult = await askClaude(t, articles);
     } catch (err) {
       console.log(`✗ ERROR: ${err.message}`);
       // Do NOT stamp last_audited_at — Claude failed, the audit didn't
       // happen. Next run will retry this thread.
       continue;
     }
+    const { outliers, dominantTopic } = auditResult;
 
     if (!outliers.length) {
-      console.log(`✓ clean`);
+      console.log(`✓ clean${dominantTopic ? ` (story: "${dominantTopic.slice(0, 70)}")` : ''}`);
     } else {
       flaggedCount += outliers.length;
-      console.log(`🚩 ${outliers.length} outlier(s)`);
+      console.log(`🚩 ${outliers.length} outlier(s)${dominantTopic ? ` — story: "${dominantTopic.slice(0, 70)}"` : ''}`);
       for (const o of outliers) {
         const art = articles.find(a => a.id === o.article_id);
         const title = (art?.title || '').slice(0, 80);
@@ -204,33 +205,58 @@ async function loadArticles(threadId) {
 
 // ─── Claude prompt ───────────────────────────────────────────────────────────
 async function askClaude(thread, articles) {
-  const threadBlock = `THREAD:
+  // Title is shown as a CLUE, not authority. The previous prompt anchored
+  // on the stored title — that broke for two failure modes we observed:
+  //   (1) wrongly-merged titles ("antisemitic hoax threat" = antisemitic
+  //       violence + one bomb-hoax article). Every article matched HALF
+  //       the title → Claude returned "clean".
+  //   (2) titles that drifted broad enough that off-topic articles
+  //       seemed plausible (Trump scotch-tariff thread containing a
+  //       Pentagon-Iran cost article).
+  // The rewrite below asks Claude to derive the dominant topic from the
+  // article set FIRST, then audit against THAT — so a corrupted title
+  // can't shield outliers.
+  const threadBlock = `THREAD (stored metadata — treat as a clue, NOT as authority):
 - id: ${thread.id}
 - title: "${thread.title || ''}"
 - category: ${thread.primary_category || 'unknown'}
 - description: ${thread.description || '(none)'}
 - keywords: ${(thread.keywords || []).slice(0, 15).join(', ')}`;
 
+  // Bumped 220 → 350 chars so the summary actually shows the article's
+  // subject for medium-length pieces. The prior 220 truncation hid the
+  // subject for many wire-service articles whose lede starts with
+  // attribution boilerplate.
   const articleBlock = articles.map(a =>
-    `#${a.id} [${a.source_name || '?'}${a.country_name ? ', ' + a.country_name : ''}] "${(a.title || '').slice(0, 160)}"\n   ${(a.summary || '').slice(0, 220).replace(/\s+/g, ' ')}`
+    `#${a.id} [${a.source_name || '?'}${a.country_name ? ', ' + a.country_name : ''}] "${(a.title || '').slice(0, 180)}"\n   ${(a.summary || '').slice(0, 350).replace(/\s+/g, ' ')}`
   ).join('\n');
 
-  const prompt = `You are auditing article-to-thread assignments for a breaking-news platform. A "thread" is a single ongoing story; an article is "out of place" if it's about a different event, unrelated topic, or only tangentially references the thread subject.
+  const prompt = `You are auditing article-to-thread assignments for a breaking-news platform. A "thread" should be a SINGLE ongoing story — one event, one decision, one actor's narrative arc.
+
+The thread's stored title is a CLUE. Threads accumulate articles over time, and the title sometimes gets re-synthesized to cover topics that don't actually belong together. You must NOT trust the title alone — derive the truth from the articles.
+
+STEP 1 — Identify the dominant story.
+Read every article. The "dominant story" is the single concrete event/actor/decision that the LARGEST cluster of articles covers. If the title looks like a forced merger of two unrelated topics (e.g. "Antisemitic Hoax Threat" combining antisemitic violence with one isolated bomb-hoax article), pick the larger cluster as the true story.
+
+STEP 2 — Flag outliers.
+For each article, decide if it belongs to the dominant story or is an outlier.
 
 Return ONLY valid JSON matching this schema:
 {
+  "dominant_topic": "one-sentence description of the actual story you inferred from the articles",
   "outliers": [
     { "article_id": 12345, "reason": "one-line reason (<20 words)" }
   ]
 }
 
 Rules:
-- ONLY flag articles that are clearly NOT about this thread's story. When in doubt, keep the article attached.
-- A related-but-secondary article about the same event is fine; do NOT flag it.
-- Do not flag articles just because they use different vocabulary — same event, different framing, keep it.
-- Tangential articles that only mention the subject in passing ARE outliers.
-- Articles about a different conflict, a different country's politics, or a different event entirely ARE outliers.
-- If every article belongs, return { "outliers": [] }.
+- If the articles split into 2+ distinct topic clusters of size ≥ 2, flag the smaller cluster(s) as outliers. A thread is one story, not a topic bucket.
+- Different DOMAIN entirely → outlier (e.g., trade policy vs military operation; cultural event vs political crisis; one country's election vs another country's protest).
+- A related-but-secondary article about the SAME event is fine; do NOT flag it.
+- Different vocabulary describing the same event is fine; do NOT flag.
+- An article that only mentions the subject in passing IS an outlier.
+- Cross-topic surface noise — articles that share an actor name (e.g. "Trump") but are about a totally different decision/event — ARE outliers.
+- If every article truly belongs to one story, return outliers: [].
 
 ${threadBlock}
 
@@ -239,15 +265,22 @@ ${articleBlock}`;
 
   const response = await client.messages.create({
     model: MODEL,
-    max_tokens: 1400,
+    max_tokens: 1600,
     messages: [{ role: 'user', content: prompt }],
   });
   const text = (response?.content || []).map(p => typeof p?.text === 'string' ? p.text : '').join('').trim();
   const parsed = extractJson(text);
   const list = Array.isArray(parsed?.outliers) ? parsed.outliers : [];
-  return list
-    .map(o => ({ article_id: parseInt(o.article_id, 10), reason: String(o.reason || '').trim().slice(0, 160) }))
-    .filter(o => Number.isFinite(o.article_id) && articles.some(a => a.id === o.article_id));
+  // Capture the dominant_topic into the reason metadata so the audit log
+  // and tombstone reason both make clear WHY (the thread's actual story
+  // wasn't this article's topic), not just "doesn't match title".
+  const dominantTopic = String(parsed?.dominant_topic || '').trim().slice(0, 200);
+  return {
+    dominantTopic,
+    outliers: list
+      .map(o => ({ article_id: parseInt(o.article_id, 10), reason: String(o.reason || '').trim().slice(0, 160) }))
+      .filter(o => Number.isFinite(o.article_id) && articles.some(a => a.id === o.article_id))
+  };
 }
 
 function extractJson(text) {
