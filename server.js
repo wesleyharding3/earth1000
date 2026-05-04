@@ -2863,9 +2863,35 @@ app.get("/api/flows", heavyLimiter, async (req, res) => {
     // tokens must appear; non-word chars are stripped to prevent users
     // injecting tsquery syntax (`! | ( )` etc.).
     if (keyword) {
+      // Push the outer query's date filter INTO the keyword subquery via a
+      // JOIN on news_articles. Without this, hot keywords like "trump"
+      // pulled every tagged article_id from article_keywords (~150k+ across
+      // the 90-day retention window), then the outer 7-day filter discarded
+      // most — but the IN evaluator still materialized the full set first,
+      // which is what was timing out the prewarm cron at 60-90s. With the
+      // date pushed down, the subquery only returns article_ids that are
+      // BOTH keyword-tagged AND inside the requested window. No silent cap
+      // — just don't materialize rows the outer query will drop anyway.
       const kwLower = keyword.toLowerCase().trim();
       params.push(kwLower);
       const exactParam = params.length;
+
+      // Build the same date filter the outer query uses, but parameterized
+      // separately so it can sit inside the subquery's WHERE.
+      const subDateClauses = [];
+      if (fromDate) {
+        params.push(fromDate);
+        subDateClauses.push(`na.published_at >= $${params.length}::date`);
+      }
+      if (toDate) {
+        params.push(toDate);
+        subDateClauses.push(`na.published_at < $${params.length}::date + interval '1 day'`);
+      }
+      if (!fromDate && !toDate) {
+        subDateClauses.push(`na.published_at > NOW() - INTERVAL '7 days'`);
+      }
+      const subDateFilter = subDateClauses.length ? ` AND ${subDateClauses.join(' AND ')}` : '';
+
       const tsTokens = kwLower.replace(/[^a-z0-9 ]+/g, ' ').trim().split(/\s+/).filter(Boolean);
       if (tsTokens.length) {
         const tsQuery = tsTokens.map(w => w + ':*').join(' & ');
@@ -2873,14 +2899,18 @@ app.get("/api/flows", heavyLimiter, async (req, res) => {
         const tsParam = params.length;
         conditions.push(`a.id IN (
           SELECT ak.article_id FROM article_keywords ak
-          WHERE ak.normalized_keyword = $${exactParam}
-             OR to_tsvector('simple', ak.keyword) @@ to_tsquery('simple', $${tsParam})
+          JOIN news_articles na ON na.id = ak.article_id
+          WHERE (ak.normalized_keyword = $${exactParam}
+             OR to_tsvector('simple', ak.keyword) @@ to_tsquery('simple', $${tsParam}))
+            ${subDateFilter}
         )`);
       } else {
         // Pure non-word input — only the exact normalized lookup is meaningful.
         conditions.push(`a.id IN (
           SELECT ak.article_id FROM article_keywords ak
+          JOIN news_articles na ON na.id = ak.article_id
           WHERE ak.normalized_keyword = $${exactParam}
+            ${subDateFilter}
         )`);
       }
     }
@@ -7195,15 +7225,39 @@ app.get("/api/heatmap", heavyLimiter, async (req, res) => {
         // via to_tsquery 'kw:*'), then probe the outer query against
         // that set. Same fix already shipped to /api/flows and
         // /api/news/search.
+        //
+        // ALSO push the outer date filter INTO the subquery via a JOIN
+        // on news_articles. Without this, hot keywords like "trump"
+        // pulled every tagged article_id (~150k+ across the 90-day
+        // retention window), then the outer N-day filter discarded most
+        // — but the IN evaluator materialized the full set first, which
+        // is what was timing out the prewarm cron at 80s+ on
+        // trump-heatmap. With the date pushed down, the subquery only
+        // returns article_ids that are BOTH keyword-tagged AND inside
+        // the requested window. No silent cap; density still reflects
+        // every relevant article.
         const kwLc = keyword.toLowerCase().trim();
         params.push(kwLc);
         const kwExact = `$${params.length}`;
         params.push(kwLc + ':*');
         const kwTs = `$${params.length}`;
+
+        const subDateClauses = [];
+        if (fromIso && toIso) {
+          params.push(fromIso); subDateClauses.push(`na.published_at >= $${params.length}::timestamptz`);
+          params.push(toIso);   subDateClauses.push(`na.published_at <  $${params.length}::timestamptz`);
+        } else {
+          params.push(days);
+          subDateClauses.push(`na.published_at > NOW() - make_interval(days => $${params.length}::int)`);
+        }
+        const subDateFilter = subDateClauses.length ? ` AND ${subDateClauses.join(' AND ')}` : '';
+
         where.push(`a.id IN (
           SELECT ak.article_id FROM article_keywords ak
-          WHERE ak.normalized_keyword = ${kwExact}
-             OR to_tsvector('simple', ak.keyword) @@ to_tsquery('simple', ${kwTs})
+          JOIN news_articles na ON na.id = ak.article_id
+          WHERE (ak.normalized_keyword = ${kwExact}
+             OR to_tsvector('simple', ak.keyword) @@ to_tsquery('simple', ${kwTs}))
+            ${subDateFilter}
         )`);
       }
 

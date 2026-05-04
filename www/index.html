@@ -15889,22 +15889,21 @@ const loader = new THREE.TextureLoader();
     }
 
     function snapToNearest() {
+      // Two-state snap (max ↔ default). 'min' was removed per product
+      // decision — the country/city panel now toggles between full and
+      // half-screen only. Drag-down past default still gets clamped to
+      // default by the snap logic below; the panel itself can be closed
+      // via the ✕ button.
       const currentH = _rafTargetH || parseFloat(infoPanel.style.height);
-      const min = SNAP.min;
       const def = SNAP.default;
       const max = SNAP.max();
 
       // Velocity-based: fast flick overrides position thresholds
-      // _velocity > 0 means panel growing (swipe up), < 0 means shrinking (swipe down)
       const FLICK = 0.35; // px/ms — a decisive flick
       if (_velocity < -FLICK) {
-        // Fast swipe down → go to next smaller state
-        if (snapState === "max") { applySnapHeight("default"); return; }
-        applySnapHeight("min"); return;
+        applySnapHeight("default"); return;
       }
       if (_velocity > FLICK) {
-        // Fast swipe up → go to next larger state
-        if (snapState === "min") { applySnapHeight("default"); return; }
         applySnapHeight("max"); return;
       }
 
@@ -15912,15 +15911,14 @@ const loader = new THREE.TextureLoader();
       const dragDir = currentH < resizeStartH ? -1 : 1;
       if (dragDir < 0) {
         if (snapState === "max" && currentH < max - (max - def) * 0.2) { applySnapHeight("default"); return; }
-        if (currentH < def - (def - min) * 0.2) { applySnapHeight("min"); return; }
+        // No min snap — stay at default.
+        applySnapHeight("default"); return;
       } else {
-        if (snapState === "min" && currentH > min + (def - min) * 0.2) { applySnapHeight("default"); return; }
         if (currentH > def + (max - def) * 0.2) { applySnapHeight("max"); return; }
       }
 
-      // Fallback: snap to nearest
+      // Fallback: snap to nearest of the two valid states.
       const states = [
-        { state: "min", value: min },
         { state: "default", value: def },
         { state: "max", value: max }
       ];
@@ -15952,11 +15950,19 @@ const loader = new THREE.TextureLoader();
       if (!_rafPending) { _rafPending = true; requestAnimationFrame(_rafApplyH); }
     }
 
+    // 5px tap threshold — any micro-jitter under this is treated as a
+    // tap, not a drag. Without this, even a 1px finger tremor on tap was
+    // setting fromEl._didDrag=true, which made the click handler bail
+    // (the "needs many clicks" bug on the resize handle).
+    const TAP_MOVE_THRESHOLD = 5;
+    let _resizeTotalMove = 0;
+
     function _startDrag(clientY, fromEl) {
       resizeDragging = true;
       resizeStartY = clientY;
       resizeStartH = parseFloat(infoPanel.style.height) || SNAP.default;
       _velocity = 0;
+      _resizeTotalMove = 0;
       _lastMoveTime = performance.now();
       infoPanel.classList.add("panel-dragging");
       if (fromEl) fromEl._didDrag = false;
@@ -15964,7 +15970,11 @@ const loader = new THREE.TextureLoader();
 
     function _moveDrag(clientY, fromEl) {
       if (!resizeDragging) return;
-      if (fromEl) fromEl._didDrag = true;
+      _resizeTotalMove = Math.max(_resizeTotalMove, Math.abs(clientY - resizeStartY));
+      if (fromEl && _resizeTotalMove >= TAP_MOVE_THRESHOLD) fromEl._didDrag = true;
+      // Don't actually move the panel until we've crossed the threshold —
+      // keeps a stationary tap visually still even if the touchmove fires.
+      if (_resizeTotalMove < TAP_MOVE_THRESHOLD) return;
       const now = performance.now();
       const dt = now - _lastMoveTime;
       const newH = Math.max(SNAP.min, Math.min(SNAP.max(), resizeStartH + (resizeStartY - clientY)));
@@ -15981,6 +15991,14 @@ const loader = new THREE.TextureLoader();
       resizeDragging = false;
       infoPanel.classList.remove("panel-dragging");
       document.body.style.cursor = "";
+      // If movement never crossed the tap threshold, this was a tap —
+      // skip snapToNearest() entirely and let the click handler decide.
+      // Without this skip, snapToNearest read _rafTargetH=0 (no drag
+      // occurred so no rAF-scheduled height) and the position-based
+      // branch evaluated 0 < def → snapped to 'min', which then the
+      // click handler immediately toggled to 'max' — the "minimizes
+      // first, then maximizes" visible bug.
+      if (_resizeTotalMove < TAP_MOVE_THRESHOLD) return;
       snapToNearest();
     }
 
@@ -39220,8 +39238,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
   function _adpTouchMove(e) {
     if (!_adpDragging) return;
-    _adpDidDrag = true;
     const clientY = e.touches[0].clientY;
+    const moved = Math.abs(clientY - _adpStartY);
+    // 5px tap threshold — match the country/city + cluster-detail
+    // panels. Finger jitter under this stays a tap; the click handler
+    // does the snap toggle.
+    if (moved < 5) return;
+    _adpDidDrag = true;
     const dy = _adpStartY - clientY; // positive = swipe up = grow
     // Lower bound keeps the panel's first line (~100px from top) visible
     // above the nav/ticker. Read the same vars the rest of the app uses.
@@ -39284,6 +39307,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
   panel.addEventListener('touchstart', _adpTouchStart, { passive: true });
   panel.addEventListener('touchmove', _adpTouchMove, { passive: true });
   panel.addEventListener('touchend', _adpTouchEnd);
+
+  // One-click maximize on the drag handle — mirrors the country/city
+  // (#panelResizeHandle) and cluster-detail (#cdResizeHandle) handles
+  // which both toggle between 'max' and 'default' on tap. Drag-vs-click
+  // disambiguated via _adpDidDrag (set by _adpTouchMove) so a real drag
+  // doesn't also trigger this toggle on touchend → click.
+  if (adpHandle) {
+    adpHandle.addEventListener('click', (e) => {
+      if (_adpDidDrag) { _adpDidDrag = false; return; }
+      e.stopPropagation();
+      adpApplySnap(adpSnapState === 'max' ? 'default' : 'max');
+    });
+  }
   
   // ── Stop globe interactions when using panel ─────────────────────────────────
   panel.addEventListener('click', (e) => { e.stopPropagation(); });
@@ -48297,15 +48333,26 @@ body.ticker-active .gTickerLabel {
     function _cdRafApply() { _cdRafPending = false; detailEl.style.height = _cdRafH + "px"; }
     function _cdScheduleH(h) { _cdRafH = h; if (!_cdRafPending) { _cdRafPending = true; requestAnimationFrame(_cdRafApply); } }
 
+    // 5px tap threshold — micro-jitter under this is treated as a tap,
+    // not a drag, so the click handler isn't bypassed by a 1px finger
+    // tremor on touchstart→touchend (the "needs many clicks" bug).
+    const CD_TAP_THRESHOLD = 5;
+    let _cdTotalMove = 0;
+
     function _cdStartDrag(clientY) {
       _cdDragging = true; _cdDidDrag = false;
       _cdDragY = clientY;
       _cdDragH = detailEl.getBoundingClientRect().height || CD_DEFAULT_H();
       _cdVelocity = 0; _cdLastMoveT = performance.now();
+      _cdTotalMove = 0;
       detailEl.classList.add("panel-dragging");
     }
     function _cdMoveDrag(clientY) {
       if (!_cdDragging) return;
+      _cdTotalMove = Math.max(_cdTotalMove, Math.abs(clientY - _cdDragY));
+      // Don't flag as a drag (and don't move the panel) until the finger
+      // has crossed the tap threshold — keeps stationary taps stationary.
+      if (_cdTotalMove < CD_TAP_THRESHOLD) return;
       _cdDidDrag = true;
       const now = performance.now();
       const dt = now - _cdLastMoveT;
