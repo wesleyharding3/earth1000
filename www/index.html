@@ -55919,17 +55919,25 @@ body.ticker-active .gTickerLabel {
     }
   }
   // OAuth callback for native Google sign-in. The in-app SFSafariViewController
-  // posts back to com.earth00.app://login-callback?code=… — we exchange the
-  // code for a session and dismiss the browser so the user lands in-app.
-  // Errors from the provider come through as ?error=…&error_description=…
-  // (no `code`); surface those in the auth modal so the user knows why.
+  // posts back to com.earth00.app://login-callback?code=… — dismiss the
+  // sheet FIRST so the user gets instant feedback, then exchange the code in
+  // the background. Earlier ordering (exchange first, then close) left the
+  // sheet stuck on a blank page during the network round-trip; user reports
+  // had to force-quit to recover. Idempotent + duplicate-safe via _authBusy.
+  let _authBusy = false;
   async function _routeAuthCallback(url) {
     if (!url || url.indexOf('com.earth00.app://login-callback') !== 0) return false;
+    if (_authBusy) return true;
+    _authBusy = true;
+    const Browser = window.Capacitor?.Plugins?.Browser || null;
+    // Dismiss the in-app sheet immediately — runs in parallel with the
+    // exchange below. Errors are swallowed because the user may have
+    // already dismissed the sheet manually.
+    try { Browser?.close?.(); } catch (_) {}
     try {
       const u = new URL(url);
       const code = u.searchParams.get('code');
       const errDesc = u.searchParams.get('error_description') || u.searchParams.get('error');
-      const Browser = window.Capacitor?.Plugins?.Browser || null;
       const sb = window.__earthSupabase;
       if (errDesc) {
         const msgEl = document.getElementById('authMsg');
@@ -55941,9 +55949,10 @@ body.ticker-active .gTickerLabel {
           if (msgEl) { msgEl.className = 'authMsg show error'; msgEl.textContent = error.message || 'Sign-in failed.'; }
         }
       }
-      try { await Browser?.close?.(); } catch (_) {}
     } catch (err) {
       console.warn('[auth] callback route error:', err.message);
+    } finally {
+      _authBusy = false;
     }
     return true;
   }
@@ -55960,6 +55969,16 @@ body.ticker-active .gTickerLabel {
           if (!handled) _routeShareUrl(url);
         });
       });
+      // Belt-and-suspenders: if the user dismisses the SFSafariViewController
+      // manually (or the OAuth provider stalls and they tap Done), nudge
+      // Supabase to re-read the session — the redirect may have completed
+      // server-side before they killed the sheet.
+      const Browser = window.Capacitor?.Plugins?.Browser || null;
+      if (Browser?.addListener) {
+        Browser.addListener('browserFinished', () => {
+          try { window.__earthSupabase?.auth?.getSession?.(); } catch (_) {}
+        });
+      }
     }
     // On regular web (browser open of /share/...), the redirect
     // happens automatically (set timeout in the share HTML wrapper)
