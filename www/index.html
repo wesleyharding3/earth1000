@@ -9671,6 +9671,9 @@ button.arcCtxSegDot,
       display: flex; justify-content: space-between;
       align-items: center; margin-top: auto; padding-top: 4px; gap: 6px;
     }
+    .nfThreadCardFooterLeft {
+      display: flex; flex-direction: column; gap: 1px; min-width: 0;
+    }
     .nfThreadCardMeta {
       font-size: 9px; color: rgba(255,255,255,0.28); font-weight: 500;
     }
@@ -33218,13 +33221,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // quiet for 3 days but hasn't had its row updated yet.
       //
       // Sort priority (matches /api/threads/latest ORDER BY):
-      //   1. status — active → dormant → cooling (note dormant before
-      //      cooling per spec: established stories with depth read
-      //      better than transition-state ones)
+      //   1. status — active → cooling → dormant
       //   2. importance DESC
       //   3. category tier
       //   4. recency
-      const STATUS_RANK = { active: 0, dormant: 1, cooling: 2 };
+      const STATUS_RANK = { active: 0, cooling: 1, dormant: 2 };
       function applyRecencyStatus(data) {
         const now = Date.now();
         const H48     = 48 * 60 * 60 * 1000;
@@ -33341,7 +33342,25 @@ const settingsToggle     = document.getElementById("settingsToggle");
               <div class="nfThreadCardDesc">${desc}</div>
             </div>
             <div class="nfThreadCardFooter">
-              <span class="nfThreadCardMeta">${count} article${count !== 1 ? 's' : ''}</span>
+              <div class="nfThreadCardFooterLeft">
+                ${(() => {
+                  // Date range: earliest → latest article. Empty when both
+                  // missing; collapses to a single date when both equal.
+                  const _e = t.earliest_published_at ? new Date(t.earliest_published_at) : null;
+                  const _l = t.latest_published_at  ? new Date(t.latest_published_at)  : null;
+                  const _valid = (d) => d && !Number.isNaN(d.getTime());
+                  if (!_valid(_e) && !_valid(_l)) return '';
+                  const _one = _valid(_e) ? _e : _l;
+                  const _two = _valid(_l) ? _l : _e;
+                  const sameYear = _one.getFullYear() === _two.getFullYear();
+                  const opts = sameYear ? { month: 'short', day: 'numeric' } : { month: 'short', day: 'numeric', year: 'numeric' };
+                  const a = _one.toLocaleDateString(undefined, opts);
+                  const b = _two.toLocaleDateString(undefined, opts);
+                  const label = a === b ? a : `${a} \u2013 ${b}`;
+                  return `<span class="nfThreadCardMeta">${esc(label)}</span>`;
+                })()}
+                <span class="nfThreadCardMeta">${count} article${count !== 1 ? 's' : ''}</span>
+              </div>
               <div class="nfThreadCardNations">${(() => {
                 // Preprocess: uppercase, alias UK→GB (UK isn't a valid
                 // ISO 3166-1 alpha-2 code; it was rendering as a

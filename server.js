@@ -8716,10 +8716,12 @@ app.get("/api/threads/latest", async (req, res) => {
         st.id AS thread_id, st.title, st.description, st.primary_category,
         st.geographic_scope, st.importance, st.keywords, st.primary_nations,
         st.article_count, st.status, st.last_updated_at,
-        COALESCE(lp.latest_pub, st.last_updated_at) AS true_latest_published_at
+        COALESCE(lp.latest_pub, st.last_updated_at) AS true_latest_published_at,
+        lp.earliest_pub AS earliest_published_at
       FROM story_threads st
       LEFT JOIN LATERAL (
-        SELECT MAX(na.published_at) AS latest_pub
+        SELECT MAX(na.published_at) AS latest_pub,
+               MIN(na.published_at) AS earliest_pub
         FROM story_thread_articles sta
         JOIN news_articles na ON na.id = sta.article_id
         WHERE sta.thread_id = st.id
@@ -8729,14 +8731,15 @@ app.get("/api/threads/latest", async (req, res) => {
         AND COALESCE(st.scope, 'global') = 'global'
         ${dateWhere}
       ORDER BY
-        -- Status first: active → dormant → cooling → other (per request).
-        -- Importance second within each status bucket. Note dormant
-        -- ranks BEFORE cooling intentionally — established stories with
-        -- depth read better than transition-state ones.
+        -- Status first: active → cooling → dormant → other.
+        -- Importance second within each status bucket. Cooling threads
+        -- are still freshening (recent but slowing) while dormant ones
+        -- have aged out — surfacing cooling first matches user mental
+        -- model of "what's happening now".
         CASE st.status
           WHEN 'active'  THEN 0
-          WHEN 'dormant' THEN 1
-          WHEN 'cooling' THEN 2
+          WHEN 'cooling' THEN 1
+          WHEN 'dormant' THEN 2
           ELSE 3
         END,
         st.importance DESC NULLS LAST,
