@@ -59,6 +59,17 @@ const {
   snapshotTimeline: snapshotTimelineRow,
 } = require("./editorEventLogger");
 
+// Refuse to boot if the local-dev admin backdoor is enabled in production.
+// DEV_EDITOR_BYPASS=1 forces req.user.is_admin = true on every request (see
+// the requireAdmin block further down) — convenient for local editorial work
+// without minting admin tokens, catastrophic if a stale .env ever lands on
+// Render. Failing fast here surfaces the misconfig immediately instead of
+// silently shipping admin endpoints to the public.
+if (process.env.NODE_ENV === 'production' && process.env.DEV_EDITOR_BYPASS === '1') {
+  console.error('FATAL: DEV_EDITOR_BYPASS=1 is forbidden when NODE_ENV=production');
+  process.exit(1);
+}
+
 const app = express();
 console.log("Node version:", process.version);
 

@@ -1390,6 +1390,29 @@ async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()
                    ))
              WHERE id = $1
           `, [threadId]);
+          // Mirror the eject into the parent timeline. story_timeline_articles
+          // is INSERT-only by storyTimelineBuilder, so without this an ejected
+          // article keeps appearing in the Line view and contaminates the
+          // umbrella keyword refresh forever. We only delete from the timeline
+          // if NO OTHER thread in the same timeline still contains the
+          // article — an article shared across sibling threads stays as long
+          // as one of them legitimately owns it. NOT EXISTS works here because
+          // the DELETE FROM story_thread_articles above already happened, so
+          // "this thread still contains it" naturally evaluates false.
+          await pool.query(`
+            DELETE FROM story_timeline_articles sta
+            WHERE sta.timeline_id = (SELECT timeline_id FROM story_threads WHERE id = $1)
+              AND sta.timeline_id IS NOT NULL
+              AND sta.article_id = ANY($2::int[])
+              AND NOT EXISTS (
+                SELECT 1
+                FROM story_thread_articles other_sta
+                JOIN story_threads other_t ON other_t.id = other_sta.thread_id
+                WHERE other_t.timeline_id = sta.timeline_id
+                  AND other_t.id != $1
+                  AND other_sta.article_id = sta.article_id
+              )
+          `, [threadId, ejectIds]);
           await recomputeBreakingSignal(threadId).catch(() => {});
           console.log(`   ✂ Ejected ${result.rowCount} article(s) from thread ${threadId} "${def.reason || ''}"`);
           touchedIds.add(threadId);

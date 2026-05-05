@@ -44,6 +44,7 @@
  *                               ⚠️  Never expose this in the frontend — server-only
  */
 
+const crypto  = require('crypto');
 const express = require('express');
 const fs      = require('fs');
 const path    = require('path');
@@ -116,27 +117,28 @@ async function upsertSubscription({ userId, tier, provider, providerSubId, provi
   //   [revenuecat/webhook] type=PRODUCT_CHANGE product=earth00.pro.monthly tier=pro
   //   ↑ written AFTER an earlier enterprise upgrade had landed
   //
-  // Guard: read the current row first; if the incoming tier is LOWER and
-  // the row's status is still active and unexpired, no-op. Does NOT block
-  // status changes (cancellation, expiration) — only refuses to silently
-  // demote the tier_id of a still-active row.
-  if (status === 'active') {
-    const { data: existing } = await sba
-      .from('subscriptions')
-      .select('tier_id, status, current_period_end')
-      .eq('user_id', userId)
-      .maybeSingle();
-    if (existing?.tier_id != null && existing.status === 'active') {
-      // Compare tier ranks via name (existing.tier_id → name).
-      const existingTierName = await _tierNameById(existing.tier_id);
-      const incomingRank = _tierRank(tier);
-      const existingRank = _tierRank(existingTierName);
-      const periodActive = !existing.current_period_end
-        || new Date(existing.current_period_end) > new Date();
-      if (incomingRank > 0 && incomingRank < existingRank && periodActive) {
-        console.log(`[upsertSubscription] skipping downgrade: ${existingTierName}(rank ${existingRank}) → ${tier}(rank ${incomingRank}) for user ${userId}`);
-        return;
-      }
+  // Guard: read the current row first; if the row is currently active
+  // with an unexpired period AND the incoming tier rank is strictly
+  // LOWER, no-op. Independent of the *incoming* status — a webhook
+  // arriving with status='expired'/'in_grace_period'/etc. that also
+  // tries to demote tier_id is exactly the case we need to block. This
+  // does NOT block upgrades (incoming rank > existing) or renewals
+  // (equal rank); status-only transitions go through cancelSubscription
+  // / setSubscriptionStatus, which don't pass through this guard.
+  const { data: existing } = await sba
+    .from('subscriptions')
+    .select('tier_id, status, current_period_end')
+    .eq('user_id', userId)
+    .maybeSingle();
+  if (existing?.tier_id != null && existing.status === 'active') {
+    const existingTierName = await _tierNameById(existing.tier_id);
+    const incomingRank = _tierRank(tier);
+    const existingRank = _tierRank(existingTierName);
+    const periodActive = !existing.current_period_end
+      || new Date(existing.current_period_end) > new Date();
+    if (incomingRank > 0 && incomingRank < existingRank && periodActive) {
+      console.log(`[upsertSubscription] skipping downgrade: ${existingTierName}(rank ${existingRank}) → ${tier}(rank ${incomingRank}) status=${status} for user ${userId}`);
+      return;
     }
   }
 
@@ -510,7 +512,16 @@ async function markWebhookFailed(rowId, errMessage) {
 async function verifyPayPalWebhookSignature(req) {
   const webhookId = process.env.PAYPAL_WEBHOOK_ID;
   if (!webhookId) {
-    console.warn('[paypal/webhook] PAYPAL_WEBHOOK_ID not set — accepting unverified event. Set this env var before production.');
+    // Fail closed in production: an unset secret is almost always a deploy
+    // misconfig, and a permissive fallback turns the webhook into a free
+    // subscription dispenser for anyone who knows the URL. Keep the
+    // sandbox affordance so local development before the webhook is wired
+    // up still works without setting the env var.
+    if (process.env.NODE_ENV === 'production') {
+      console.error('[paypal/webhook] PAYPAL_WEBHOOK_ID missing in production — rejecting');
+      return false;
+    }
+    console.warn('[paypal/webhook] PAYPAL_WEBHOOK_ID not set (sandbox) — accepting unverified event.');
     return true;
   }
   const h = req.headers;
@@ -949,7 +960,12 @@ router.post('/revenuecat/webhook', async (req, res) => {
     console.error('[revenuecat/webhook] REVENUECAT_WEBHOOK_SECRET not set — rejecting');
     return res.sendStatus(500);
   }
-  if (got !== expected) {
+  // Timing-safe comparison: short-circuit equality leaks one byte of the
+  // secret per measurable timing difference. The length pre-check is
+  // mandatory — crypto.timingSafeEqual throws on mismatched lengths.
+  const gotBuf = Buffer.from(got);
+  const expBuf = Buffer.from(expected);
+  if (gotBuf.length !== expBuf.length || !crypto.timingSafeEqual(gotBuf, expBuf)) {
     console.warn('[revenuecat/webhook] auth header mismatch');
     return res.sendStatus(401);
   }
