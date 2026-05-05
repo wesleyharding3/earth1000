@@ -523,6 +523,16 @@ async function run() {
       if (segments[si]._focalSplitMs != null) {
         segments[si].focal_trigger_ms = cumMs + segments[si]._focalSplitMs;
         delete segments[si]._focalSplitMs;
+      } else {
+        // Defensive fallback for takeover segments lacking a split — see
+        // comment in the main generation path. Stamps end-of-voiceover so
+        // the player never cuts the narrator off mid-sentence even when
+        // Claude regresses on the [VIDEO_HANDOFF] marker.
+        const _fm = segments[si].featured_video || segments[si].video?.focal || segments[si].video_focal;
+        if (_fm?.enabled && segments[si].media_type !== 'heatmap' && vms > 0) {
+          segments[si].focal_trigger_ms = cumMs + vms;
+          console.warn(`   ⚠ Seg ${si} (audio-only regen) takeover without split — stamping focal_trigger_ms = ${segments[si].focal_trigger_ms}ms (end-of-voiceover).`);
+        }
       }
       cumMs += vms + tms;
     }
@@ -1036,6 +1046,23 @@ async function run() {
         const _focalSplitMs = segments[si]._focalSplitMs;
         if (_focalSplitMs != null) {
           segments[si].focal_trigger_ms = cumMs + _focalSplitMs;
+        } else {
+          // Defensive fallback: if this is a takeover (video/twitter)
+          // segment without a [VIDEO_HANDOFF] split — Claude sometimes
+          // omits the marker even when the prompt requests it (observed
+          // in episode 36 where every featured-video segment shipped
+          // without a split, causing the player's legacy 35%-timer
+          // fallback to cut the narrator off mid-sentence) — stamp
+          // focal_trigger_ms at the end of the voiceover so the player's
+          // poll-until-currentTime guard can wait for the narrator to
+          // finish her sentence before the takeover fires. Heatmap is a
+          // passive overlay (narrator keeps speaking), so we skip it.
+          const _fmCheck = segments[si].featured_video || segments[si].video?.focal || segments[si].video_focal;
+          const _isHeatmapSeg = segments[si].media_type === 'heatmap';
+          if (_fmCheck?.enabled && !_isHeatmapSeg && vms > 0) {
+            segments[si].focal_trigger_ms = cumMs + vms;
+            console.warn(`   ⚠ Seg ${si} ("${segments[si].thread_title || ''}") is a takeover but Claude omitted [VIDEO_HANDOFF] — stamping focal_trigger_ms = end-of-voiceover (${segments[si].focal_trigger_ms}ms) so narrator finishes before video.`);
+          }
         }
 
         // Phase 2C: stamp ms on each text line of seg.script using the

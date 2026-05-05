@@ -2049,15 +2049,19 @@
                 <option value="youtube" ${mediaType === 'youtube' ? 'selected' : ''}>YouTube Video</option>
                 <option value="twitter_post" ${mediaType === 'twitter_post' ? 'selected' : ''}>Twitter/X Post</option>
                 <option value="twitter_video" ${mediaType === 'twitter_video' ? 'selected' : ''}>Twitter/X Video</option>
+                <option value="heatmap" ${mediaType === 'heatmap' ? 'selected' : ''}>Heatmap (configured in Step 2)</option>
               </select>
             </div>
             <div id="media-yt-${idx}" style="display:${mediaType === 'youtube' ? 'block' : 'none'};">
               <input class="seg-input" data-seg="${idx}" data-field="video_id" placeholder="YouTube Video ID" value="${escHtml(videoId)}" />
               ${videoId ? `<div style="margin-top:6px;"><img src="https://img.youtube.com/vi/${escHtml(videoId)}/mqdefault.jpg" style="max-width:200px;border-radius:4px;" /></div>` : ''}
             </div>
-            <div id="media-tw-${idx}" style="display:${mediaType !== 'youtube' ? 'block' : 'none'};">
+            <div id="media-tw-${idx}" style="display:${mediaType === 'twitter_post' || mediaType === 'twitter_video' ? 'block' : 'none'};">
               <input class="seg-input" data-seg="${idx}" data-field="twitter_url" placeholder="https://x.com/user/status/123..." value="${escHtml(twitterUrl)}" />
               <span style="font-size:10px;color:rgba(255,255,255,0.35);margin-top:2px;display:block;">Full tweet URL — post or video</span>
+            </div>
+            <div id="media-hm-${idx}" style="display:${mediaType === 'heatmap' ? 'block' : 'none'};font-size:11px;color:rgba(255,255,255,0.5);padding:6px 8px;background:rgba(96,200,255,0.06);border-left:2px solid rgba(96,200,255,0.4);border-radius:4px;">
+              Heatmap question and mode are edited in Step 2 (enrichment). The Step 3 dropdown only displays the type.
             </div>
           </div>
           <div class="seg-field" style="padding-left:12px;border-left:2px solid rgba(96,200,255,0.2);">
@@ -2161,8 +2165,15 @@
     function toggleMediaFields(idx, mediaType) {
       const ytDiv = document.getElementById(`media-yt-${idx}`);
       const twDiv = document.getElementById(`media-tw-${idx}`);
+      const hmDiv = document.getElementById(`media-hm-${idx}`);
+      // Heatmap segments don't need the YouTube ID or Twitter URL fields —
+      // hide both. Without this guard the old logic showed the Twitter
+      // input for any non-youtube selection, including 'heatmap', which
+      // both confused the editor and caused stale URL values to leak
+      // back into clone.twitter_url on save.
       if (ytDiv) ytDiv.style.display = mediaType === 'youtube' ? 'block' : 'none';
-      if (twDiv) twDiv.style.display = mediaType !== 'youtube' ? 'block' : 'none';
+      if (twDiv) twDiv.style.display = (mediaType === 'twitter_post' || mediaType === 'twitter_video') ? 'block' : 'none';
+      if (hmDiv) hmDiv.style.display = mediaType === 'heatmap' ? 'block' : 'none';
     }
 
     function toggleFeaturedFields(idx, enabled) {
@@ -2414,7 +2425,34 @@
           const mediaTypeEl = document.querySelector(`select[data-seg="${idx}"][data-field="media_type"]`);
           const vidEl = document.querySelector(`input[data-seg="${idx}"][data-field="video_id"]`);
           const twitterUrlEl = document.querySelector(`input[data-seg="${idx}"][data-field="twitter_url"]`);
-          const selectedMediaType = mediaTypeEl?.value || 'youtube';
+
+          // CRITICAL: Step 2 (enrichment) is the source of truth for
+          // 'heatmap' media-type. The Step 3 segment-level dropdown
+          // historically had no 'heatmap' option, so its rendered value
+          // for a heatmap segment defaulted to 'youtube' — and a blind
+          // `clone.media_type = mediaTypeEl.value || 'youtube'` here
+          // clobbered the heatmap selection synced earlier from
+          // enrichData. Result on episode 36: segments 3 and 4 had
+          // heatmap_question + heatmap_resolved (195 / 36 country
+          // values pre-baked) but media_type='youtube' and no
+          // video_focal — so the player's `isHeatmap = mediaType ===
+          // 'heatmap'` gate was false and the heatmap silently never
+          // fired despite the user explicitly setting it. The dropdown
+          // now has a 'heatmap' option (so it round-trips), but we
+          // still defend against this here: respect the enrichData
+          // selection unless the segment-level select says otherwise.
+          const _segMediaTypeChoice = mediaTypeEl?.value;
+          const _enrichSaysHeatmap  = _enrichFv?.media_type === 'heatmap';
+          let selectedMediaType;
+          if (_enrichSaysHeatmap && (!_segMediaTypeChoice || _segMediaTypeChoice === 'heatmap' || _segMediaTypeChoice === 'youtube')) {
+            // Heatmap from Step 2 wins. The 'youtube' fallback covers
+            // legacy DOMs whose select never got the heatmap option;
+            // explicit non-heatmap, non-youtube choice (twitter_post /
+            // twitter_video) at the segment level overrides Step 2.
+            selectedMediaType = 'heatmap';
+          } else {
+            selectedMediaType = _segMediaTypeChoice || 'youtube';
+          }
           clone.media_type = selectedMediaType;
 
           if (vidEl) {

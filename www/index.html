@@ -45439,9 +45439,35 @@ body.ticker-active .gTickerLabel {
           // word, before media UI starts") but was never actually
           // applied — wiring it in here finally honors its definition.
           const focalAbsMs    = Number.isFinite(seg.focal_trigger_ms) ? seg.focal_trigger_ms : null;
-          const focalOffsetMs = (focalAbsMs != null && Number.isFinite(seg.start_ms))
+          let   focalOffsetMs = (focalAbsMs != null && Number.isFinite(seg.start_ms))
             ? Math.max(0, focalAbsMs - seg.start_ms)
             : null;
+
+          // CRITICAL defensive fallback: when this is a takeover (video /
+          // twitter — anything that pauses the narrator) AND the segment
+          // is missing focal_trigger_ms, defer the trigger to the END of
+          // the voiceover instead of the legacy 35%-of-duration timer.
+          //
+          // Why this matters: focal_trigger_ms is only stamped by
+          // briefingGenerator when the script carries a [VIDEO_HANDOFF]
+          // marker that splits the voiceover into before/after halves.
+          // If Claude regresses and omits the marker (observed in
+          // episode 36: every featured-video segment shipped without a
+          // split), the old `ms(triggerPct)` fallback fired audio.pause()
+          // at 35% of segment wall-clock duration regardless of where the
+          // narrator actually was — cutting her off mid-sentence in
+          // every featured segment. The user-reported bug:
+          // "the featured video just interrupted the narrator in all
+          // segments where it existed. this must not happen ever."
+          //
+          // Heatmap stays on the percentage timeline because it's a
+          // passive overlay — narrator keeps speaking, no pause, no
+          // interrupt risk. Only takeovers need this guard.
+          if (focalOffsetMs == null && fireTakeover && Number.isFinite(seg.voiceover_ms) && seg.voiceover_ms > 0) {
+            focalOffsetMs = seg.voiceover_ms;
+            console.warn(`[briefing/focal] seg ${idx} missing focal_trigger_ms — deferring takeover to end-of-voiceover (${seg.voiceover_ms}ms) so narrator isn't interrupted.`);
+          }
+
           const triggerDelayMs = (focalOffsetMs != null)
             ? (focalOffsetMs + FOCAL_PRE_PAUSE_MS)
             : ms(triggerPct);
@@ -45503,17 +45529,22 @@ body.ticker-active .gTickerLabel {
             // the pause clipped the narrator mid-word — user-reported
             // "video interrupted the narrator". Poll currentTime until
             // it reaches focalOffsetMs (the manifest-stamped end of the
-            // before-voice MP3), with a 1500ms safety ceiling so a
-            // stuck/failed audio element can't hang the segment.
-            // Legacy episodes lacking focal_trigger_ms fall back to the
-            // wall-clock behavior — we have no better signal there.
+            // before-voice MP3), with a generous 5000ms safety ceiling
+            // so a stuck/failed audio element can't hang the segment but
+            // a heavily-throttled tab also doesn't trip an early pause
+            // mid-narrator. The 1500ms previous ceiling was too tight
+            // for the end-of-voiceover fallback path, where the audio
+            // is racing to deliver the final 1-2 seconds of speech.
+            // Pre-2026 episodes lacking focal_trigger_ms AND voiceover_ms
+            // fall back to the wall-clock behavior — we have no better
+            // signal there.
             const targetSec = (focalOffsetMs != null) ? (focalOffsetMs / 1000) : null;
             if (targetSec == null) {
               try { audio.pause(); } catch (_) {}
               advance();
               return;
             }
-            const deadline = (typeof performance !== 'undefined' ? performance.now() : Date.now()) + 1500;
+            const deadline = (typeof performance !== 'undefined' ? performance.now() : Date.now()) + 5000;
             const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
             const poll = () => {
               if (segIdx !== idx) return;

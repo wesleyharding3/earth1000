@@ -41691,9 +41691,22 @@ body.ticker-active .gTickerLabel {
           // phrase fully completes before audio.pause() fires — see
           // www/index.html for full rationale.
           const focalAbsMs    = Number.isFinite(seg.focal_trigger_ms) ? seg.focal_trigger_ms : null;
-          const focalOffsetMs = (focalAbsMs != null && Number.isFinite(seg.start_ms))
+          let   focalOffsetMs = (focalAbsMs != null && Number.isFinite(seg.start_ms))
             ? Math.max(0, focalAbsMs - seg.start_ms)
             : null;
+
+          // Defensive fallback for takeovers missing focal_trigger_ms —
+          // see www/index.html for the full bug write-up. tl;dr: when
+          // Claude omits [VIDEO_HANDOFF], the segment ships without a
+          // split, briefingGenerator can't stamp focal_trigger_ms, and
+          // the legacy ms(triggerPct) timer cuts the narrator off at
+          // 35% of segment duration. Defer to end-of-voiceover instead.
+          const _isTakeover_d = !isHeatmap && fm?.enabled && hasMedia;
+          if (focalOffsetMs == null && _isTakeover_d && Number.isFinite(seg.voiceover_ms) && seg.voiceover_ms > 0) {
+            focalOffsetMs = seg.voiceover_ms;
+            console.warn(`[briefing/focal] seg ${idx} missing focal_trigger_ms — deferring takeover to end-of-voiceover (${seg.voiceover_ms}ms).`);
+          }
+
           const triggerDelayMs = (focalOffsetMs != null)
             ? (focalOffsetMs + FOCAL_PRE_PAUSE_MS)
             : ms(triggerPct);
@@ -41704,12 +41717,7 @@ body.ticker-active .gTickerLabel {
 
           addBTimer(setTimeout(() => {
             if (segIdx !== idx) return;
-            // Pause narrator NOW for video/twitter takeovers — see
-            // www/index.html for full rationale. Heatmap is a passive
-            // overlay; narrator continues over it.
-            if (!isHeatmap && audio) {
-              try { audio.pause(); } catch (_) {}
-            }
+
             const fire = () => {
               if (isHeatmap) {
                 startFocalHeatmap(hmQ, hmMode, Math.max(1, fEnd - fStart), hmResolved);
@@ -41724,11 +41732,47 @@ body.ticker-active .gTickerLabel {
                 startFocalVideo(fStart, fEnd, enableCC, volumeLevel);
               }
             };
-            if (transition) {
-              showFocalTransition(transition, fire);
-            } else {
-              fire();
+
+            const advance = () => {
+              if (segIdx !== idx) return;
+              if (transition) {
+                showFocalTransition(transition, fire);
+              } else {
+                fire();
+              }
+            };
+
+            // Heatmap is a passive overlay — narrator keeps speaking, no pause.
+            if (isHeatmap || !audio) {
+              advance();
+              return;
             }
+
+            // Wait for audio.currentTime to actually reach the trigger
+            // point before pausing. Polling avoids a clipped final
+            // syllable when audio playback lags wall-clock (buffering,
+            // throttled tab, audio.play() resolving a frame late).
+            // Pre-2026 episodes lacking focal_trigger_ms AND voiceover_ms
+            // fall back to immediate pause — no better signal available.
+            const targetSec = (focalOffsetMs != null) ? (focalOffsetMs / 1000) : null;
+            if (targetSec == null) {
+              try { audio.pause(); } catch (_) {}
+              advance();
+              return;
+            }
+            const _now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+            const deadline = _now() + 5000;
+            const poll = () => {
+              if (segIdx !== idx) return;
+              const ct = audio?.currentTime || 0;
+              if (!audio || audio.ended || ct >= targetSec || _now() > deadline) {
+                try { audio?.pause(); } catch (_) {}
+                advance();
+              } else {
+                addBTimer(setTimeout(poll, 30));
+              }
+            };
+            poll();
           }, triggerDelayMs));
         } else if (mediaType === 'heatmap') {
           console.warn(`[briefing/heatmap] seg ${idx} NOT firing — hasMedia=${hasMedia} hmQ="${hmQ}" hmResolved=${!!hmResolved}`);
