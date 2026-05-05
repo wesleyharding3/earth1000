@@ -84,6 +84,49 @@ function _scriptWordsToMs(text) {
   return Math.round((words / _SCRIPT_WORDS_PER_MIN) * 60000);
 }
 
+// Pick a sentence boundary near targetFrac of total word count and return
+// { before, after } strings. Returns null when the text is too short, has
+// no sentence boundaries, or no boundary leaves at least 3 words on each
+// side. Used as the deterministic fallback when Claude omits the
+// [VIDEO_HANDOFF] marker on a featured-video segment — without a split,
+// the audio renders as one clip and the player can never pause the
+// narrator mid-segment for the video takeover.
+function _splitVoiceoverAtSentence(text, targetFrac = 0.6) {
+  const trimmed = String(text || '').trim();
+  if (!trimmed) return null;
+  const totalWords = trimmed.split(/\s+/).filter(Boolean).length;
+  if (totalWords < 8) return null;
+
+  // Match terminator + optional closing quote/paren, where the next
+  // non-space character is uppercase (or end of text). Filters most
+  // abbreviation false positives ("Dr. Smith" → "Dr." is followed by
+  // capital, but the next word "Smith" doesn't start a new sentence;
+  // we accept this rare miss since voiceovers are mostly clean prose).
+  const boundaries = [];
+  const re = /[.!?](?:["'\)\]]+)?(?=\s+(?:["'\(\[]?[A-Z]|$))/g;
+  let m;
+  while ((m = re.exec(trimmed)) !== null) {
+    const cut = m.index + m[0].length;
+    const before = trimmed.slice(0, cut).trim();
+    const after  = trimmed.slice(cut).trim();
+    if (!before || !after) continue;
+    const wordsBefore = before.split(/\s+/).filter(Boolean).length;
+    const wordsAfter  = after.split(/\s+/).filter(Boolean).length;
+    if (wordsBefore < 3 || wordsAfter < 3) continue;
+    boundaries.push({ before, after, wordsBefore });
+  }
+  if (!boundaries.length) return null;
+
+  const target = totalWords * targetFrac;
+  let best = boundaries[0];
+  let bestDist = Math.abs(best.wordsBefore - target);
+  for (const b of boundaries) {
+    const d = Math.abs(b.wordsBefore - target);
+    if (d < bestDist) { best = b; bestDist = d; }
+  }
+  return { before: best.before, after: best.after };
+}
+
 function _buildSegmentScript(seg) {
   const lines = [];
   const arcs = Array.isArray(seg.flow_arcs) ? seg.flow_arcs : [];
@@ -2300,7 +2343,13 @@ async function buildSegments(narrative, threadData, allArcs, entityCoords = {}) 
       s => !primaryCoordKeys.has(_coordKey(s.lat, s.lon))
     );
 
-    // Split voiceover at [VIDEO_HANDOFF] marker if present (featured video segments)
+    // Split voiceover at [VIDEO_HANDOFF] marker if present (featured video segments).
+    // Fallback: when the marker is missing on a featured-video segment, split at the
+    // sentence boundary closest to ~60% of words. Without a split the audio renders
+    // as one clip, the audio pipeline can't stamp focal_trigger_ms at the boundary,
+    // and the player's defensive fallback defers the takeover to end-of-voiceover —
+    // by which time audio.ended has auto-advanced the segment, so the video silently
+    // never plays.
     let voiceoverText = ns.voiceover;
     let voiceoverBeforeVideo = null;
     let voiceoverAfterVideo = null;
@@ -2310,6 +2359,16 @@ async function buildSegments(narrative, threadData, allArcs, entityCoords = {}) 
       voiceoverAfterVideo = parts[1]?.trim() || '';
       // Full voiceover is both parts joined (for TTS, the audio will be two separate clips)
       voiceoverText = voiceoverBeforeVideo + ' ' + voiceoverAfterVideo;
+    } else if (thread._featuredVideo?.enabled) {
+      const split = _splitVoiceoverAtSentence(voiceoverText, 0.6);
+      if (split) {
+        voiceoverBeforeVideo = split.before;
+        voiceoverAfterVideo  = split.after;
+        voiceoverText = voiceoverBeforeVideo + ' ' + voiceoverAfterVideo;
+        console.warn(`   ⚠ Thread ${thread.id} ("${thread.title || ''}"): Claude omitted [VIDEO_HANDOFF] for featured-video segment — auto-split at sentence boundary (${voiceoverBeforeVideo.split(/\s+/).length}w / ${voiceoverAfterVideo.split(/\s+/).length}w).`);
+      } else {
+        console.warn(`   ⚠ Thread ${thread.id} ("${thread.title || ''}"): Claude omitted [VIDEO_HANDOFF] AND voiceover has no usable sentence boundary (${voiceoverText.split(/\s+/).length}w) — focal trigger will fall back to end-of-voiceover and the video may not play.`);
+      }
     }
 
     const _isHeatmap = thread._featuredVideo?.media_type === 'heatmap';

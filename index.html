@@ -20655,7 +20655,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
       window._briefingTrackFlowArcLabels = function() {
         if (!briefingFlowLabels.length) return;
         const rect = renderer.domElement.getBoundingClientRect();
-        const baseOffsetPx     = 32;
+        const baseOffsetPx     = 44;   // bumped from 32 so labels sit higher
+                                       // off the anchor and read as separated
+                                       // even before stack-resolve kicks in.
         const hoverDedupeNear  = 40;
         const hoverDedupeFar   = 80;
         const facingFullVisible = -0.20;
@@ -39521,6 +39523,68 @@ const settingsToggle     = document.getElementById("settingsToggle");
   opacity: 1;
   transform: translate(-50%, 0);
 }
+.bSegmentTitle.typing::after {
+  content: '';
+  display: inline-block;
+  width: 2px;
+  height: 0.85em;
+  margin-left: 4px;
+  background: rgba(255, 224, 180, 0.92);
+  vertical-align: text-bottom;
+  animation: bTitleCaret 0.7s steps(1) infinite;
+  box-shadow: 0 0 6px rgba(255, 184, 92, 0.5);
+}
+@keyframes bTitleCaret { 50% { opacity: 0; } }
+
+/* Holographic sheen — diagonal gradient sweep clipped to text. */
+.bSegmentTitle.visible {
+  background: linear-gradient(
+    115deg,
+    rgba(255,224,180,0.94) 0%,
+    rgba(255,224,180,0.94) 35%,
+    rgba(255,255,235,1) 50%,
+    rgba(255,224,180,0.94) 65%,
+    rgba(255,224,180,0.94) 100%
+  );
+  background-size: 220% 100%;
+  background-position: 100% 0;
+  -webkit-background-clip: text;
+          background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: bTitleSheen 7s ease-in-out 2s infinite;
+}
+@keyframes bTitleSheen {
+  0%   { background-position: 140% 0; }
+  18%  { background-position: -40% 0; }
+  100% { background-position: -40% 0; }
+}
+
+/* Chromatic aberration burst at segment start. */
+.bSegmentTitle.cab {
+  animation:
+    bTitleSheen 7s ease-in-out 2s infinite,
+    bTitleCAB 0.36s ease-out 1;
+}
+@keyframes bTitleCAB {
+  0% {
+    text-shadow:
+      -3px 0 0 rgba(255, 60, 90, 0.85),
+       3px 0 0 rgba(80, 160, 255, 0.85),
+       0 0 14px rgba(255, 184, 92, 0.32);
+    filter: blur(0.4px);
+  }
+  60% {
+    text-shadow:
+      -1px 0 0 rgba(255, 60, 90, 0.45),
+       1px 0 0 rgba(80, 160, 255, 0.45),
+       0 0 14px rgba(255, 184, 92, 0.32);
+    filter: blur(0.2px);
+  }
+  100% {
+    text-shadow: 0 0 14px rgba(255, 184, 92, 0.32);
+    filter: blur(0);
+  }
+}
 @media (max-width: 700px) {
   /* Title spans the safe-area horizontally with no truncation —
      overrides line-clamp + clip behavior from the desktop rule so a
@@ -39536,6 +39600,57 @@ const settingsToggle     = document.getElementById("settingsToggle");
     -webkit-line-clamp: unset;
     display: block;
     -webkit-box-orient: unset;
+  }
+}
+
+/* ── Country chip row — sits just below the segment title and lists
+   the countries the segment is about (primary first, then flow-arc
+   endpoints and secondary mentions). Visibility tracks the title:
+   visible on story segments, hidden on intro/outro/keywords. */
+.bSegmentCountries {
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + 56px);
+  left: 50%;
+  z-index: 100018;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 14px;
+  justify-content: center;
+  max-width: min(82vw, 760px);
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(-50%, -8px);
+  transition: opacity 0.45s ease, transform 0.45s cubic-bezier(0.32, 0.72, 0, 1);
+}
+.bSegmentCountries.visible {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+.bCountryChip {
+  font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: rgba(255, 224, 180, 0.82);
+  background: rgba(20, 12, 6, 0.55);
+  border: 1px solid rgba(255, 184, 92, 0.22);
+  padding: 4px 10px;
+  border-radius: 999px;
+  white-space: nowrap;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+}
+@media (max-width: 700px) {
+  .bSegmentCountries {
+    top: calc(env(safe-area-inset-top, 0px) + 44px);
+    max-width: calc(100vw - 16px);
+    gap: 8px 10px;
+  }
+  .bCountryChip {
+    font-size: 10px;
+    padding: 3px 8px;
+    letter-spacing: 0.05em;
   }
 }
 
@@ -40511,6 +40626,7 @@ body.ticker-active .gTickerLabel {
        show seg.thread_title; the intro segment shows "Daily Briefing ·
        [date]". Outro/keywords/summary hide it. -->
   <div class="bSegmentTitle" id="bSegmentTitle"></div>
+  <div class="bSegmentCountries" id="bSegmentCountries"></div>
   <div class="bFocalScrim" id="bFocalScrim"></div>
   <div class="bDotsMeta" id="bDotsMeta"></div>
   <div class="bDots" id="bDots"></div>
@@ -40888,6 +41004,11 @@ body.ticker-active .gTickerLabel {
   // ── Segment title control ────────────────────────────────────────────
   // Top-center marquee that replaces the slid-out top nav buttons during
   // the briefing. Hidden for outro/keywords/summary (recap card takes over).
+  // Typewriter title — types each character with a blinking caret.
+  // A token is bumped per call so an in-flight typewriter cancels itself
+  // if the segment changes mid-type (the chars-after token mismatch are
+  // simply dropped).
+  let _titleTypewriterToken = 0;
   function setSegmentTitle(seg) {
     const el = document.getElementById('bSegmentTitle');
     if (!el) return;
@@ -40901,12 +41022,82 @@ body.ticker-active .gTickerLabel {
       });
       text = `Daily Briefing · ${dateStr}`;
     }
-    if (text) {
-      el.textContent = text;
-      el.classList.add('visible');
-    } else {
+    const myToken = ++_titleTypewriterToken;
+    if (!text) {
       el.classList.remove('visible');
+      el.classList.remove('typing');
+      el.classList.remove('cab');
+      el.textContent = '';
+      return;
     }
+    el.textContent = '';
+    el.classList.add('visible');
+    el.classList.add('typing');
+    // Chromatic aberration burst — restart keyframe via remove + reflow + re-add.
+    el.classList.remove('cab');
+    void el.offsetWidth;
+    el.classList.add('cab');
+    setTimeout(() => {
+      if (myToken !== _titleTypewriterToken) return;
+      el.classList.remove('cab');
+    }, 400);
+    const chars = Array.from(text);
+    const stepMs = chars.length > 28 ? 22 : (chars.length > 18 ? 28 : 36);
+    let i = 0;
+    const tick = () => {
+      if (myToken !== _titleTypewriterToken) return;
+      if (i >= chars.length) {
+        setTimeout(() => {
+          if (myToken !== _titleTypewriterToken) return;
+          el.classList.remove('typing');
+        }, 600);
+        return;
+      }
+      el.textContent += chars[i++];
+      setTimeout(tick, stepMs);
+    };
+    tick();
+  }
+
+  // Country chip row — sits below the segment title. Lists the
+  // countries the segment is about: primary first, then flow-arc
+  // endpoints, then any other secondary mentions, deduped and capped.
+  // Hidden on non-story segments (intro/outro/keywords) since the
+  // title hides too.
+  function setSegmentCountries(seg) {
+    const el = document.getElementById('bSegmentCountries');
+    if (!el) return;
+    if (seg?.type !== 'story') {
+      el.classList.remove('visible');
+      el.innerHTML = '';
+      return;
+    }
+    const seen = new Set();
+    const names = [];
+    const push = (raw) => {
+      const name = (raw || '').trim();
+      if (!name) return;
+      const key = name.toLowerCase();
+      if (seen.has(key)) return;
+      seen.add(key);
+      names.push(name);
+    };
+    push(seg.primary_country?.name);
+    push(seg.primary_city?.country_name);
+    const isoToName = window._isoToName || ((iso) => iso);
+    for (const iso of (seg.flow_arc_isos || [])) push(isoToName(iso));
+    for (const iso of (seg.secondary_country_isos || [])) push(isoToName(iso));
+    const capped = names.slice(0, 5);
+    if (!capped.length) {
+      el.classList.remove('visible');
+      el.innerHTML = '';
+      return;
+    }
+    const esc = (s) => String(s).replace(/[&<>"']/g, ch => ({
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+    }[ch]));
+    el.innerHTML = capped.map(n => `<span class="bCountryChip">${esc(n)}</span>`).join('');
+    el.classList.add('visible');
   }
 
   // Exposed on window so the tutorial reset can tear down the briefing
@@ -40935,6 +41126,11 @@ body.ticker-active .gTickerLabel {
     if (_stitle) {
       _stitle.classList.remove('visible');
       setTimeout(() => { _stitle.textContent = ''; }, 480);
+    }
+    const _scountries = document.getElementById('bSegmentCountries');
+    if (_scountries) {
+      _scountries.classList.remove('visible');
+      setTimeout(() => { _scountries.innerHTML = ''; }, 480);
     }
     if (_focalActive) endFocalVideo();
     clearArcMeshes();
@@ -41614,6 +41810,7 @@ body.ticker-active .gTickerLabel {
     // thread_title; the intro segment shows "Daily Briefing · [date]";
     // outro/keywords/summary hide it.
     setSegmentTitle(seg);
+    setSegmentCountries(seg);
 
     // Reset globe state — always return to country view so city-view never sticks
     if (_focalActive) endFocalVideo();
@@ -48235,7 +48432,10 @@ body.ticker-active .gTickerLabel {
     if (!overlayCtx) return;
     overlayCtx.clearRect(0, 0, W, H);
 
-    // Flow arc country highlights — draw all involved countries
+    // Flow arc country highlights — draw all involved countries with the
+    // SAME styling as a click-selected country, so every country tied to a
+    // flow arc (primary + arc endpoints + secondary) lights up like it's
+    // been individually selected during briefing playback.
     if (flowHighlightKeys.size > 0) {
       const countries = window.__hitTestCountries?.() || [];
       for (const c of countries) {
@@ -48243,9 +48443,9 @@ body.ticker-active .gTickerLabel {
         if (c.polygonless) continue;
         drawCountryShape(
           overlayCtx, c,
-          'rgba(255,180,80,0.85)',
-          'rgba(255,160,40,0.14)',
-          2.5
+          'rgba(255,210,110,0.95)',
+          'rgba(255,180,60,0.18)',
+          3.0
         );
       }
     }
