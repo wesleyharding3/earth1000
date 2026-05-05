@@ -346,7 +346,7 @@ function _extractJsonObject(rawText) {
 async function normalizeBatchWithClaude(client, originals, logger = console) {
   const msg = await client.messages.create({
     model: 'claude-haiku-4-5',
-    max_tokens: 800,
+    max_tokens: 3500,
     messages: [{
       role: 'user',
       content: `Translate these news keywords/phrases to standard English equivalents for keyword indexing.
