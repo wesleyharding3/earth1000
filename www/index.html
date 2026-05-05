@@ -40768,16 +40768,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (!SocialLogin) {
           throw new Error('Google sign-in plugin not registered — run npx cap sync ios.');
         }
-        // Replay-protection nonce — Supabase rejects the token with
-        // "passed nonce and nonce in id_token should either both exist
-        // or not" if we omit this, because the Google iOS SDK auto-
-        // embeds a nonce in the idToken. Standard pattern (same as
-        // Apple flow below): hashed nonce → Google, raw nonce → Supabase.
-        const rawNonce    = _appleNonce();
-        const hashedNonce = await _sha256Hex(rawNonce);
+        // Replay-protection nonce. Unlike Apple (where Supabase hashes
+        // the raw nonce server-side and compares against the hashed
+        // value Apple embedded in the token), Google embeds the nonce
+        // verbatim in the idToken's `nonce` claim and Supabase
+        // compares it directly. So both Google AND Supabase need the
+        // RAW nonce — not the hashed form.
+        const rawNonce = _appleNonce();
         const out = await SocialLogin.login({
           provider: 'google',
-          options: { scopes: ['email', 'profile'], nonce: hashedNonce },
+          options: { scopes: ['email', 'profile'], nonce: rawNonce },
         });
         // Plugin shape: { provider, result: { idToken, accessToken, profile, ... } }
         const idToken = out?.result?.idToken;
