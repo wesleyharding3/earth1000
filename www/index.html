@@ -1057,6 +1057,26 @@
       box-shadow: 0 4px 20px rgba(0,0,0,0.5);
     }
     .iconBtn:hover .btnTooltip { opacity: 1; transition-delay: 0.38s; }
+    /* Suppress hover tooltips while the settings sidebar, account
+       dropdown, or news-flows panel is open on desktop — tooltips
+       would otherwise bleed through the open panel and fire as the
+       cursor passes back over icons it was just clicking.
+       Targets both the legacy `.btnTooltip` (declared as a child of
+       `.iconBtn`) and the current `.holdTip` (dynamically appended to
+       body when an element with `data-hold-tip` is hovered/held).
+       `(hover: hover)` keeps tap-based mobile holdTips untouched on
+       touch-only devices — those are intentional, user-summoned. */
+    @media (hover: hover) {
+      body:has(#viewSidebar.open) .iconBtn:hover .btnTooltip,
+      body:has(#accountDropdown.open) .iconBtn:hover .btnTooltip,
+      body:has(#flowControls.visible:not(.minimized)) .iconBtn:hover .btnTooltip,
+      body:has(#viewSidebar.open) .holdTip,
+      body:has(#accountDropdown.open) .holdTip,
+      body:has(#flowControls.visible:not(.minimized)) .holdTip {
+        opacity: 0 !important;
+        transition-delay: 0s !important;
+      }
+    }
     .btnTooltipTitle {
       font-size: 11px; font-weight: 700;
       color: rgba(255,255,255,0.9);

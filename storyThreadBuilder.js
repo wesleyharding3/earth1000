@@ -58,6 +58,16 @@ async function recomputeAndPersistNations(threadId) {
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const LOOKBACK_HOURS  = parseInt(process.argv.find(a => a.startsWith("--hours="))?.split("=")[1] || "48");
+// Inline normalization scope — half of the full 48h article window
+// to keep the candidate query well under the 300s statement_timeout.
+// 48h was working until 2026-05-05 00:00 UTC when the query finally
+// hit the limit and aborted ("Keyword normalization skipped:
+// canceling statement due to statement timeout" → 0 new threads
+// created from 1500 articles because raw multilingual variants stayed
+// unmerged). 24h gives roughly 2x headroom vs the failing 48h scope
+// and still covers a typical 6h cron gap with 4x overlap; the
+// standalone hourly keywordNormalizerCron handles anything older.
+const NORMALIZATION_LOOKBACK_HOURS = 24;
 const CLAUDE_BATCH    = 100;    // articles per Claude call
 const MIN_CLUSTER     = 3;     // min articles to form a cluster (Claude sees singletons too)
 // Bumped 2 → 3 because the prior 2-keyword threshold + transitive union-find
@@ -298,12 +308,12 @@ async function run() {
   console.log(`\n🧵 Story Thread Builder — ${new Date().toISOString()}`);
   console.log(`   Lookback: ${LOOKBACK_HOURS}h | Article limit: none`);
 
-  console.log(`   [${elapsed()}] Normalizing recent multilingual keywords...`);
+  console.log(`   [${elapsed()}] Normalizing recent multilingual keywords (scope=${NORMALIZATION_LOOKBACK_HOURS}h)...`);
   const normalization = await normalizeRecentKeywords({
     pool,
     anthropicClient: client,
     logger: console,
-    scope: { hours: LOOKBACK_HOURS }
+    scope: { hours: NORMALIZATION_LOOKBACK_HOURS }
   }).catch(err => {
     console.warn(`   ⚠ Keyword normalization skipped: ${err.message}`);
     return null;
@@ -1694,6 +1704,19 @@ function countIntersect(setA, setB) {
   return n;
 }
 
+// Categories Claude routinely conflates on the same event. Politics,
+// diplomacy, military, and economy slide into each other constantly —
+// a war is politics-by-other-means, sanctions are economy AND diplomacy,
+// a coup is politics OR military depending on the angle. Allow the dedup
+// pass to compare threads across this geopolitical family. Environment
+// and technology stay outside it because they're rarely conflated with
+// the others (an oil spill isn't going to be misfiled as politics, and
+// a chip ban gets tagged "technology" or "economy" but not military).
+const _GEOPOLITICAL_FAMILY = new Set(['politics', 'diplomacy', 'military', 'economy']);
+function categoriesAreRelated(a, b) {
+  return _GEOPOLITICAL_FAMILY.has(a) && _GEOPOLITICAL_FAMILY.has(b);
+}
+
 // Overlap coefficient / Szymkiewicz-Simpson: |A∩B| / min(|A|,|B|). Useful
 // when one set is meaningfully shorter than the other (e.g. a 4-token
 // title like "Denmark Train Collision: 17 Injured" vs a 7-token title
@@ -1743,8 +1766,19 @@ async function dedupSimilarThreads() {
   for (let i = 0; i < enriched.length; i++) {
     for (let j = i + 1; j < enriched.length; j++) {
       const a = enriched[i], b = enriched[j];
-      // Require category match to avoid e.g. politics ↔ sports false merges
-      if (a.primary_category && b.primary_category && a.primary_category !== b.primary_category) continue;
+      // Originally required STRICT category equality to avoid politics ↔
+      // sports false merges, but Claude routinely splits the same event
+      // across closely-related categories — e.g. a vehicle attack on a
+      // crowd ends up as "crime" in one batch and "domestic_terror" in
+      // the next. Two threads about the Leipzig vehicle incident never
+      // got compared (skipped at this gate), so the dedup pass missed a
+      // textbook duplicate. Soften to a related-category whitelist:
+      // categories within the same family CAN merge, others cannot.
+      // Title/keyword/nation gates below remain strict so cross-category
+      // false positives stay rare.
+      if (a.primary_category && b.primary_category
+          && a.primary_category !== b.primary_category
+          && !categoriesAreRelated(a.primary_category, b.primary_category)) continue;
 
       // ── Three similarity signals (ANY triggers a merge) ─────────────
       // Jaccard alone at 0.60 was empirically too strict for Claude's
