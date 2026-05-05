@@ -20627,8 +20627,44 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (!briefingFlowLabels.length) return;
         const rect = renderer.domElement.getBoundingClientRect();
         const tmp = new THREE.Vector3();
+        const hoverDedupePx = 60;
+
+        // Cross-system dedupe — see www/index.html for full rationale.
+        // Suppress flow-arc labels that point at the same node as the
+        // active hover card (or visually collide with it within
+        // hoverDedupePx). Hover card is richer (population, flag); the
+        // flow-arc label defers. Re-evaluated every frame so the
+        // hidden flow-arc reappears the moment the hover card moves on.
+        let hoverSx = null, hoverSy = null;
+        let hoverPosArr = null, hoverIdx = -1;
+        try {
+          const ref = (typeof _briefingHoverRef !== 'undefined') ? _briefingHoverRef : null;
+          if (ref && ref.posArr && ref.pts && Number.isFinite(ref.idx) && ref.idx >= 0) {
+            tmp.set(
+              ref.posArr[ref.idx * 3],
+              ref.posArr[ref.idx * 3 + 1],
+              ref.posArr[ref.idx * 3 + 2],
+            ).applyMatrix4(ref.pts.matrixWorld);
+            const projHover = tmp.clone().project(camera);
+            const hCamDir = tmp.clone().sub(camera.position).normalize();
+            const hNormal = tmp.clone().normalize();
+            if (hNormal.dot(hCamDir) <= -0.05 && projHover.z <= 1) {
+              hoverSx = rect.left + (projHover.x + 1) / 2 * rect.width;
+              hoverSy = rect.top  + (-projHover.y + 1) / 2 * rect.height;
+              hoverPosArr = ref.posArr;
+              hoverIdx    = ref.idx;
+            }
+          }
+        } catch (_) { /* best-effort dedupe; never crash the tracker */ }
+
         for (const l of briefingFlowLabels) {
           if (!l.posArr || !l.pts) continue;
+          // Exact same node as the hover card → suppress.
+          if (hoverPosArr && l.posArr === hoverPosArr && l.idx === hoverIdx) {
+            l.cardEl.style.opacity = '0';
+            l.lineEl.style.opacity = '0';
+            continue;
+          }
           tmp.set(
             l.posArr[l.idx * 3],
             l.posArr[l.idx * 3 + 1],
@@ -20644,6 +20680,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
             l.cardEl.style.opacity = '0';
             l.lineEl.style.opacity = '0';
             continue;
+          }
+          // Screen-space proximity dedupe — handles city-vs-country
+          // same-place case where node identity differs but the
+          // anchors project to nearly the same screen pixel.
+          if (hoverSx != null) {
+            const dxh = sx - hoverSx, dyh = sy - hoverSy;
+            if (dxh * dxh + dyh * dyh < hoverDedupePx * hoverDedupePx) {
+              l.cardEl.style.opacity = '0';
+              l.lineEl.style.opacity = '0';
+              continue;
+            }
           }
           const cardOffsetPx = 32;
           l.cardEl.style.left = sx + 'px';

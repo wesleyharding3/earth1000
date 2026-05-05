@@ -22363,11 +22363,60 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const labelGap      = 4;    // gap between stacked cards (px)
         const maxStackPush  = 90;   // hard cap on extra offset beyond base
         const xOverlapSlack = 4;    // small px slack so just-touching ≠ overlap
+        const hoverDedupePx = 60;   // hide flow-arc label if its anchor is
+                                    // within this many px of the active
+                                    // hover card's anchor (covers the
+                                    // city-vs-country same-place case)
+
+        // Cross-system dedupe — project the active hover-card anchor
+        // (if any) so flow-arc labels that point at the same node, or
+        // collide visually with it, can be suppressed. The richer hover
+        // card (z 100005, carries population + flag) wins; the flow-arc
+        // label (z 5060, name only) defers. Without this guard, when
+        // the briefing's primary_country (or a tour stop) coincided
+        // with a flow-arc endpoint both cards rendered at the same
+        // anchor — hover card on top, flow-arc card poking out from
+        // underneath, leader line emerging from "behind" the hover
+        // card. The check re-evaluates every frame so it works for the
+        // tour sequence too: as briefingShowLabelAt advances through
+        // secondary locations, the hidden flow-arc label re-appears
+        // the moment the hover card moves on.
+        let hoverSx = null, hoverSy = null;
+        let hoverPosArr = null, hoverIdx = -1;
+        try {
+          const ref = (typeof _briefingHoverRef !== 'undefined') ? _briefingHoverRef : null;
+          if (ref && ref.posArr && ref.pts && Number.isFinite(ref.idx) && ref.idx >= 0) {
+            tmp.set(
+              ref.posArr[ref.idx * 3],
+              ref.posArr[ref.idx * 3 + 1],
+              ref.posArr[ref.idx * 3 + 2],
+            ).applyMatrix4(ref.pts.matrixWorld);
+            const projHover = tmp.clone().project(camera);
+            // Same back-hemisphere gate the hover card itself uses —
+            // if the hover anchor is on the far side, no dedupe needed.
+            const hCamDir = tmp.clone().sub(camera.position).normalize();
+            const hNormal = tmp.clone().normalize();
+            if (hNormal.dot(hCamDir) <= -0.05 && projHover.z <= 1) {
+              hoverSx = rect.left + (projHover.x + 1) / 2 * rect.width;
+              hoverSy = rect.top  + (-projHover.y + 1) / 2 * rect.height;
+              hoverPosArr = ref.posArr;
+              hoverIdx    = ref.idx;
+            }
+          }
+        } catch (_) { /* best-effort dedupe; never crash the tracker */ }
 
         // Pass 1 — project anchors, defer DOM writes.
         const visible = [];
         for (const l of briefingFlowLabels) {
           if (!l.posArr || !l.pts) {
+            l.cardEl.style.opacity = '0';
+            l.lineEl.style.opacity = '0';
+            continue;
+          }
+          // Cross-system dedupe (exact same node): same posArr reference
+          // + same index = same country/city. The hover card already
+          // claims this anchor; suppress the flow-arc duplicate.
+          if (hoverPosArr && l.posArr === hoverPosArr && l.idx === hoverIdx) {
             l.cardEl.style.opacity = '0';
             l.lineEl.style.opacity = '0';
             continue;
@@ -22390,6 +22439,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
             l.cardEl.style.opacity = '0';
             l.lineEl.style.opacity = '0';
             continue;
+          }
+          // Cross-system dedupe (screen-space proximity): handles the
+          // city-vs-country same-place case where the hover card shows
+          // a city and the flow-arc references the surrounding country
+          // (different posArr/idx but visually at the same spot on the
+          // globe). Within hoverDedupePx → suppress.
+          if (hoverSx != null) {
+            const dxh = sx - hoverSx, dyh = sy - hoverSy;
+            if (dxh * dxh + dyh * dyh < hoverDedupePx * hoverDedupePx) {
+              l.cardEl.style.opacity = '0';
+              l.lineEl.style.opacity = '0';
+              continue;
+            }
           }
           // offsetWidth/Height read forces layout — fine, only on visible.
           const w = l.cardEl.offsetWidth  || 80;
