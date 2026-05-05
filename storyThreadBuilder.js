@@ -408,9 +408,21 @@ async function run() {
   // Cross-batch + semantic dedup pass (no Claude). Catches the duplicates
   // that batch-isolated Claude calls inevitably create — e.g. multiple
   // "Trump-Iran" or "Strait of Hormuz" threads spawned by different batches.
+  //
+  // Wrapped in try/catch so a structural-dedup failure (SQL error,
+  // pool exhaustion, edge-case crash) can NEVER block coolDownInactive
+  // Threads() from running below. Prior behavior: an unhandled throw
+  // here aborted the whole builder run mid-flight → cooldown skipped
+  // → stale "active" threads accumulated until manual cleanup. Now
+  // dedup failures degrade to a logged warning and the cooldown still
+  // fires.
   console.log(`\n   [${elapsed()}] Running cross-batch similarity dedup...`);
-  const merged = await dedupSimilarThreads();
-  console.log(`   [${elapsed()}] Merged ${merged} duplicate thread(s)`);
+  try {
+    const merged = await dedupSimilarThreads();
+    console.log(`   [${elapsed()}] Merged ${merged} duplicate thread(s)`);
+  } catch (err) {
+    console.warn(`   ⚠ Structural dedup failed (cooldown will still run): ${err.message}`);
+  }
 
   // Claude-assisted scoped dedup. Catches paraphrased duplicates that the
   // structural dedup above misses (different vocabulary, same story). Kept
@@ -2035,10 +2047,28 @@ async function coolDownInactiveThreads() {
   // news_articles, primary key on story_thread_articles). All three
   // transition queries reuse the same CTE.
 
-  // active → cooling: latest article > 48h old.
+  // active → cooling. TWO triggers:
+  //   1. Latest article > 48h old — the original rule, catches threads
+  //      that have stopped getting any articles at all.
+  //   2. Fewer than MIN_VELOCITY articles in the last 48h — catches the
+  //      "trickle" failure mode the original rule missed: a thread peaks
+  //      at 200 articles/day, then drops to 1-3 articles/day of
+  //      tangentially-related coverage (e.g. the King Charles Scotch
+  //      Whisky Tariff thread getting "Royal Tour return" articles
+  //      after the actual tariff event was over). MAX(published_at)
+  //      stays inside the 48h window because of that trickle, but the
+  //      story is over and the thread should cool.
+  //
+  // Newly-created threads are exempt — first_seen_at < 48h means the
+  // thread hasn't had time to accumulate enough articles to clear the
+  // velocity bar, and we don't want to immediately cool a fresh
+  // breaking story.
+  const MIN_VELOCITY_48H = 5;
   const a = await pool.query(`
     WITH article_recency AS (
-      SELECT sta.thread_id, MAX(na.published_at) AS latest_pub
+      SELECT sta.thread_id,
+             MAX(na.published_at) AS latest_pub,
+             COUNT(*) FILTER (WHERE na.published_at > NOW() - INTERVAL '48 hours') AS articles_48h
       FROM story_thread_articles sta
       JOIN news_articles na ON na.id = sta.article_id
       GROUP BY sta.thread_id
@@ -2048,7 +2078,11 @@ async function coolDownInactiveThreads() {
     FROM article_recency ar
     WHERE ar.thread_id = st.id
       AND st.status = 'active'
-      AND ar.latest_pub < NOW() - INTERVAL '48 hours'
+      AND st.first_seen_at < NOW() - INTERVAL '48 hours'
+      AND (
+        ar.latest_pub < NOW() - INTERVAL '48 hours'
+        OR ar.articles_48h < ${MIN_VELOCITY_48H}
+      )
   `);
 
   // cooling → dormant: latest article > 7d old.

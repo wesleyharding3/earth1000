@@ -909,9 +909,31 @@ app.post("/api/internal/cache/invalidate-hero", express.json(), (req, res) => {
 
   // Per-entity keys used by the flow + hero builders. Clear every
   // variant so the next request misses cache and re-runs the SQL.
+  // Expanded list — was just [flows/thread, threads/articles] which
+  // missed timeline/panels/by-country surfaces. After a builder cycle
+  // the user's expectation is that EVERY thread surface refreshes;
+  // this makes one curl actually do that instead of leaving timeline
+  // and panels stale until natural TTL expiry.
   for (const id of threadIds) {
-    for (const k of [`flows/thread:${id}`, `threads/${id}/articles`]) {
+    for (const k of [
+      `flows/thread:${id}`,
+      `threads/${id}/articles`,
+      `threads/${id}/timeline`,
+      `threads/${id}/panels`,
+    ]) {
       if (_ttlCache.delete(k)) cleared++;
+    }
+  }
+  // Also nuke the by-country / local-by-country pages whose payloads
+  // contain card snapshots of any of the affected threads. These are
+  // keyed `threads/by-country:<iso>:...` and `threads/local-by-country:...`
+  // — too many to enumerate individually, so wipe the whole prefix.
+  if (threadIds.length) {
+    for (const k of [..._ttlCache.keys()].filter(k =>
+         k.startsWith('threads/by-country:') ||
+         k.startsWith('threads/local-by-country:'))) {
+      _ttlCache.delete(k);
+      cleared++;
     }
   }
   for (const id of timelineIds) {
@@ -3956,8 +3978,18 @@ app.get("/api/threads/:id/articles", async (req, res) => {
           LIMIT 1
         ) dst ON TRUE
         WHERE sta.thread_id = $1
-        ORDER BY sta.is_anchor DESC NULLS LAST,
-                 a.published_at DESC
+        -- Sort purely by recency. Previously the ORDER BY was
+        -- `is_anchor DESC NULLS LAST, published_at DESC`, which pinned
+        -- "anchor" articles to the top of the list — under the broken
+        -- multi-anchor regime that meant 48+ stale anchors crowded out
+        -- recent articles. Even after the anchor cleanup (one anchor
+        -- per thread, fixed at thread creation), keeping that ordering
+        -- means the founding article (often weeks old) sits above
+        -- today's news. Users want most-recent first; the founding
+        -- article's identity is preserved on the row via is_anchor for
+        -- consumers that need it (timeline, audit), but it no longer
+        -- dictates display order.
+        ORDER BY a.published_at DESC
         LIMIT 80
       `, [threadId]);
       return { thread_id: threadId, articles: rows, count: rows.length };
