@@ -40750,6 +40750,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
         google: {
           iOSClientId: _GOOGLE_IOS_CLIENT_ID,
           iOSServerClientId: _GOOGLE_SERVER_CLIENT_ID,
+          // Skip the plugin's silent restorePreviousSignIn path. With this
+          // off, a stale cached GIDSignIn session is reused and our fresh
+          // nonce never reaches Google — Supabase then rejects the
+          // restored idToken (which carries the OLD nonce) with the
+          // "nonces mismatch" error. forceAuthCode forces the real
+          // signIn(withPresenting:) flow so the nonce is attached to a
+          // genuine auth request.
+          forceAuthCode: true,
         },
       });
     } catch (_) {}
@@ -40777,44 +40785,26 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // nonce to a real auth request.
         try { await SocialLogin.logout({ provider: 'google' }); } catch (_) {}
 
-        // Replay-protection nonce. Google embeds the nonce verbatim in
-        // the idToken's `nonce` claim (no SHA-256 hashing on either
-        // side, unlike Apple). Same RAW value to plugin AND Supabase.
-        const rawNonce = _appleNonce();
+        // Replay-protection nonce. Identical pattern to Apple Sign In:
+        // GoTrue hashes the `nonce` we send and compares it to the
+        // `nonce` claim inside the idToken. So we send the HASHED
+        // value to Google (which embeds it verbatim into the token's
+        // nonce claim) and the RAW value to Supabase (which hashes
+        // and compares). Sending the same raw value to both yields
+        // "Nonces mismatch" because GoTrue's hash(raw) ≠ raw-in-token.
+        const rawNonce    = _appleNonce();
+        const hashedNonce = await _sha256Hex(rawNonce);
         const out = await SocialLogin.login({
           provider: 'google',
-          options: { scopes: ['email', 'profile'], nonce: rawNonce },
+          options: { scopes: ['email', 'profile'], nonce: hashedNonce },
         });
         // Plugin shape: { provider, result: { idToken, accessToken, profile, ... } }
         const idToken = out?.result?.idToken;
         if (!idToken) throw new Error('No identity token returned from Google.');
-
-        // Diagnostic: decode JWT to compare our nonce vs the one Google
-        // actually baked into the token. If the plugin/SDK silently
-        // restored a cached session, the token's nonce will be the OLD
-        // one and our fresh rawNonce will mismatch. We pass the token's
-        // actual nonce to Supabase as a working fallback while we
-        // continue investigating the keychain-cache root cause.
-        let tokenNonce = null;
-        try {
-          const payloadB64 = idToken.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
-          const padded = payloadB64 + '='.repeat((4 - payloadB64.length % 4) % 4);
-          const claims = JSON.parse(atob(padded));
-          tokenNonce = claims?.nonce || null;
-          console.log('[google-auth] sent nonce:', rawNonce);
-          console.log('[google-auth] token nonce:', tokenNonce);
-          console.log('[google-auth] token iat:', claims?.iat, 'email:', claims?.email);
-          if (tokenNonce && tokenNonce !== rawNonce) {
-            console.warn('[google-auth] NONCE MISMATCH — plugin returned stale/cached token; using token nonce as fallback');
-          }
-        } catch (e) {
-          console.warn('[google-auth] could not decode idToken:', e.message);
-        }
-
         const { data, error } = await sb.auth.signInWithIdToken({
           provider: 'google',
           token: idToken,
-          nonce: tokenNonce || rawNonce,
+          nonce: rawNonce,
         });
         if (error) throw error;
         // Mirror the Apple flow — apply session + close the modal in-line
