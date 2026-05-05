@@ -70,10 +70,30 @@ async function fetchJSON(url) {
   return res.json();
 }
 
+// Retry wrapper for the discovery call only. The thread builder runs on the
+// same DB and can leave it briefly saturated; a single 500 from
+// /api/threads/latest right after a builder pass shouldn't kill the prewarm.
+// 3 attempts with 5s → 15s backoff (~20s total wait worst case).
+async function fetchJSONWithRetry(url, attempts = 3, baseDelayMs = 5000) {
+  let lastErr;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fetchJSON(url);
+    } catch (e) {
+      lastErr = e;
+      if (i === attempts - 1) break;
+      const delayMs = baseDelayMs * Math.pow(3, i);
+      console.warn(`${TAG} retry ${i + 1}/${attempts - 1} for ${url}: ${e.message} — waiting ${delayMs / 1000}s`);
+      await new Promise(r => setTimeout(r, delayMs));
+    }
+  }
+  throw lastErr;
+}
+
 async function pickTopThreads(n) {
   let data;
   try {
-    data = await fetchJSON(`${API_URL}/api/threads/latest?limit=${n}`);
+    data = await fetchJSONWithRetry(`${API_URL}/api/threads/latest?limit=${n}`);
   } catch (e) {
     throw new Error(`/api/threads/latest?limit=${n}: ${e.message}`);
   }
@@ -173,13 +193,20 @@ async function main() {
 
   // Phase 1 — discover top N + warm all detail endpoints per thread
   let threads = [];
+  let discoveryFailed = false;
   try {
     threads = await pickTopThreads(THREAD_LIMIT);
   } catch (err) {
-    console.error(`${TAG} fatal: discovery failed (${err.message}). Verify API_URL is reachable.`);
-    process.exit(1);
+    // Don't bail hard. Core feeds may have warmed successfully; let the
+    // final summary decide exit status (exit(1) only if literally nothing
+    // succeeded). Render alerts on exit(1) — a transient DB-saturation 500
+    // here, recoverable next cycle, shouldn't page.
+    console.error(`${TAG} discovery failed (${err.message}). Skipping phase 1; will rely on next cycle.`);
+    discoveryFailed = true;
   }
-  console.log(`${TAG} phase 1: warming ${PER_THREAD_ENDPOINTS.length} detail endpoints for ${threads.length} threads…`);
+  if (!discoveryFailed) {
+    console.log(`${TAG} phase 1: warming ${PER_THREAD_ENDPOINTS.length} detail endpoints for ${threads.length} threads…`);
+  }
 
   const allResults = [];
   for (let i = 0; i < threads.length; i += CONCURRENCY) {
