@@ -20581,6 +20581,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const card = document.createElement('div');
         card.className = 'briefingFlowLabel';
         card.textContent = resolved.node.name || '';
+        // CSS opacity transition intentionally omitted — see www/index.html
+        // for full rationale (per-frame continuous alpha + lerp gives
+        // smoother fades without injecting transition lag).
         card.style.cssText = [
           'position: fixed', 'pointer-events: none',
           'padding: 4px 10px',
@@ -20594,18 +20597,28 @@ const settingsToggle     = document.getElementById("settingsToggle");
           'z-index: 5060',
           'opacity: 0',
           'transform: translate(-50%, -100%)',
-          'transition: opacity 0.2s ease',
           'box-shadow: 0 4px 14px rgba(0,0,0,0.55)',
           'text-shadow: 0 0 6px rgba(255,180,80,0.25)',
         ].join(';');
         document.body.appendChild(card);
         const svg = _ensureBriefingFlowSvg();
-        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        // Curved <path> leader line — see www/index.html for full
+        // rationale on the quadratic Bézier with outward bow.
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'path');
         line.setAttribute('stroke', 'rgba(255,180,80,0.55)');
         line.setAttribute('stroke-width', '1.2');
         line.setAttribute('stroke-dasharray', '3,3');
-        line.style.cssText = 'opacity:0;transition:opacity 0.2s ease;';
+        line.setAttribute('fill', 'none');
+        line.setAttribute('stroke-linecap', 'round');
+        line.style.opacity = '0';
         svg.appendChild(line);
+        const anchorDot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        anchorDot.setAttribute('r', '3');
+        anchorDot.setAttribute('fill', 'rgba(255,200,120,0.9)');
+        anchorDot.setAttribute('stroke', 'rgba(255,160,80,0.7)');
+        anchorDot.setAttribute('stroke-width', '0.8');
+        anchorDot.style.opacity = '0';
+        svg.appendChild(anchorDot);
         briefingFlowLabels.push({
           posArr: resolved.posArr,
           pts:    resolved.pts,
@@ -20613,94 +20626,142 @@ const settingsToggle     = document.getElementById("settingsToggle");
           name:   resolved.node.name,
           cardEl: card,
           lineEl: line,
+          dotEl:  anchorDot,
           _key:   key,
+          _w:     0,
+          _h:     0,
+          _alpha: 0,
         });
       };
       window.clearBriefingFlowArcLabels = function() {
         for (const l of briefingFlowLabels) {
           try { l.cardEl.remove(); } catch (_) {}
           try { l.lineEl.remove(); } catch (_) {}
+          try { l.dotEl?.remove(); } catch (_) {}
         }
         briefingFlowLabels.length = 0;
       };
+      // Reusable Vector3s for the per-frame tracker — see www/index.html
+      // for full rationale.
+      const _flowVec = new THREE.Vector3();
+      const _flowVec2 = new THREE.Vector3();
+      const _flowVec3 = new THREE.Vector3();
+      function _smoothstep(edge0, edge1, x) {
+        if (edge0 === edge1) return x < edge0 ? 0 : 1;
+        const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
+        return t * t * (3 - 2 * t);
+      }
+
       window._briefingTrackFlowArcLabels = function() {
         if (!briefingFlowLabels.length) return;
         const rect = renderer.domElement.getBoundingClientRect();
-        const tmp = new THREE.Vector3();
-        const hoverDedupePx = 60;
+        const baseOffsetPx     = 32;
+        const hoverDedupeNear  = 40;
+        const hoverDedupeFar   = 80;
+        const facingFullVisible = -0.20;
+        const facingFullHidden  = -0.05;
+        const alphaLerp         = 0.28;
 
-        // Cross-system dedupe — see www/index.html for full rationale.
-        // Suppress flow-arc labels that point at the same node as the
-        // active hover card (or visually collide with it within
-        // hoverDedupePx). Hover card is richer (population, flag); the
-        // flow-arc label defers. Re-evaluated every frame so the
-        // hidden flow-arc reappears the moment the hover card moves on.
+        // Project the active hover-card anchor for dedupe — see
+        // www/index.html for full rationale.
         let hoverSx = null, hoverSy = null;
         let hoverPosArr = null, hoverIdx = -1;
         try {
           const ref = (typeof _briefingHoverRef !== 'undefined') ? _briefingHoverRef : null;
           if (ref && ref.posArr && ref.pts && Number.isFinite(ref.idx) && ref.idx >= 0) {
-            tmp.set(
+            _flowVec.set(
               ref.posArr[ref.idx * 3],
               ref.posArr[ref.idx * 3 + 1],
               ref.posArr[ref.idx * 3 + 2],
             ).applyMatrix4(ref.pts.matrixWorld);
-            const projHover = tmp.clone().project(camera);
-            const hCamDir = tmp.clone().sub(camera.position).normalize();
-            const hNormal = tmp.clone().normalize();
-            if (hNormal.dot(hCamDir) <= -0.05 && projHover.z <= 1) {
-              hoverSx = rect.left + (projHover.x + 1) / 2 * rect.width;
-              hoverSy = rect.top  + (-projHover.y + 1) / 2 * rect.height;
+            _flowVec2.copy(_flowVec).project(camera);
+            _flowVec3.copy(_flowVec).sub(camera.position).normalize();
+            const hNormalDotCam = _flowVec.clone().normalize().dot(_flowVec3);
+            if (hNormalDotCam <= -0.05 && _flowVec2.z <= 1) {
+              hoverSx = rect.left + (_flowVec2.x + 1) / 2 * rect.width;
+              hoverSy = rect.top  + (-_flowVec2.y + 1) / 2 * rect.height;
               hoverPosArr = ref.posArr;
               hoverIdx    = ref.idx;
             }
           }
-        } catch (_) { /* best-effort dedupe; never crash the tracker */ }
+        } catch (_) { /* best-effort */ }
 
+        const cxCanvas = rect.left + rect.width / 2;
         for (const l of briefingFlowLabels) {
           if (!l.posArr || !l.pts) continue;
-          // Exact same node as the hover card → suppress.
+          let targetA = 0;
+          let sx = 0, sy = 0;
+          let computed = false;
+
+          // Exact-node dedupe — fully suppress.
           if (hoverPosArr && l.posArr === hoverPosArr && l.idx === hoverIdx) {
-            l.cardEl.style.opacity = '0';
-            l.lineEl.style.opacity = '0';
-            continue;
-          }
-          tmp.set(
-            l.posArr[l.idx * 3],
-            l.posArr[l.idx * 3 + 1],
-            l.posArr[l.idx * 3 + 2],
-          ).applyMatrix4(l.pts.matrixWorld);
-          const projected = tmp.clone().project(camera);
-          const sx = rect.left + (projected.x + 1) / 2 * rect.width;
-          const sy = rect.top  + (-projected.y + 1) / 2 * rect.height;
-          const camDir = tmp.clone().sub(camera.position).normalize();
-          const surfaceNormal = tmp.clone().normalize();
-          const dot = surfaceNormal.dot(camDir);
-          if (dot > -0.05 || projected.z > 1) {
-            l.cardEl.style.opacity = '0';
-            l.lineEl.style.opacity = '0';
-            continue;
-          }
-          // Screen-space proximity dedupe — handles city-vs-country
-          // same-place case where node identity differs but the
-          // anchors project to nearly the same screen pixel.
-          if (hoverSx != null) {
-            const dxh = sx - hoverSx, dyh = sy - hoverSy;
-            if (dxh * dxh + dyh * dyh < hoverDedupePx * hoverDedupePx) {
-              l.cardEl.style.opacity = '0';
-              l.lineEl.style.opacity = '0';
-              continue;
+            targetA = 0;
+          } else {
+            _flowVec.set(
+              l.posArr[l.idx * 3],
+              l.posArr[l.idx * 3 + 1],
+              l.posArr[l.idx * 3 + 2],
+            ).applyMatrix4(l.pts.matrixWorld);
+            _flowVec2.copy(_flowVec).project(camera);
+            if (_flowVec2.z > 1) {
+              targetA = 0;
+            } else {
+              sx = rect.left + (_flowVec2.x + 1) / 2 * rect.width;
+              sy = rect.top  + (-_flowVec2.y + 1) / 2 * rect.height;
+              _flowVec3.copy(_flowVec).sub(camera.position).normalize();
+              const dot = _flowVec.normalize().dot(_flowVec3);
+              const facingAlpha = 1 - _smoothstep(facingFullVisible, facingFullHidden, dot);
+              let hoverFade = 1;
+              if (hoverSx != null) {
+                const dxh = sx - hoverSx, dyh = sy - hoverSy;
+                const dist = Math.sqrt(dxh * dxh + dyh * dyh);
+                hoverFade = _smoothstep(hoverDedupeNear, hoverDedupeFar, dist);
+              }
+              targetA = facingAlpha * hoverFade;
+              computed = true;
             }
           }
-          const cardOffsetPx = 32;
-          l.cardEl.style.left = sx + 'px';
-          l.cardEl.style.top  = (sy - cardOffsetPx) + 'px';
-          l.cardEl.style.opacity = '1';
-          l.lineEl.setAttribute('x1', sx);
-          l.lineEl.setAttribute('y1', sy - cardOffsetPx);
-          l.lineEl.setAttribute('x2', sx);
-          l.lineEl.setAttribute('y2', sy);
-          l.lineEl.style.opacity = '1';
+
+          // Lerp toward target so visibility eases naturally instead of
+          // snapping when the dot crosses a threshold or the dedupe
+          // distance flips.
+          const newA = l._alpha + (targetA - l._alpha) * alphaLerp;
+          l._alpha = newA;
+
+          if (computed && newA > 0.005) {
+            const cardBottomY = sy - baseOffsetPx;
+            l.cardEl.style.left = sx + 'px';
+            l.cardEl.style.top  = cardBottomY + 'px';
+            l.cardEl.style.opacity = String(newA);
+            // Curved leader path — quadratic Bézier with outward bow.
+            const lineLen = Math.max(0, sy - cardBottomY);
+            const bowMag  = Math.min(18, lineLen * 0.22);
+            const bowSign = (sx >= cxCanvas) ? 1 : -1;
+            const cpX = sx + bowMag * bowSign;
+            const cpY = cardBottomY + lineLen * 0.5;
+            l.lineEl.setAttribute('d',
+              `M ${sx.toFixed(1)} ${sy.toFixed(1)} ` +
+              `Q ${cpX.toFixed(1)} ${cpY.toFixed(1)} ` +
+              `${sx.toFixed(1)} ${cardBottomY.toFixed(1)}`);
+            l.lineEl.style.opacity = String(newA);
+            if (l.dotEl) {
+              l.dotEl.setAttribute('cx', sx.toFixed(1));
+              l.dotEl.setAttribute('cy', sy.toFixed(1));
+              l.dotEl.style.opacity = String(newA);
+            }
+          } else {
+            // Hidden / fading-out — keep alpha lerp going so the fade-
+            // out animates instead of snapping.
+            if (newA < 0.01) {
+              l.cardEl.style.opacity = '0';
+              l.lineEl.style.opacity = '0';
+              if (l.dotEl) l.dotEl.style.opacity = '0';
+            } else {
+              l.cardEl.style.opacity = String(newA);
+              l.lineEl.style.opacity = String(newA);
+              if (l.dotEl) l.dotEl.style.opacity = String(newA);
+            }
+          }
         }
       };
 
@@ -41103,6 +41164,9 @@ body.ticker-active .gTickerLabel {
     }
     if (_focalActive) endFocalVideo();
     clearArcMeshes();
+    // True segment boundary — clear labels here (clearArcMeshes leaves
+    // labels alone now, see its comment for why).
+    if (window.clearBriefingFlowArcLabels) window.clearBriefingFlowArcLabels();
     if (window.clearBriefingPulses) window.clearBriefingPulses();
     if (window.__clearBriefingCityMask) window.__clearBriefingCityMask();
     // Ease camera back to default orbit distance
@@ -41947,6 +42011,8 @@ body.ticker-active .gTickerLabel {
     // Reset globe state — always return to country view so city-view never sticks
     if (_focalActive) endFocalVideo();
     clearArcMeshes();
+    // True segment boundary — clear labels here.
+    if (window.clearBriefingFlowArcLabels) window.clearBriefingFlowArcLabels();
     if (window.clearBriefingPulses) window.clearBriefingPulses();
     if (window.__flowClearHighlights) window.__flowClearHighlights();
     if (window.setBriefingViewMode) window.setBriefingViewMode('country');
@@ -43039,10 +43105,12 @@ body.ticker-active .gTickerLabel {
     if (window.clearBriefingNationHalos) {
       try { window.clearBriefingNationHalos(); } catch (_) {}
     }
-    // Multi-label cards — same lifecycle, see www/index.html.
-    if (window.clearBriefingFlowArcLabels) {
-      try { window.clearBriefingFlowArcLabels(); } catch (_) {}
-    }
+    // NOTE: flow-arc labels are intentionally NOT cleared here — see
+    // www/index.html clearArcMeshes for the full rationale. The 95%
+    // setBriefingViewMode('country') was prematurely killing labels
+    // ~5% before the segment audio ended. Labels are now cleared only
+    // at true segment boundaries (goToSegment, closeBriefing,
+    // showRecap), not in the arc/view-mode reset path.
     // Heatmap overlay teardown when the briefing fired one — see
     // www/index.html for the full rationale. __semHeatClose handles
     // the heatSphere disposal + body class removal in one go.
@@ -43066,6 +43134,8 @@ body.ticker-active .gTickerLabel {
       setTimeout(() => { if (_bgMusic) { try { _bgMusic.pause(); } catch (_) {} } }, 2500);
     }
     clearArcMeshes();
+    // True end-of-briefing boundary — clear labels here.
+    if (window.clearBriefingFlowArcLabels) window.clearBriefingFlowArcLabels();
     if (window.clearBriefingPulses) window.clearBriefingPulses();
 
     const grid = document.getElementById('bRecapGrid');

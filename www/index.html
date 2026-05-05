@@ -22294,6 +22294,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const card = document.createElement('div');
         card.className = 'briefingFlowLabel';
         card.textContent = resolved.node.name || '';
+        // Per-frame opacity is computed by _briefingTrackFlowArcLabels
+        // from a continuous function of (back-hemisphere dot product,
+        // hover-dedupe distance) and lerped toward the target each
+        // frame. CSS transition is intentionally OMITTED — restarting a
+        // 0.2s transition on every continuous-value frame write would
+        // inject ~150ms of lag during fast camera moves. The smoothness
+        // comes from continuous alpha values and the lerp, not CSS.
         card.style.cssText = [
           'position: fixed', 'pointer-events: none',
           'padding: 4px 10px',
@@ -22307,21 +22314,43 @@ const settingsToggle     = document.getElementById("settingsToggle");
           'z-index: 5060',
           'opacity: 0',
           'transform: translate(-50%, -100%)',
-          'transition: opacity 0.2s ease',
           'box-shadow: 0 4px 14px rgba(0,0,0,0.55)',
           'text-shadow: 0 0 6px rgba(255,180,80,0.25)',
         ].join(';');
         document.body.appendChild(card);
         const svg = _ensureBriefingFlowSvg();
-        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        // Curved leader line — quadratic Bézier <path> instead of a
+        // rigid <line>. Per-frame the tracker recomputes the `d`
+        // attribute with a control point laterally offset from the
+        // line midpoint (signed by which side of the canvas the
+        // anchor sits on, magnitude scaling with line length capped
+        // at ~18px). Same dashed amber stroke as before.
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'path');
         line.setAttribute('stroke', 'rgba(255,180,80,0.55)');
         line.setAttribute('stroke-width', '1.2');
         line.setAttribute('stroke-dasharray', '3,3');
-        line.style.cssText = 'opacity:0;transition:opacity 0.2s ease;';
+        line.setAttribute('fill', 'none');
+        line.setAttribute('stroke-linecap', 'round');
+        line.style.opacity = '0';
         svg.appendChild(line);
+        // Small anchor dot at the line's anchor end — mirrors the
+        // single hover card's ::before circle so flow-arc leaders
+        // read as the same family of label.
+        const anchorDot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        anchorDot.setAttribute('r', '3');
+        anchorDot.setAttribute('fill', 'rgba(255,200,120,0.9)');
+        anchorDot.setAttribute('stroke', 'rgba(255,160,80,0.7)');
+        anchorDot.setAttribute('stroke-width', '0.8');
+        anchorDot.style.opacity = '0';
+        svg.appendChild(anchorDot);
         // Anchor reference: the canonical posArr + index so re-projection
         // each frame uses the live globe transform (mirrors the single-
-        // card briefingShowLabel pattern).
+        // card briefingShowLabel pattern). _w/_h are cached layout
+        // dimensions (filled on first visible frame) so the per-frame
+        // tracker doesn't have to re-read offsetWidth/offsetHeight and
+        // force layout reflow for every label every frame.
+        // _alpha tracks the lerp-smoothed visibility for next-frame
+        // interpolation (target alpha is computed fresh each frame).
         briefingFlowLabels.push({
           posArr: resolved.posArr,
           pts:    resolved.pts,
@@ -22329,149 +22358,161 @@ const settingsToggle     = document.getElementById("settingsToggle");
           name:   resolved.node.name,
           cardEl: card,
           lineEl: line,
+          dotEl:  anchorDot,
           _key:   key,
+          _w:     0,
+          _h:     0,
+          _alpha: 0,
         });
       };
       window.clearBriefingFlowArcLabels = function() {
         for (const l of briefingFlowLabels) {
           try { l.cardEl.remove(); } catch (_) {}
           try { l.lineEl.remove(); } catch (_) {}
+          try { l.dotEl?.remove(); } catch (_) {}
         }
         briefingFlowLabels.length = 0;
       };
+      // Reusable Vector3s — allocating fresh `new THREE.Vector3()` and
+      // `tmp.clone()` instances each frame in the hot loop showed up in
+      // GC sample profiling; reusing keeps the tracker amortized to a
+      // handful of bytes per frame regardless of label count.
+      const _flowVec = new THREE.Vector3();
+      const _flowVec2 = new THREE.Vector3();
+      const _flowVec3 = new THREE.Vector3();
+
+      function _smoothstep(edge0, edge1, x) {
+        if (edge0 === edge1) return x < edge0 ? 0 : 1;
+        const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
+        return t * t * (3 - 2 * t); // hermite ease — softer than linear
+      }
+
       // Called per render-loop tick. Keeps cards/lines pinned to their
-      // 3D anchors as the globe rotates and hides any whose anchor has
-      // rotated to the back hemisphere (same dot-product gate the
-      // single hover card uses, same threshold the city-fan picker uses).
+      // 3D anchors as the globe rotates and fades any whose anchor has
+      // rotated toward the back hemisphere.
       //
-      // Three-pass layout to prevent overlapping labels (two countries
-      // close on-screen used to stack their cards on top of each other):
-      //   1. Project every anchor → sx/sy + visibility flag.
-      //   2. Stack-resolve in screen-space: sort visible labels by
-      //      anchor Y (top-most anchor first), then push any later
-      //      label that would overlap an already-placed one UP further
-      //      away from its anchor (its leader line stretches to fill
-      //      the gap). Cap the push at maxStackPush so labels can't
-      //      drift off the top of the screen — beyond that, accept a
-      //      partial overlap rather than orphan the label.
-      //   3. Write final card position + line endpoints to the DOM.
+      // Five-pass layout:
+      //   1. Project every anchor → sx/sy + a continuous facing alpha
+      //      (smoothstep from dot=-0.05 fully hidden to dot=-0.20 fully
+      //      visible, NOT a hard threshold — the previous binary cutoff
+      //      caused labels right at the rotation edge to flicker on/off
+      //      across frames as the dot product oscillated, the
+      //      user-reported "choppy and inconsistent" behavior).
+      //   2. Cross-system dedupe vs the active hover card — exact-node
+      //      match suppresses to alpha 0; screen-space proximity uses a
+      //      smoothstep fade across 40-80px so brushing past doesn't
+      //      snap labels off.
+      //   3. Stack-resolve overlapping cards in screen-space by pushing
+      //      later (higher anchor) cards UP, leader line stretches to
+      //      fill. Cached _w/_h dimensions — no per-frame layout reads.
+      //   4. Lerp current alpha toward target alpha so visibility eases
+      //      naturally rather than snapping.
+      //   5. Write card position + curved leader path + anchor dot.
       window._briefingTrackFlowArcLabels = function() {
         if (!briefingFlowLabels.length) return;
         const rect = renderer.domElement.getBoundingClientRect();
-        const tmp = new THREE.Vector3();
-        const baseOffsetPx  = 32;   // matches single hover card visual feel
-        const labelGap      = 4;    // gap between stacked cards (px)
-        const maxStackPush  = 90;   // hard cap on extra offset beyond base
-        const xOverlapSlack = 4;    // small px slack so just-touching ≠ overlap
-        const hoverDedupePx = 60;   // hide flow-arc label if its anchor is
-                                    // within this many px of the active
-                                    // hover card's anchor (covers the
-                                    // city-vs-country same-place case)
+        const baseOffsetPx     = 32;   // matches single hover card visual feel
+        const labelGap         = 4;    // gap between stacked cards (px)
+        const maxStackPush     = 90;   // hard cap on extra offset beyond base
+        const xOverlapSlack    = 4;    // small px slack so just-touching ≠ overlap
+        const hoverDedupeNear  = 40;   // <= this many px → fully hidden
+        const hoverDedupeFar   = 80;   // >= this many px → fully visible
+        const facingFullVisible = -0.20; // dot ≤ this → fully facing camera
+        const facingFullHidden  = -0.05; // dot ≥ this → on far hemisphere
+        const alphaLerp         = 0.28;  // per-frame ease toward target — ~10
+                                         // frames to converge from 0 to 1, fast
+                                         // enough to feel responsive but smooth
 
-        // Cross-system dedupe — project the active hover-card anchor
-        // (if any) so flow-arc labels that point at the same node, or
-        // collide visually with it, can be suppressed. The richer hover
-        // card (z 100005, carries population + flag) wins; the flow-arc
-        // label (z 5060, name only) defers. Without this guard, when
-        // the briefing's primary_country (or a tour stop) coincided
-        // with a flow-arc endpoint both cards rendered at the same
-        // anchor — hover card on top, flow-arc card poking out from
-        // underneath, leader line emerging from "behind" the hover
-        // card. The check re-evaluates every frame so it works for the
-        // tour sequence too: as briefingShowLabelAt advances through
-        // secondary locations, the hidden flow-arc label re-appears
-        // the moment the hover card moves on.
+        // Project the active hover-card anchor (if any) so flow-arc
+        // labels that point at the same node, or collide visually with
+        // it, can be suppressed. The richer hover card (z 100005,
+        // carries population + flag) wins; the flow-arc label (z 5060,
+        // name only) defers. Re-evaluated every frame so it tracks the
+        // tour sequence as briefingShowLabelAt advances.
         let hoverSx = null, hoverSy = null;
         let hoverPosArr = null, hoverIdx = -1;
         try {
           const ref = (typeof _briefingHoverRef !== 'undefined') ? _briefingHoverRef : null;
           if (ref && ref.posArr && ref.pts && Number.isFinite(ref.idx) && ref.idx >= 0) {
-            tmp.set(
+            _flowVec.set(
               ref.posArr[ref.idx * 3],
               ref.posArr[ref.idx * 3 + 1],
               ref.posArr[ref.idx * 3 + 2],
             ).applyMatrix4(ref.pts.matrixWorld);
-            const projHover = tmp.clone().project(camera);
-            // Same back-hemisphere gate the hover card itself uses —
-            // if the hover anchor is on the far side, no dedupe needed.
-            const hCamDir = tmp.clone().sub(camera.position).normalize();
-            const hNormal = tmp.clone().normalize();
-            if (hNormal.dot(hCamDir) <= -0.05 && projHover.z <= 1) {
-              hoverSx = rect.left + (projHover.x + 1) / 2 * rect.width;
-              hoverSy = rect.top  + (-projHover.y + 1) / 2 * rect.height;
+            // Reuse: project mutates in place; copy to projected slot.
+            _flowVec2.copy(_flowVec).project(camera);
+            _flowVec3.copy(_flowVec).sub(camera.position).normalize();
+            const hNormalDotCam = _flowVec.clone().normalize().dot(_flowVec3);
+            if (hNormalDotCam <= -0.05 && _flowVec2.z <= 1) {
+              hoverSx = rect.left + (_flowVec2.x + 1) / 2 * rect.width;
+              hoverSy = rect.top  + (-_flowVec2.y + 1) / 2 * rect.height;
               hoverPosArr = ref.posArr;
               hoverIdx    = ref.idx;
             }
           }
         } catch (_) { /* best-effort dedupe; never crash the tracker */ }
 
-        // Pass 1 — project anchors, defer DOM writes.
+        // Pass 1 + 2 — project anchors, compute target alpha, defer DOM writes.
         const visible = [];
         for (const l of briefingFlowLabels) {
           if (!l.posArr || !l.pts) {
-            l.cardEl.style.opacity = '0';
-            l.lineEl.style.opacity = '0';
+            l._targetAlpha = 0;
             continue;
           }
-          // Cross-system dedupe (exact same node): same posArr reference
-          // + same index = same country/city. The hover card already
-          // claims this anchor; suppress the flow-arc duplicate.
+          // Exact-node dedupe (same country/city) — fully suppress.
           if (hoverPosArr && l.posArr === hoverPosArr && l.idx === hoverIdx) {
-            l.cardEl.style.opacity = '0';
-            l.lineEl.style.opacity = '0';
+            l._targetAlpha = 0;
             continue;
           }
-          tmp.set(
+          _flowVec.set(
             l.posArr[l.idx * 3],
             l.posArr[l.idx * 3 + 1],
             l.posArr[l.idx * 3 + 2],
           ).applyMatrix4(l.pts.matrixWorld);
-          const projected = tmp.clone().project(camera);
-          const sx = rect.left + (projected.x + 1) / 2 * rect.width;
-          const sy = rect.top  + (-projected.y + 1) / 2 * rect.height;
-          // Back-hemisphere gate: if the anchor's surface normal faces
-          // the same direction as the camera, the country is on the far
-          // side of the globe and we hide the card + line entirely.
-          const camDir = tmp.clone().sub(camera.position).normalize();
-          const surfaceNormal = tmp.clone().normalize();
-          const dot = surfaceNormal.dot(camDir);
-          if (dot > -0.05 || projected.z > 1) {
-            l.cardEl.style.opacity = '0';
-            l.lineEl.style.opacity = '0';
-            continue;
-          }
-          // Cross-system dedupe (screen-space proximity): handles the
-          // city-vs-country same-place case where the hover card shows
-          // a city and the flow-arc references the surrounding country
-          // (different posArr/idx but visually at the same spot on the
-          // globe). Within hoverDedupePx → suppress.
+          _flowVec2.copy(_flowVec).project(camera);
+          if (_flowVec2.z > 1) { l._targetAlpha = 0; continue; }
+          const sx = rect.left + (_flowVec2.x + 1) / 2 * rect.width;
+          const sy = rect.top  + (-_flowVec2.y + 1) / 2 * rect.height;
+          // Back-hemisphere fade. dot = surfaceNormal · camDir; very
+          // negative → directly facing camera, near 0 / positive → on
+          // the far side. Smoothstep across the [-0.20, -0.05] window
+          // so the transition is continuous, eliminating the per-frame
+          // 0↔1 snap that made the cards feel choppy.
+          _flowVec3.copy(_flowVec).sub(camera.position).normalize();
+          const dot = _flowVec.normalize().dot(_flowVec3);
+          // 1 when dot ≤ -0.20, 0 when dot ≥ -0.05, smoothstep between.
+          const facingAlpha = 1 - _smoothstep(facingFullVisible, facingFullHidden, dot);
+          if (facingAlpha <= 0.005) { l._targetAlpha = 0; continue; }
+
+          // Hover-card screen-space proximity fade — same smoothstep
+          // pattern instead of the previous binary cutoff. Brushing past
+          // the hover anchor briefly (e.g. tour traveling through a
+          // crowded region) no longer snaps cards in/out.
+          let hoverFade = 1;
           if (hoverSx != null) {
             const dxh = sx - hoverSx, dyh = sy - hoverSy;
-            if (dxh * dxh + dyh * dyh < hoverDedupePx * hoverDedupePx) {
-              l.cardEl.style.opacity = '0';
-              l.lineEl.style.opacity = '0';
-              continue;
-            }
+            const dist = Math.sqrt(dxh * dxh + dyh * dyh);
+            hoverFade = _smoothstep(hoverDedupeNear, hoverDedupeFar, dist);
           }
-          // offsetWidth/Height read forces layout — fine, only on visible.
-          const w = l.cardEl.offsetWidth  || 80;
-          const h = l.cardEl.offsetHeight || 22;
-          visible.push({ l, sx, sy, w, h, offsetPx: baseOffsetPx });
+
+          const targetAlpha = facingAlpha * hoverFade;
+          // Cache layout dimensions on first visible frame — eliminates
+          // per-frame offsetWidth/offsetHeight reads (which forced
+          // synchronous layout reflow for every label every frame, the
+          // single biggest cost of the old tracker on long segments).
+          if (!l._w || !l._h) {
+            l._w = l.cardEl.offsetWidth  || 80;
+            l._h = l.cardEl.offsetHeight || 22;
+          }
+          l._targetAlpha = targetAlpha;
+          visible.push({ l, sx, sy, w: l._w, h: l._h, offsetPx: baseOffsetPx });
         }
 
-        // Pass 2 — stack-resolve. Each visible label's card occupies the
-        // rect [sx - w/2, sx + w/2] × [sy - offsetPx - h, sy - offsetPx]
-        // (transform: translate(-50%, -100%) anchors card bottom-center
-        // at (sx, sy - offsetPx)). We sort by anchor Y ascending so the
-        // top-most anchor wins its base offset; subsequent labels that
-        // would clip a previously-placed card get pushed UP (offsetPx
-        // increased) until clear or the cap is hit.
+        // Pass 3 — stack-resolve. Sort by anchor Y; push overlapping
+        // cards UP. Cap at maxStackPush so labels can't drift off screen.
         visible.sort((a, b) => a.sy - b.sy);
         for (let i = 0; i < visible.length; i++) {
           const cur = visible[i];
-          // One sweep is usually enough but cascading collisions need
-          // re-checks — bound the inner loop so a degenerate cluster
-          // can't spin forever.
           let attempts = 0;
           let moved = true;
           while (moved && attempts < 8) {
@@ -22480,15 +22521,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
             for (let j = 0; j < i; j++) {
               const prev = visible[j];
               const dx = Math.abs(cur.sx - prev.sx);
-              const xOverlap = dx < ((cur.w + prev.w) / 2 - xOverlapSlack);
-              if (!xOverlap) continue;
+              if (dx >= ((cur.w + prev.w) / 2 - xOverlapSlack)) continue;
               const curTop  = cur.sy  - cur.offsetPx  - cur.h;
               const curBot  = cur.sy  - cur.offsetPx;
               const prevTop = prev.sy - prev.offsetPx - prev.h;
               const prevBot = prev.sy - prev.offsetPx;
-              const yOverlap = curBot > prevTop && curTop < prevBot;
-              if (!yOverlap) continue;
-              // Push cur up so its bottom sits at prev.top - labelGap.
+              if (!(curBot > prevTop && curTop < prevBot)) continue;
               const wantedOffset = cur.sy - (prevTop - labelGap);
               const cappedOffset = Math.min(wantedOffset, baseOffsetPx + maxStackPush);
               if (cappedOffset > cur.offsetPx + 0.5) {
@@ -22499,16 +22537,64 @@ const settingsToggle     = document.getElementById("settingsToggle");
           }
         }
 
-        // Pass 3 — commit positions + leader-line endpoints.
+        // Pass 4 + 5 — commit. Lerp current alpha toward target so
+        // visibility changes ease naturally; write card position +
+        // curved leader path + anchor dot. Hidden labels still get
+        // their alpha lerped toward 0 (so they fade out, not snap).
+        const cxCanvas = rect.left + rect.width / 2;
         for (const v of visible) {
+          const cardBottomY = v.sy - v.offsetPx;
+          const targetA = v.l._targetAlpha ?? 1;
+          const newA = v.l._alpha + (targetA - v.l._alpha) * alphaLerp;
+          v.l._alpha = newA;
           v.l.cardEl.style.left = v.sx + 'px';
-          v.l.cardEl.style.top  = (v.sy - v.offsetPx) + 'px';
-          v.l.cardEl.style.opacity = '1';
-          v.l.lineEl.setAttribute('x1', v.sx);
-          v.l.lineEl.setAttribute('y1', v.sy - v.offsetPx);
-          v.l.lineEl.setAttribute('x2', v.sx);
-          v.l.lineEl.setAttribute('y2', v.sy);
-          v.l.lineEl.style.opacity = '1';
+          v.l.cardEl.style.top  = cardBottomY + 'px';
+          v.l.cardEl.style.opacity = String(newA);
+
+          // Quadratic Bézier curve from anchor (v.sx, v.sy) up to the
+          // card's bottom-center (v.sx, cardBottomY). Control point sits
+          // at the line's vertical midpoint, offset laterally by bowMag
+          // toward the side of canvas-center the anchor is on — gives
+          // the leader a gentle organic outward bow rather than the
+          // rigid vertical stick the old <line> drew.
+          const lineLen = Math.max(0, v.sy - cardBottomY);
+          const bowMag  = Math.min(18, lineLen * 0.22);
+          const bowSign = (v.sx >= cxCanvas) ? 1 : -1;
+          const cpX = v.sx + bowMag * bowSign;
+          const cpY = cardBottomY + lineLen * 0.5;
+          v.l.lineEl.setAttribute('d',
+            `M ${v.sx.toFixed(1)} ${v.sy.toFixed(1)} ` +
+            `Q ${cpX.toFixed(1)} ${cpY.toFixed(1)} ` +
+            `${v.sx.toFixed(1)} ${cardBottomY.toFixed(1)}`);
+          v.l.lineEl.style.opacity = String(newA);
+          if (v.l.dotEl) {
+            v.l.dotEl.setAttribute('cx', v.sx.toFixed(1));
+            v.l.dotEl.setAttribute('cy', v.sy.toFixed(1));
+            v.l.dotEl.style.opacity = String(newA);
+          }
+        }
+
+        // Hidden labels still need their alpha eased toward 0 (so they
+        // FADE OUT instead of vanishing the frame they fall behind the
+        // hemisphere or get dedupe-suppressed). Without this loop a
+        // label that just got hidden would skip the lerp entirely
+        // because it never makes it into `visible[]`.
+        for (const l of briefingFlowLabels) {
+          if (!l.posArr || !l.pts) continue;
+          if (l._targetAlpha === undefined) continue;
+          // Visible labels were already updated above; skip them.
+          if (visible.some(v => v.l === l)) continue;
+          const newA = l._alpha + (0 - l._alpha) * alphaLerp;
+          l._alpha = newA;
+          if (newA < 0.01) {
+            l.cardEl.style.opacity = '0';
+            l.lineEl.style.opacity = '0';
+            if (l.dotEl) l.dotEl.style.opacity = '0';
+          } else {
+            l.cardEl.style.opacity = String(newA);
+            l.lineEl.style.opacity = String(newA);
+            if (l.dotEl) l.dotEl.style.opacity = String(newA);
+          }
         }
       };
 
@@ -44793,6 +44879,11 @@ body.ticker-active .gTickerLabel {
     }
     if (_focalActive) endFocalVideo();
     clearArcMeshes();
+    // Flow-arc labels are tied to the segment lifecycle, NOT the
+    // arc/view-mode lifecycle (see clearArcMeshes for full rationale).
+    // Clear them at every true segment boundary — closeBriefing,
+    // goToSegment, showRecap.
+    if (window.clearBriefingFlowArcLabels) window.clearBriefingFlowArcLabels();
     if (window.clearBriefingPulses) window.clearBriefingPulses();
     if (window.__clearBriefingCityMask) window.__clearBriefingCityMask();
     // Ease camera back to default orbit distance
@@ -45773,6 +45864,9 @@ body.ticker-active .gTickerLabel {
     // Reset globe state — always return to country view so city-view never sticks
     if (_focalActive) endFocalVideo();
     clearArcMeshes();
+    // True segment boundary — clear labels here (clearArcMeshes leaves
+    // labels alone now, see its comment for why).
+    if (window.clearBriefingFlowArcLabels) window.clearBriefingFlowArcLabels();
     if (window.clearBriefingPulses) window.clearBriefingPulses();
     if (window.__flowClearHighlights) window.__flowClearHighlights();
     if (window.setBriefingViewMode) window.setBriefingViewMode('country');
@@ -47206,12 +47300,17 @@ body.ticker-active .gTickerLabel {
     if (window.clearBriefingNationHalos) {
       try { window.clearBriefingNationHalos(); } catch (_) {}
     }
-    // Same lifecycle for the multi-label flow-arc system — labels for
-    // segment N's flow_arcs / secondary_flow_arcs go away when the
-    // segment ends, before segment N+1 registers its own.
-    if (window.clearBriefingFlowArcLabels) {
-      try { window.clearBriefingFlowArcLabels(); } catch (_) {}
-    }
+    // NOTE: flow-arc labels are intentionally NOT cleared here. Earlier
+    // they were, which caused the user-reported "labels disappear at
+    // weird times" bug: at 95% of every segment, the playback timeline
+    // calls setBriefingViewMode('country') (city → country reset for
+    // the recap window), which calls clearBriefingArcs, which is
+    // clearArcMeshes. That premature clear killed the labels ~5%
+    // before the segment audio ended, leaving a noticeable empty gap.
+    // Labels are now cleared only at true segment boundaries — see
+    // goToSegment / closeBriefing / showRecap, where the call lives
+    // alongside clearArcMeshes() but stays separate so view-mode
+    // resets don't drag labels along with the arcs.
     // Heatmap overlay (when the segment used media_type='heatmap') —
     // tear it down on segment exit so the colored countries don't
     // bleed into the next segment. Only fires when the briefing
@@ -47235,6 +47334,9 @@ body.ticker-active .gTickerLabel {
     clearTimeout(segTimer);
     clearBTimers();
     clearArcMeshes();
+    // True end-of-briefing — clear labels here (clearArcMeshes leaves
+    // labels alone now, see its comment for why).
+    if (window.clearBriefingFlowArcLabels) window.clearBriefingFlowArcLabels();
     // Fade out background music at end of briefing
     if (_bgMusic) {
       duckBgMusic(0.001, 2.0);
