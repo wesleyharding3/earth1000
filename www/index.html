@@ -44649,21 +44649,58 @@ body.ticker-active .gTickerLabel {
     return isNaN(d) ? new Date() : d;
   }
 
+  // Extract the date phrase the NARRATOR actually says in the intro — the
+  // single source of truth for what the viewer hears. The script prompt
+  // constrains the first sentence of the intro voiceover to a verbatim
+  // "Weekday, Month Day, Year" string (built from `new Date()` at
+  // generation time, see briefingGenerator.js). Parsing that out of the
+  // stored voiceover_text guarantees the on-screen label and the spoken
+  // date match — even when episode.target_date has drifted from the
+  // generation-time date (briefings generated for a future date,
+  // generation crossing midnight UTC, manifest regenerations, etc.).
+  //
+  // Returns the verbatim narrator phrase (e.g. "Wednesday, May 5, 2026")
+  // or null when parsing fails — caller falls back to target_date so the
+  // overlay never goes blank.
+  function _extractNarratorIntroDate(ep) {
+    try {
+      const segs = Array.isArray(ep?.segments) ? ep.segments : null;
+      if (!segs) return null;
+      const intro = segs.find(s => s && (s.type === 'intro' || s.segment_type === 'intro'));
+      const text = (intro?.voiceover_text || intro?.voiceover || '').toString();
+      if (!text) return null;
+      // Match: "Wednesday, May 5, 2026" — full weekday + month + day + 4-digit year.
+      // Anchored to the canonical English month/weekday names the prompt
+      // demands; case-sensitive on purpose so ad-libbed lowercase strings
+      // (which would also be wrong for a broadcast) don't get pulled in.
+      const re = /\b(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}\b/;
+      const m = text.match(re);
+      return m ? m[0] : null;
+    } catch (_) { return null; }
+  }
+
   function showIntroOverlay() {
     const overlay = document.getElementById('bIntroOverlay');
     if (!overlay) return;
     if (overlay.classList.contains('visible') && !overlay.classList.contains('exiting')) return;
     overlay.classList.remove('exiting');
     overlay.style.display = '';
-    // Stamp the date once. If episode.target_date exists, use it (which
-    // matches what the narrator says — both come from the briefing's
-    // generation date). Fall back to today.
+    // Stamp the date the NARRATOR says (verbatim). target_date is the
+    // defensive fallback for legacy episodes whose intro voiceover doesn't
+    // contain a parseable date phrase — should be vanishingly rare given
+    // the prompt's "MUST state the date in this exact format" instruction.
     const dateEl = document.getElementById('bIntroDate');
     if (dateEl) {
-      const d = _parseEpisodeDate(episode?.target_date);
-      dateEl.textContent = d.toLocaleDateString('en-US', {
-        weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
-      });
+      const narratorDate = _extractNarratorIntroDate(episode);
+      if (narratorDate) {
+        dateEl.textContent = narratorDate;
+      } else {
+        const d = _parseEpisodeDate(episode?.target_date);
+        dateEl.textContent = d.toLocaleDateString('en-US', {
+          weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
+        });
+        console.warn('[briefing/intro] no parseable date in narrator voiceover — falling back to target_date');
+      }
     }
     // Force layout so the entrance transition has a defined start frame.
     void overlay.offsetWidth;
@@ -46512,6 +46549,14 @@ body.ticker-active .gTickerLabel {
   // Supports YouTube videos, Twitter posts, and Twitter videos.
   let _focalActive = false;
   let _focalCaptionsWereOff = false; // track if we auto-enabled captions
+  // Tracks whether the briefing has an active heatmap overlay so
+  // segment-end cleanup (clearArcMeshes) can tear it down. Without
+  // this the colored countries from segment N stay painted into
+  // segment N+1 and onward to the end of the briefing — exactly the
+  // user-reported "must remove the heatmap overlay at the end of the
+  // segment" symptom. Set true by startFocalHeatmap on a successful
+  // render; reset false after __semHeatClose runs.
+  let _briefingHeatmapOpen = false;
   // Saved parent + sibling so we can restore #bVideoCard into the article
   // panel after the focal pass. We reparent to <body> during focal because
   // #bArticlePanel has `transform: translateY(-50%)` which creates a new
@@ -46879,7 +46924,15 @@ body.ticker-active .gTickerLabel {
             mode:        mode || 'binary',
             legend:      prebaked.legend || question,
             source_note: prebaked.source_note || '',
+            // Briefing mode: paint the colored countries onto the globe
+            // but suppress the side panel UI. The narrator carries the
+            // viewer through the visualization; the panel would be a
+            // distraction during a played briefing.
+            briefingMode: true,
           });
+          // Track that the briefing opened a heatmap so segment-end cleanup
+          // (clearArcMeshes → __semHeatClose) knows to tear it down.
+          _briefingHeatmapOpen = true;
         } else {
           console.warn('[briefing/heatmap] __semHeatRenderQA not available — heat panel module not initialized');
         }
@@ -46917,7 +46970,9 @@ body.ticker-active .gTickerLabel {
           mode:        data.mode || mode || 'binary',
           legend:      data.legend || question,
           source_note: data.source_note || '',
+          briefingMode: true,
         });
+        _briefingHeatmapOpen = true;
       } else {
         console.warn('[briefing/heatmap] __semHeatRenderQA not available — heat panel module not initialized');
       }
@@ -47156,6 +47211,18 @@ body.ticker-active .gTickerLabel {
     // segment ends, before segment N+1 registers its own.
     if (window.clearBriefingFlowArcLabels) {
       try { window.clearBriefingFlowArcLabels(); } catch (_) {}
+    }
+    // Heatmap overlay (when the segment used media_type='heatmap') —
+    // tear it down on segment exit so the colored countries don't
+    // bleed into the next segment. Only fires when the briefing
+    // actually opened a heatmap; if the user had a manually-opened
+    // heatmap from before the briefing, the flag stays false and we
+    // don't disturb their state. __semHeatClose handles the heatSphere
+    // disposal, the body-class removal, and the (no-op for briefing
+    // mode) panel teardown in one go.
+    if (_briefingHeatmapOpen) {
+      _briefingHeatmapOpen = false;
+      try { window.__semHeatClose?.(); } catch (_) {}
     }
   }
   // Expose so setBriefingViewMode can call it when returning to country view
@@ -50835,10 +50902,25 @@ body.ticker-active .gTickerLabel {
 
   window.__semHeatRenderQA = function(opts) {
     if (!opts) return;
-    const { values, legend, mode, source_note, question, refusal } = opts;
-    // Open the panel if it's closed (mirrors __semHeatOpen's minimum
-    // setup without triggering its reload()).
-    if (!window.__semHeatActive) {
+    const { values, legend, mode, source_note, question, refusal, briefingMode } = opts;
+    // Briefing mode — paint the colored countries onto the globe but
+    // do NOT reveal the side panel. The briefing player handles its
+    // own narration + segment chrome; the heatmap is purely a visual
+    // overlay during a heatmap segment, and the panel UI (legend,
+    // tabs, palette pickers, click inspector) would distract from
+    // that. We also skip hideNodeMarkers / enableHeatClickInspector /
+    // the body 'sem-heatmap-active' class so the briefing's own dot
+    // markers, pulse rings, and label-tracking code keep working.
+    // __semHeatActive is still set to true so the briefing-side
+    // cleanup (which calls __semHeatClose at segment end) tears down
+    // the heatSphere correctly.
+    if (briefingMode) {
+      window.__semHeatActive = true;
+      // Skip: panel.visible, body class, hideNodeMarkers,
+      //       enableHeatClickInspector — see comment above.
+    } else if (!window.__semHeatActive) {
+      // Open the panel if it's closed (mirrors __semHeatOpen's minimum
+      // setup without triggering its reload()).
       window.__semHeatActive = true;
       document.body.classList.add('sem-heatmap-active');
       panel.classList.remove('minimized');
@@ -50847,13 +50929,17 @@ body.ticker-active .gTickerLabel {
       try { enableHeatClickInspector(); } catch (_) {}
     }
     // Force the Ask AI tab visible so users see the legend/source note.
-    [...ctlTabs.querySelectorAll('.semHeatCtlTab')].forEach(t => t.classList.toggle('active', t.dataset.ctl === 'ask'));
-    [...panel.querySelectorAll('.semHeatCtlPanel')].forEach(p => p.classList.toggle('active', p.dataset.panel === 'ask'));
-    state.ctl = 'ask';
-    state.mode = 'coverage';
-    document.querySelectorAll('#semHeatModeRow .semHeatPill').forEach(p =>
-      p.classList.toggle('active', p.dataset.mode === 'coverage')
-    );
+    // Skipped in briefing mode — the panel is hidden, so toggling tabs
+    // and pills is wasted DOM work that also can't be visually verified.
+    if (!briefingMode) {
+      [...ctlTabs.querySelectorAll('.semHeatCtlTab')].forEach(t => t.classList.toggle('active', t.dataset.ctl === 'ask'));
+      [...panel.querySelectorAll('.semHeatCtlPanel')].forEach(p => p.classList.toggle('active', p.dataset.panel === 'ask'));
+      state.ctl = 'ask';
+      state.mode = 'coverage';
+      document.querySelectorAll('#semHeatModeRow .semHeatPill').forEach(p =>
+        p.classList.toggle('active', p.dataset.mode === 'coverage')
+      );
+    }
 
     // Refusal path — clear the globe and show the reason in the status row.
     if (refusal) {
@@ -50861,10 +50947,12 @@ body.ticker-active .gTickerLabel {
       state.cityPoints = [];
       state.points = [];
       try { renderPoints({ country_points: [], city_points: [] }); } catch (_) {}
-      const status = document.getElementById('semHeatAskStatus');
-      if (status) status.textContent = '⚠ ' + refusal;
-      const note = document.getElementById('semHeatAskNote');
-      if (note) { note.textContent = ''; note.style.display = 'none'; }
+      if (!briefingMode) {
+        const status = document.getElementById('semHeatAskStatus');
+        if (status) status.textContent = '⚠ ' + refusal;
+        const note = document.getElementById('semHeatAskNote');
+        if (note) { note.textContent = ''; note.style.display = 'none'; }
+      }
       return;
     }
 
@@ -50877,24 +50965,29 @@ body.ticker-active .gTickerLabel {
     state.qaSourceNote = source_note || '';
     state.qaMode = mode || 'percent';
     try { renderPoints({ country_points: pts, city_points: [] }); } catch (_) {}
-    try { updateLegend(); } catch (_) {}
-    // Refresh the palette pickers — the active QA mode determines whether we
-    // surface a single picker (binary / percent), 5 pickers (rank), etc.
-    try { syncPaletteUI(); } catch (_) {}
-    const status = document.getElementById('semHeatAskStatus');
-    if (status) status.textContent = `${pts.length} countries · ${state.qaLegend}`;
-    const note = document.getElementById('semHeatAskNote');
-    if (note) {
-      if (state.qaSourceNote) {
-        note.textContent = state.qaSourceNote;
-        note.style.display = '';
-        // Promote estimate notes to a brighter, bolder, non-italic style so
-        // the caveat reads as a warning rather than muted attribution.
-        note.classList.toggle('is-estimate', state.qaSourceNote.startsWith('⚠ ESTIMATE'));
-      } else {
-        note.textContent = '';
-        note.style.display = 'none';
-        note.classList.remove('is-estimate');
+    if (!briefingMode) {
+      // Panel-only UI: legend swatch row, palette picker layout, status
+      // row text, source-note row. None of these are visible in briefing
+      // mode (panel is hidden), so we skip the whole block.
+      try { updateLegend(); } catch (_) {}
+      // Refresh the palette pickers — the active QA mode determines whether we
+      // surface a single picker (binary / percent), 5 pickers (rank), etc.
+      try { syncPaletteUI(); } catch (_) {}
+      const status = document.getElementById('semHeatAskStatus');
+      if (status) status.textContent = `${pts.length} countries · ${state.qaLegend}`;
+      const note = document.getElementById('semHeatAskNote');
+      if (note) {
+        if (state.qaSourceNote) {
+          note.textContent = state.qaSourceNote;
+          note.style.display = '';
+          // Promote estimate notes to a brighter, bolder, non-italic style so
+          // the caveat reads as a warning rather than muted attribution.
+          note.classList.toggle('is-estimate', state.qaSourceNote.startsWith('⚠ ESTIMATE'));
+        } else {
+          note.textContent = '';
+          note.style.display = 'none';
+          note.classList.remove('is-estimate');
+        }
       }
     }
   };

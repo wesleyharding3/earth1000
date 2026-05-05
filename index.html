@@ -41000,6 +41000,23 @@ body.ticker-active .gTickerLabel {
     return isNaN(d) ? new Date() : d;
   }
 
+  // Extract the date phrase the NARRATOR actually says in the intro
+  // voiceover. See www/index.html for full rationale — short version:
+  // the on-screen date and the spoken date should always match, even
+  // when episode.target_date has drifted from the generation-time date.
+  function _extractNarratorIntroDate(ep) {
+    try {
+      const segs = Array.isArray(ep?.segments) ? ep.segments : null;
+      if (!segs) return null;
+      const intro = segs.find(s => s && (s.type === 'intro' || s.segment_type === 'intro'));
+      const text = (intro?.voiceover_text || intro?.voiceover || '').toString();
+      if (!text) return null;
+      const re = /\b(?:Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday),\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}\b/;
+      const m = text.match(re);
+      return m ? m[0] : null;
+    } catch (_) { return null; }
+  }
+
   function showIntroOverlay() {
     const overlay = document.getElementById('bIntroOverlay');
     if (!overlay) return;
@@ -41008,10 +41025,16 @@ body.ticker-active .gTickerLabel {
     overlay.style.display = '';
     const dateEl = document.getElementById('bIntroDate');
     if (dateEl) {
-      const d = _parseEpisodeDate(episode?.target_date);
-      dateEl.textContent = d.toLocaleDateString('en-US', {
-        weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
-      });
+      const narratorDate = _extractNarratorIntroDate(episode);
+      if (narratorDate) {
+        dateEl.textContent = narratorDate;
+      } else {
+        const d = _parseEpisodeDate(episode?.target_date);
+        dateEl.textContent = d.toLocaleDateString('en-US', {
+          weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
+        });
+        console.warn('[briefing/intro] no parseable date in narrator voiceover — falling back to target_date');
+      }
     }
     void overlay.offsetWidth;
     overlay.classList.add('visible');
@@ -42540,6 +42563,10 @@ body.ticker-active .gTickerLabel {
   // ── Focal / Featured Media Controller ──────────────────────────────────
   let _focalActive = false;
   let _focalCaptionsWereOff = false;
+  // Tracks whether the briefing has an active heatmap overlay so
+  // segment-end cleanup (clearArcMeshes) can tear it down. See
+  // www/index.html for the full rationale.
+  let _briefingHeatmapOpen = false;
   // See www/index.html for the full comment — reparent the video card to
   // <body> during focal so its `position: fixed` centering resolves to the
   // viewport, not to #bArticlePanel's transformed box.
@@ -42803,7 +42830,13 @@ body.ticker-active .gTickerLabel {
             mode:        mode || 'binary',
             legend:      prebaked.legend || question,
             source_note: prebaked.source_note || '',
+            // Briefing mode — see www/index.html for full rationale.
+            // tl;dr: paint colored countries onto the globe but suppress
+            // the side panel UI (legend, tabs, palette, click inspector)
+            // so the narrator carries the visualization.
+            briefingMode: true,
           });
+          _briefingHeatmapOpen = true;
         } else {
           console.warn('[briefing/heatmap] __semHeatRenderQA not available — heat panel module not initialized');
         }
@@ -42837,7 +42870,9 @@ body.ticker-active .gTickerLabel {
           mode:        data.mode || mode || 'binary',
           legend:      data.legend || question,
           source_note: data.source_note || '',
+          briefingMode: true,
         });
+        _briefingHeatmapOpen = true;
       } else {
         console.warn('[briefing/heatmap] __semHeatRenderQA not available — heat panel module not initialized');
       }
@@ -43007,6 +43042,13 @@ body.ticker-active .gTickerLabel {
     // Multi-label cards — same lifecycle, see www/index.html.
     if (window.clearBriefingFlowArcLabels) {
       try { window.clearBriefingFlowArcLabels(); } catch (_) {}
+    }
+    // Heatmap overlay teardown when the briefing fired one — see
+    // www/index.html for the full rationale. __semHeatClose handles
+    // the heatSphere disposal + body class removal in one go.
+    if (_briefingHeatmapOpen) {
+      _briefingHeatmapOpen = false;
+      try { window.__semHeatClose?.(); } catch (_) {}
     }
     arcMeshes = [];
   }
@@ -46459,8 +46501,14 @@ body.ticker-active .gTickerLabel {
 
   window.__semHeatRenderQA = function(opts) {
     if (!opts) return;
-    const { values, legend, mode, source_note, question, refusal } = opts;
-    if (!window.__semHeatActive) {
+    const { values, legend, mode, source_note, question, refusal, briefingMode } = opts;
+    // Briefing mode — paint the colored countries onto the globe but do
+    // NOT reveal the side panel. See www/index.html for full rationale.
+    if (briefingMode) {
+      window.__semHeatActive = true;
+      // Skip: panel.visible, body class, hideNodeMarkers,
+      //       enableHeatClickInspector — see www/index.html.
+    } else if (!window.__semHeatActive) {
       window.__semHeatActive = true;
       document.body.classList.add('sem-heatmap-active');
       panel.classList.remove('minimized');
@@ -46468,21 +46516,25 @@ body.ticker-active .gTickerLabel {
       try { hideNodeMarkers(); } catch (_) {}
       try { enableHeatClickInspector(); } catch (_) {}
     }
-    [...ctlTabs.querySelectorAll('.semHeatCtlTab')].forEach(t => t.classList.toggle('active', t.dataset.ctl === 'ask'));
-    [...panel.querySelectorAll('.semHeatCtlPanel')].forEach(p => p.classList.toggle('active', p.dataset.panel === 'ask'));
-    state.ctl = 'ask';
-    state.mode = 'coverage';
-    document.querySelectorAll('#semHeatModeRow .semHeatPill').forEach(p =>
-      p.classList.toggle('active', p.dataset.mode === 'coverage')
-    );
+    if (!briefingMode) {
+      [...ctlTabs.querySelectorAll('.semHeatCtlTab')].forEach(t => t.classList.toggle('active', t.dataset.ctl === 'ask'));
+      [...panel.querySelectorAll('.semHeatCtlPanel')].forEach(p => p.classList.toggle('active', p.dataset.panel === 'ask'));
+      state.ctl = 'ask';
+      state.mode = 'coverage';
+      document.querySelectorAll('#semHeatModeRow .semHeatPill').forEach(p =>
+        p.classList.toggle('active', p.dataset.mode === 'coverage')
+      );
+    }
 
     if (refusal) {
       state.countryPoints = []; state.cityPoints = []; state.points = [];
       try { renderPoints({ country_points: [], city_points: [] }); } catch (_) {}
-      const status = document.getElementById('semHeatAskStatus');
-      if (status) status.textContent = '⚠ ' + refusal;
-      const note = document.getElementById('semHeatAskNote');
-      if (note) { note.textContent = ''; note.style.display = 'none'; }
+      if (!briefingMode) {
+        const status = document.getElementById('semHeatAskStatus');
+        if (status) status.textContent = '⚠ ' + refusal;
+        const note = document.getElementById('semHeatAskNote');
+        if (note) { note.textContent = ''; note.style.display = 'none'; }
+      }
       return;
     }
 
@@ -46495,24 +46547,23 @@ body.ticker-active .gTickerLabel {
     state.qaSourceNote = source_note || '';
     state.qaMode = mode || 'percent';
     try { renderPoints({ country_points: pts, city_points: [] }); } catch (_) {}
-    try { updateLegend(); } catch (_) {}
-    // Refresh palette pickers so the active QA mode determines whether we
-    // show a single picker (binary / percent), 5 pickers (rank), etc.
-    try { syncPaletteUI(); } catch (_) {}
-    const status = document.getElementById('semHeatAskStatus');
-    if (status) status.textContent = `${pts.length} countries · ${state.qaLegend}`;
-    const note = document.getElementById('semHeatAskNote');
-    if (note) {
-      if (state.qaSourceNote) {
-        note.textContent = state.qaSourceNote;
-        note.style.display = '';
-        // Promote estimate notes to a brighter, bolder, non-italic style so
-        // the caveat reads as a warning rather than muted attribution.
-        note.classList.toggle('is-estimate', state.qaSourceNote.startsWith('⚠ ESTIMATE'));
-      } else {
-        note.textContent = '';
-        note.style.display = 'none';
-        note.classList.remove('is-estimate');
+    if (!briefingMode) {
+      // Panel-only UI updates — see www/index.html for the full block.
+      try { updateLegend(); } catch (_) {}
+      try { syncPaletteUI(); } catch (_) {}
+      const status = document.getElementById('semHeatAskStatus');
+      if (status) status.textContent = `${pts.length} countries · ${state.qaLegend}`;
+      const note = document.getElementById('semHeatAskNote');
+      if (note) {
+        if (state.qaSourceNote) {
+          note.textContent = state.qaSourceNote;
+          note.style.display = '';
+          note.classList.toggle('is-estimate', state.qaSourceNote.startsWith('⚠ ESTIMATE'));
+        } else {
+          note.textContent = '';
+          note.style.display = 'none';
+          note.classList.remove('is-estimate');
+        }
       }
     }
   };
