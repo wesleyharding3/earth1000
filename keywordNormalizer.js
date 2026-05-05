@@ -254,8 +254,8 @@ function buildCandidateQuery({ scope, keywordLimit, minRows, minFrequency }) {
                  ak.frequency
             FROM article_keywords ak
             JOIN news_articles a ON a.id = ak.article_id
-           WHERE a.published_at >= NOW() - (($1 + $5) * INTERVAL '1 hour')
-             AND a.published_at <  NOW() - ($5 * INTERVAL '1 hour')
+           WHERE a.published_at >= NOW() - (($1::int + $5::int) * INTERVAL '1 hour')
+             AND a.published_at <  NOW() - ($5::int * INTERVAL '1 hour')
              AND ak.normalized_keyword IS NULL
              AND ak.keyword IS NOT NULL
              AND ak.source_language IS DISTINCT FROM 'en'
