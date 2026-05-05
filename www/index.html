@@ -40721,18 +40721,41 @@ const settingsToggle     = document.getElementById("settingsToggle");
   siSubmit.addEventListener('click', signIn);
   suSubmit.addEventListener('click', signUp);
 
-  // Google OAuth — skips email verification entirely. User is auto-verified
-  // by Google; Supabase creates the row on first callback.
+  // Google sign-in. Two paths, mirroring the Apple Sign In pattern above.
   //
-  // Two flows:
-  //   • Web: redirect to window.location.origin, Supabase parses the
-  //     ?code= on return and creates the session (detectSessionInUrl).
-  //   • Capacitor iOS: open the OAuth URL in an SFSafariViewController
-  //     (Browser.open) and have Google/Supabase redirect back to the
-  //     custom URL scheme com.earth00.app://login-callback. The
-  //     appUrlOpen listener picks that up, calls exchangeCodeForSession,
-  //     and dismisses the in-app browser. Without skipBrowserRedirect we
-  //     can't intercept the URL — supabase-js would window.location it.
+  //   • iOS Capacitor: native @capgo/capacitor-social-login plugin
+  //     (system Google account sheet — no SFSafariViewController, no
+  //     white-page hang). Returns an idToken which we hand to Supabase
+  //     via signInWithIdToken. Earlier attempt used @capacitor/browser +
+  //     custom URL scheme callback; SFSafariViewController doesn't
+  //     auto-dismiss on com.earth00.app:// redirects, so it stalled on
+  //     a blank page until the user manually closed it. Native plugin
+  //     sidesteps the whole SFSafari + URL-scheme dance.
+  //   • Web/desktop: standard Supabase OAuth redirect — page reloads
+  //     and detectSessionInUrl parses the ?code= on return.
+  //
+  // SocialLogin needs initialize() called once before login(). The
+  // server client ID (web OAuth client) is passed so the idToken Apple
+  // hands us is signed by THAT client — Supabase only trusts ID tokens
+  // from server clients listed in its Authorized Client IDs panel.
+  const _GOOGLE_IOS_CLIENT_ID    = '752787517368-ea0oidutoncbv17odibu2hq5qek3be1v.apps.googleusercontent.com';
+  const _GOOGLE_SERVER_CLIENT_ID = '752787517368-4oqlc3b394sn25mrhcch7tvvq9ngk4h8.apps.googleusercontent.com';
+  let _socialLoginReady = false;
+  async function _ensureSocialLogin() {
+    const SocialLogin = window.Capacitor?.Plugins?.SocialLogin || null;
+    if (!SocialLogin) return null;
+    if (_socialLoginReady) return SocialLogin;
+    try {
+      await SocialLogin.initialize({
+        google: {
+          iOSClientId: _GOOGLE_IOS_CLIENT_ID,
+          iOSServerClientId: _GOOGLE_SERVER_CLIENT_ID,
+        },
+      });
+    } catch (_) {}
+    _socialLoginReady = true;
+    return SocialLogin;
+  }
   async function signInWithGoogle() {
     const btn = document.getElementById('authGoogleBtn');
     try {
@@ -40740,31 +40763,51 @@ const settingsToggle     = document.getElementById("settingsToggle");
       authMsg.className = 'authMsg';
       authMsg.textContent = '';
 
-      const isCap = !!(window.Capacitor?.isNativePlatform?.());
-      const Browser = window.Capacitor?.Plugins?.Browser || null;
-
-      if (isCap && Browser) {
-        const { data, error } = await sb.auth.signInWithOAuth({
+      if (window.Capacitor?.getPlatform?.() === 'ios') {
+        const SocialLogin = await _ensureSocialLogin();
+        if (!SocialLogin) {
+          throw new Error('Google sign-in plugin not registered — run npx cap sync ios.');
+        }
+        // Replay-protection nonce — Supabase rejects the token with
+        // "passed nonce and nonce in id_token should either both exist
+        // or not" if we omit this, because the Google iOS SDK auto-
+        // embeds a nonce in the idToken. Standard pattern (same as
+        // Apple flow below): hashed nonce → Google, raw nonce → Supabase.
+        const rawNonce    = _appleNonce();
+        const hashedNonce = await _sha256Hex(rawNonce);
+        const out = await SocialLogin.login({
           provider: 'google',
-          options: {
-            redirectTo: 'com.earth00.app://login-callback',
-            skipBrowserRedirect: true,
-          },
+          options: { scopes: ['email', 'profile'], nonce: hashedNonce },
+        });
+        // Plugin shape: { provider, result: { idToken, accessToken, profile, ... } }
+        const idToken = out?.result?.idToken;
+        if (!idToken) throw new Error('No identity token returned from Google.');
+        const { data, error } = await sb.auth.signInWithIdToken({
+          provider: 'google',
+          token: idToken,
+          nonce: rawNonce,
         });
         if (error) throw error;
-        if (!data?.url) throw new Error('No OAuth URL returned.');
-        await Browser.open({ url: data.url, presentationStyle: 'popover' });
-      } else {
-        const { error } = await sb.auth.signInWithOAuth({
-          provider: 'google',
-          options: { redirectTo: window.location.origin },
-        });
-        if (error) throw error;
+        // Mirror the Apple flow — apply session + close the modal in-line
+        // because the page doesn't reload like the web OAuth path does.
+        if (data?.session) { try { await applySession(data.session); } catch (_) {} }
+        closeModal();
+        return;
       }
+
+      // Web fallback — Supabase OAuth redirect.
+      const { error } = await sb.auth.signInWithOAuth({
+        provider: 'google',
+        options: { redirectTo: window.location.origin },
+      });
+      if (error) throw error;
     } catch (err) {
       if (btn) btn.disabled = false;
+      // User cancelled the sheet — silent (no error UI).
+      const msg = err?.message || '';
+      if (err?.code === '12501' || /cancel|closed|dismiss/i.test(msg)) return;
       authMsg.className = 'authMsg show error';
-      authMsg.textContent = (err && err.message) || 'Google sign-in failed.';
+      authMsg.textContent = msg || 'Google sign-in failed.';
     }
   }
   const authGoogleBtn = document.getElementById('authGoogleBtn');
