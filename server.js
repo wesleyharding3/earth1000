@@ -20,7 +20,6 @@ const { startArticleListener } = require("./articleListener");
 const { getRankedArticles, getRankedCityArticles, getRankedFeedArticles } = require("./rankingService");
 const { countryVarianceRerank, diversityRerank, combinedDiversityRerank, calculatePriority, FLOW_CITY_PENALTY } = require("./priorityEngine");
 const { translateText } = require("./translator");
-const { generateLocationBriefing } = require("./locationBriefingGenerator");
 const dataPanels = require("./dataPanelGenerator");
 const Anthropic = new (require('@anthropic-ai/sdk'))({ apiKey: process.env.ANTHROPIC_API_KEY });
 const { resolveImagesForArticles } = require("./imageResolver");
@@ -31,7 +30,7 @@ const heatmapResolver = require("./heatmapResolver");
 const jwt = require("jsonwebtoken");
 const payments = require("./payments");
 const sba = require("./supabaseAdmin");
-const { checkTranslation, checkExplanation, checkKwExplanation, checkBriefingAccess, checkCustomBriefing } = require("./tierLimits");
+const { checkTranslation, checkExplanation, checkKwExplanation, checkBriefingAccess } = require("./tierLimits");
 const credits = require("./creditLedger");
 
 // Turn a creditLedger access object into a JSON-safe block for API
@@ -2843,6 +2842,123 @@ app.get("/api/flows", heavyLimiter, async (req, res) => {
       ? 46_800_000   // 13h — country-aggregate, prewarmed twice daily
       : 3_300_000;   // 55m — keyword / city / unfiltered
     const _flowResult = await ttlCached(_flowCacheKey, _flowTtl, async () => {
+
+    // ── Keyword aggregate fast-path ──────────────────────────────────────
+    // Reads from keyword_flows_daily (populated by aggregateKeywordCacheCron)
+    // when the request shape matches: aggregate mode, country view, a
+    // keyword, no source/destination location filters, and a date window
+    // that fits inside the cron's rolling cache (default 14 days). Falls
+    // through to the live query on cache miss or out-of-window request.
+    const KEYWORD_CACHE_WINDOW_DAYS = 14;
+    const _kwAggCacheable = mode === 'aggregate'
+      && viewMode === 'country'
+      && keyword
+      && !fromCountry && !fromCity && !aboutCountry && !aboutCity;
+    if (_kwAggCacheable) {
+      // Resolve the requested date window. Default mirrors the live query:
+      // last 7 days when no explicit dates passed.
+      const today = new Date();
+      const todayIso = today.toISOString().slice(0, 10);
+      const defaultFromIso = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+      const reqFromIso = fromDate || defaultFromIso;
+      const reqToIso   = toDate   || todayIso;
+      const earliestCacheIso = new Date(today.getTime() - KEYWORD_CACHE_WINDOW_DAYS * 24 * 60 * 60 * 1000)
+        .toISOString().slice(0, 10);
+      const _withinWindow = reqFromIso >= earliestCacheIso;
+      if (_withinWindow) {
+        try {
+          const kwLower = keyword.toLowerCase().trim();
+          const { rows } = await pool.query(
+            `WITH flow_counts AS (
+               SELECT
+                 src_country_id,
+                 src_city_id,
+                 dst_country_id,
+                 dst_city_id,
+                 SUM(n)::int                                                AS flow_count,
+                 CASE WHEN SUM(sent_n) > 0
+                      THEN (SUM(sent_sum) / SUM(sent_n))::float
+                      ELSE NULL END                                         AS avg_sentiment,
+                 SUM(source_routes)::int                                    AS source_routes,
+                 SUM(content_routes)::int                                   AS content_routes
+               FROM keyword_flows_daily
+               WHERE keyword     = $1
+                 AND day_bucket >= $2::date
+                 AND day_bucket <= $3::date
+               GROUP BY src_country_id, src_city_id, dst_country_id, dst_city_id
+             )
+             SELECT
+               fc.flow_count,
+               fc.avg_sentiment,
+               fc.source_routes,
+               fc.content_routes,
+               CASE WHEN fc.src_city_id > 0 THEN src_city.latitude  ELSE src_co.latitude  END AS src_lat,
+               CASE WHEN fc.src_city_id > 0 THEN src_city.longitude ELSE src_co.longitude END AS src_lon,
+               CASE WHEN fc.src_city_id > 0 THEN src_city.name      ELSE src_co.name      END AS src_place,
+               CASE WHEN fc.src_city_id > 0 THEN fc.src_city_id     ELSE fc.src_country_id END AS src_id,
+               CASE WHEN fc.src_city_id > 0 THEN 'city' ELSE 'country' END AS src_type,
+               src_co.iso_code AS src_iso,
+               CASE WHEN fc.src_city_id > 0 THEN src_city.region_id ELSE NULL END AS src_region_id,
+               CASE WHEN fc.dst_city_id > 0 THEN dst_city.latitude  ELSE dst_co.latitude  END AS dst_lat,
+               CASE WHEN fc.dst_city_id > 0 THEN dst_city.longitude ELSE dst_co.longitude END AS dst_lon,
+               CASE WHEN fc.dst_city_id > 0 THEN dst_city.name      ELSE dst_co.name      END AS dst_place,
+               CASE WHEN fc.dst_city_id > 0 THEN fc.dst_city_id     ELSE fc.dst_country_id END AS dst_id,
+               CASE WHEN fc.dst_city_id > 0 THEN 'city' ELSE 'country' END AS dst_type,
+               dst_co.iso_code AS dst_iso,
+               CASE WHEN fc.dst_city_id > 0 THEN dst_city.region_id ELSE NULL END AS dst_region_id,
+               MAX(fc.flow_count) OVER() AS max_count,
+               SUM(fc.flow_count) OVER() AS total_articles
+             FROM flow_counts fc
+             JOIN countries src_co ON src_co.id = fc.src_country_id
+             JOIN countries dst_co ON dst_co.id = fc.dst_country_id
+             LEFT JOIN cities src_city ON src_city.id = fc.src_city_id
+             LEFT JOIN cities dst_city ON dst_city.id = fc.dst_city_id
+             ORDER BY fc.flow_count DESC
+             LIMIT $4`,
+            [kwLower, reqFromIso, reqToIso, limit]
+          );
+
+          if (rows.length > 0) {
+            const maxCount = parseInt(rows[0].max_count) || 1;
+            const totalArticles = parseInt(rows[0].total_articles) || 0;
+            const flows = rows.map(r => ({
+              src: {
+                lat: parseFloat(r.src_lat),
+                lon: parseFloat(r.src_lon),
+                place: r.src_place,
+                id: r.src_id,
+                type: r.src_type,
+                iso: r.src_iso,
+                regionId: r.src_region_id || null,
+              },
+              dst: {
+                lat: parseFloat(r.dst_lat),
+                lon: parseFloat(r.dst_lon),
+                place: r.dst_place,
+                id: r.dst_id,
+                type: r.dst_type,
+                iso: r.dst_iso,
+                regionId: r.dst_region_id || null,
+              },
+              count: parseInt(r.flow_count),
+              avgSentiment: r.avg_sentiment != null ? parseFloat(r.avg_sentiment) : null,
+              routingBreakdown: {
+                source:  parseInt(r.source_routes)  || 0,
+                content: parseInt(r.content_routes) || 0,
+              },
+            }));
+            return { mode: 'aggregate', totalRoutes: flows.length, totalArticles, maxCount, flows };
+          }
+          // Empty result on a cached keyword + window means either the
+          // keyword isn't in the cron's keyword list or that period has
+          // no flows. Drop through to the live query for a definitive
+          // answer; the live path will populate the response cache on
+          // success.
+        } catch (e) {
+          console.error('[flows] keyword-snapshot read failed, falling back to live query:', e.message);
+        }
+      }
+    }
 
     // Build dynamic WHERE conditions
     const conditions = [];
@@ -7190,6 +7306,15 @@ app.get("/api/heatmap", heavyLimiter, async (req, res) => {
     const presetKey = SNAPSHOT_PRESETS[days];
     const useSnapshot = presetKey && !keyword && !threadId && bucket === 'none' && !fromIso && !toIso;
 
+    // ── Keyword snapshot fast-path ─────────────────────────────────────
+    // Keyword-filtered requests with one of the cached day windows read
+    // from keyword_country_daily / keyword_city_daily, populated by
+    // aggregateKeywordCacheCron.js. Falls through to the live query
+    // below if the keyword isn't in the prewarm list (cache miss).
+    const KEYWORD_DAY_PRESETS = new Set([1, 7, 14]);
+    const useKeywordSnapshot = keyword && KEYWORD_DAY_PRESETS.has(days)
+      && !threadId && bucket === 'none' && !fromIso && !toIso;
+
     // ── Time-series snapshot fast-path ─────────────────────────────────
     // Pre-computed bucketed snapshots covering every UI-reachable combo.
     // When this lookup table drifts from refreshHeatmapTsSnapshots() above,
@@ -7228,6 +7353,76 @@ app.get("/api/heatmap", heavyLimiter, async (req, res) => {
           }
         } catch (e) {
           console.error('[heatmap] snapshot read failed, falling back to live query:', e.message);
+        }
+      }
+
+      // ── Keyword aggregate fast-path ────────────────────────────────────
+      // Aggregates over the rolling-window daily cache populated by
+      // aggregateKeywordCacheCron.js. Only the common preset windows
+      // (1/7/14 days) are cached; other window sizes drop through to the
+      // live query.
+      if (useKeywordSnapshot) {
+        try {
+          const kwLower = keyword.toLowerCase().trim();
+          const [countryRes, cityRes] = await Promise.all([
+            pool.query(
+              `SELECT
+                 c.id        AS country_id,
+                 c.iso_code  AS iso,
+                 NULL::text  AS country_name,
+                 c.name      AS name,
+                 c.latitude  AS lat,
+                 c.longitude AS lon,
+                 SUM(d.n)::int                                                       AS n,
+                 SUM(d.sent_n)::int                                                  AS sent_n,
+                 CASE WHEN SUM(d.sent_n) > 0
+                      THEN (SUM(d.sent_sum) / SUM(d.sent_n))::float
+                      ELSE NULL END                                                  AS avg_sent
+               FROM keyword_country_daily d
+               JOIN countries c ON c.id = d.country_id
+               WHERE d.keyword = $1
+                 AND d.day_bucket > CURRENT_DATE - $2::int
+                 AND c.latitude IS NOT NULL AND c.longitude IS NOT NULL
+               GROUP BY c.id, c.iso_code, c.name, c.latitude, c.longitude
+               ORDER BY SUM(d.n) DESC
+               LIMIT 500`,
+              [kwLower, days]
+            ),
+            pool.query(
+              `SELECT
+                 ci.id          AS city_id,
+                 ci.country_id  AS country_id,
+                 co.iso_code    AS iso,
+                 co.name        AS country_name,
+                 ci.name        AS name,
+                 ci.latitude    AS lat,
+                 ci.longitude   AS lon,
+                 SUM(d.n)::int                                                       AS n,
+                 SUM(d.sent_n)::int                                                  AS sent_n,
+                 CASE WHEN SUM(d.sent_n) > 0
+                      THEN (SUM(d.sent_sum) / SUM(d.sent_n))::float
+                      ELSE NULL END                                                  AS avg_sent
+               FROM keyword_city_daily d
+               JOIN cities ci    ON ci.id = d.city_id
+               LEFT JOIN countries co ON co.id = ci.country_id
+               WHERE d.keyword = $1
+                 AND d.day_bucket > CURRENT_DATE - $2::int
+                 AND ci.latitude IS NOT NULL AND ci.longitude IS NOT NULL
+               GROUP BY ci.id, ci.country_id, co.iso_code, co.name, ci.name, ci.latitude, ci.longitude
+               ORDER BY SUM(d.n) DESC
+               LIMIT 1500`,
+              [kwLower, days]
+            ),
+          ]);
+          // Cache hit only if rows came back. An empty result for a
+          // populated keyword is unusual but possible (e.g., 1d window on
+          // a quiet day for a low-traffic keyword) — falling through to
+          // the live query gives a definitive answer.
+          if (countryRes.rows.length > 0 || cityRes.rows.length > 0) {
+            return { countryRows: countryRes.rows, cityRows: cityRes.rows };
+          }
+        } catch (e) {
+          console.error('[heatmap] keyword-snapshot read failed, falling back to live query:', e.message);
         }
       }
 
@@ -9941,11 +10136,39 @@ async function getAudioCached(episodeId) {
   return { buf: _audioCache.buf, segs: _audioCache.segs };
 }
 
+// resolveAudioRequestUser — auth resolver shared by both audio endpoints.
+// HTML <audio> elements can't set custom headers, so we accept the Supabase
+// JWT via ?at= query param in addition to the Authorization header (which
+// optionalAuth has already consumed by the time we reach the route).
+// Falls through to resolveSupabaseUserFromRequest so tier and is_admin are
+// loaded from Supabase the same way the rest of the API does it.
+async function resolveAudioRequestUser(req) {
+  if (req.user?.id) return req.user;
+  const qt = (typeof req.query?.at === 'string' ? req.query.at : '').trim();
+  if (!qt) return null;
+  return resolveSupabaseUserFromRequest({ headers: { authorization: `Bearer ${qt}` }, query: {} });
+}
+
 // GET /api/briefing/audio/:id/:segIdx — serves one segment's MP3 slice (CBR 128kbps, 16 bytes/ms)
+// Auth: requires a signed-in user. Token comes from Authorization header
+// (fetch path) or ?at= query (HTML audio path). Re-checks the per-episode
+// access gate so a free-tier user who's hit the weekly cap can't keep
+// streaming an episode they no longer have entitlement to via a saved URL.
 app.get("/api/briefing/audio/:id/:segIdx", async (req, res) => {
   try {
+    const user = await resolveAudioRequestUser(req);
+    if (!user?.id) return res.status(401).json({ error: "Authentication required" });
     const episodeId = parseInt(req.params.id);
     const segIdx    = parseInt(req.params.segIdx);
+    if (!Number.isFinite(episodeId)) return res.status(400).json({ error: "Bad episode id" });
+    const tier = user.tier || "free";
+    const access = await checkBriefingAccess(user.id, episodeId, tier).catch(() => ({ allowed: true }));
+    if (!access.allowed) {
+      return res.status(403).json({
+        error: access.resetNote || "Weekly briefing limit reached",
+        limitReached: true, used: access.used, limit: access.limit, requiredTier: "pro",
+      });
+    }
     const cached = await getAudioCached(episodeId);
     if (!cached) return res.status(404).json({ error: "Audio not found" });
     const { buf, segs } = cached;
@@ -9971,9 +10194,22 @@ app.get("/api/briefing/audio/:id/:segIdx", async (req, res) => {
 });
 
 // GET /api/briefing/audio/:id — streams the full MP3 audio for an episode
+// Auth: requires a signed-in user. Token comes from Authorization header
+// (fetch path) or ?at= query (HTML audio path).
 app.get("/api/briefing/audio/:id", async (req, res) => {
   try {
+    const user = await resolveAudioRequestUser(req);
+    if (!user?.id) return res.status(401).json({ error: "Authentication required" });
     const episodeId = parseInt(req.params.id);
+    if (!Number.isFinite(episodeId)) return res.status(400).json({ error: "Bad episode id" });
+    const tier = user.tier || "free";
+    const access = await checkBriefingAccess(user.id, episodeId, tier).catch(() => ({ allowed: true }));
+    if (!access.allowed) {
+      return res.status(403).json({
+        error: access.resetNote || "Weekly briefing limit reached",
+        limitReached: true, used: access.used, limit: access.limit, requiredTier: "pro",
+      });
+    }
     const cached = await getAudioCached(episodeId);
     if (!cached) return res.status(404).json({ error: "Audio not found" });
     const buf = cached.buf;
@@ -11289,199 +11525,6 @@ function _coverageTrendCaption(rows) {
 
   return _STATIC_COVERAGE_CAPTION;
 }
-
-// POST /api/briefing/custom — custom briefing with from/about/keyword filters.
-// Available to all paid tiers, gated by the credit ledger (debits 200
-// credits text-only / 1500 credits with voiceover). The credit cost
-// reflects the real Claude+ElevenLabs spend (~$0.10 / ~$1.50). Free users
-// get a 401 (must sign in); they technically pass the tier gate but their
-// 20-credit/week base allowance is below the 200-credit floor for even the
-// cheapest path, so they'll bounce off the credit check with a clear
-// "upgrade or buy a credit pack" response. Pro users have 400 credits/week
-// → ~2 text briefings/week from base, voiceover via add-on packs.
-// Enterprise has 2500 credits/week + a 10/month safety cap.
-//
-// Returns 422 { insufficient, count, message, suggestions } if < 8 articles
-// found and skipCheck is not true. Otherwise generates and returns an episode.
-app.post("/api/briefing/custom", async (req, res) => {
-  // ── Auth ──────────────────────────────────────────────────────────────
-  // Anonymous users don't have a credit balance to debit, and we don't
-  // want to spawn pay-per-use billing infrastructure right now — the
-  // credit ledger IS the pay-per-use system (buy a pack, spend the
-  // credits). So unauthenticated → 401, point them at sign-up.
-  const user = req.user?.id ? req.user : await resolveSupabaseUserFromRequest(req);
-  if (!user?.id) {
-    return res.status(401).json({ error: "Authentication required" });
-  }
-  const tier = user.tier || "free";
-  const isAdmin = !!user.is_admin;
-  // ── Credit ledger debit ───────────────────────────────────────────────
-  // Cost depends on whether voiceover is requested — TTS is the dominant
-  // expense (~$1.20 of ElevenLabs vs ~$0.10 for everything else). Picking
-  // the right key BEFORE generation runs means an undercharge can't
-  // happen if the user toggles voiceover at the last second on the client.
-  // Atomic: if the user doesn't have enough credits, the call is rejected
-  // BEFORE any Claude/ElevenLabs work runs. Refunded on failure further
-  // down (best effort) so a midstream error doesn't burn the budget.
-  const wantsVoiceover = !!req.body?.voiceover;
-  const cbFeatureKey = wantsVoiceover ? 'custom_briefing_voice' : 'custom_briefing_text';
-  const cbCredits = await credits.consumeCredits(user.id, tier, cbFeatureKey, { isAdmin })
-    .catch(() => ({ allowed: false, reason: 'credit_check_error' }));
-  if (!cbCredits.allowed) {
-    // Suggest the right next step based on tier:
-    //   - Free: upgrade to Pro (cheapest path that has any meaningful credit budget).
-    //   - Pro voiceover-blocked: hint at credit packs OR Enterprise.
-    //   - Pro text-blocked: weekly reset OR credit packs.
-    //   - Enterprise blocked: must be a heavy week — credit packs OR wait.
-    let suggestedAction;
-    if (tier === 'free') {
-      suggestedAction = wantsVoiceover
-        ? 'Upgrade to Pro for weekly credits or to Enterprise for higher allowance.'
-        : 'Upgrade to Pro for weekly credits, or buy a credit pack.';
-    } else if (tier === 'pro') {
-      suggestedAction = wantsVoiceover
-        ? 'Voiceover briefings need 1500 credits — buy an add-on pack ($2 / 500 credits or $6 / 2000) or upgrade to Enterprise.'
-        : 'Buy a credit pack or wait for next week\'s allowance (resets Monday 00:00 UTC).';
-    } else {
-      suggestedAction = 'Buy a credit pack or wait for next week\'s allowance.';
-    }
-    return res.status(429).json({
-      error:        'Not enough credits for a Custom Briefing',
-      limitReached: true,
-      cost:         cbCredits.cost,
-      remaining:    cbCredits.remaining,
-      weekly_limit: cbCredits.weekly_limit,
-      currentTier:  tier,
-      // Recommend Pro to free users (entry tier) and Enterprise to Pro
-      // users blocked on voiceover. Null for tiers that just need a pack.
-      suggestedTier: tier === 'free' ? 'pro' : (tier === 'pro' && wantsVoiceover ? 'enterprise' : null),
-      suggestedAction,
-      withVoiceover: wantsVoiceover,
-      resetNote:    'Weekly credits reset Monday 00:00 UTC. Add-on packs available.',
-    });
-  }
-  // Belt-and-suspenders: still respect the legacy monthly cap (10/mo for
-  // enterprise) so a single user can't exhaust their entire weekly credit
-  // pool on one feature. Skip for admins. If the cap is hit, refund the
-  // credit debit so the user isn't double-charged.
-  if (!isAdmin) {
-    const cbAccess = await checkCustomBriefing(user.id, tier).catch(() => ({ allowed: true }));
-    if (!cbAccess.allowed) {
-      // Refund the credits we just consumed.
-      try { await credits.refundCredits(user.id, cbCredits.cost, cbFeatureKey, { reason: 'monthly_cap_exceeded' }); } catch (_) {}
-      return res.status(403).json({
-        error:        cbAccess.resetNote || "Monthly custom briefing limit reached",
-        limitReached: true,
-        used:         cbAccess.used,
-        limit:        cbAccess.limit,
-        creditsRefunded: cbCredits.cost,
-      });
-    }
-  }
-
-  const { from, about, keywords = [], skipCheck = false, voiceover = false, voiceId } = req.body || {};
-  if (!from && !about && !keywords.length) {
-    return res.status(400).json({ error: "Provide at least one of: from, about, or keywords" });
-  }
-
-  try {
-    // ── Build article filter query ───────────────────────────────────────────
-    const conditions = [
-      "a.published_at > NOW() - INTERVAL '72 hours'",
-      "a.status = 'ready'",
-    ];
-    const params = [];
-
-    if (from) {
-      params.push(`%${from}%`);
-      conditions.push(`(a.source_country_name ILIKE $${params.length} OR a.source_name ILIKE $${params.length})`);
-    }
-    if (about) {
-      params.push(`%${about}%`);
-      conditions.push(`(
-        a.city_name ILIKE $${params.length}
-        OR a.country_name ILIKE $${params.length}
-        OR COALESCE(a.translated_title, a.title) ILIKE $${params.length}
-        OR COALESCE(a.translated_summary, a.summary) ILIKE $${params.length}
-      )`);
-    }
-    if (keywords.length) {
-      params.push(keywords);
-      conditions.push(`EXISTS (
-        SELECT 1 FROM article_keywords ak
-        WHERE ak.article_id = a.id
-          AND COALESCE(ak.normalized_keyword, ak.keyword) = ANY($${params.length}::text[])
-      )`);
-    }
-
-    const where = conditions.join(' AND ');
-
-    // ── Content availability check ───────────────────────────────────────────
-    if (!skipCheck) {
-      const { rows: cnt } = await pool.query(
-        `SELECT COUNT(*)::int AS count FROM news_articles a WHERE ${where}`, params
-      );
-      const count = cnt[0].count;
-      const THRESHOLD = 8;
-
-      if (count < THRESHOLD) {
-        // Ask Claude for intelligent alternatives
-        const Anthropic = require('@anthropic-ai/sdk');
-        const haiku = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-        const ctx = [
-          from    ? `from: "${from}"`          : '',
-          about   ? `about: "${about}"`         : '',
-          keywords.length ? `keywords: "${keywords.join(', ')}"` : '',
-        ].filter(Boolean).join(', ');
-
-        const sugRes = await haiku.messages.create({
-          model: 'claude-haiku-4-5-20251001',
-          max_tokens: 400,
-          messages: [{
-            role: 'user',
-            content: `A user searched for news briefing content with parameters: ${ctx}. Only ${count} articles were found in the last 72 hours — below the minimum of ${THRESHOLD} needed for a meaningful briefing.
-
-Generate 3–4 intelligent alternative search directions related to the user's interests that would yield richer news coverage. Think geographically adjacent places, thematically related topics, or broader regional/political contexts.
-
-Return ONLY valid JSON: { "message": "one sentence explaining why coverage is limited", "suggestions": ["Direction 1", "Direction 2", "Direction 3"] }`,
-          }],
-        });
-        const match = sugRes.content[0].text.match(/\{[\s\S]*\}/);
-        const sugg  = match ? JSON.parse(match[0]) : { message: `Only ${count} matching articles found.`, suggestions: [] };
-        return res.status(422).json({ insufficient: true, count, ...sugg });
-      }
-    }
-
-    // ── Sufficient content — generate briefing via location generator ─────────
-    // Use `about` or keywords as the location "name"; type=country is fine for prompting
-    const locName = about || keywords.join(', ') || from || 'Custom';
-    let ep;
-    try {
-      ep = await generateLocationBriefing({
-        type: 'country',
-        id: null,
-        name: locName,
-        voiceover: !!voiceover,
-        sourceFilter: 'mix',
-        voiceId: voiceId || null,
-        customFilter: { from, about, keywords, sqlWhere: where, sqlParams: params },
-      });
-    } catch (genErr) {
-      // Refund credits on generation failure — the user shouldn't pay for
-      // a briefing they can't watch. Non-fatal if refund itself errors;
-      // the failure is already logged.
-      try { await credits.refundCredits(user.id, cbCredits.cost, cbFeatureKey, { reason: 'generation_failed', errorMessage: genErr.message }); } catch (_) {}
-      throw genErr;
-    }
-    // Pass credit balance back to client so the meter updates without
-    // a separate /api/credits/me round-trip — same pattern as analyze /
-    // explain endpoints.
-    res.json({ ...ep, credits: cbCredits });
-  } catch (err) {
-    console.error("[briefing/custom]", err.message);
-    res.status(500).json({ error: err.message || "Failed to generate custom briefing" });
-  }
-});
 
 /* =========================================
    On-demand Translation
@@ -13752,8 +13795,7 @@ app.get('/api/admin/heatmap/saved/:questionHash/:mode', requireAdmin, async (req
      1. Supabase auth user (sba.auth.admin.deleteUser). This triggers
         the ON DELETE CASCADE on user_preferences (see migration #25).
      2. Render Postgres user-keyed tables: user_usage,
-        briefing_access_log, custom_briefing_usage, user_credit_balance,
-        credit_ledger.
+        briefing_access_log, user_credit_balance, credit_ledger.
      3. editor_events.editor_id is NULLed (not row-deleted) so the
         editorial audit log preserves the action history without the
         personal identifier — required for editorial-rule mining and
@@ -13799,7 +13841,6 @@ app.delete("/api/account", authLimiter, async (req, res) => {
   const wipes = [
     ['user_usage',           `DELETE FROM user_usage           WHERE user_id = $1`],
     ['briefing_access_log',  `DELETE FROM briefing_access_log  WHERE user_id = $1`],
-    ['custom_briefing_usage',`DELETE FROM custom_briefing_usage WHERE user_id = $1`],
     ['user_credit_balance',  `DELETE FROM user_credit_balance  WHERE user_id = $1`],
     ['credit_ledger',        `DELETE FROM credit_ledger        WHERE user_id = $1`],
     // Editor events: anonymize rather than delete (see header).
@@ -14110,5 +14151,18 @@ function gracefulShutdown(signal) {
     process.exit(1);
   }, 30_000).unref();
 }
+// Catch-all error handlers so a stray rejection or throw inside a setTimeout/
+// setInterval/promise chain doesn't take down the dyno silently. Render's
+// default behavior on Node 15+ is to exit on unhandledRejection — we'd
+// rather log and keep serving (uncaughtException is a different story:
+// state may be corrupt, so we trigger graceful shutdown).
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[unhandledRejection]', reason && reason.stack ? reason.stack : reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[uncaughtException]', err && err.stack ? err.stack : err);
+  // State may be corrupt — drain and exit. SIGTERM handler will run via gracefulShutdown.
+  gracefulShutdown('uncaughtException');
+});
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT',  () => gracefulShutdown('SIGINT'));

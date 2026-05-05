@@ -43970,120 +43970,6 @@ body.ticker-active .gTickerLabel {
   .bRecapGrid { grid-template-columns: 1fr; }
 }
 
-/* ── Location Briefing ── */
-.locBriefBtn {
-  background: rgba(96,200,255,0.10);
-  border: 1px solid rgba(96,200,255,0.25);
-  color: #60c8ff; border-radius: 7px;
-  width: 26px; height: 26px;
-  display: flex; align-items: center; justify-content: center;
-  cursor: pointer; transition: background 0.15s;
-  flex-shrink: 0;
-}
-.locBriefBtn:hover { background: rgba(96,200,255,0.26); }
-.locBriefBtn svg { width: 13px; height: 13px; }
-
-.locBriefOptions {
-  position: absolute; inset: auto 0 0 0;
-  background: rgba(6,10,20,0.97);
-  border-top: 1px solid rgba(255,255,255,0.10);
-  border-radius: 16px 16px 0 0;
-  padding: 20px 20px calc(24px + var(--page-nav-height) + var(--global-ticker-height) + var(--global-ticker-gap) + env(safe-area-inset-bottom));
-  transform: translateY(100%);
-  transition: transform 0.30s cubic-bezier(0.32,0.72,0,1);
-  z-index: 200;
-}
-.locBriefOptions.open { transform: translateY(0); }
-.locBriefOptionsTitle {
-  font-size: 13px; font-weight: 700; color: #fff;
-  margin-bottom: 16px; display: flex; align-items: center; gap: 8px;
-}
-.locBriefOptionsTitle svg { width: 15px; height: 15px; opacity: 0.65; flex-shrink: 0; }
-.locBriefOptionRow {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 10px 0; border-top: 1px solid rgba(255,255,255,0.06);
-}
-.locBriefOptionLabel { font-size: 13px; color: rgba(255,255,255,0.85); }
-.locBriefOptionSub { font-size: 11px; color: rgba(255,255,255,0.32); margin-top: 2px; }
-.locBriefToggle {
-  width: 40px; height: 22px; border-radius: 11px;
-  background: rgba(255,255,255,0.10);
-  border: 1px solid rgba(255,255,255,0.14);
-  cursor: pointer; position: relative; transition: background 0.2s, border-color 0.2s;
-  flex-shrink: 0;
-}
-.locBriefToggle.on { background: #60c8ff; border-color: #60c8ff; }
-.locBriefToggle::after {
-  content: ''; position: absolute; top: 2px; left: 2px;
-  width: 16px; height: 16px; border-radius: 50%;
-  background: rgba(255,255,255,0.65); transition: left 0.2s, background 0.2s;
-}
-.locBriefToggle.on::after { left: 20px; background: #fff; }
-.bVoiceSelect {
-  background: rgba(255,255,255,0.05);
-  border: 1px solid rgba(255,255,255,0.12);
-  border-radius: 7px; padding: 6px 10px;
-  color: rgba(255,255,255,0.75); font-size: 12px;
-  outline: none; cursor: pointer;
-  transition: border-color 0.15s;
-}
-.bVoiceSelect:focus { border-color: rgba(96,200,255,0.4); }
-.bVoiceSelect option { background: #0a0f1e; }
-.locBriefPills { display: flex; gap: 4px; }
-.locBriefPill {
-  padding: 5px 12px; border-radius: 20px; font-size: 12px; cursor: pointer;
-  background: rgba(255,255,255,0.05);
-  border: 1px solid rgba(255,255,255,0.12);
-  color: rgba(255,255,255,0.5); transition: all 0.15s;
-}
-.locBriefPill.active {
-  background: rgba(96,200,255,0.18);
-  border-color: rgba(96,200,255,0.4);
-  color: #60c8ff;
-}
-.locBriefBtnsRow { display: flex; gap: 10px; margin-top: 18px; }
-.locBriefCancelBtn {
-  flex: 1; padding: 11px; border-radius: 8px;
-  background: rgba(255,255,255,0.05);
-  border: 1px solid rgba(255,255,255,0.10);
-  color: rgba(255,255,255,0.55); font-size: 13px; cursor: pointer;
-  transition: background 0.15s;
-}
-.locBriefCancelBtn:hover { background: rgba(255,255,255,0.11); }
-.locBriefGenerateBtn {
-  flex: 2; padding: 11px; border-radius: 8px;
-  background: rgba(96,200,255,0.15);
-  border: 1px solid rgba(96,200,255,0.32);
-  color: #60c8ff; font-size: 13px; font-weight: 600; cursor: pointer;
-  transition: background 0.15s;
-}
-.locBriefGenerateBtn:hover { background: rgba(96,200,255,0.30); }
-
-.locBriefLoading {
-  position: absolute; inset: 0;
-  background: rgba(4,10,20,0.92);
-  display: flex; flex-direction: column;
-  align-items: center; justify-content: center;
-  gap: 14px; z-index: 210;
-  opacity: 0; pointer-events: none;
-  transition: opacity 0.2s;
-}
-.locBriefLoading.visible { opacity: 1; pointer-events: all; }
-.locBriefSpinner {
-  width: 30px; height: 30px; border-radius: 50%;
-  border: 2px solid rgba(96,200,255,0.15);
-  border-top-color: #60c8ff;
-  animation: locBriefSpin 0.85s linear infinite;
-}
-@keyframes locBriefSpin { to { transform: rotate(360deg); } }
-.locBriefLoadingText { font-size: 13px; color: rgba(255,255,255,0.65); }
-.locBriefLoadingCancel {
-  background: none; border: 1px solid rgba(255,255,255,0.12);
-  color: rgba(255,255,255,0.35); border-radius: 6px;
-  padding: 6px 14px; font-size: 11px; cursor: pointer; transition: color 0.15s;
-}
-.locBriefLoadingCancel:hover { color: rgba(255,255,255,0.65); }
-
 /* ── Briefing Launcher ── */
 .bLauncher {
   position: fixed;
@@ -44160,26 +44046,6 @@ body.ticker-active .gTickerLabel {
 }
 .bLauncherInput:focus { border-color: rgba(96,200,255,0.4); }
 .bLauncherInput::placeholder { color: rgba(255,255,255,0.22); }
-.bCustTagsWrap {
-  display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
-  background: rgba(255,255,255,0.05);
-  border: 1px solid rgba(255,255,255,0.10);
-  border-radius: 7px; padding: 6px 8px; min-height: 36px;
-  cursor: text;
-}
-.bCustTagsWrap:focus-within { border-color: rgba(96,200,255,0.4); }
-.bCustTag {
-  display: flex; align-items: center; gap: 5px;
-  background: rgba(96,200,255,0.15); border: 1px solid rgba(96,200,255,0.3);
-  color: #60c8ff; border-radius: 4px; padding: 2px 7px; font-size: 12px;
-}
-.bCustTag button { background: none; border: none; color: rgba(96,200,255,0.6); cursor: pointer; font-size: 13px; line-height: 1; padding: 0; }
-.bCustTag button:hover { color: #fff; }
-.bCustTagInput {
-  background: none; border: none; color: #fff; font-size: 12px;
-  outline: none; min-width: 100px; flex: 1;
-}
-.bCustTagInput::placeholder { color: rgba(255,255,255,0.22); }
 .bLauncherStartBtn {
   align-self: flex-end; background: rgba(96,200,255,0.18);
   border: 1px solid rgba(96,200,255,0.4); color: #60c8ff;
@@ -44202,41 +44068,6 @@ body.ticker-active .gTickerLabel {
 .bArchiveDate { font-size: 11px; color: rgba(255,255,255,0.4); white-space: nowrap; flex-shrink: 0; }
 .bArchiveHeadline { font-size: 12px; color: rgba(255,255,255,0.8); flex: 1; margin-right: 10px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bArchiveAudio { font-size: 10px; color: rgba(96,200,255,0.6); flex-shrink: 0; }
-/* Insufficient content warning */
-.bLauncherInsuff {
-  background: rgba(255,180,30,0.07); border: 1px solid rgba(255,180,30,0.25);
-  border-radius: 12px; padding: 18px; display: flex; flex-direction: column; gap: 12px;
-}
-.bLauncherInsuffIcon { font-size: 22px; }
-.bLauncherInsuffTitle { font-size: 14px; font-weight: 700; color: rgba(255,200,60,0.95); }
-.bLauncherInsuffMsg { font-size: 12px; color: rgba(255,255,255,0.55); line-height: 1.5; }
-.bLauncherInsuffSugs { display: flex; flex-direction: column; gap: 7px; }
-.bLauncherInsuffSug {
-  background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.08);
-  border-radius: 8px; padding: 10px 13px; font-size: 12px; color: rgba(255,255,255,0.7);
-  cursor: pointer; transition: background 0.15s;
-}
-.bLauncherInsuffSug:hover { background: rgba(96,200,255,0.10); border-color: rgba(96,200,255,0.25); color: #fff; }
-.bLauncherInsuffBtns { display: flex; gap: 10px; justify-content: flex-end; }
-.bLauncherBackBtn {
-  background: none; border: 1px solid rgba(255,255,255,0.15);
-  color: rgba(255,255,255,0.5); border-radius: 8px; padding: 8px 14px;
-  font-size: 12px; cursor: pointer; transition: all 0.15s;
-}
-.bLauncherBackBtn:hover { color: #fff; border-color: rgba(255,255,255,0.35); }
-/* Loading state inside launcher */
-.bLauncherLoading {
-  display: flex; flex-direction: column; align-items: center; gap: 12px;
-  padding: 24px 0;
-}
-.bLauncherLoadSpinner {
-  width: 28px; height: 28px; border-radius: 50%;
-  border: 2px solid rgba(96,200,255,0.2);
-  border-top-color: #60c8ff;
-  animation: spin 0.8s linear infinite;
-}
-@keyframes spin { to { transform: rotate(360deg); } }
-.bLauncherLoadMsg { font-size: 12px; color: rgba(255,255,255,0.4); }
 </style>
 
 <!-- Briefing Launcher Modal -->
@@ -44263,50 +44094,6 @@ body.ticker-active .gTickerLabel {
       </div>
     </div>
 
-    <!-- Custom briefing form -->
-    <div class="bLauncherSection" id="bLauncherCustomSection">
-      <div class="bLauncherSectionLabel">Custom Briefing</div>
-      <div class="bLauncherField">
-        <label>From</label>
-        <input class="bLauncherInput" id="bCustFrom" type="text" placeholder="Country, region, or news source…" autocomplete="off"/>
-      </div>
-      <div class="bLauncherField">
-        <label>About</label>
-        <input class="bLauncherInput" id="bCustAbout" type="text" placeholder="Topic, city, event, or subject…" autocomplete="off"/>
-      </div>
-      <div class="bLauncherField">
-        <label>Keywords</label>
-        <div class="bCustTagsWrap" id="bCustTagsWrap">
-          <input class="bCustTagInput" id="bCustTagInput" type="text" placeholder="Type keyword + Enter…"/>
-        </div>
-      </div>
-      <div class="bLauncherField" id="bCustVoiceRow">
-        <label>Voiceover &amp; Language</label>
-        <div style="display:flex;gap:8px;align-items:center;">
-          <div class="locBriefToggle" id="bCustVoiceToggle" style="flex-shrink:0"></div>
-          <select class="bVoiceSelect" id="bCustLangSelect" style="display:none;flex:1"></select>
-        </div>
-      </div>
-      <button class="bLauncherStartBtn secondary" id="bLauncherStartCustom">Generate Briefing →</button>
-    </div>
-
-    <!-- Insufficient content warning (hidden until needed) -->
-    <div class="bLauncherInsuff" id="bLauncherInsuff" style="display:none">
-      <div class="bLauncherInsuffIcon">⚠</div>
-      <div class="bLauncherInsuffTitle" id="bLauncherInsuffTitle"></div>
-      <div class="bLauncherInsuffMsg" id="bLauncherInsuffMsg"></div>
-      <div class="bLauncherInsuffSugs" id="bLauncherInsuffSugs"></div>
-      <div class="bLauncherInsuffBtns">
-        <button class="bLauncherBackBtn" id="bLauncherInsuffBack">← Back</button>
-        <button class="bLauncherStartBtn" id="bLauncherInsuffAnyway">Generate Anyway</button>
-      </div>
-    </div>
-
-    <!-- Loading state (hidden until needed) -->
-    <div class="bLauncherLoading" id="bLauncherLoadingState" style="display:none">
-      <div class="bLauncherLoadSpinner"></div>
-      <div class="bLauncherLoadMsg" id="bLauncherLoadMsg">Gathering stories…</div>
-    </div>
   </div>
 </div>
 
@@ -44679,19 +44466,6 @@ body.ticker-active .gTickerLabel {
       if (ttSub) ttSub.textContent = 'Check back tomorrow for your daily briefing';
     }
 
-    // Fetch available ElevenLabs voices and cache globally
-    try {
-      const vRes = await fetch(`${API}/api/briefing/voices`);
-      if (vRes.ok) {
-        window._briefingVoices = await vRes.json();
-        // Pre-populate the launcher language select
-        const sel = document.getElementById('bCustLangSelect');
-        if (sel && window._briefingVoices.length) {
-          sel.innerHTML = window._briefingVoices
-            .map(v => `<option value="${v.voiceId}">${v.language}</option>`).join('');
-        }
-      }
-    } catch (_) {}
   }
 
   // ── Open ─────────────────────────────────────────────────────────────────
@@ -44931,173 +44705,6 @@ body.ticker-active .gTickerLabel {
     if (fTimer) fTimer.style.display = 'none';
     // Restore today's episode so launcher shows correct info after closing a past briefing
     if (_todayEpisode) episode = _todayEpisode;
-  }
-
-  // ── Location Briefing Options + Request ──────────────────────────────────
-  window.showLocBriefingOptions = function showLocBriefingOptions(node, type) {
-    const panel = document.getElementById('infoPanel');
-    panel.querySelectorAll('.locBriefOptions,.locBriefLoading').forEach(el => el.remove());
-
-    const opts = document.createElement('div');
-    opts.className = 'locBriefOptions';
-    opts.innerHTML = `
-      <div class="locBriefOptionsTitle">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="12" cy="12" r="2"/><path d="M16.24 7.76a6 6 0 0 1 0 8.49M7.76 16.24a6 6 0 0 1 0-8.49"/>
-        </svg>
-        Location Briefing — ${node.name}
-      </div>
-      <div class="locBriefOptionRow">
-        <div>
-          <div class="locBriefOptionLabel">Sources</div>
-          <div class="locBriefOptionSub">Which news sources to include</div>
-        </div>
-        <div class="locBriefPills" id="locSourcePills">
-          <button class="locBriefPill" data-val="local">Local</button>
-          <button class="locBriefPill active" data-val="mix">Mix</button>
-          <button class="locBriefPill" data-val="global">Global</button>
-        </div>
-      </div>
-      <div class="locBriefOptionRow">
-        <div>
-          <div class="locBriefOptionLabel">Voiceover</div>
-          <div class="locBriefOptionSub">ElevenLabs audio synthesis (~40s)</div>
-        </div>
-        <div class="locBriefToggle" id="locVoiceToggle"></div>
-      </div>
-      <div class="locBriefOptionRow" id="locLangRow" style="display:none">
-        <div>
-          <div class="locBriefOptionLabel">Language</div>
-          <div class="locBriefOptionSub">Broadcast voice</div>
-        </div>
-        <select class="bVoiceSelect" id="locLangSelect"></select>
-      </div>
-      <div class="locBriefBtnsRow">
-        <button class="locBriefCancelBtn" id="locBriefCancel">Cancel</button>
-        <button class="locBriefGenerateBtn" id="locBriefGenerate">Generate Briefing</button>
-      </div>
-    `;
-    panel.appendChild(opts);
-    requestAnimationFrame(() => opts.classList.add('open'));
-
-    let voiceoverOn = false;
-    let sourceFilter = 'mix';
-
-    // Source pills
-    opts.querySelectorAll('.locBriefPill').forEach(pill => {
-      pill.addEventListener('click', (e) => {
-        e.stopPropagation();
-        sourceFilter = pill.dataset.val;
-        opts.querySelectorAll('.locBriefPill').forEach(p => p.classList.remove('active'));
-        pill.classList.add('active');
-      });
-    });
-
-    // Populate language selector from cached voices
-    const locLangSelect = opts.querySelector('#locLangSelect');
-    const locLangRow    = opts.querySelector('#locLangRow');
-    if (window._briefingVoices?.length) {
-      locLangSelect.innerHTML = window._briefingVoices
-        .map(v => `<option value="${v.voiceId}">${v.language}</option>`).join('');
-    }
-
-    const toggle = opts.querySelector('#locVoiceToggle');
-    toggle.addEventListener('click', (e) => {
-      e.stopPropagation();
-      voiceoverOn = !voiceoverOn;
-      toggle.classList.toggle('on', voiceoverOn);
-      locLangRow.style.display = (voiceoverOn && window._briefingVoices?.length) ? '' : 'none';
-    });
-
-    opts.querySelector('#locBriefCancel').addEventListener('click', (e) => {
-      e.stopPropagation();
-      opts.classList.remove('open');
-      setTimeout(() => opts.remove(), 320);
-    });
-
-    opts.querySelector('#locBriefGenerate').addEventListener('click', (e) => {
-      e.stopPropagation();
-      const voiceId = (voiceoverOn && locLangSelect.value) ? locLangSelect.value : null;
-      opts.classList.remove('open');
-      setTimeout(() => {
-        opts.remove();
-        requestLocationBriefing(node, type, { voiceover: voiceoverOn, sourceFilter, voiceId });
-      }, 200);
-    });
-  }
-
-  window.requestLocationBriefing = function requestLocationBriefing(node, type, opts = {}) {
-    const panel = document.getElementById('infoPanel');
-    const loading = document.createElement('div');
-    loading.className = 'locBriefLoading';
-    loading.innerHTML = `
-      <div class="locBriefSpinner"></div>
-      <div class="locBriefLoadingText">Generating briefing for ${node.name}…</div>
-      <button class="locBriefLoadingCancel" id="locBriefLoadingCancel">Cancel</button>
-    `;
-    panel.appendChild(loading);
-    requestAnimationFrame(() => loading.classList.add('visible'));
-
-    let cancelled = false;
-    const abortCtrl = new AbortController();
-    const abortTimer = setTimeout(() => abortCtrl.abort(), 90000);
-
-    // Cycle status messages while waiting
-    const statusMsgs = [
-      `Generating briefing for ${node.name}…`,
-      'Selecting top stories…',
-      'Writing narrative…',
-      'Assembling segments…',
-      'Almost ready…',
-    ];
-    const loadingText = loading.querySelector('.locBriefLoadingText');
-    let msgIdx = 0;
-    const msgCycle = setInterval(() => {
-      msgIdx = (msgIdx + 1) % statusMsgs.length;
-      if (loadingText) loadingText.textContent = statusMsgs[msgIdx];
-    }, 7000);
-
-    loading.querySelector('#locBriefLoadingCancel').addEventListener('click', (e) => {
-      e.stopPropagation();
-      cancelled = true;
-      clearTimeout(abortTimer);
-      clearInterval(msgCycle);
-      abortCtrl.abort();
-      loading.classList.remove('visible');
-      setTimeout(() => loading.remove(), 200);
-    });
-
-    fetch(`${API}/api/briefing/location`, {
-      signal: abortCtrl.signal,
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type, id: node.id, name: node.name, voiceover: opts.voiceover || false, sourceFilter: opts.sourceFilter || 'mix', voiceId: opts.voiceId || null }),
-    })
-      .then(r => r.json().then(body => { if (!r.ok) throw new Error(body.error || `Server error ${r.status}`); return body; }))
-      .then(ep => {
-        if (cancelled) return;
-        clearTimeout(abortTimer);
-        clearInterval(msgCycle);
-        loading.classList.remove('visible');
-        setTimeout(() => loading.remove(), 200);
-        episode = ep;
-        // Location briefings have no target_date — patch a display-friendly one
-        if (!episode.target_date) episode.target_date = new Date().toISOString();
-        openBriefing();
-      })
-      .catch(err => {
-        if (cancelled) return;
-        clearTimeout(abortTimer);
-        clearInterval(msgCycle);
-        loading.classList.remove('visible');
-        setTimeout(() => loading.remove(), 200);
-        console.error('[locBriefing]', err);
-        const toast = document.createElement('div');
-        toast.style.cssText = 'position:absolute;bottom:20px;left:50%;transform:translateX(-50%);white-space:nowrap;background:rgba(220,50,50,0.92);color:#fff;padding:8px 16px;border-radius:8px;font-size:12px;z-index:220;pointer-events:none;';
-        toast.textContent = `Briefing failed: ${err.message}`;
-        panel.appendChild(toast);
-        setTimeout(() => toast.remove(), 3500);
-      });
   }
 
   // ── Dots ─────────────────────────────────────────────────────────────────
@@ -45909,7 +45516,7 @@ body.ticker-active .gTickerLabel {
       if (audioNext && audioNext._segIdx === idx) {
         sa = audioNext; audioNext = null;
       } else {
-        sa = new Audio(`${API}/api/briefing/audio/${episode.id}/${idx}`);
+        sa = new Audio(`${API}/api/briefing/audio/${episode.id}/${idx}?at=${encodeURIComponent(window.__authToken || '')}`);
         sa.preload = 'auto';
         sa._segIdx = idx;
       }
@@ -45954,7 +45561,7 @@ body.ticker-active .gTickerLabel {
         if (!retried) {
           retried = true;
           console.warn(`[briefing] audio load error seg ${curIdx} — retrying`);
-          sa.src = `${API}/api/briefing/audio/${episode.id}/${curIdx}?r=1`;
+          sa.src = `${API}/api/briefing/audio/${episode.id}/${curIdx}?at=${encodeURIComponent(window.__authToken || '')}&r=1`;
           sa.load();
           return;
         }
@@ -46020,7 +45627,7 @@ body.ticker-active .gTickerLabel {
     const nextIdx = idx + 1;
     if (episode.has_audio && nextIdx < episode.segments.length &&
         episode.segments[nextIdx]?.start_ms != null) {
-      audioNext = new Audio(`${API}/api/briefing/audio/${episode.id}/${nextIdx}`);
+      audioNext = new Audio(`${API}/api/briefing/audio/${episode.id}/${nextIdx}?at=${encodeURIComponent(window.__authToken || '')}`);
       audioNext.preload = 'auto';
       audioNext._segIdx = nextIdx;
       audioNext.load();
@@ -47453,7 +47060,7 @@ body.ticker-active .gTickerLabel {
       audioBar.style.display = 'none';
     } else {
       audioBar.style.display = 'flex';
-      const da = new Audio(`${API}/api/briefing/audio/${episode.id}/${actualIdx}`);
+      const da = new Audio(`${API}/api/briefing/audio/${episode.id}/${actualIdx}?at=${encodeURIComponent(window.__authToken || '')}`);
       da.preload = 'metadata';
       detailAudio = da;
       window._detailAudio = da;  // expose for single-voice guarantee
@@ -47789,8 +47396,6 @@ body.ticker-active .gTickerLabel {
   }
 
   // ── Briefing Launcher ─────────────────────────────────────────────────────
-  const customTags = new Set();
-
   function openBriefingLauncher() {
     if (!window.__checkTier?.('pro')) {
       window.__openPricing?.();
@@ -47814,8 +47419,6 @@ body.ticker-active .gTickerLabel {
       if (startBtn) startBtn.style.display = 'none';
       if (el) el.style.display = '';
     }
-    hideLauncherInsuff();
-    hideLauncherLoading();
     document.getElementById('bLauncher').classList.add('open');
     loadArchive();
   }
@@ -47884,135 +47487,6 @@ body.ticker-active .gTickerLabel {
     document.getElementById('bLauncher').classList.remove('open');
   }
 
-  function hideLauncherInsuff() {
-    document.getElementById('bLauncherInsuff').style.display = 'none';
-    const sec = document.getElementById('bLauncherCustomSection');
-    if (sec) sec.style.display = '';
-  }
-
-  function showLauncherInsuff(data) {
-    const sec = document.getElementById('bLauncherCustomSection');
-    if (sec) sec.style.display = 'none';
-    const el = document.getElementById('bLauncherInsuff');
-    el.style.display = '';
-    document.getElementById('bLauncherInsuffTitle').textContent =
-      `Limited Content — ${data.count} article${data.count === 1 ? '' : 's'} found`;
-    document.getElementById('bLauncherInsuffMsg').textContent = data.message || '';
-    const sugsEl = document.getElementById('bLauncherInsuffSugs');
-    sugsEl.innerHTML = (data.suggestions || []).map(s =>
-      `<div class="bLauncherInsuffSug">${s.replace(/</g,'&lt;')}</div>`
-    ).join('');
-    // Click a suggestion → populate "About" and go back
-    sugsEl.querySelectorAll('.bLauncherInsuffSug').forEach((btn, i) => {
-      btn.addEventListener('click', () => {
-        const sug = (data.suggestions || [])[i];
-        if (sug) document.getElementById('bCustAbout').value = sug;
-        hideLauncherInsuff();
-      });
-    });
-    // Store params for "Generate Anyway"
-    el.dataset.from     = document.getElementById('bCustFrom')?.value || '';
-    el.dataset.about    = document.getElementById('bCustAbout')?.value || '';
-    el.dataset.keywords = JSON.stringify([...customTags]);
-  }
-
-  function showLauncherLoading(msg) {
-    document.getElementById('bLauncherTodaySection').style.display = 'none';
-    document.getElementById('bLauncherCustomSection').style.display = 'none';
-    document.getElementById('bLauncherInsuff').style.display = 'none';
-    const el = document.getElementById('bLauncherLoadingState');
-    el.style.display = '';
-    document.getElementById('bLauncherLoadMsg').textContent = msg || 'Generating…';
-  }
-
-  function hideLauncherLoading() {
-    document.getElementById('bLauncherLoadingState').style.display = 'none';
-    document.getElementById('bLauncherTodaySection').style.display = '';
-    document.getElementById('bLauncherCustomSection').style.display = '';
-  }
-
-  function renderCustomTags() {
-    const wrap = document.getElementById('bCustTagsWrap');
-    const input = document.getElementById('bCustTagInput');
-    wrap.querySelectorAll('.bCustTag').forEach(t => t.remove());
-    customTags.forEach(tag => {
-      const el = document.createElement('div');
-      el.className = 'bCustTag';
-      el.innerHTML = `<span>${tag.replace(/</g,'&lt;')}</span><button>×</button>`;
-      el.querySelector('button').addEventListener('click', () => { customTags.delete(tag); renderCustomTags(); });
-      wrap.insertBefore(el, input);
-    });
-  }
-
-  async function submitCustomBriefing(from, about, keywords, skipCheck = false, voiceOpts = {}) {
-    const loadMsgs = ['Checking available content…', 'Gathering stories…', 'Building briefing…', 'Almost ready…'];
-    let msgIdx = 0;
-    showLauncherLoading(loadMsgs[0]);
-    const msgInterval = setInterval(() => {
-      msgIdx = (msgIdx + 1) % loadMsgs.length;
-      document.getElementById('bLauncherLoadMsg').textContent = loadMsgs[msgIdx];
-    }, 8000);
-
-    try {
-      const res = await fetch(`${API}/api/briefing/custom`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ from, about, keywords: [...keywords], skipCheck, voiceover: voiceOpts.voiceover || false, voiceId: voiceOpts.voiceId || null }),
-        signal: AbortSignal.timeout ? AbortSignal.timeout(120000) : undefined,
-      });
-      clearInterval(msgInterval);
-      const data = await res.json();
-
-      if (!res.ok) {
-        hideLauncherLoading();
-        if (data.insufficient) {
-          showLauncherInsuff(data);
-        } else if (res.status === 429 && data.limitReached) {
-          // Credit-gated. The server now returns:
-          //   data.cost           — credits needed (200 text / 1500 voice)
-          //   data.remaining      — what the user has
-          //   data.suggestedAction — human-readable next step
-          //   data.suggestedTier  — 'pro' | 'enterprise' | null
-          // If they should upgrade, open pricing with the tailored msg.
-          // Otherwise show the shortfall + suggested action.
-          if (data.suggestedTier && typeof window.__openPricing === 'function') {
-            window.__openPricing(data.suggestedAction || data.error);
-          } else {
-            const lines = [
-              `Custom Briefing needs ${data.cost} credits — you have ${data.remaining} left this week.`,
-              data.suggestedAction || data.resetNote || '',
-            ].filter(Boolean);
-            alert(lines.join('\n\n'));
-          }
-        } else if (res.status === 401) {
-          // Not signed in — Custom Briefing requires an account.
-          if (typeof window.__openAuthModal === 'function') {
-            window.__openAuthModal();
-          } else {
-            alert(data.error || 'Sign in to generate Custom Briefings.');
-          }
-        } else {
-          alert(data.error || 'Something went wrong. Please try again.');
-        }
-        return;
-      }
-
-      // Success — swap episode, close launcher, open briefing.
-      // Update the credit meter live from the response (server now
-      // returns ep.credits = consumeCredits result on success).
-      if (data.credits && typeof window.__updateCreditMeterFromResponse === 'function') {
-        window.__updateCreditMeterFromResponse(data.credits);
-      }
-      episode = data;
-      closeBriefingLauncher();
-      openBriefing();
-    } catch (e) {
-      clearInterval(msgInterval);
-      hideLauncherLoading();
-      alert('Request timed out or failed. Please try again.');
-    }
-  }
-
   // ── Launcher event wiring ──────────────────────────────────────────────────
   // Block ALL pointer events from passing through the modal to underlying canvas/globe.
   // The globe picker runs on pointerdown/mousedown so click-only stopPropagation isn't enough.
@@ -48038,61 +47512,6 @@ body.ticker-active .gTickerLabel {
     if (_todayEpisode) episode = _todayEpisode;
     closeBriefingLauncher();
     openBriefing();
-  });
-
-  document.getElementById('bCustTagInput')?.addEventListener('keydown', e => {
-    const input = e.target;
-    if ((e.key === 'Enter' || e.key === ',') && input.value.trim()) {
-      e.preventDefault();
-      customTags.add(input.value.trim().toLowerCase());
-      input.value = '';
-      renderCustomTags();
-    } else if (e.key === 'Backspace' && !input.value && customTags.size) {
-      const last = [...customTags].pop();
-      customTags.delete(last);
-      renderCustomTags();
-    }
-  });
-
-  document.getElementById('bCustTagsWrap')?.addEventListener('click', () => {
-    document.getElementById('bCustTagInput')?.focus();
-  });
-
-  // Voiceover toggle in launcher
-  let custVoiceoverOn = false;
-  document.getElementById('bCustVoiceToggle')?.addEventListener('click', () => {
-    custVoiceoverOn = !custVoiceoverOn;
-    document.getElementById('bCustVoiceToggle').classList.toggle('on', custVoiceoverOn);
-    const sel = document.getElementById('bCustLangSelect');
-    if (sel) sel.style.display = (custVoiceoverOn && window._briefingVoices?.length) ? '' : 'none';
-  });
-
-  document.getElementById('bLauncherStartCustom')?.addEventListener('click', () => {
-    const from    = document.getElementById('bCustFrom')?.value.trim() || '';
-    const about   = document.getElementById('bCustAbout')?.value.trim() || '';
-    const voiceId = (custVoiceoverOn && document.getElementById('bCustLangSelect')?.value)
-      ? document.getElementById('bCustLangSelect').value : null;
-    if (!from && !about && !customTags.size) return;
-    // No pre-flight tier gate — Custom Briefing is now open to all paid
-    // tiers via the credit ledger (Pro / Enterprise debit 200 credits for
-    // text or 1500 for voiceover; Free users authenticate but their
-    // 20-credit/week budget bounces them with a clear upgrade hint from
-    // the server). The /api/briefing/custom 429 response carries
-    // suggestedAction + suggestedTier so submitCustomBriefing can show
-    // the right next step instead of a generic "upgrade" wall.
-    submitCustomBriefing(from, about, customTags, false, { voiceover: custVoiceoverOn, voiceId });
-  });
-
-  document.getElementById('bLauncherInsuffBack')?.addEventListener('click', hideLauncherInsuff);
-
-  document.getElementById('bLauncherInsuffAnyway')?.addEventListener('click', () => {
-    const el = document.getElementById('bLauncherInsuff');
-    const from     = el.dataset.from     || '';
-    const about    = el.dataset.about    || '';
-    const keywords = JSON.parse(el.dataset.keywords || '[]');
-    const voiceId  = (custVoiceoverOn && document.getElementById('bCustLangSelect')?.value)
-      ? document.getElementById('bCustLangSelect').value : null;
-    submitCustomBriefing(from, about, new Set(keywords), true, { voiceover: custVoiceoverOn, voiceId });
   });
 
   // ── Event wiring ──────────────────────────────────────────────────────────

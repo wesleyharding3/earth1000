@@ -39,39 +39,6 @@ const CREDIT_COSTS = Object.freeze({
   // + curated rows are FREE — credits only charged when we actually
   // invoke Claude. (~$0.025-0.030)
   heatmap_qa:       30,
-  // /api/briefing/custom — most expensive feature in the app. Cost is
-  // dominated by ElevenLabs TTS, which is OPT-IN (the `voiceover` flag).
-  // We track two tiers because the cost spread is ~10×:
-  //
-  //   custom_briefing_text (NO voiceover):
-  //     • Sonnet narrative (5K in + 3K out)            ≈ $0.06
-  //     • 3 Haiku data panels (~3K each in/out)        ≈ $0.02
-  //     • optional heatmap pre-resolution              ≈ $0.05
-  //     • storage I/O                                  ≈ $0.01
-  //     Sum: ~$0.10–0.15. 200 credits = ~$0.20 with ~30% headroom.
-  //
-  //   custom_briefing_voice (WITH voiceover):
-  //     • Everything in custom_briefing_text           ≈ $0.15
-  //     • ElevenLabs eleven_multilingual_v2:
-  //         ~750 words × 5.5 chars = ~4,500 chars typical, up to
-  //         ~8,000 chars on a verbose briefing. At Pro-plan pricing
-  //         (~$0.000198/char) that's $0.89–1.58.
-  //     Sum: ~$1.05–1.75. 1500 credits = ~$1.50 budget — undercharges
-  //     by ~$0.25 on the worst-case verbose run, profitable at the
-  //     median (~$1.20). Bump to 1800 if cost monitoring shows the
-  //     average climbing past $1.40.
-  //
-  // Enterprise weekly base = 2500 credits, so a user can run:
-  //   • ~1 voiceover briefing per week + ~5 text-only, or
-  //   • ~12 text-only briefings per week.
-  // Plus add-on packs for heavier use. Free/Pro can't afford either
-  // tier even once and the endpoint gates on tier === 'enterprise'
-  // before the credit check anyway.
-  //
-  // Endpoint code at /api/briefing/custom picks the right key based
-  // on req.body.voiceover.
-  custom_briefing_text:  200,
-  custom_briefing_voice: 1500,
 });
 
 // ─── Weekly base allowance by tier ──────────────────────────────────────────

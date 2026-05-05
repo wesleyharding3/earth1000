@@ -15,19 +15,12 @@ const pool = require('./db');
 //      makes repeats free, so unlimited is supportable at $24.99/mo.
 //      Pro gets a 5× bump (5/day → 25/day) so the upgrade narrative is
 //      "casual reader → power reader → professional reader, unlimited."
-//   3. Custom briefings are no longer hard-gated to Enterprise. The
-//      endpoint debits the credit ledger (200 credits text-only, 1500 with
-//      voiceover). Pro users can afford 2 text briefings/week from base
-//      allowance, or buy add-on packs for voiceover. Enterprise still has
-//      the legacy monthly cap (10) as a belt-and-suspenders ceiling on
-//      top of credits.
 const LIMITS = {
   free: {
     briefingsPerWeek:        2,
     translationsPerDay:      5,
     translationsPerMonth:    null,   // daily cap applies
     explanationsPerDay:      1,      // small daily taste of AI context
-    customBriefingsPerMonth: 0,      // credit-gated only; 20 credits/wk is below the 200 floor anyway
     kwExplanationsPerDay:    0,      // enterprise-only feature
   },
   pro: {
@@ -35,10 +28,6 @@ const LIMITS = {
     translationsPerDay:      25,     // 5× the free tier — clear "Pro = power user" upgrade
     translationsPerMonth:    null,   // daily cap applies
     explanationsPerDay:      5,
-    // No monthly cap on custom briefings — credit ledger is the gate.
-    // 400 credits/week base allowance covers ~2 text briefings; voice
-    // requires add-on packs ($2.00 for 500 / $6.00 for 2000 credits).
-    customBriefingsPerMonth: null,
     kwExplanationsPerDay:    0,      // enterprise-only feature
   },
   enterprise: {
@@ -51,7 +40,6 @@ const LIMITS = {
     translationsPerDay:      Infinity,
     translationsPerMonth:    null,
     explanationsPerDay:      20,
-    customBriefingsPerMonth: 10,     // safety cap on top of credit ledger
     kwExplanationsPerDay:    25,     // AI keyword context explanations
   },
 };
@@ -207,61 +195,6 @@ async function checkBriefingAccess(userId, episodeId, tier) {
 }
 
 /**
- * Check the legacy monthly cap on custom briefings. The PRIMARY gate for
- * this feature is now the credit ledger (creditLedger.js custom_briefing_*
- * keys, debited inside /api/briefing/custom). This function exists ONLY
- * as a safety ceiling for Enterprise users who buy enough add-on credit
- * packs to exceed a reasonable monthly count.
- *
- * Tier behavior:
- *   - customBriefingsPerMonth = 0    → not allowed (handled at endpoint)
- *   - customBriefingsPerMonth = null → no monthly cap (credit-only gate)
- *   - customBriefingsPerMonth = N    → cap at N, regardless of credits
- */
-async function checkCustomBriefing(userId, tier) {
-  const lim = limitsFor(tier);
-
-  // Hard-block: tier doesn't have access at all (rare — would only be a
-  // future tier added with explicit 0).
-  if (lim.customBriefingsPerMonth === 0) {
-    return { allowed: false, used: 0, limit: 0 };
-  }
-
-  // No monthly cap (Pro tier as of the 2026 launch pass) — defer entirely
-  // to the credit ledger. Caller already debited credits before us.
-  if (lim.customBriefingsPerMonth == null) {
-    return { allowed: true, used: 0, limit: Infinity };
-  }
-
-  // Enterprise tier: monthly cap as a belt-and-suspenders ceiling.
-  const month = new Date().toISOString().slice(0, 7); // 'YYYY-MM'
-  const { rows } = await pool.query(`
-    INSERT INTO custom_briefing_usage (user_id, usage_month, count)
-    VALUES ($1, $2, 1)
-    ON CONFLICT (user_id, usage_month) DO UPDATE SET count = custom_briefing_usage.count + 1
-    RETURNING count
-  `, [userId, month]);
-
-  const count = rows[0]?.count ?? 1;
-  if (count > lim.customBriefingsPerMonth) {
-    // Roll back
-    await pool.query(`
-      UPDATE custom_briefing_usage
-      SET count = GREATEST(count - 1, 0)
-      WHERE user_id = $1 AND usage_month = $2
-    `, [userId, month]);
-    return {
-      allowed:   false,
-      used:      lim.customBriefingsPerMonth,
-      limit:     lim.customBriefingsPerMonth,
-      resetNote: 'Resets on the 1st of next month',
-    };
-  }
-
-  return { allowed: true, used: count, limit: lim.customBriefingsPerMonth };
-}
-
-/**
  * Check and consume one keyword AI explanation credit.
  * Enterprise-only: 25/day. Pro and Free: 0.
  * Returns { allowed: bool, used: number, limit: number }
@@ -294,12 +227,10 @@ async function checkKwExplanation(userId, tier) {
 async function getUsageSnapshot(userId, tier) {
   const lim = limitsFor(tier);
   const today = new Date().toISOString().slice(0, 10);
-  const month = new Date().toISOString().slice(0, 7);
 
-  const [dailyRow, weekRow, customRow, monthTransRow] = await Promise.all([
+  const [dailyRow, weekRow, monthTransRow] = await Promise.all([
     pool.query(`SELECT translations, explanations, kw_explanations FROM user_usage WHERE user_id=$1 AND usage_date=$2`, [userId, today]),
     pool.query(`SELECT COUNT(*)::int AS c FROM briefing_access_log WHERE user_id=$1 AND accessed_at > NOW() - INTERVAL '7 days'`, [userId]),
-    pool.query(`SELECT count FROM custom_briefing_usage WHERE user_id=$1 AND usage_month=$2`, [userId, month]),
     lim.translationsPerMonth !== null
       ? _getMonthlyTranslations(userId)
       : Promise.resolve(null),
@@ -327,11 +258,6 @@ async function getUsageSnapshot(userId, tier) {
       limit: lim.briefingsPerWeek,
       period: 'week',
     },
-    customBriefings: {
-      used:  customRow.rows[0]?.count ?? 0,
-      limit: lim.customBriefingsPerMonth,
-      period: 'month',
-    },
   };
 }
 
@@ -342,6 +268,5 @@ module.exports = {
   checkExplanation,
   checkKwExplanation,
   checkBriefingAccess,
-  checkCustomBriefing,
   getUsageSnapshot,
 };
