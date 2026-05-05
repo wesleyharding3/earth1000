@@ -163,21 +163,43 @@ async function loadThreads() {
     );
     return rows;
   }
-  // Gate: only audit threads that have either never been audited
-  // (last_audited_at IS NULL) or have accumulated new articles since
-  // their last audit (last_updated_at > last_audited_at). At a 2×/day
-  // cadence + ~300 active+cooling threads, this drops the per-run
-  // workload from ~300 audits to ~75 (typical 25% hit rate), turning
-  // the daily Anthropic bill from ~$2.70 → ~$0.70. Index that backs
-  // this query: idx_story_threads_audit_gate (migration
+  // Gate: re-audit a thread when ANY of:
+  //   1. Never audited (last_audited_at IS NULL)
+  //   2. New articles have arrived since the last audit (last_updated_at
+  //      > last_audited_at)
+  //   3. Last audit was > 7 days ago — a backstop forced re-audit. This
+  //      is the recovery path for threads that survived a previous
+  //      audit run with a silent false negative (e.g. token-budget
+  //      truncation, parse failure under the old coercion logic, or
+  //      LLM variability). Without this clause the King Charles
+  //      whiskey thread case repeats: a single false-negative audit
+  //      stamps last_audited_at, no new articles arrive, gate clauses
+  //      1+2 stay false, and the thread is locked out forever even as
+  //      its article set drifts further off-topic with each match
+  //      cycle.
+  //
+  // At 2×/day cadence + ~300 active+cooling threads the typical run
+  // touches ~75 (clauses 1+2). The 7-day backstop adds ~43/run amortized
+  // (300/7 ÷ 14 runs/week × 2 runs/day) — well within MAX_THREADS=500.
+  // Anthropic bill impact: ~$0.40/day extra at Haiku rates.
+  //
+  // Index that backs this query: idx_story_threads_audit_gate (migration
   // 20260430_add_last_audited_at_to_story_threads.sql).
   const { rows } = await pool.query(`
     SELECT id, title, description, keywords, primary_category
       FROM story_threads
      WHERE status IN ('active','cooling')
        AND article_count >= ${MIN_ARTICLES}
-       AND (last_audited_at IS NULL OR last_updated_at > last_audited_at)
-     ORDER BY article_count DESC, last_updated_at DESC
+       AND (
+         last_audited_at IS NULL
+         OR last_updated_at > last_audited_at
+         OR last_audited_at < NOW() - INTERVAL '7 days'
+       )
+     ORDER BY
+       -- Prioritize threads with new content first, then forced re-audits
+       CASE WHEN last_audited_at IS NULL OR last_updated_at > last_audited_at THEN 0 ELSE 1 END,
+       article_count DESC,
+       last_updated_at DESC
      LIMIT ${MAX_THREADS}
   `);
   return rows;
@@ -263,14 +285,48 @@ ${threadBlock}
 ARTICLES (${articles.length}):
 ${articleBlock}`;
 
+  // max_tokens raised 1600 → 8000. Bug discovered via the King Charles
+  // whiskey thread (id 8250): the audit was silently passing threads
+  // whose outlier list was long enough to overflow the response budget.
+  // When Claude's JSON response truncates mid-array, extractJson fails
+  // to parse, and the catch-all `parsed?.outliers || []` coerced the
+  // failure into a clean ✓ — stamping last_audited_at and locking the
+  // thread out of every future audit cycle (gate at loadThreads
+  // requires last_updated_at > last_audited_at to re-trigger). The
+  // worst-offender threads (most articles, most drift, most outliers)
+  // were the EXACT threads most likely to overflow → the threads
+  // needing cleanup were systematically waved through.
+  //
+  // 8000 tokens covers ~60 outliers with their reasons, comfortably
+  // above the worst case observed (41+) on an 80-article window.
+  // Combined with the truncation detection below, no more silent
+  // pass-throughs.
   const response = await client.messages.create({
     model: MODEL,
-    max_tokens: 1600,
+    max_tokens: 8000,
     messages: [{ role: 'user', content: prompt }],
   });
   const text = (response?.content || []).map(p => typeof p?.text === 'string' ? p.text : '').join('').trim();
+  // Truncation detection — if Claude reports it stopped because of the
+  // max_tokens budget rather than completing, we KNOW the JSON is
+  // incomplete and should not be parsed-as-clean. Throw so the caller
+  // (main loop) skips stamping last_audited_at and the thread retries
+  // next run with a chance for a complete response.
+  if (response?.stop_reason === 'max_tokens') {
+    throw new Error(`Claude response hit max_tokens=${8000} — JSON likely truncated; refusing to silently pass thread`);
+  }
   const parsed = extractJson(text);
-  const list = Array.isArray(parsed?.outliers) ? parsed.outliers : [];
+  // Parse failure is also fatal — same reasoning as truncation. The
+  // previous version coerced parse failures to outliers:[] and stamped
+  // last_audited_at, causing the thread-lockout bug. Throw so the
+  // caller skips stamping.
+  if (!parsed) {
+    throw new Error(`Claude response was not valid JSON (length=${text.length}, head="${text.slice(0, 80).replace(/\s+/g,' ')}")`);
+  }
+  if (!Array.isArray(parsed.outliers)) {
+    throw new Error(`Claude response missing 'outliers' array (keys: ${Object.keys(parsed).join(',')})`);
+  }
+  const list = parsed.outliers;
   // Capture the dominant_topic into the reason metadata so the audit log
   // and tombstone reason both make clear WHY (the thread's actual story
   // wasn't this article's topic), not just "doesn't match title".

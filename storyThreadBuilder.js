@@ -2137,42 +2137,116 @@ async function getUnthreadedArticles(hours) {
 // numeric thread id, with each value being an array of compact member
 // objects { id, title, summary, country }.
 async function fetchThreadMembers(threadIds, perThread = 5) {
+  // 5 sample slots, spread evenly across the thread's published_at
+  // timeline. The old sampling (anchor first, then everything by
+  // published_at DESC) made the 5 slots be 1 anchor + 4 most-recent,
+  // which biased the matcher toward the thread's RECENT drift rather
+  // than its actual identity:
+  //
+  //   - Once a few off-topic articles attach to a thread (matcher
+  //     false-positive), they immediately become 4 of 5 "samples"
+  //     Claude sees on the next match cycle.
+  //   - Claude infers the thread's identity from those recent samples,
+  //     not the anchor alone (1 of 5).
+  //   - More off-topic articles match → more drift → tighter feedback
+  //     loop. Self-reinforcing, no escape.
+  //
+  // The new sampling assigns the 5 slots to time-percentile positions
+  // across the thread's full article set, so Claude sees the full ARC
+  // of the thread instead of just its tail:
+  //   slot 1: anchor (original cluster seed) — falls back to oldest
+  //   slot 2: 25th-percentile by published_at (early evolution)
+  //   slot 3: 50th-percentile / median (mid-arc state)
+  //   slot 4: 75th-percentile (late evolution)
+  //   slot 5: most recent (current state for matching)
+  //
+  // For threads with < 5 articles the percentile picks collapse to
+  // distinct articles via dedupe and the bucket fills to the cap.
   const out = new Map();
   if (!Array.isArray(threadIds) || !threadIds.length) return out;
   const ids = threadIds.map(Number).filter(Number.isFinite);
   if (!ids.length) return out;
-  // country_name lives on the `countries` table joined via a.country_id.
-  // The previous version selected a.country_name directly → every batch
-  // errored with "column a.country_name does not exist" and the whole
-  // run produced 0 threads.
+  // Window-function ranking per thread; one DB roundtrip, no per-thread
+  // queries. asc_rank counts oldest=1; desc_rank counts newest=1.
   const { rows } = await pool.query(`
-    SELECT sta.thread_id,
-           a.id           AS article_id,
-           a.title,
-           a.summary,
-           a.translated_summary,
-           co.name AS country_name,
-           sta.is_anchor,
-           a.published_at
-      FROM story_thread_articles sta
-      JOIN news_articles a ON a.id = sta.article_id
-      LEFT JOIN countries co ON co.id = a.country_id
-     WHERE sta.thread_id = ANY($1::int[])
-     ORDER BY sta.thread_id,
-              sta.is_anchor DESC NULLS LAST,
-              a.published_at DESC
+    WITH ranked AS (
+      SELECT sta.thread_id,
+             a.id           AS article_id,
+             a.title,
+             a.summary,
+             a.translated_summary,
+             co.name        AS country_name,
+             sta.is_anchor,
+             a.published_at,
+             ROW_NUMBER() OVER (PARTITION BY sta.thread_id ORDER BY a.published_at ASC)  AS asc_rank,
+             ROW_NUMBER() OVER (PARTITION BY sta.thread_id ORDER BY a.published_at DESC) AS desc_rank,
+             COUNT(*)       OVER (PARTITION BY sta.thread_id)                            AS thread_total
+        FROM story_thread_articles sta
+        JOIN news_articles a ON a.id = sta.article_id
+        LEFT JOIN countries co ON co.id = a.country_id
+       WHERE sta.thread_id = ANY($1::int[])
+    )
+    SELECT *
+      FROM ranked
+     WHERE is_anchor IS TRUE
+        OR asc_rank = 1
+        OR asc_rank = GREATEST(1, (thread_total + 3) / 4)
+        OR asc_rank = GREATEST(1, (thread_total + 1) / 2)
+        OR asc_rank = GREATEST(1, (3 * thread_total + 1) / 4)
+        OR desc_rank = 1
+     ORDER BY thread_id, asc_rank ASC
   `, [ids]);
+
+  // JS-side: pick role-tagged samples per thread, dedupe, fill in slot
+  // order so the bucket Claude sees is anchor → q25 → q50 → q75 → recent.
+  const perThreadGroups = new Map();
   for (const r of rows) {
     const tid = Number(r.thread_id);
-    if (!out.has(tid)) out.set(tid, []);
-    const bucket = out.get(tid);
-    if (bucket.length >= perThread) continue;
-    bucket.push({
-      id:       Number(r.article_id),
-      title:    r.title,
-      summary:  String(r.translated_summary || r.summary || '').slice(0, 180),
-      country:  r.country_name || null,
-    });
+    if (!perThreadGroups.has(tid)) {
+      perThreadGroups.set(tid, {
+        anchor: null, oldest: null, q25: null, q50: null, q75: null, recent: null,
+        seen: new Set(),
+      });
+    }
+    const g = perThreadGroups.get(tid);
+    const total = Number(r.thread_total);
+    const asc = Number(r.asc_rank);
+    const desc = Number(r.desc_rank);
+    const q25target = Math.max(1, Math.floor((total + 3) / 4));
+    const q50target = Math.max(1, Math.floor((total + 1) / 2));
+    const q75target = Math.max(1, Math.floor((3 * total + 1) / 4));
+    if (r.is_anchor && !g.anchor)   g.anchor = r;
+    if (asc === 1 && !g.oldest)     g.oldest = r;
+    if (asc === q25target && !g.q25) g.q25 = r;
+    if (asc === q50target && !g.q50) g.q50 = r;
+    if (asc === q75target && !g.q75) g.q75 = r;
+    if (desc === 1 && !g.recent)    g.recent = r;
+  }
+
+  for (const [tid, g] of perThreadGroups) {
+    const ordered = [];
+    const push = (r) => {
+      if (!r) return;
+      const id = Number(r.article_id);
+      if (g.seen.has(id)) return;
+      g.seen.add(id);
+      ordered.push({
+        id,
+        title:    r.title,
+        summary:  String(r.translated_summary || r.summary || '').slice(0, 180),
+        country:  r.country_name || null,
+      });
+    };
+    // Slot 1: anchor first; if no anchor flag in the thread, oldest
+    // serves as the origin proxy.
+    push(g.anchor || g.oldest);
+    // Slots 2-4: q25, q50, q75 — early/mid/late evolution.
+    push(g.q25);
+    push(g.q50);
+    push(g.q75);
+    // Slot 5: most recent — current state for matching.
+    push(g.recent);
+    out.set(tid, ordered.slice(0, perThread));
   }
   return out;
 }
