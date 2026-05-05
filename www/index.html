@@ -41927,16 +41927,42 @@ const settingsToggle     = document.getElementById("settingsToggle");
     const ppEnt    = document.getElementById('pricingPaypalEnterprise');
 
     [cardFree, cardPro, cardEnt].forEach(c => c?.classList.remove('current'));
-    ctaFree.textContent = 'Current plan';
+
+    // Free button — two modes: disabled "Current plan" when actually on
+    // free, or active "Switch to Free" when on a paid tier (lets the
+    // user downgrade by routing to the same Manage-Subscription flow
+    // as the paid tier's manage button — Apple Subscriptions sheet on
+    // iOS, PayPal autopay on web).
+    if (ctaFree) {
+      if (tier === 'free') {
+        ctaFree.textContent = 'Current plan';
+        ctaFree.classList.add('current-plan');
+        ctaFree.classList.remove('active');
+        ctaFree.onclick = null;
+      } else {
+        ctaFree.textContent = 'Switch to Free';
+        ctaFree.classList.remove('current-plan');
+        ctaFree.classList.add('active');
+        ctaFree.onclick = () => window.__cancelPayPal?.();
+      }
+    }
 
     if (tier === 'pro') {
       cardPro?.classList.add('current');
       if (ctaPro)  { ctaPro.style.display  = 'block'; }
       if (ppPro)   { ppPro.style.display   = 'none';  }
+      // Enterprise card stays a real upgrade path — show its purchase CTA.
+      if (ctaEnt)  { ctaEnt.style.display  = 'none'; }
+      if (ppEnt)   { ppEnt.style.display   = '';     }
     } else if (tier === 'enterprise') {
       cardEnt?.classList.add('current');
       if (ctaEnt)  { ctaEnt.style.display  = 'block'; }
       if (ppEnt)   { ppEnt.style.display   = 'none';  }
+      // Pro is a downgrade from Enterprise — Apple/PayPal handle that
+      // through the same manage-subscription UI, so hide the purchase
+      // button to avoid double-charging users on a separate Pro sub.
+      if (ctaPro)  { ctaPro.style.display  = 'none'; }
+      if (ppPro)   { ppPro.style.display   = 'none'; }
     } else {
       cardFree?.classList.add('current');
       if (ctaPro)  { ctaPro.style.display  = 'none'; }
