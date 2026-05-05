@@ -49,6 +49,10 @@ async function normalizeRecentKeywords(options) {
     minRows = DEFAULT_MIN_ROWS,
     minFrequency = DEFAULT_MIN_FREQUENCY,
     scope,
+    // Per-candidate-query statement_timeout (ms). Default 5min preserves the
+    // legacy behaviour. Budgeted/chunked callers pass a tighter value (e.g.
+    // 90_000) so a single heavy chunk can't eat the whole wall-clock budget.
+    candidateTimeoutMs = 300_000,
     // DeepL fallback is DANGEROUS at production volume — keyword sets can
     // run ~100k DeepL chars/day. Fallback is now opt-in: callers must set
     // allowDeeplFallback:true to use DeepL when Claude is unavailable.
@@ -97,7 +101,7 @@ async function normalizeRecentKeywords(options) {
   if (isPool) {
     const candClient = await pool.connect();
     try {
-      try { await candClient.query(`SET statement_timeout = '5min'`); } catch (_) {}
+      try { await candClient.query(`SET statement_timeout = ${candidateTimeoutMs}`); } catch (_) {}
       ({ rows } = await candClient.query(sql, params));
     } finally {
       candClient.release();
@@ -236,6 +240,12 @@ function buildCandidateQuery({ scope, keywordLimit, minRows, minFrequency }) {
     //     planner hash-anti-join once and prune ~80%+ of rows before they
     //     reach the GROUP BY. This was the change that took the candidate
     //     query from "5-min timeout in prod" back under a minute.
+    //
+    // scope.skipHours (optional): exclude articles newer than skipHours ago.
+    // Used by normalizeRecentKeywordsBudgeted to walk older windows after
+    // newer ones are processed. When 0 (default), the upper bound becomes
+    // `published_at < NOW()` which is a no-op.
+    const skipHours = Number(scope.skipHours) || 0;
     return {
       sql: `
         WITH base AS (
@@ -244,7 +254,8 @@ function buildCandidateQuery({ scope, keywordLimit, minRows, minFrequency }) {
                  ak.frequency
             FROM article_keywords ak
             JOIN news_articles a ON a.id = ak.article_id
-           WHERE a.published_at >= NOW() - ($1 * INTERVAL '1 hour')
+           WHERE a.published_at >= NOW() - (($1 + $5) * INTERVAL '1 hour')
+             AND a.published_at <  NOW() - ($5 * INTERVAL '1 hour')
              AND ak.normalized_keyword IS NULL
              AND ak.keyword IS NOT NULL
              AND ak.source_language IS DISTINCT FROM 'en'
@@ -266,7 +277,7 @@ function buildCandidateQuery({ scope, keywordLimit, minRows, minFrequency }) {
          ORDER BY SUM(COALESCE(b.frequency, 1)) DESC, COUNT(*) DESC, LENGTH(b.keyword) DESC
          LIMIT $4
       `,
-      params: [scope.hours, minRows, minFrequency, keywordLimit]
+      params: [scope.hours, minRows, minFrequency, keywordLimit, skipHours]
     };
   }
 
@@ -399,6 +410,109 @@ async function persistTranslations(pool, accepted) {
   };
 }
 
+// Time-budgeted driver: walk backward from NOW in fixed-size chunks, calling
+// normalizeRecentKeywords on each window with a tight per-chunk
+// statement_timeout. Stops as soon as the wall-clock budget is exhausted (or
+// maxLookbackHours is reached). Built for storyThreadBuilder's inline
+// normalize step, which was timing out on a single 24h candidate query
+// after the cron cadence shifted from 2h → 4h and the unnormalized backlog
+// piled up. Each small chunk completes well under the candidate timeout, and
+// however far back we get within the budget is what we get; the next run
+// continues from wherever fresh articles have arrived.
+async function normalizeRecentKeywordsBudgeted(options) {
+  const {
+    pool,
+    anthropicClient = null,
+    logger = console,
+    budgetMs = 600_000,            // 10 min default total wall-clock budget
+    chunkHours = 2,                // size of each lookback window
+    maxLookbackHours = 168,        // 1 week safety stop
+    candidateTimeoutMs = 90_000,   // per-chunk SQL statement_timeout
+    keywordLimit,
+    charCap,
+    minRows,
+    minFrequency,
+    batchSize,
+    deeplApiKey,
+    allowDeeplFallback = false
+  } = options || {};
+
+  if (!pool) throw new Error('normalizeRecentKeywordsBudgeted requires pool');
+
+  const t0 = Date.now();
+  const elapsed = () => Date.now() - t0;
+
+  let totalCandidate = 0;
+  let totalUpdatedKeywords = 0;
+  let totalUpdatedRows = 0;
+  let totalTranslatedChars = 0;
+  let cursorHours = 0;
+  let chunksRun = 0;
+  let consecutiveErrors = 0;
+  let budgetExhausted = false;
+
+  while (cursorHours < maxLookbackHours) {
+    if (elapsed() >= budgetMs) {
+      budgetExhausted = true;
+      break;
+    }
+
+    const windowSize = Math.min(chunkHours, maxLookbackHours - cursorHours);
+    const chunkStart = cursorHours;
+    const chunkEnd = cursorHours + windowSize;
+
+    let chunkResult;
+    try {
+      chunkResult = await normalizeRecentKeywords({
+        pool,
+        anthropicClient,
+        logger,
+        candidateTimeoutMs,
+        keywordLimit,
+        charCap,
+        minRows,
+        minFrequency,
+        batchSize,
+        deeplApiKey,
+        allowDeeplFallback,
+        scope: { hours: windowSize, skipHours: chunkStart }
+      });
+      consecutiveErrors = 0;
+    } catch (err) {
+      consecutiveErrors++;
+      logger.warn?.(`   ⚠ chunk ${chunkStart}-${chunkEnd}h failed: ${err.message}`);
+      if (consecutiveErrors >= 2) {
+        logger.warn?.(`   ⚠ Aborting budgeted run after ${consecutiveErrors} consecutive chunk errors`);
+        break;
+      }
+      cursorHours = chunkEnd;
+      continue;
+    }
+
+    totalCandidate += chunkResult.candidateKeywords || 0;
+    totalUpdatedKeywords += chunkResult.updatedKeywords || 0;
+    totalUpdatedRows += chunkResult.updatedRows || 0;
+    totalTranslatedChars += chunkResult.translatedChars || 0;
+    chunksRun++;
+    cursorHours = chunkEnd;
+
+    logger.log?.(`   chunk ${chunkStart}-${chunkEnd}h: cand=${chunkResult.candidateKeywords || 0} kw=${chunkResult.updatedKeywords || 0} rows=${chunkResult.updatedRows || 0} (elapsed ${(elapsed() / 1000).toFixed(1)}s)`);
+  }
+
+  return {
+    provider: anthropicClient ? 'claude' : (allowDeeplFallback && (deeplApiKey || process.env.DEEPL_API_KEY) ? 'deepl' : 'none'),
+    candidateKeywords: totalCandidate,
+    translatedChars: totalTranslatedChars,
+    updatedKeywords: totalUpdatedKeywords,
+    updatedRows: totalUpdatedRows,
+    chunksRun,
+    furthestLookbackHours: cursorHours,
+    elapsedMs: elapsed(),
+    budgetExhausted
+  };
+}
+
 module.exports = {
-  normalizeRecentKeywords
+  normalizeRecentKeywords,
+  normalizeRecentKeywordsBudgeted
 };

@@ -29,7 +29,7 @@ process.env.DB_POOL_MAX = "4";
 require("dotenv").config();
 const pool = require("./db");
 const Anthropic = require("@anthropic-ai/sdk");
-const { normalizeRecentKeywords } = require("./keywordNormalizer");
+const { normalizeRecentKeywordsBudgeted } = require("./keywordNormalizer");
 const { computeNationsForItem, enforceDisjointAndCapped } = require("./nationDesignations");
 
 // Recompute primary/secondary nations from the thread's full article corpus
@@ -58,16 +58,22 @@ async function recomputeAndPersistNations(threadId) {
 const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const LOOKBACK_HOURS  = parseInt(process.argv.find(a => a.startsWith("--hours="))?.split("=")[1] || "48");
-// Inline normalization scope — half of the full 48h article window
-// to keep the candidate query well under the 300s statement_timeout.
-// 48h was working until 2026-05-05 00:00 UTC when the query finally
-// hit the limit and aborted ("Keyword normalization skipped:
-// canceling statement due to statement timeout" → 0 new threads
-// created from 1500 articles because raw multilingual variants stayed
-// unmerged). 24h gives roughly 2x headroom vs the failing 48h scope
-// and still covers a typical 6h cron gap with 4x overlap; the
-// standalone hourly keywordNormalizerCron handles anything older.
-const NORMALIZATION_LOOKBACK_HOURS = 24;
+// Inline normalization is now wall-clock-budgeted instead of a fixed
+// lookback window. We walk backward from NOW in NORMALIZATION_CHUNK_HOURS
+// chunks until NORMALIZATION_BUDGET_MS expires; whatever depth we reach is
+// what we get, and the next run continues from wherever fresh articles have
+// arrived.
+//
+// Why this shape: a single 24h candidate query was hitting the 5-min
+// statement_timeout once the cron cadence widened from 2h → 4h and the
+// unnormalized backlog piled up ("Keyword normalization skipped: canceling
+// statement due to statement timeout" → 0 new threads from full input).
+// Each small chunk completes well under the per-chunk timeout, so a
+// growing backlog now slows progress instead of failing the whole pass.
+const NORMALIZATION_BUDGET_MS         = 10 * 60 * 1000;  // 10 min wall-clock
+const NORMALIZATION_CHUNK_HOURS       = 2;
+const NORMALIZATION_CHUNK_TIMEOUT_MS  = 90_000;
+const NORMALIZATION_MAX_LOOKBACK_HOURS = 72;
 const CLAUDE_BATCH    = 100;    // articles per Claude call
 const MIN_CLUSTER     = 3;     // min articles to form a cluster (Claude sees singletons too)
 // Bumped 2 → 3 because the prior 2-keyword threshold + transitive union-find
@@ -323,18 +329,21 @@ async function run() {
   console.log(`\n🧵 Story Thread Builder — ${new Date().toISOString()}`);
   console.log(`   Lookback: ${LOOKBACK_HOURS}h | Article limit: none`);
 
-  console.log(`   [${elapsed()}] Normalizing recent multilingual keywords (scope=${NORMALIZATION_LOOKBACK_HOURS}h)...`);
-  const normalization = await normalizeRecentKeywords({
+  console.log(`   [${elapsed()}] Normalizing recent multilingual keywords (budget=${NORMALIZATION_BUDGET_MS / 1000}s, chunk=${NORMALIZATION_CHUNK_HOURS}h, max_lookback=${NORMALIZATION_MAX_LOOKBACK_HOURS}h)...`);
+  const normalization = await normalizeRecentKeywordsBudgeted({
     pool,
     anthropicClient: client,
     logger: console,
-    scope: { hours: NORMALIZATION_LOOKBACK_HOURS }
+    budgetMs:           NORMALIZATION_BUDGET_MS,
+    chunkHours:         NORMALIZATION_CHUNK_HOURS,
+    candidateTimeoutMs: NORMALIZATION_CHUNK_TIMEOUT_MS,
+    maxLookbackHours:   NORMALIZATION_MAX_LOOKBACK_HOURS
   }).catch(err => {
     console.warn(`   ⚠ Keyword normalization skipped: ${err.message}`);
     return null;
   });
   if (normalization) {
-    console.log(`   [${elapsed()}] Keyword normalization provider=${normalization.provider} updated_keywords=${normalization.updatedKeywords} updated_rows=${normalization.updatedRows}`);
+    console.log(`   [${elapsed()}] Keyword normalization provider=${normalization.provider} chunks=${normalization.chunksRun} reached_lookback=${normalization.furthestLookbackHours}h updated_keywords=${normalization.updatedKeywords} updated_rows=${normalization.updatedRows}${normalization.budgetExhausted ? ' (budget exhausted)' : ''}`);
   }
 
   console.log(`   [${elapsed()}] Querying unthreaded articles...`);
