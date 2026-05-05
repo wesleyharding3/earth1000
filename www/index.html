@@ -40788,10 +40788,33 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // Plugin shape: { provider, result: { idToken, accessToken, profile, ... } }
         const idToken = out?.result?.idToken;
         if (!idToken) throw new Error('No identity token returned from Google.');
+
+        // Diagnostic: decode JWT to compare our nonce vs the one Google
+        // actually baked into the token. If the plugin/SDK silently
+        // restored a cached session, the token's nonce will be the OLD
+        // one and our fresh rawNonce will mismatch. We pass the token's
+        // actual nonce to Supabase as a working fallback while we
+        // continue investigating the keychain-cache root cause.
+        let tokenNonce = null;
+        try {
+          const payloadB64 = idToken.split('.')[1].replace(/-/g, '+').replace(/_/g, '/');
+          const padded = payloadB64 + '='.repeat((4 - payloadB64.length % 4) % 4);
+          const claims = JSON.parse(atob(padded));
+          tokenNonce = claims?.nonce || null;
+          console.log('[google-auth] sent nonce:', rawNonce);
+          console.log('[google-auth] token nonce:', tokenNonce);
+          console.log('[google-auth] token iat:', claims?.iat, 'email:', claims?.email);
+          if (tokenNonce && tokenNonce !== rawNonce) {
+            console.warn('[google-auth] NONCE MISMATCH — plugin returned stale/cached token; using token nonce as fallback');
+          }
+        } catch (e) {
+          console.warn('[google-auth] could not decode idToken:', e.message);
+        }
+
         const { data, error } = await sb.auth.signInWithIdToken({
           provider: 'google',
           token: idToken,
-          nonce: rawNonce,
+          nonce: tokenNonce || rawNonce,
         });
         if (error) throw error;
         // Mirror the Apple flow — apply session + close the modal in-line
