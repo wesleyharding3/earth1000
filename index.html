@@ -41427,9 +41427,41 @@ body.ticker-active .gTickerLabel {
         const isoSet = new Set();
         const addIso = (iso) => { if (iso) isoSet.add(String(iso).toUpperCase()); };
 
+        // Resolve names/coords against the polygon layer first (reliable,
+        // baked from GeoJSON, has every country with ISO-2 keys + bbox)
+        // and the API-fetched centroid array as a fallback. Earlier this
+        // function consulted only __globeCountries — when the API hadn't
+        // populated it, every isoSet entry came back empty and no
+        // country lit up during the briefing.
+        const polyC  = window.__hitTestCountries?.() || [];
         const globeC = window.__globeCountries || [];
+        const _polyBboxCenter = (c) => {
+          // bbox is { latMin, latMax, lonMin, lonMax } — object form.
+          const b = c?.bbox;
+          if (!b || b.latMin == null || b.lonMin == null) return null;
+          return { lat: (b.latMin + b.latMax) / 2, lon: (b.lonMin + b.lonMax) / 2 };
+        };
         const _nearestIso = (lat, lon) => {
           if (lat == null || lon == null) return null;
+          // Prefer point-in-polygon via hitTestGlobe — accurate for
+          // countries with non-contiguous territory.
+          if (typeof window.hitTestGlobe === 'function') {
+            const res = window.hitTestGlobe(lat, lon, 1.0);
+            const k = res?.primary?.key
+                   ?? res?.inside?.[0]?.key
+                   ?? res?.nearby?.[0]?.key;
+            if (k) return String(k).toUpperCase();
+          }
+          if (polyC.length) {
+            let best = null, bestD = Infinity;
+            for (const c of polyC) {
+              const ctr = _polyBboxCenter(c);
+              if (!ctr) continue;
+              const d = Math.abs(ctr.lat - lat) + Math.abs(ctr.lon - lon);
+              if (d < bestD) { bestD = d; best = c; }
+            }
+            if (best) return (best.key || best.iso || '').toUpperCase();
+          }
           let best = null, bestD = Infinity;
           for (const c of globeC) {
             if (c.lat == null) continue;
@@ -41441,6 +41473,8 @@ body.ticker-active .gTickerLabel {
         const _findIso = (name) => {
           if (!name) return null;
           const n = name.trim().toLowerCase();
+          const pc = polyC.find(g => (g.lowerName || (g.name || '').toLowerCase()) === n);
+          if (pc) return (pc.key || pc.iso || '').toUpperCase();
           const c = globeC.find(g => g.name && g.name.toLowerCase() === n);
           return c ? (c.iso_code || c.key || '').toUpperCase() : null;
         };

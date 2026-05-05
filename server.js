@@ -12030,8 +12030,8 @@ app.get("/api/commodities", (req, res) => {
 ========================================= */
 
 const KEYWORD_ROUTE_TTLS = Object.freeze({
-  trending: 5 * 60 * 1000,   // 5 min in-memory (DB cache is primary)
-  rising: 5 * 60 * 1000,     // 5 min in-memory
+  trending: 4 * 60 * 60 * 1000,  // 4h — aligned with keywordCron `0 */4 * * *`
+  rising:   4 * 60 * 60 * 1000,  // 4h — aligned with keywordCron `0 */4 * * *`
   autocomplete: 30 * 1000,
   top: 60 * 1000,
   trend: 60 * 1000,

@@ -45239,9 +45239,51 @@ body.ticker-active .gTickerLabel {
 
         // 1. Live computation from current editable fields. This is the
         //    source of truth — matches whatever the editor saved.
+        //
+        // We resolve names/coords against TWO data sources and merge:
+        //  - __hitTestCountries (the polygon layer, 177 countries with
+        //    ISO-2 keys + bboxes — populated reliably from baked GeoJSON)
+        //  - __globeCountries   (API-fetched centroid records — may be
+        //    empty if /api/countries hasn't loaded yet)
+        //
+        // The polygon layer is the canonical source of the keys we ALSO
+        // check in repaint() (flowHighlightKeys vs c.key/c.iso), so
+        // resolving against it directly guarantees the highlight matches.
+        // Earlier this function only consulted __globeCountries, which
+        // meant a missing/late API response left every isoSet entry empty
+        // and no country lit up during the briefing.
+        const polyC  = window.__hitTestCountries?.() || [];
         const globeC = window.__globeCountries || [];
+        const _polyBboxCenter = (c) => {
+          // bbox is { latMin, latMax, lonMin, lonMax } — object form, not array.
+          const b = c?.bbox;
+          if (!b || b.latMin == null || b.lonMin == null) return null;
+          return { lat: (b.latMin + b.latMax) / 2, lon: (b.lonMin + b.lonMax) / 2 };
+        };
         const _nearestIso = (lat, lon) => {
           if (lat == null || lon == null) return null;
+          // Prefer point-in-polygon via hitTestGlobe — accurate even for
+          // countries with non-contiguous territory (US has Alaska +
+          // Hawaii in its bbox, so a bbox-center pick lands wrong).
+          if (typeof window.hitTestGlobe === 'function') {
+            const res = window.hitTestGlobe(lat, lon, 1.0);
+            const k = res?.primary?.key
+                   ?? res?.inside?.[0]?.key
+                   ?? res?.nearby?.[0]?.key;
+            if (k) return String(k).toUpperCase();
+          }
+          // Fallback A: bbox-center scan over the polygon layer.
+          if (polyC.length) {
+            let best = null, bestD = Infinity;
+            for (const c of polyC) {
+              const ctr = _polyBboxCenter(c);
+              if (!ctr) continue;
+              const d = Math.abs(ctr.lat - lat) + Math.abs(ctr.lon - lon);
+              if (d < bestD) { bestD = d; best = c; }
+            }
+            if (best) return (best.key || best.iso || '').toUpperCase();
+          }
+          // Fallback B: centroid-based __globeCountries.
           let best = null, bestD = Infinity;
           for (const c of globeC) {
             if (c.lat == null) continue;
@@ -45253,6 +45295,9 @@ body.ticker-active .gTickerLabel {
         const _findIso = (name) => {
           if (!name) return null;
           const n = name.trim().toLowerCase();
+          // Polygon layer first — matches the keys repaint() checks.
+          const pc = polyC.find(g => (g.lowerName || (g.name || '').toLowerCase()) === n);
+          if (pc) return (pc.key || pc.iso || '').toUpperCase();
           const c = globeC.find(g => g.name && g.name.toLowerCase() === n);
           return c ? (c.iso_code || c.key || '').toUpperCase() : null;
         };
