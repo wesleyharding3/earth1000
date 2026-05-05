@@ -79,6 +79,21 @@ const MIN_CLUSTER     = 3;     // min articles to form a cluster (Claude sees si
 // transitively. Three shared keywords is the minimum that reliably means
 // "same story" — two is just "same general topic / category".
 const MIN_SHARED_KW   = 3;     // min shared keywords to link two articles
+// Per-keyword frequency cap as a FRACTION of the input set, replacing the
+// previous absolute 80-article cap that excluded major-story keywords from
+// clustering. With 1498 unthreaded articles in a typical run, the old cap
+// dropped any keyword appearing in >5.3% of articles → "Iran", "Hormuz",
+// "tariff", "Israel" got excluded from clustering for the very stories
+// they were the most distinctive markers of. Articles could only link via
+// their LEAST informative keywords, leaving 84% of input as singletons.
+//
+// The cap stays meaningful for true noise words (those would appear in
+// 50%+ of articles), but real story keywords now participate. Combined
+// with MIN_SHARED_KW=3 the transitive-chaining risk that prompted the old
+// 2→3 bump remains contained — we're widening the vocabulary that can
+// link, not loosening the link threshold.
+const KW_COMMON_FRAC  = 0.30;  // keywords appearing in >30% of input excluded
+const KW_COMMON_FLOOR = 200;   // but always allow keywords with ≤200 occurrences
 const MIN_SOURCES_FOR_BREAKING = 3; // ≥3 distinct sources within 24h → "breaking meta-story"
 const CONVERGENCE_WINDOW_HOURS = 24;
 const TOTAL_ARTICLE_LIMIT  = 1500;
@@ -445,10 +460,14 @@ function sqlCluster(articles) {
     }
   }
 
-  // Score pairs by shared keyword count
+  // Score pairs by shared keyword count. Adaptive common-keyword cap
+  // (KW_COMMON_FRAC * input size, floored at KW_COMMON_FLOOR) replaces the
+  // old hard 80-cap that systematically excluded the most informative
+  // keywords for major stories — see comment at the constant declaration.
+  const kwCap = Math.max(KW_COMMON_FLOOR, Math.floor(articles.length * KW_COMMON_FRAC));
   const pairScore = new Map();
   for (const [, arts] of kwIndex) {
-    if (arts.length < 2 || arts.length > 80) continue; // skip hapax or too-common
+    if (arts.length < 2 || arts.length > kwCap) continue; // skip hapax or true noise
     for (let i = 0; i < arts.length; i++) {
       for (let j = i + 1; j < arts.length; j++) {
         const key = `${Math.min(arts[i].id, arts[j].id)}:${Math.max(arts[i].id, arts[j].id)}`;
@@ -496,6 +515,10 @@ function chunkSingletons(singletons, size) {
 // geographic mix instead of a US / Reuters block. Buckets by country_iso,
 // shuffles the country order (so the same country doesn't always go first),
 // then drains one article per country per round until empty.
+//
+// Used by older callers; the singleton path now prefers groupSingletonsByTopic
+// (below) because country-spread actively destroys cluster-discovery for
+// articles that didn't make the SQL pre-clustering cut.
 function roundRobinByCountry(articles) {
   const buckets = new Map();
   for (const a of articles) {
@@ -517,6 +540,83 @@ function roundRobinByCountry(articles) {
       if (arr.length) { out.push(arr.shift()); any = true; }
     }
   }
+  return out;
+}
+
+// Topic-grouped singleton ordering. Solves the user-reported "no new threads
+// from singletons" symptom: when 84% of articles fail the SQL pre-cluster
+// cut and become singletons, the old roundRobinByCountry path then SCATTERED
+// every potential late-stage cluster across batches. Each singleton batch
+// ended up with 100 articles from 100 different countries on 100 different
+// topics — Claude is told to surface "multi-source moments" but there are
+// no convergences to find INSIDE such a batch.
+//
+// This function does a second-pass weak clustering pass over singletons:
+//   1. For each singleton, score each of its keywords by the count of OTHER
+//      singletons sharing that keyword (excluding generic SKIP_KEYWORDS,
+//      same exclusion the SQL cluster uses).
+//   2. Pick the keyword with the highest "shared-singleton" count as the
+//      article's "topic key" — its most distinctive cluster anchor.
+//   3. Group articles by topic key, then emit groups in size DESC order.
+//      Articles with no shared keyword fall to the tail (true singletons,
+//      no cluster discovery possible there).
+//
+// Result: a 100-article batch likely contains 5-30 articles converging on a
+// single topic ("armenia", "tariff", "earthquake"), giving Claude a real
+// shot at identifying the multi-source moment instead of staring at noise.
+function groupSingletonsByTopic(singletons) {
+  // Pass A: invert keyword → singleton ids index, applying same exclusions
+  // as sqlCluster (skip generic stopwords, skip <4-char tokens).
+  const kwIndex = new Map();
+  for (const a of singletons) {
+    for (const kw of (a.keywords || [])) {
+      const k = normalizeKeyword(kw);
+      if (k.length < 4 || SKIP_KEYWORDS.has(k)) continue;
+      if (!kwIndex.has(k)) kwIndex.set(k, []);
+      kwIndex.get(k).push(a.id);
+    }
+  }
+  // Adaptive cap: a keyword shared by EVERY singleton ("said", "year") is
+  // useless for grouping; same fraction-based cap as sqlCluster.
+  const kwCap = Math.max(KW_COMMON_FLOOR, Math.floor(singletons.length * KW_COMMON_FRAC));
+
+  // Pass B: for each singleton, pick the topic key with the most siblings
+  // (shared singletons) — that's the keyword most likely to anchor a group.
+  // Ties broken by alphabetical order for deterministic batching.
+  const topicByArticle = new Map();
+  for (const a of singletons) {
+    let bestKw = null;
+    let bestCount = 0;
+    for (const kw of (a.keywords || [])) {
+      const k = normalizeKeyword(kw);
+      if (k.length < 4 || SKIP_KEYWORDS.has(k)) continue;
+      const sharers = kwIndex.get(k);
+      if (!sharers || sharers.length < 2 || sharers.length > kwCap) continue;
+      // Count distinct other singletons sharing this keyword.
+      const cnt = sharers.length;
+      if (cnt > bestCount || (cnt === bestCount && bestKw && k < bestKw)) {
+        bestCount = cnt;
+        bestKw = k;
+      }
+    }
+    topicByArticle.set(a.id, bestKw || '__solo__');
+  }
+
+  // Pass C: group + order by group size descending so big topical clusters
+  // (most likely to spawn new threads) lead the batch sequence.
+  const groups = new Map();
+  for (const a of singletons) {
+    const key = topicByArticle.get(a.id) || '__solo__';
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(a);
+  }
+  // Solo articles last (no group anchor → no cluster discovery anyway).
+  const solo = groups.get('__solo__') || [];
+  groups.delete('__solo__');
+  const ordered = [...groups.entries()].sort((a, b) => b[1].length - a[1].length);
+  const out = [];
+  for (const [, arts] of ordered) out.push(...arts);
+  out.push(...solo);
   return out;
 }
 
@@ -557,9 +657,16 @@ function planBatches(clusters, singletons, size) {
   }
   batches.push(...clusterBatches);
 
-  const rr = roundRobinByCountry(singletons);
-  for (let i = 0; i < rr.length; i += size) {
-    batches.push(rr.slice(i, i + size));
+  // Singletons: topic-grouped ordering instead of country round-robin.
+  // See groupSingletonsByTopic for full rationale — short version: country
+  // round-robin scattered topical convergence across batches, and Claude
+  // can't surface multi-source moments out of 100 unrelated articles. The
+  // new ordering puts singletons sharing a distinctive keyword (their best
+  // cluster-anchor candidate) into the same batch so weak signals get
+  // their day in court.
+  const ordered = groupSingletonsByTopic(singletons);
+  for (let i = 0; i < ordered.length; i += size) {
+    batches.push(ordered.slice(i, i + size));
   }
 
   return batches;
@@ -1353,7 +1460,21 @@ async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()
           WHERE id = $4
         `, [def.importance, def.article_ids.length, def.keywords || [], threadId]);
 
-        await insertArticles(threadId, def.article_ids, def.anchor_article_id, def.importance, validIdSet);
+        // CRITICAL: pass null for anchor on EXTEND. The is_anchor flag is
+        // supposed to mark the founding article — exactly one per thread.
+        // The previous code passed `def.anchor_article_id` from the new
+        // Claude batch, which means every builder run that extended a
+        // thread stamped a FRESH anchor on whatever article Claude said
+        // was most representative of THAT batch. Over time, threads
+        // accumulated dozens-to-hundreds of anchors (8250 had 48; 8291
+        // had 288 of 5630 articles). The /api/threads/:id/articles
+        // endpoint sorts `ORDER BY is_anchor DESC, published_at DESC
+        // LIMIT 80` so the user sees a wall of stale "anchors" first,
+        // pushing genuinely-recent articles below the visible window.
+        // Visible symptom: a thread the DB knows has a May 3 article
+        // appears in the UI to top out at 4/29 because the most-recent
+        // among the 48 accumulated anchors is from 4/29.
+        await insertArticles(threadId, def.article_ids, null, def.importance, validIdSet);
         await recomputeBreakingSignal(threadId);
         await recomputeAndPersistNations(threadId);
         if (current) {

@@ -3622,9 +3622,9 @@ app.get("/api/flows/thread/:id", async (req, res) => {
     const threadId = parseInt(req.params.id, 10);
     if (!threadId) return res.status(400).json({ error: "Invalid thread ID" });
 
-    // 5h45m — thread builder + prewarm-threads cron both run every 6h.
+    // 3h45m — thread builder + prewarm-threads cron both run every 4h.
     // TTL just under that cadence so cache never expires between warms.
-    const _cached = await ttlCached(`flows/thread:${threadId}`, 20_700_000, async () => {
+    const _cached = await ttlCached(`flows/thread:${threadId}`, 13_500_000, async () => {
       return await _buildTieredFlows({
         kind: 'thread',
         id: threadId,
@@ -3882,9 +3882,9 @@ app.get("/api/threads/:id/articles", async (req, res) => {
     const threadId = parseInt(req.params.id, 10);
     if (!threadId) return res.status(400).json({ error: "Invalid thread ID" });
 
-    // 5h45m — thread builder + prewarm-threads cron both every 6h.
+    // 3h45m — thread builder + prewarm-threads cron both every 4h.
     // Cache always warm between cycles.
-    const _cached = await ttlCached(`threads/${threadId}/articles`, 20_700_000, async () => {
+    const _cached = await ttlCached(`threads/${threadId}/articles`, 13_500_000, async () => {
       // src = article's home country (publisher / origin).
       // dst = primary destination country this article is ABOUT, pulled from
       //       article_locations with 'content' routing preferred over 'source'.
@@ -4100,9 +4100,9 @@ app.get("/api/threads/:id/timeline", async (req, res) => {
     const threadId = parseInt(req.params.id, 10);
     if (!threadId) return res.status(400).json({ error: "Invalid thread ID" });
 
-    // 5h45m TTL — thread builder + prewarm-threads cron both every 6h.
+    // 3h45m TTL — thread builder + prewarm-threads cron both every 4h.
     // Was uncached; added so prewarm-threads cron populates it.
-    const _cached = await ttlCached(`threads/${threadId}/timeline`, 20_700_000, async () => {
+    const _cached = await ttlCached(`threads/${threadId}/timeline`, 13_500_000, async () => {
     const { rows } = await pool.query(`
       SELECT
         a.id,
@@ -7508,13 +7508,13 @@ app.get("/api/articles/by-ids", async (req, res) => {
     // cache entry. The Sources tab on thread/timeline detail panels
     // sends the SAME id set every time the same thread is opened
     // (top_article_ids is stable until the next thread builder run),
-    // so a 5h45m TTL — matching the thread builder cadence — keeps the
+    // so a 3h45m TTL — matching the thread builder cadence — keeps the
     // Sources view warm between rebuilds. order_in_response is preserved
     // by sorting in JS after the cache hit, so different orders of the
     // same IDs all share one DB query.
     const sortedIds = ids.slice().sort((a, b) => a - b);
     const cacheKey = `articles/by-ids:${sortedIds.join(',')}`;
-    const rowsByIdSorted = await ttlCached(cacheKey, 20_700_000, async () => {
+    const rowsByIdSorted = await ttlCached(cacheKey, 13_500_000, async () => {
       const { rows } = await pool.query(`
         SELECT
           a.id, a.title, a.translated_title, a.summary, a.translated_summary,
@@ -7554,7 +7554,7 @@ app.get("/api/articles/by-thread", async (req, res) => {
     const threadId = parseInt(req.query.thread_id, 10);
     if (!threadId) return res.status(400).json({ error: "thread_id required" });
     const limit = Math.min(parseInt(req.query.limit, 10) || 20, 40);
-    // 5h45m TTL — same cadence as /api/threads/:id/articles and the
+    // 3h45m TTL — same cadence as /api/threads/:id/articles and the
     // thread builder + prewarm-threads cron. The Sources tab on the
     // thread detail panel calls THIS endpoint (not /api/threads/:id
     // /articles), so without a cache here every Sources view was a
@@ -7562,7 +7562,7 @@ app.get("/api/articles/by-thread", async (req, res) => {
     // (limit=30) for the top N threads so opening Sources is instant
     // for any pre-warmed thread.
     const cacheKey = `articles/by-thread:${threadId}:${limit}`;
-    const rows = await ttlCached(cacheKey, 20_700_000, async () => {
+    const rows = await ttlCached(cacheKey, 13_500_000, async () => {
       const { rows: r } = await pool.query(`
         SELECT
           a.id, a.title, a.translated_title, a.summary, a.translated_summary,
@@ -8333,8 +8333,8 @@ app.get("/api/threads/by-country/:iso", async (req, res) => {
     //    primary_nations=[iso], so skip the entity-mention CTE entirely
     //    and just filter story_threads directly.
     if (scope === 'local') {
-      // 5h45m — thread builder + prewarm-threads cron both every 6h.
-      const rows = await ttlCached(`threads/local-by-country:${iso}:${days}:${limit}`, 20_700_000, async () => {
+      // 3h45m — thread builder + prewarm-threads cron both every 4h.
+      const rows = await ttlCached(`threads/local-by-country:${iso}:${days}:${limit}`, 13_500_000, async () => {
         const { rows } = await pool.query(`
           SELECT
             t.id                    AS thread_id,
@@ -8398,8 +8398,8 @@ app.get("/api/threads/by-country/:iso", async (req, res) => {
       return res.json(rows);
     }
 
-    // 5h45m — thread builder + prewarm-threads cron both every 6h.
-    const rows = await ttlCached(`threads/by-country:${iso}:${days}:${limit}`, 20_700_000, async () => {
+    // 3h45m — thread builder + prewarm-threads cron both every 4h.
+    const rows = await ttlCached(`threads/by-country:${iso}:${days}:${limit}`, 13_500_000, async () => {
     const { rows } = await pool.query(`
       WITH candidate_articles AS (
         SELECT
@@ -8639,12 +8639,12 @@ app.get("/api/threads/latest", async (req, res) => {
     const fromDate = req.query.from_date || null;  // ISO date string e.g. "2026-03-01"
     const toDate   = req.query.to_date   || null;
 
-    // 5h45m TTL — thread builder + prewarm-threads cron both every 6h.
+    // 3h45m TTL — thread builder + prewarm-threads cron both every 4h.
     // TTL just under that cadence so cache stays continuously warm and
     // never expires mid-cycle. Schedule warmer ~30min AFTER builder so
     // each warm picks up the latest build.
     const _cacheKey = `threads/latest:${limit}:${fromDate || ''}:${toDate || ''}`;
-    const _cached = await ttlCached(_cacheKey, 20_700_000, async () => {
+    const _cached = await ttlCached(_cacheKey, 13_500_000, async () => {
 
     // Step 1: get threads — single fast query on story_threads only,
     // no JOINs, no regex, no correlated subqueries.
@@ -11054,8 +11054,8 @@ app.get("/api/threads/:threadId/panels", async (req, res) => {
   try {
     const threadId = parseInt(req.params.threadId, 10);
     if (!Number.isFinite(threadId)) return res.status(400).json({ error: "bad id" });
-    // 5h45m TTL — thread builder + prewarm-threads cron both every 6h.
-    const _cached = await ttlCached(`threads/${threadId}/panels`, 20_700_000, async () => {
+    // 3h45m TTL — thread builder + prewarm-threads cron both every 4h.
+    const _cached = await ttlCached(`threads/${threadId}/panels`, 13_500_000, async () => {
       const [coverage, rows] = await Promise.all([
         computeCoveragePiePanel(pool, { type: 'thread', id: threadId }),
         dataPanels.loadPanels(pool, { type: 'thread', id: threadId }),

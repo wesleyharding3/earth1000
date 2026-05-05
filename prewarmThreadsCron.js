@@ -4,8 +4,11 @@
 /**
  * prewarmThreadsCron.js
  *
- * Owns ALL thread surface warming. Runs every 6h; thread builder also
- * runs every 6h. Per-thread caches (TTL 5h45m) stay continuously warm.
+ * Owns ALL thread surface warming. Runs every 4h; thread builder also
+ * runs every 4h (6×/day). Per-thread caches (TTL 3h45m) stay continuously
+ * warm — TTL stays just under cycle so the cache expires ~15min before
+ * the next prewarm fires, eliminating the window where users see stale
+ * post-builder data.
  * Schedule this cron ~30min AFTER the builder so each warm picks up the
  * latest build (otherwise users see stale data for up to a full cycle).
  *
@@ -16,7 +19,7 @@
  *   • /api/flows/thread/:id            (flow arcs)
  *
  * Plus core feeds whose TTL exceeds this cron's cadence:
- *   • /api/threads/latest              (the cards list, TTL 5h45m)
+ *   • /api/threads/latest              (the cards list, TTL 3h45m)
  *   • /api/news/sources-stats          (source stats, TTL 11h)
  *
  * Pure HTTP — no DB. Discovers top threads via /api/threads/latest,
@@ -37,8 +40,8 @@
  * Run:
  *   node prewarmThreadsCron.js
  *
- * Wire to a 6h Render Cron — schedule: 5 past every 6th hour
- *   (cron expression: 5  STAR/6  STAR  STAR  STAR  — STAR = literal asterisk)
+ * Wire to a 4h Render Cron — schedule: 5 past every 4th hour
+ *   (cron expression: 5  STAR/4  STAR  STAR  STAR  — STAR = literal asterisk)
  */
 
 require('dotenv').config({ override: true });
@@ -130,7 +133,7 @@ async function processThread(t) {
 }
 
 // Core feeds warmed alongside per-thread surfaces.
-//   /api/threads/latest      TTL 5h45m, builder + this cron both every 6h
+//   /api/threads/latest      TTL 3h45m, builder + this cron both every 4h
 //   /api/news/sources-stats  TTL 11h, source stats cron runs 2x/day
 const CORE_FEEDS = [
   '/api/threads/latest',
