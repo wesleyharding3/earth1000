@@ -1595,18 +1595,28 @@
 
     // ── Step 2: Enrich ──
     function buildEnrichList() {
-      // Initial order: most-recent-first by last_updated_at, falling back
-      // to click order for any thread missing a timestamp. Users can still
-      // reorder manually via the up/down arrows on each card.
-      orderedIds = [...selectedIds]
-        .filter(id => allThreads.some(t => (t.thread_id || t.id) === id))
-        .map(id => {
-          const t = allThreads.find(t => (t.thread_id || t.id) === id);
-          const ts = t?.last_updated_at ? new Date(t.last_updated_at).getTime() : 0;
-          return { id, ts };
-        })
-        .sort((a, b) => b.ts - a.ts)
-        .map(o => o.id);
+      // Only (re-)initialize order from selectedIds when the underlying
+      // selection actually changed (e.g. user went back to Step 1 and
+      // toggled threads). When the id set is unchanged, we're re-rendering
+      // after a reorder — preserve the user's manual order. Earlier this
+      // re-sorted by timestamp every render, which wiped every up/down
+      // arrow click and drop the instant buildEnrichList() ran, making
+      // the controls look broken.
+      const selSet = new Set(selectedIds);
+      const ordSet = new Set(orderedIds);
+      const sameSet = selSet.size === ordSet.size
+        && [...selSet].every(id => ordSet.has(id));
+      if (!sameSet) {
+        orderedIds = [...selectedIds]
+          .filter(id => allThreads.some(t => (t.thread_id || t.id) === id))
+          .map(id => {
+            const t = allThreads.find(t => (t.thread_id || t.id) === id);
+            const ts = t?.last_updated_at ? new Date(t.last_updated_at).getTime() : 0;
+            return { id, ts };
+          })
+          .sort((a, b) => b.ts - a.ts)
+          .map(o => o.id);
+      }
       const list = document.getElementById('enrich-list');
       list.innerHTML = '';
       orderedIds.forEach((id, idx) => {

@@ -20572,65 +20572,55 @@ const settingsToggle     = document.getElementById("settingsToggle");
         }
         return null;
       }
-      window.briefingAddFlowArcLabel = function(lat, lon, name) {
+      window.briefingAddFlowArcLabel = function(lat, lon, name, tier) {
         if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
         const resolved = _resolveBriefingNode(lat, lon, name);
         if (!resolved) return;
-        const key = (resolved.node.name || '').toLowerCase().trim();
+        const placeName = resolved.node.name || name || '';
+        const key = placeName.toLowerCase().trim();
         if (briefingFlowLabels.some(l => l._key === key)) return;
+        const iso = (resolved.node.iso_code || resolved.node.iso || '').toLowerCase();
+        const tierClass = tier === 'primary'   ? ' fnl-tier-primary'
+                        : tier === 'secondary' ? ' fnl-tier-secondary'
+                        : '';
+        const typeTxt = tier === 'primary' ? 'PRIMARY'
+                      : tier === 'secondary' ? 'SECONDARY'
+                      : '';
         const card = document.createElement('div');
-        card.className = 'briefingFlowLabel';
-        card.textContent = resolved.node.name || '';
-        // CSS opacity transition intentionally omitted — see www/index.html
-        // for full rationale (per-frame continuous alpha + lerp gives
-        // smoother fades without injecting transition lag).
-        card.style.cssText = [
-          'position: fixed', 'pointer-events: none',
-          'padding: 4px 10px',
-          'background: rgba(8,12,22,0.94)',
-          'border: 1px solid rgba(255,180,80,0.42)',
-          'border-radius: 8px',
-          'font-size: 11px', 'font-weight: 600',
-          'letter-spacing: 0.04em',
-          'color: rgba(255,215,160,0.96)',
-          'white-space: nowrap',
-          'z-index: 5060',
-          'opacity: 0',
-          'transform: translate(-50%, -100%)',
-          'box-shadow: 0 4px 14px rgba(0,0,0,0.55)',
-          'text-shadow: 0 0 6px rgba(255,180,80,0.25)',
-        ].join(';');
+        card.className = `flowNodeLabel${tierClass}`;
+        const flagImg = iso
+          ? `<img class="fnlFlag" src="https://flagcdn.com/w20/${iso}.png" width="14" height="10" alt="" style="vertical-align:middle;">`
+          : '';
+        const safeName = String(placeName).replace(/[&<>"']/g, ch => ({
+          '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+        }[ch]));
+        card.innerHTML = (typeTxt ? `<div class="fnlType">${typeTxt}</div>` : '') +
+          `<div class="fnlName">${flagImg}${safeName}</div>`;
+        card.style.opacity = '0';
         document.body.appendChild(card);
         const svg = _ensureBriefingFlowSvg();
-        // Curved <path> leader line — see www/index.html for full
-        // rationale on the quadratic Bézier with outward bow.
-        const line = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-        line.setAttribute('stroke', 'rgba(255,180,80,0.55)');
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        line.setAttribute('stroke', 'rgba(255,200,120,0.75)');
         line.setAttribute('stroke-width', '1.2');
-        line.setAttribute('stroke-dasharray', '3,3');
-        line.setAttribute('fill', 'none');
+        line.setAttribute('stroke-dasharray', '4 3');
         line.setAttribute('stroke-linecap', 'round');
         line.style.opacity = '0';
         svg.appendChild(line);
         const anchorDot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-        anchorDot.setAttribute('r', '3');
+        anchorDot.setAttribute('r', '4');
         anchorDot.setAttribute('fill', 'rgba(255,200,120,0.9)');
-        anchorDot.setAttribute('stroke', 'rgba(255,160,80,0.7)');
-        anchorDot.setAttribute('stroke-width', '0.8');
+        anchorDot.setAttribute('stroke', 'rgba(255,255,255,0.9)');
+        anchorDot.setAttribute('stroke-width', '1');
         anchorDot.style.opacity = '0';
         svg.appendChild(anchorDot);
         briefingFlowLabels.push({
-          posArr: resolved.posArr,
-          pts:    resolved.pts,
-          idx:    resolved.idx,
-          name:   resolved.node.name,
+          lat,
+          lon,
+          name:   placeName,
           cardEl: card,
           lineEl: line,
           dotEl:  anchorDot,
           _key:   key,
-          _w:     0,
-          _h:     0,
-          _alpha: 0,
         });
       };
       window.clearBriefingFlowArcLabels = function() {
@@ -20641,128 +20631,111 @@ const settingsToggle     = document.getElementById("settingsToggle");
         }
         briefingFlowLabels.length = 0;
       };
-      // Reusable Vector3s for the per-frame tracker — see www/index.html
-      // for full rationale.
-      const _flowVec = new THREE.Vector3();
-      const _flowVec2 = new THREE.Vector3();
-      const _flowVec3 = new THREE.Vector3();
-      function _smoothstep(edge0, edge1, x) {
-        if (edge0 === edge1) return x < edge0 ? 0 : 1;
-        const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
-        return t * t * (3 - 2 * t);
-      }
+      // Scratch Vector3s for the per-frame tracker — see www/index.html.
+      let _bflPos = null, _bflNorm = null, _bflProj = null, _bflCamDir = null;
 
+      // Per-frame tracker — mirrors updateFlowNodeLabels (the thread
+      // flow-arc system) so briefing labels look + behave identically.
+      // See www/index.html for full rationale.
       window._briefingTrackFlowArcLabels = function() {
         if (!briefingFlowLabels.length) return;
+        if (!_bflPos) {
+          _bflPos    = new THREE.Vector3();
+          _bflNorm   = new THREE.Vector3();
+          _bflProj   = new THREE.Vector3();
+          _bflCamDir = new THREE.Vector3();
+        }
         const rect = renderer.domElement.getBoundingClientRect();
-        const baseOffsetPx     = 44;   // bumped from 32 so labels sit higher
-                                       // off the anchor and read as separated
-                                       // even before stack-resolve kicks in.
-        const hoverDedupeNear  = 40;
-        const hoverDedupeFar   = 80;
-        const facingFullVisible = -0.20;
-        const facingFullHidden  = -0.05;
-        const alphaLerp         = 0.28;
+        const sceneQuat = scene?.quaternion;
+        const GLOBE_RADIUS = 1.0;
+        camera.getWorldDirection(_bflCamDir).normalize();
 
-        // Project the active hover-card anchor for dedupe — see
-        // www/index.html for full rationale.
-        let hoverSx = null, hoverSy = null;
-        let hoverPosArr = null, hoverIdx = -1;
-        try {
-          const ref = (typeof _briefingHoverRef !== 'undefined') ? _briefingHoverRef : null;
-          if (ref && ref.posArr && ref.pts && Number.isFinite(ref.idx) && ref.idx >= 0) {
-            _flowVec.set(
-              ref.posArr[ref.idx * 3],
-              ref.posArr[ref.idx * 3 + 1],
-              ref.posArr[ref.idx * 3 + 2],
-            ).applyMatrix4(ref.pts.matrixWorld);
-            _flowVec2.copy(_flowVec).project(camera);
-            _flowVec3.copy(_flowVec).sub(camera.position).normalize();
-            const hNormalDotCam = _flowVec.clone().normalize().dot(_flowVec3);
-            if (hNormalDotCam <= -0.05 && _flowVec2.z <= 1) {
-              hoverSx = rect.left + (_flowVec2.x + 1) / 2 * rect.width;
-              hoverSy = rect.top  + (-_flowVec2.y + 1) / 2 * rect.height;
-              hoverPosArr = ref.posArr;
-              hoverIdx    = ref.idx;
-            }
-          }
-        } catch (_) { /* best-effort */ }
-
-        const cxCanvas = rect.left + rect.width / 2;
+        const visible = [];
         for (const l of briefingFlowLabels) {
-          if (!l.posArr || !l.pts) continue;
-          let targetA = 0;
-          let sx = 0, sy = 0;
-          let computed = false;
+          if (!Number.isFinite(l.lat) || !Number.isFinite(l.lon)) {
+            l.cardEl.style.opacity = '0';
+            l.lineEl.style.opacity = '0';
+            if (l.dotEl) l.dotEl.style.opacity = '0';
+            continue;
+          }
+          const latR =  l.lat * Math.PI / 180;
+          const lonR = -l.lon * Math.PI / 180;
+          _bflPos.set(
+            GLOBE_RADIUS * Math.cos(latR) * Math.cos(lonR),
+            GLOBE_RADIUS * Math.sin(latR),
+            GLOBE_RADIUS * Math.cos(latR) * Math.sin(lonR),
+          );
+          if (sceneQuat) _bflPos.applyQuaternion(sceneQuat);
+          const dot = -_bflCamDir.dot(_bflNorm.copy(_bflPos).normalize());
+          if (dot < 0.05) {
+            l.cardEl.style.opacity = '0';
+            l.lineEl.style.opacity = '0';
+            if (l.dotEl) l.dotEl.style.opacity = '0';
+            continue;
+          }
+          _bflProj.copy(_bflPos).project(camera);
+          const sx = rect.left + (_bflProj.x + 1) / 2 * rect.width;
+          const sy = rect.top  + (-_bflProj.y + 1) / 2 * rect.height;
+          const w = l._w || (l._w = l.cardEl.offsetWidth  || 120);
+          const h = l._h || (l._h = l.cardEl.offsetHeight || 32);
+          visible.push({
+            l,
+            ax: sx, ay: sy,
+            hx: sx, hy: sy - 20,
+            px: sx, py: sy - 20,
+            w, h,
+            opacity: Math.min(1, (dot - 0.05) * 4),
+          });
+        }
 
-          // Exact-node dedupe — fully suppress.
-          if (hoverPosArr && l.posArr === hoverPosArr && l.idx === hoverIdx) {
-            targetA = 0;
-          } else {
-            _flowVec.set(
-              l.posArr[l.idx * 3],
-              l.posArr[l.idx * 3 + 1],
-              l.posArr[l.idx * 3 + 2],
-            ).applyMatrix4(l.pts.matrixWorld);
-            _flowVec2.copy(_flowVec).project(camera);
-            if (_flowVec2.z > 1) {
-              targetA = 0;
-            } else {
-              sx = rect.left + (_flowVec2.x + 1) / 2 * rect.width;
-              sy = rect.top  + (-_flowVec2.y + 1) / 2 * rect.height;
-              _flowVec3.copy(_flowVec).sub(camera.position).normalize();
-              const dot = _flowVec.normalize().dot(_flowVec3);
-              const facingAlpha = 1 - _smoothstep(facingFullVisible, facingFullHidden, dot);
-              let hoverFade = 1;
-              if (hoverSx != null) {
-                const dxh = sx - hoverSx, dyh = sy - hoverSy;
-                const dist = Math.sqrt(dxh * dxh + dyh * dyh);
-                hoverFade = _smoothstep(hoverDedupeNear, hoverDedupeFar, dist);
-              }
-              targetA = facingAlpha * hoverFade;
-              computed = true;
+        const PAD = 4;
+        const ITERS = 3;
+        for (let iter = 0; iter < ITERS; iter++) {
+          let moved = false;
+          for (let i = 0; i < visible.length; i++) {
+            for (let j = i + 1; j < visible.length; j++) {
+              const a = visible[i], b = visible[j];
+              const aLeft = a.px - a.w / 2, aRight = a.px + a.w / 2;
+              const aBot  = a.py - 8,        aTop   = aBot - a.h;
+              const bLeft = b.px - b.w / 2, bRight = b.px + b.w / 2;
+              const bBot  = b.py - 8,        bTop   = bBot - b.h;
+              const overlapX = Math.min(aRight, bRight) - Math.max(aLeft, bLeft);
+              const overlapY = Math.min(aBot,   bBot)   - Math.max(aTop,  bTop);
+              if (overlapX <= -PAD || overlapY <= -PAD) continue;
+              const push = (overlapY + PAD) / 2;
+              if (a.py < b.py) { a.py -= push; b.py += push; }
+              else             { a.py += push; b.py -= push; }
+              moved = true;
             }
           }
+          if (!moved) break;
+        }
 
-          // Lerp toward target so visibility eases naturally instead of
-          // snapping when the dot crosses a threshold or the dedupe
-          // distance flips.
-          const newA = l._alpha + (targetA - l._alpha) * alphaLerp;
-          l._alpha = newA;
+        const LEADER_MIN = 6;
+        for (const r of visible) {
+          r.l.cardEl.style.left = r.px + 'px';
+          r.l.cardEl.style.top  = r.py + 'px';
+          r.l.cardEl.style.opacity = String(r.opacity);
 
-          if (computed && newA > 0.005) {
-            const cardBottomY = sy - baseOffsetPx;
-            l.cardEl.style.left = sx + 'px';
-            l.cardEl.style.top  = cardBottomY + 'px';
-            l.cardEl.style.opacity = String(newA);
-            // Curved leader path — quadratic Bézier with outward bow.
-            const lineLen = Math.max(0, sy - cardBottomY);
-            const bowMag  = Math.min(18, lineLen * 0.22);
-            const bowSign = (sx >= cxCanvas) ? 1 : -1;
-            const cpX = sx + bowMag * bowSign;
-            const cpY = cardBottomY + lineLen * 0.5;
-            l.lineEl.setAttribute('d',
-              `M ${sx.toFixed(1)} ${sy.toFixed(1)} ` +
-              `Q ${cpX.toFixed(1)} ${cpY.toFixed(1)} ` +
-              `${sx.toFixed(1)} ${cardBottomY.toFixed(1)}`);
-            l.lineEl.style.opacity = String(newA);
-            if (l.dotEl) {
-              l.dotEl.setAttribute('cx', sx.toFixed(1));
-              l.dotEl.setAttribute('cy', sy.toFixed(1));
-              l.dotEl.style.opacity = String(newA);
-            }
+          const ex = r.px, ey = r.py - 8;
+          const dx = ex - r.ax, dy = ey - r.ay;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          r.l.lineEl.setAttribute('x1', r.ax.toFixed(1));
+          r.l.lineEl.setAttribute('y1', r.ay.toFixed(1));
+          if (r.l.dotEl) {
+            r.l.dotEl.setAttribute('cx', r.ax.toFixed(1));
+            r.l.dotEl.setAttribute('cy', r.ay.toFixed(1));
+          }
+          if (dist < LEADER_MIN || r.opacity < 0.2) {
+            r.l.lineEl.setAttribute('x2', r.ax.toFixed(1));
+            r.l.lineEl.setAttribute('y2', r.ay.toFixed(1));
+            r.l.lineEl.style.opacity = '0';
+            if (r.l.dotEl) r.l.dotEl.style.opacity = '0';
           } else {
-            // Hidden / fading-out — keep alpha lerp going so the fade-
-            // out animates instead of snapping.
-            if (newA < 0.01) {
-              l.cardEl.style.opacity = '0';
-              l.lineEl.style.opacity = '0';
-              if (l.dotEl) l.dotEl.style.opacity = '0';
-            } else {
-              l.cardEl.style.opacity = String(newA);
-              l.lineEl.style.opacity = String(newA);
-              if (l.dotEl) l.dotEl.style.opacity = String(newA);
-            }
+            r.l.lineEl.setAttribute('x2', ex.toFixed(1));
+            r.l.lineEl.setAttribute('y2', ey.toFixed(1));
+            r.l.lineEl.style.opacity = String(r.opacity);
+            if (r.l.dotEl) r.l.dotEl.style.opacity = String(r.opacity);
           }
         }
       };
@@ -21825,13 +21798,46 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
           function trackNode() {
             if (!card.classList.contains("ahVisible") && !line.classList.contains("drawn")) return;
-            if (!posArr2 || nodeIndex < 0) return; // safety guard
-            const wv = new THREE.Vector3(
-              posArr2[nodeIndex*3], posArr2[nodeIndex*3+1], posArr2[nodeIndex*3+2]
-            ).applyQuaternion(scene.quaternion);
-            const p  = wv.clone().project(camera);
-            const lx = (p.x+1)/2 * window.innerWidth;
-            const ly = (-p.y+1)/2 * window.innerHeight;
+
+            let lx, ly;
+            // 2D Map branch — recompute screen coords from __map2d.state every
+            // frame so the dot+line follow the country as ambient horizontal
+            // auto-scroll drifts the world. Without this, posArr2/quaternion
+            // give stale 3D coords and the headline stays glued in place
+            // while the polygon scrolls past.
+            if (window.__projection === "map" && window.__map2d?.isEnabled?.()) {
+              const lat = node?.lat ?? node?.latitude;
+              const lon = node?.lon ?? node?.longitude;
+              if (lat == null || lon == null) {
+                window._ahTrackRaf = requestAnimationFrame(trackNode);
+                return;
+              }
+              const m   = window.__map2d;
+              const mst = m.state;
+              const wW  = m.worldW(), wH = m.worldH();
+              const baseX  = -(((mst.scrollX % wW) + wW) % wW);
+              const xWorld = baseX + ((lon + 180) / 360) * wW;
+              ly = (-mst.scrollY + ((90 - lat) / 180) * wH) / mst.dpr;
+              // Pick the wrap-tile copy nearest the card so the connector
+              // stays sane when the country crosses the seam.
+              const cardCx = parseFloat(card.style.left || "0") + 139;
+              let bestSx = null, bestDist = Infinity;
+              for (let tile = -1; tile <= 1; tile++) {
+                const sx0 = (xWorld + tile * wW) / mst.dpr;
+                const d = Math.abs(sx0 - cardCx);
+                if (d < bestDist) { bestDist = d; bestSx = sx0; }
+              }
+              lx = bestSx;
+            } else {
+              if (!posArr2 || nodeIndex < 0) return; // safety guard
+              const wv = new THREE.Vector3(
+                posArr2[nodeIndex*3], posArr2[nodeIndex*3+1], posArr2[nodeIndex*3+2]
+              ).applyQuaternion(scene.quaternion);
+              const p  = wv.clone().project(camera);
+              lx = (p.x+1)/2 * window.innerWidth;
+              ly = (-p.y+1)/2 * window.innerHeight;
+            }
+
             dot.style.left = lx+"px";
             dot.style.top  = ly+"px";
             const ancX = parseFloat(card.style.left) < lx
@@ -39627,19 +39633,22 @@ const settingsToggle     = document.getElementById("settingsToggle");
   transform: translate(-50%, 0);
 }
 .bCountryChip {
-  font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: rgba(255, 224, 180, 0.82);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   background: rgba(20, 12, 6, 0.55);
   border: 1px solid rgba(255, 184, 92, 0.22);
-  padding: 4px 10px;
-  border-radius: 999px;
-  white-space: nowrap;
+  padding: 3px 5px;
+  border-radius: 4px;
   backdrop-filter: blur(4px);
   -webkit-backdrop-filter: blur(4px);
+  line-height: 0;
+}
+.bCountryChip img {
+  display: block;
+  width: 26px;
+  height: auto;
+  border-radius: 2px;
 }
 @media (max-width: 700px) {
   .bSegmentCountries {
@@ -39648,9 +39657,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
     gap: 8px 10px;
   }
   .bCountryChip {
-    font-size: 10px;
-    padding: 3px 8px;
-    letter-spacing: 0.05em;
+    padding: 2px 4px;
+  }
+  .bCountryChip img {
+    width: 22px;
   }
 }
 
@@ -41073,21 +41083,20 @@ body.ticker-active .gTickerLabel {
       return;
     }
     const seen = new Set();
-    const names = [];
-    const push = (raw) => {
-      const name = (raw || '').trim();
-      if (!name) return;
-      const key = name.toLowerCase();
-      if (seen.has(key)) return;
-      seen.add(key);
-      names.push(name);
+    const isos = [];
+    const push = (rawIso, fallbackName) => {
+      const iso = (rawIso || '').trim().toUpperCase();
+      if (!iso || iso.length !== 2) return;
+      if (seen.has(iso)) return;
+      seen.add(iso);
+      isos.push({ iso, name: fallbackName || iso });
     };
-    push(seg.primary_country?.name);
-    push(seg.primary_city?.country_name);
+    push(seg.primary_country_iso || seg.primary_country?.iso, seg.primary_country?.name);
+    push(seg.primary_city_country_iso, seg.primary_city?.country_name);
     const isoToName = window._isoToName || ((iso) => iso);
-    for (const iso of (seg.flow_arc_isos || [])) push(isoToName(iso));
-    for (const iso of (seg.secondary_country_isos || [])) push(isoToName(iso));
-    const capped = names.slice(0, 5);
+    for (const iso of (seg.flow_arc_isos || [])) push(iso, isoToName(iso));
+    for (const iso of (seg.secondary_country_isos || [])) push(iso, isoToName(iso));
+    const capped = isos.slice(0, 5);
     if (!capped.length) {
       el.classList.remove('visible');
       el.innerHTML = '';
@@ -41096,7 +41105,9 @@ body.ticker-active .gTickerLabel {
     const esc = (s) => String(s).replace(/[&<>"']/g, ch => ({
       '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
     }[ch]));
-    el.innerHTML = capped.map(n => `<span class="bCountryChip">${esc(n)}</span>`).join('');
+    el.innerHTML = capped.map(({ iso, name }) =>
+      `<span class="bCountryChip" title="${esc(name)}"><img src="https://flagcdn.com/w40/${iso.toLowerCase()}.png" alt="${esc(iso)}" /></span>`
+    ).join('');
     el.classList.add('visible');
   }
 
@@ -41285,13 +41296,13 @@ body.ticker-active .gTickerLabel {
 
       // Multi-label cards — see www/index.html for full notes.
       if (window.briefingAddFlowArcLabel) {
-        window.briefingAddFlowArcLabel(rawFromLat, rawFromLng, arc.from_name);
+        window.briefingAddFlowArcLabel(rawFromLat, rawFromLng, arc.from_name, tier);
         const toDelayMs = (distKm < DOMESTIC_KM)
           ? 500
           : Math.round(BRIEFING_ARC_REVEAL_SECS * 1000);
         addBTimer(setTimeout(() => {
           if (window.briefingAddFlowArcLabel) {
-            window.briefingAddFlowArcLabel(rawToLat, rawToLng, arc.to_name);
+            window.briefingAddFlowArcLabel(rawToLat, rawToLng, arc.to_name, tier);
           }
         }, toDelayMs));
       }
