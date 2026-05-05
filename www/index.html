@@ -40768,12 +40768,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (!SocialLogin) {
           throw new Error('Google sign-in plugin not registered — run npx cap sync ios.');
         }
-        // Replay-protection nonce. Unlike Apple (where Supabase hashes
-        // the raw nonce server-side and compares against the hashed
-        // value Apple embedded in the token), Google embeds the nonce
-        // verbatim in the idToken's `nonce` claim and Supabase
-        // compares it directly. So both Google AND Supabase need the
-        // RAW nonce — not the hashed form.
+        // Force fresh sign-in. Without this, the plugin's login() detects
+        // a cached GIDSignIn session and silently calls restorePreviousSignIn()
+        // — which returns the OLD idToken from the prior login, with the
+        // ORIGINAL nonce baked in. Our fresh nonce never reaches Google,
+        // so Supabase rejects with "nonces mismatch". Logout first so the
+        // next login() actually shows the account picker and attaches our
+        // nonce to a real auth request.
+        try { await SocialLogin.logout({ provider: 'google' }); } catch (_) {}
+
+        // Replay-protection nonce. Google embeds the nonce verbatim in
+        // the idToken's `nonce` claim (no SHA-256 hashing on either
+        // side, unlike Apple). Same RAW value to plugin AND Supabase.
         const rawNonce = _appleNonce();
         const out = await SocialLogin.login({
           provider: 'google',
