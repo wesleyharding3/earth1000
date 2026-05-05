@@ -22343,12 +22343,35 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // 3D anchors as the globe rotates and hides any whose anchor has
       // rotated to the back hemisphere (same dot-product gate the
       // single hover card uses, same threshold the city-fan picker uses).
+      //
+      // Three-pass layout to prevent overlapping labels (two countries
+      // close on-screen used to stack their cards on top of each other):
+      //   1. Project every anchor → sx/sy + visibility flag.
+      //   2. Stack-resolve in screen-space: sort visible labels by
+      //      anchor Y (top-most anchor first), then push any later
+      //      label that would overlap an already-placed one UP further
+      //      away from its anchor (its leader line stretches to fill
+      //      the gap). Cap the push at maxStackPush so labels can't
+      //      drift off the top of the screen — beyond that, accept a
+      //      partial overlap rather than orphan the label.
+      //   3. Write final card position + line endpoints to the DOM.
       window._briefingTrackFlowArcLabels = function() {
         if (!briefingFlowLabels.length) return;
         const rect = renderer.domElement.getBoundingClientRect();
         const tmp = new THREE.Vector3();
+        const baseOffsetPx  = 32;   // matches single hover card visual feel
+        const labelGap      = 4;    // gap between stacked cards (px)
+        const maxStackPush  = 90;   // hard cap on extra offset beyond base
+        const xOverlapSlack = 4;    // small px slack so just-touching ≠ overlap
+
+        // Pass 1 — project anchors, defer DOM writes.
+        const visible = [];
         for (const l of briefingFlowLabels) {
-          if (!l.posArr || !l.pts) continue;
+          if (!l.posArr || !l.pts) {
+            l.cardEl.style.opacity = '0';
+            l.lineEl.style.opacity = '0';
+            continue;
+          }
           tmp.set(
             l.posArr[l.idx * 3],
             l.posArr[l.idx * 3 + 1],
@@ -22368,18 +22391,62 @@ const settingsToggle     = document.getElementById("settingsToggle");
             l.lineEl.style.opacity = '0';
             continue;
           }
-          // Card sits ~32 px above the node, leader line connects card
-          // bottom-center to the node dot. Same offset feel as the
-          // single hover card so visual language stays consistent.
-          const cardOffsetPx = 32;
-          l.cardEl.style.left = sx + 'px';
-          l.cardEl.style.top  = (sy - cardOffsetPx) + 'px';
-          l.cardEl.style.opacity = '1';
-          l.lineEl.setAttribute('x1', sx);
-          l.lineEl.setAttribute('y1', sy - cardOffsetPx);
-          l.lineEl.setAttribute('x2', sx);
-          l.lineEl.setAttribute('y2', sy);
-          l.lineEl.style.opacity = '1';
+          // offsetWidth/Height read forces layout — fine, only on visible.
+          const w = l.cardEl.offsetWidth  || 80;
+          const h = l.cardEl.offsetHeight || 22;
+          visible.push({ l, sx, sy, w, h, offsetPx: baseOffsetPx });
+        }
+
+        // Pass 2 — stack-resolve. Each visible label's card occupies the
+        // rect [sx - w/2, sx + w/2] × [sy - offsetPx - h, sy - offsetPx]
+        // (transform: translate(-50%, -100%) anchors card bottom-center
+        // at (sx, sy - offsetPx)). We sort by anchor Y ascending so the
+        // top-most anchor wins its base offset; subsequent labels that
+        // would clip a previously-placed card get pushed UP (offsetPx
+        // increased) until clear or the cap is hit.
+        visible.sort((a, b) => a.sy - b.sy);
+        for (let i = 0; i < visible.length; i++) {
+          const cur = visible[i];
+          // One sweep is usually enough but cascading collisions need
+          // re-checks — bound the inner loop so a degenerate cluster
+          // can't spin forever.
+          let attempts = 0;
+          let moved = true;
+          while (moved && attempts < 8) {
+            moved = false;
+            attempts++;
+            for (let j = 0; j < i; j++) {
+              const prev = visible[j];
+              const dx = Math.abs(cur.sx - prev.sx);
+              const xOverlap = dx < ((cur.w + prev.w) / 2 - xOverlapSlack);
+              if (!xOverlap) continue;
+              const curTop  = cur.sy  - cur.offsetPx  - cur.h;
+              const curBot  = cur.sy  - cur.offsetPx;
+              const prevTop = prev.sy - prev.offsetPx - prev.h;
+              const prevBot = prev.sy - prev.offsetPx;
+              const yOverlap = curBot > prevTop && curTop < prevBot;
+              if (!yOverlap) continue;
+              // Push cur up so its bottom sits at prev.top - labelGap.
+              const wantedOffset = cur.sy - (prevTop - labelGap);
+              const cappedOffset = Math.min(wantedOffset, baseOffsetPx + maxStackPush);
+              if (cappedOffset > cur.offsetPx + 0.5) {
+                cur.offsetPx = cappedOffset;
+                moved = true;
+              }
+            }
+          }
+        }
+
+        // Pass 3 — commit positions + leader-line endpoints.
+        for (const v of visible) {
+          v.l.cardEl.style.left = v.sx + 'px';
+          v.l.cardEl.style.top  = (v.sy - v.offsetPx) + 'px';
+          v.l.cardEl.style.opacity = '1';
+          v.l.lineEl.setAttribute('x1', v.sx);
+          v.l.lineEl.setAttribute('y1', v.sy - v.offsetPx);
+          v.l.lineEl.setAttribute('x2', v.sx);
+          v.l.lineEl.setAttribute('y2', v.sy);
+          v.l.lineEl.style.opacity = '1';
         }
       };
 
@@ -45385,19 +45452,7 @@ body.ticker-active .gTickerLabel {
 
           addBTimer(setTimeout(() => {
             if (segIdx !== idx) return;
-            // PAUSE narrator audio NOW for video/twitter takeovers — not
-            // later when startFocalVideo runs — so the narrator doesn't
-            // keep speaking through the 3-second transition overlay.
-            // Previously audio.pause() was inside startFocalVideo, which
-            // got called only AFTER showFocalTransition's 3s overlay
-            // completed. The narrator played 3 seconds of after-voice
-            // under the overlay then suddenly cut off when the video
-            // took over — exactly the "she gets cut off / abruptly
-            // returns" complaint. Heatmap is a passive overlay; the
-            // narrator continues over it, so don't pause for heatmap.
-            if (!isHeatmap && audio) {
-              try { audio.pause(); } catch (_) {}
-            }
+
             const fire = () => {
               if (isHeatmap) {
                 // hmResolved is the pre-baked per-country values from
@@ -45425,11 +45480,52 @@ body.ticker-active .gTickerLabel {
                 startFocalVideo(fStart, fEnd, enableCC, volumeLevel);
               }
             };
-            if (transition) {
-              showFocalTransition(transition, fire);
-            } else {
-              fire();
+
+            const advance = () => {
+              if (segIdx !== idx) return;
+              if (transition) {
+                showFocalTransition(transition, fire);
+              } else {
+                fire();
+              }
+            };
+
+            // Heatmap is a passive overlay — narrator keeps speaking, no pause.
+            if (isHeatmap || !audio) {
+              advance();
+              return;
             }
+
+            // Wait until narrator audio has actually reached the trigger
+            // point before pausing. setTimeout fires on wall-clock, but
+            // audio playback can lag (buffering, audio.play() resolving
+            // a frame late, browser tab throttling). When that happened
+            // the pause clipped the narrator mid-word — user-reported
+            // "video interrupted the narrator". Poll currentTime until
+            // it reaches focalOffsetMs (the manifest-stamped end of the
+            // before-voice MP3), with a 1500ms safety ceiling so a
+            // stuck/failed audio element can't hang the segment.
+            // Legacy episodes lacking focal_trigger_ms fall back to the
+            // wall-clock behavior — we have no better signal there.
+            const targetSec = (focalOffsetMs != null) ? (focalOffsetMs / 1000) : null;
+            if (targetSec == null) {
+              try { audio.pause(); } catch (_) {}
+              advance();
+              return;
+            }
+            const deadline = (typeof performance !== 'undefined' ? performance.now() : Date.now()) + 1500;
+            const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+            const poll = () => {
+              if (segIdx !== idx) return;
+              const ct = audio?.currentTime || 0;
+              if (!audio || audio.ended || ct >= targetSec || now() > deadline) {
+                try { audio?.pause(); } catch (_) {}
+                advance();
+              } else {
+                addBTimer(setTimeout(poll, 30));
+              }
+            };
+            poll();
           }, triggerDelayMs));
         } else if (mediaType === 'heatmap') {
           // Diagnostic — heatmap segment that didn't fire. Helps debug
