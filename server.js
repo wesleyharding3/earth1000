@@ -3979,7 +3979,7 @@ app.get("/api/threads/:id/articles", async (req, res) => {
         ) dst ON TRUE
         WHERE sta.thread_id = $1
         -- Sort purely by recency. Previously the ORDER BY was
-        -- `is_anchor DESC NULLS LAST, published_at DESC`, which pinned
+        -- 'is_anchor DESC NULLS LAST, published_at DESC', which pinned
         -- "anchor" articles to the top of the list — under the broken
         -- multi-anchor regime that meant 48+ stale anchors crowded out
         -- recent articles. Even after the anchor cleanup (one anchor
