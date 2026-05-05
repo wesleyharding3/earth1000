@@ -2024,10 +2024,15 @@ Per media_type:
     - Part 2 resumes with "Following those remarks..." or "As we saw in that footage..."
     - Do NOT describe what's in the video — the viewer will see/hear it themselves.
 
-  • media_type = "twitter_post" or "twitter_video" — an embedded X post (or X video) appears on screen for ${'duration_seconds'} seconds. The narrator does NOT narrate over it (silent display).
-    - Part 1 ends with a transition like "The Foreign Minister addressed it directly on X:" or "Reuters posted footage from the scene."
-    - Part 2 resumes with "Following that post..." or "Reactions to the statement..."
-    - Do NOT quote the tweet text in the script — the viewer reads it themselves.
+  • media_type = "twitter_post" — a static X post (text/image card) appears on screen for ${'duration_seconds'} seconds. The narrator KEEPS TALKING — this is NOT a silent handoff. The post is a visual aid the viewer reads while you contextualize it.
+    - Part 1 ends with a transition that introduces the post, like "The Foreign Minister addressed it directly on X — visible now:" or "Reuters posted this from the scene:"
+    - Part 2 (the LARGER half here, ~60-70% of the words) speaks AROUND the post: who wrote it, why this framing matters, what the broader reaction has been, the political stakes. The viewer reads the tweet themselves; you provide the angle and consequence.
+    - Do NOT quote the tweet text verbatim — the viewer reads it. Reference it ("calling the move provocative", "framing the strike as defensive") rather than reciting it.
+
+  • media_type = "twitter_video" — an embedded X video plays with sound for ${'duration_seconds'} seconds. The narrator does NOT narrate over it (silent display, like a YouTube clip).
+    - Part 1 ends with a transition like "Reuters posted footage from the scene:" or "Watch this clip from the front line:"
+    - Part 2 resumes with "Following that footage..." or "Reactions to the video..."
+    - Do NOT describe what's in the video — the viewer will see/hear it themselves.
 
   • media_type = "heatmap" — a per-country heatmap visualization paints over the globe for the rest of the segment, visualizing the question in "heatmap_question". The narrator KEEPS TALKING — this is NOT a silent handoff. The narrator should INTERPRET the heatmap data live for the viewer.
     - Part 1 ends with a transition that introduces the heatmap, like "Look at where this dependency is concentrated:" or "The countries highlighted across the map share one trait:"

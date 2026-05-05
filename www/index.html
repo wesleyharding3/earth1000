@@ -45578,8 +45578,18 @@ body.ticker-active .gTickerLabel {
               }
             };
 
-            // Heatmap is a passive overlay — narrator keeps speaking, no pause.
-            if (isHeatmap || !audio) {
+            // Passive overlays — narrator keeps speaking, no pause:
+            //   - heatmap: silent globe-wide visualization
+            //   - twitter_post: a static text/image tweet card; no audio
+            //     of its own to conflict with the narrator. The user
+            //     asked for narration to continue over it ("same with
+            //     twitter post" — pairing it with heatmap behavior).
+            // Twitter_video keeps the takeover path because the embedded
+            // video carries its own soundtrack; muting it AND the
+            // narrator would be the only cleanly-mixed option, and the
+            // takeover already does that.
+            const isPassiveOverlay = isHeatmap || mediaType === 'twitter_post';
+            if (isPassiveOverlay || !audio) {
               advance();
               return;
             }
@@ -46658,12 +46668,22 @@ body.ticker-active .gTickerLabel {
     _focalActive = true;
     const duration = (endSec - startSec) * 1000;
 
-    // Mute background music for video. Narrator audio was already paused
-    // at trigger time (see the focal block in goToSegment) so it doesn't
-    // play through the 3s transition overlay; we don't pause it again
-    // here. Defensive re-pause in case caller skipped the new path.
-    if (audio && !audio.paused) { try { audio.pause(); } catch (_) {} }
-    bgMusicVideoStart();
+    // twitter_post is a passive overlay (see the trigger block in
+    // goToSegment). The narrator continues speaking through the entire
+    // segment — do NOT pause audio and do NOT duck the bg music to
+    // video-mute level. Treating twitter_post like a takeover here
+    // would re-silence the narrator the moment the card enlarges,
+    // defeating the passive-overlay behavior set upstream.
+    const _isPassiveOverlay = mediaType === 'twitter_post';
+    if (!_isPassiveOverlay) {
+      // Mute background music for video. Narrator audio was already
+      // paused at trigger time (see the focal block in goToSegment)
+      // so it doesn't play through the 3s transition overlay; we don't
+      // pause it again here. Defensive re-pause in case caller skipped
+      // the new path.
+      if (audio && !audio.paused) { try { audio.pause(); } catch (_) {} }
+      bgMusicVideoStart();
+    }
 
     // Lift the card out of #bArticlePanel (which has a CSS `transform`
     // that would otherwise anchor our `position: fixed` centering to the
@@ -46811,18 +46831,27 @@ body.ticker-active .gTickerLabel {
     }
     if (scrim) scrim.classList.remove('visible');
 
-    // Resume narrator audio and restore bg music to narrator-ducked level.
-    // Wait FOCAL_POST_PAUSE_MS before resuming the narrator so there's a
-    // clear breath beat between the video shrinking back and her next
-    // line. Without this delay she snapped back the moment the focal
-    // animation started — felt like a hard cut.
-    bgMusicVideoEnd();
-    if (audio && playing) {
-      setTimeout(() => {
-        if (!playing || _focalActive) return; // user paused or new focal started
-        bgMusicNarratorStart();
-        try { audio.play().catch(() => {}); } catch (_) {}
-      }, FOCAL_POST_PAUSE_MS);
+    // twitter_post passive-overlay path: narrator was never paused and
+    // bg music was never ducked to video-mute. Skip the resume dance
+    // entirely — calling audio.play() on already-playing audio would
+    // restart it from its current position (a no-op in modern browsers,
+    // but cheaper to skip), and the bgMusic*Narrator* hops would briefly
+    // re-trigger the duck cross-fade for no reason.
+    const _wasPassiveOverlay = mediaType === 'twitter_post';
+    if (!_wasPassiveOverlay) {
+      // Resume narrator audio and restore bg music to narrator-ducked
+      // level. Wait FOCAL_POST_PAUSE_MS before resuming the narrator
+      // so there's a clear breath beat between the video shrinking
+      // back and her next line. Without this delay she snapped back
+      // the moment the focal animation started — felt like a hard cut.
+      bgMusicVideoEnd();
+      if (audio && playing) {
+        setTimeout(() => {
+          if (!playing || _focalActive) return; // user paused or new focal started
+          bgMusicNarratorStart();
+          try { audio.play().catch(() => {}); } catch (_) {}
+        }, FOCAL_POST_PAUSE_MS);
+      }
     }
   }
 

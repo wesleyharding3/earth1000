@@ -41789,8 +41789,15 @@ body.ticker-active .gTickerLabel {
               }
             };
 
-            // Heatmap is a passive overlay — narrator keeps speaking, no pause.
-            if (isHeatmap || !audio) {
+            // Passive overlays — narrator keeps speaking, no pause:
+            //   - heatmap: silent globe-wide visualization
+            //   - twitter_post: static text/image tweet card with no
+            //     audio of its own (user-requested behavior; see
+            //     www/index.html for rationale).
+            // twitter_video stays a takeover (its embedded video has
+            // its own soundtrack that would conflict with the narrator).
+            const isPassiveOverlay = isHeatmap || mediaType === 'twitter_post';
+            if (isPassiveOverlay || !audio) {
               advance();
               return;
             }
@@ -42652,10 +42659,17 @@ body.ticker-active .gTickerLabel {
     _focalActive = true;
     const duration = (endSec - startSec) * 1000;
 
-    // Audio was already paused at trigger time so it doesn't bleed into
-    // the 3s transition overlay. Defensive re-pause here just in case.
-    if (audio && !audio.paused) { try { audio.pause(); } catch (_) {} }
-    bgMusicVideoStart();
+    // twitter_post is a passive overlay — see www/index.html for full
+    // rationale. Skip the audio.pause() + bg-music duck here so the
+    // narrator can keep talking through the tweet card's enlargement.
+    const _isPassiveOverlay = mediaType === 'twitter_post';
+    if (!_isPassiveOverlay) {
+      // Audio was already paused at trigger time so it doesn't bleed
+      // into the 3s transition overlay. Defensive re-pause here just
+      // in case.
+      if (audio && !audio.paused) { try { audio.pause(); } catch (_) {} }
+      bgMusicVideoStart();
+    }
 
     if (card.parentNode !== document.body) {
       _focalOrigParent = card.parentNode;
@@ -42752,14 +42766,19 @@ body.ticker-active .gTickerLabel {
     }
     if (scrim) scrim.classList.remove('visible');
 
-    // Resume narrator after a breath beat — see www/index.html for rationale.
-    bgMusicVideoEnd();
-    if (audio && playing) {
-      setTimeout(() => {
-        if (!playing || _focalActive) return;
-        bgMusicNarratorStart();
-        try { audio.play().catch(() => {}); } catch (_) {}
-      }, FOCAL_POST_PAUSE_MS);
+    // twitter_post passive-overlay path: narrator never paused, bg
+    // music never ducked — skip the resume dance.
+    const _wasPassiveOverlay = mediaType === 'twitter_post';
+    if (!_wasPassiveOverlay) {
+      // Resume narrator after a breath beat — see www/index.html for rationale.
+      bgMusicVideoEnd();
+      if (audio && playing) {
+        setTimeout(() => {
+          if (!playing || _focalActive) return;
+          bgMusicNarratorStart();
+          try { audio.play().catch(() => {}); } catch (_) {}
+        }, FOCAL_POST_PAUSE_MS);
+      }
     }
   }
 
