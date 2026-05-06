@@ -20505,6 +20505,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // Pass the node object ({name, lat, lon, population, flag, country}) and
       // whether it is a city (true) or country (false) node.
       window.briefingShowLabel = function(nodeObj, isCityNode) {
+        // Hover-label-with-population panel disabled during briefings —
+        // only the primary/secondary flow-arc tier labels render now.
+        return;
         if (!nodeObj) return;
         const arr    = isCityNode ? cities     : countries;
         const posArr = isCityNode ? positions  : countryPositions;
@@ -39687,7 +39690,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
    the briefing. Hidden on non-story segments. */
 .bSegmentSourcePie {
   position: fixed;
-  top: calc(env(safe-area-inset-top, 0px) + 96px);
+  top: calc(env(safe-area-inset-top, 0px) + 64px);
   left: 24px;
   z-index: 100018;
   width: 150px;
