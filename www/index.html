@@ -15721,6 +15721,23 @@ window.__arcCtxSegmented = (function() {
       enabled: ambientEnabled,
       paused:  ambientPaused,
     });
+    // Heatmap pan: temporarily replace ambient drift speed with one that
+    // completes a full revolution over the heatmap's segment duration so
+    // the viewer sees the entire globe, not just one face.
+    let _heatmapPanPrevSpeed = null;
+    window.__beginHeatmapPan = (durationSec) => {
+      if (!Number.isFinite(durationSec) || durationSec <= 0) return;
+      if (_heatmapPanPrevSpeed === null) _heatmapPanPrevSpeed = ambientSpeed;
+      ambientSpeed   = (Math.PI * 2) / (durationSec * 60);
+      ambientPaused  = false;
+      ambientEnabled = true;
+    };
+    window.__endHeatmapPan = () => {
+      if (_heatmapPanPrevSpeed !== null) {
+        ambientSpeed = _heatmapPanPrevSpeed;
+        _heatmapPanPrevSpeed = null;
+      }
+    };
     let ambientResumeTimer = null;
     // Ambient microdrift: sub-threshold sway on both yaw and pitch so
     // the horizon gently shifts like a satellite in a slow orbit.
@@ -44704,8 +44721,18 @@ body.ticker-active .gTickerLabel {
     }
     const seen = new Set();
     const isos = [];
+    const _countries = window.__globeCountries || [];
+    const _isoFromName = (name) => {
+      if (!name) return '';
+      const nl = String(name).trim().toLowerCase();
+      const c = _countries.find(c => c.name && c.name.toLowerCase() === nl);
+      return c?.iso_code || '';
+    };
     const push = (rawIso, fallbackName) => {
-      const iso = (rawIso || '').trim().toUpperCase();
+      let iso = (rawIso || '').trim().toUpperCase();
+      if ((!iso || iso.length !== 2) && fallbackName) {
+        iso = (_isoFromName(fallbackName) || '').toUpperCase();
+      }
       if (!iso || iso.length !== 2) return;
       if (seen.has(iso)) return;
       seen.add(iso);
@@ -44716,6 +44743,18 @@ body.ticker-active .gTickerLabel {
     const isoToName = window._isoToName || ((iso) => iso);
     for (const iso of (seg.flow_arc_isos || [])) push(iso, isoToName(iso));
     for (const iso of (seg.secondary_country_isos || [])) push(iso, isoToName(iso));
+    // Fallback: derive ISOs from flow_arcs by name lookup if pre-resolved
+    // arrays were missing or empty (older briefing payloads).
+    if (isos.length < 2) {
+      const arcs = [
+        ...(Array.isArray(seg.flow_arcs) ? seg.flow_arcs : []),
+        ...(Array.isArray(seg.secondary_flow_arcs) ? seg.secondary_flow_arcs : []),
+      ];
+      for (const a of arcs) {
+        push('', a?.from_name);
+        push('', a?.to_name);
+      }
+    }
     const capped = isos.slice(0, 5);
     if (!capped.length) {
       el.classList.remove('visible');
@@ -46556,17 +46595,18 @@ body.ticker-active .gTickerLabel {
       if (videoId) {
         const iframe = document.createElement('iframe');
         iframe.id   = 'bVideoIframe';
-        // start=startSec in the URL means the YT player loads pre-positioned
-        // — no flash of 0:00 before our seekTo can fire. mute:false on
-        // the URL itself (not just via the postMessage unMute below)
-        // means audio is on from the very first frame even if the
-        // unMute postMessage gets dropped during the player's bootstrap
-        // window. The user has already gestured (pressed "Start
-        // Briefing") so unmuted autoplay is permitted by browser policy.
+        // start=startSec pre-positions the playhead so we don't flash
+        // 0:00 before seekTo lands. mute defaults to 1 — browser
+        // autoplay policy reliably permits muted autoplay regardless of
+        // gesture freshness, but unmuted autoplay was being blocked
+        // (gesture from "Start Briefing" can be stale by the time the
+        // focal moment fires N segments in), leaving the player loaded
+        // but paused. We load muted then unmute via postMessage on
+        // load — the canonical YT unmuted-autoplay pattern. The
+        // sub-100ms muted-frame is acceptable.
         iframe.src  = window._ytEmbedUrl(videoId, {
           jsapi: true, cc: enableCaptions !== false,
           start: startSec, end: endSec,
-          mute: false,
         });
         iframe.allowFullscreen = true;
         iframe.setAttribute('allow', 'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share');
@@ -46805,10 +46845,10 @@ body.ticker-active .gTickerLabel {
           // Track that the briefing opened a heatmap so segment-end cleanup
           // (clearArcMeshes → __semHeatClose) knows to tear it down.
           _briefingHeatmapOpen = true;
+          try { window.__beginHeatmapPan?.(durationSec); } catch (_) {}
         } else {
           console.warn('[briefing/heatmap] __semHeatRenderQA not available — heat panel module not initialized');
         }
-        void durationSec;
         return;
       }
 
@@ -46845,10 +46885,10 @@ body.ticker-active .gTickerLabel {
           briefingMode: true,
         });
         _briefingHeatmapOpen = true;
+        try { window.__beginHeatmapPan?.(durationSec); } catch (_) {}
       } else {
         console.warn('[briefing/heatmap] __semHeatRenderQA not available — heat panel module not initialized');
       }
-      void durationSec;
     } catch (e) {
       console.warn('[briefing/heatmap] error:', e?.message || e);
     }
@@ -47100,6 +47140,7 @@ body.ticker-active .gTickerLabel {
     if (_briefingHeatmapOpen) {
       _briefingHeatmapOpen = false;
       try { window.__semHeatClose?.(); } catch (_) {}
+      try { window.__endHeatmapPan?.(); } catch (_) {}
     }
   }
   // Expose so setBriefingViewMode can call it when returning to country view

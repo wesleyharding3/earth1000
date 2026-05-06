@@ -255,6 +255,33 @@ const client         = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const ELEVENLABS_KEY = process.env.ELEVENLABS_API_KEY;
 const VOICE_ID       = process.env.ELEVENLABS_VOICE_ID || process.env.ELEVENLABS_VOICE_ID_ENGLISH;
 
+// Inter-segment silence — ~4 seconds of silent MP3 (44.1 kHz mono, CBR
+// 128 kbps to match ElevenLabs output). Appended to each non-final
+// segment's audio for two reasons:
+//   1. Clean byte-slice boundary: server.js slices segment audio at
+//      start_ms × 16 bytes/ms, which can land mid-MP3-frame and clip
+//      the narrator's last word. Padding the boundary with silence
+//      ensures any byte-misalignment falls in silence rather than speech.
+//   2. Music slot: a future enhancement will fill these gaps with
+//      inter-segment music. Reserving the slot here keeps segment
+//      timings + byte offsets stable when music is added later.
+// The asset is generated to be ID3-tag free (raw frame stream) so the
+// browser MP3 decoder doesn't trip on mid-stream metadata. Its true
+// duration is derived from byte length (16 bytes/ms at CBR 128 kbps) so
+// cumMs and the server's byte-slicer stay in sync — MP3 frames are
+// quantized (~26.12 ms each), so the file is slightly longer than 4000ms.
+const SILENCE_BETWEEN_SEGMENTS = (() => {
+  try {
+    return fs.readFileSync(path.join(__dirname, 'assets', 'silence-4s-128kbps-mono.mp3'));
+  } catch (e) {
+    console.warn(`   ⚠ Failed to load silence MP3 (${e.message}) — segment boundaries will not be padded.`);
+    return Buffer.alloc(0);
+  }
+})();
+const INTER_SEGMENT_SILENCE_MS = SILENCE_BETWEEN_SEGMENTS.length > 0
+  ? Math.round(SILENCE_BETWEEN_SEGMENTS.length / 16)
+  : 0;
+
 const FORCE        = process.argv.includes('--force');
 const NO_AUDIO     = process.argv.includes('--no-audio');
 const FORCE_AUDIO  = process.argv.includes('--force-audio'); // re-synthesise even if audio exists
@@ -542,23 +569,47 @@ async function run() {
         pieceDurationsMs.push(0);
         pieceWordTimings.push([]);
       }
+
+      // Silence piece — appended to non-final segments so the byte-slice
+      // boundary between segments lands on silence (clean cuts, no clipped
+      // last word) and to reserve a 4s slot for inter-segment music.
+      // Always pushed (zero-length on the last segment) so the per-segment
+      // piece count stays at 3 and the stamping loop's indexing is uniform.
+      const isFinalSeg = si === segments.length - 1;
+      if (!isFinalSeg && SILENCE_BETWEEN_SEGMENTS.length > 0) {
+        audioBuffers.push(SILENCE_BETWEEN_SEGMENTS);
+        pieceDurationsMs.push(INTER_SEGMENT_SILENCE_MS);
+        pieceWordTimings.push([]);
+      } else {
+        audioBuffers.push(Buffer.alloc(0));
+        pieceDurationsMs.push(0);
+        pieceWordTimings.push([]);
+      }
     }
 
     // Stamp each segment with its audio start offset + split breakdown.
+    // Pieces are now 3-per-segment: voiceover, transition, silence (last
+    // is zero-length on the final segment). silence_ms is included in
+    // duration_ms so audio.ended fires after the music slot, giving the
+    // player a uniform "voice + transition + 4s gap" rhythm to work with.
     let cumMs = 0;
     for (let si = 0; si < segments.length; si++) {
-      const voiceIdx = si * 2;
-      const transIdx = si * 2 + 1;
+      const voiceIdx = si * 3;
+      const transIdx = si * 3 + 1;
+      const silIdx   = si * 3 + 2;
       const vms = pieceDurationsMs[voiceIdx] || 0;
       const tms = pieceDurationsMs[transIdx] || 0;
+      const sms = pieceDurationsMs[silIdx]   || 0;
       const vwords = pieceWordTimings[voiceIdx] || [];
       const twords = (pieceWordTimings[transIdx] || []).map(w => ({ ...w, start: w.start + vms, end: w.end + vms }));
       segments[si].start_ms           = cumMs;
-      segments[si].duration_ms        = vms + tms;
+      segments[si].duration_ms        = vms + tms + sms;
       segments[si].voiceover_start_ms = cumMs;
       segments[si].voiceover_ms       = vms;
       segments[si].transition_start_ms= cumMs + vms;
       segments[si].transition_ms      = tms;
+      segments[si].silence_start_ms   = cumMs + vms + tms;
+      segments[si].silence_ms         = sms;
       segments[si].word_timings       = [...vwords, ...twords];
       // Featured-media segments: convert the within-piece split offset
       // into an absolute trigger time so the player fires focal at the
@@ -577,7 +628,7 @@ async function run() {
           console.warn(`   ⚠ Seg ${si} (audio-only regen) takeover without split — stamping focal_trigger_ms = ${segments[si].focal_trigger_ms}ms (end-of-voiceover).`);
         }
       }
-      cumMs += vms + tms;
+      cumMs += vms + tms + sms;
     }
 
     // Concatenate all non-empty buffers into one MP3 file
@@ -1061,6 +1112,22 @@ async function run() {
           pieceWordTimings.push([]);
         }
 
+        // Silence piece — see same block in the AUDIO_ONLY path for
+        // rationale. 4s of silence between segments gives the byte-slice
+        // a clean boundary and reserves a music slot for later. Always
+        // pushed (zero-length on the final segment) so per-segment piece
+        // count is uniformly 3.
+        const isFinalSeg = si === segments.length - 1;
+        if (!isFinalSeg && SILENCE_BETWEEN_SEGMENTS.length > 0) {
+          audioBuffers.push(SILENCE_BETWEEN_SEGMENTS);
+          pieceDurationsMs.push(INTER_SEGMENT_SILENCE_MS);
+          pieceWordTimings.push([]);
+        } else {
+          audioBuffers.push(Buffer.alloc(0));
+          pieceDurationsMs.push(0);
+          pieceWordTimings.push([]);
+        }
+
         segmentBreakdowns.push(breakdown);
       }
 
@@ -1068,20 +1135,27 @@ async function run() {
       // spanning BOTH voice and transition, for captions. Also expose the
       // voice/transition split so the player (and a future
       // rewrite-transitions endpoint) can slice independently.
+      // Pieces are 3-per-segment: voiceover, transition, silence
+      // (zero-length on the final segment). silence_ms is included in
+      // duration_ms so audio.ended fires after the 4s music slot.
       let cumMs = 0;
       for (let si = 0; si < segments.length; si++) {
-        const voiceIdx = si * 2;
-        const transIdx = si * 2 + 1;
+        const voiceIdx = si * 3;
+        const transIdx = si * 3 + 1;
+        const silIdx   = si * 3 + 2;
         const vms = pieceDurationsMs[voiceIdx] || 0;
         const tms = pieceDurationsMs[transIdx] || 0;
+        const sms = pieceDurationsMs[silIdx]   || 0;
         const vwords = pieceWordTimings[voiceIdx] || [];
         const twords = (pieceWordTimings[transIdx] || []).map(w => ({ ...w, start: w.start + vms, end: w.end + vms }));
         segments[si].start_ms           = cumMs;
-        segments[si].duration_ms        = vms + tms;
+        segments[si].duration_ms        = vms + tms + sms;
         segments[si].voiceover_start_ms = cumMs;
         segments[si].voiceover_ms       = vms;
         segments[si].transition_start_ms= cumMs + vms;
         segments[si].transition_ms      = tms;
+        segments[si].silence_start_ms   = cumMs + vms + tms;
+        segments[si].silence_ms         = sms;
         segments[si].word_timings       = [...vwords, ...twords];
         // Featured-media segments: convert the within-piece split offset
         // into an absolute trigger time so the player fires focal at the
@@ -1133,10 +1207,11 @@ async function run() {
         }
 
         if (segments[si]._focalSplitMs != null) delete segments[si]._focalSplitMs;
-        cumMs += vms + tms;
+        cumMs += vms + tms + sms;
       }
 
-      // Concatenate every piece into one MP3 (order: v0, t0, v1, t1, …)
+      // Concatenate every piece into one MP3
+      // (order: v0, t0, sil0, v1, t1, sil1, …, vN, tN, [empty]).
       const concatted = Buffer.concat(audioBuffers.filter(b => b.byteLength > 0));
       if (concatted.byteLength === 0) {
         console.warn(`   ⚠ All audio pieces failed — storing episode without audio (check ELEVENLABS_VOICE_ID and API key)`);
