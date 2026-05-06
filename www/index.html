@@ -45679,6 +45679,15 @@ body.ticker-active .gTickerLabel {
           addIso(_findIso(arc.from_name) || _nearestIso(arc.from_lat, arc.from_lng ?? arc.from_lon));
           addIso(_findIso(arc.to_name)   || _nearestIso(arc.to_lat,   arc.to_lng   ?? arc.to_lon));
         }
+        // Secondary flow arcs are drawn alongside primary in drawSegmentArcs,
+        // so their endpoint countries must illuminate too. Was missing — the
+        // visible flow visualization included them but the polygon highlight
+        // set didn't, so a country only mentioned via a secondary arc stayed
+        // dark even though its halo + label rendered.
+        for (const arc of (seg.secondary_flow_arcs || [])) {
+          addIso(_findIso(arc.from_name) || _nearestIso(arc.from_lat, arc.from_lng ?? arc.from_lon));
+          addIso(_findIso(arc.to_name)   || _nearestIso(arc.to_lat,   arc.to_lng   ?? arc.to_lon));
+        }
         for (const loc of secondary) {
           addIso(_findIso(loc.name) || _nearestIso(loc.lat, loc.lon));
         }
