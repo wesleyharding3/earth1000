@@ -1107,7 +1107,13 @@ async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()
     /\brecreation\b/i,
     /\bcultural\s+(event|festival|celebration)/i,
     /\bfestival\b/i,
-    /\b(lifestyle|wellness|food|fashion|dating|shopping|retail)\b/i,
+    /\b(lifestyle|wellness|fashion|dating)\b/i,
+    // shopping/retail/food only when paired with lifestyle context — bare
+    // "shopping" rejected "Iran Shopping Center Fire Kills Eight"; "food"
+    // would block food-crisis/famine coverage; "retail" blocks tariff and
+    // supply-chain stories. Require an explicit lifestyle modifier.
+    /\b(shopping|retail|food|cuisine)\s+(?:trends?|tips|guide|haul|blogger|review|hub)\b/i,
+    /\b(?:retail\s+therapy|shopping\s+spree)\b/i,
     /\bentertainment\s+(coverage|news|industry)\b/i,
     /\b(sports|entertainment|lifestyle|culture|arts)\s+and\s+(sports|entertainment|lifestyle|culture|arts|society|business)\b/i,
     /\b(celebrity|movie|film|tv|streaming|album|concert)\b/i,
@@ -1424,6 +1430,17 @@ async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()
     }
 
     if (!def.article_ids?.length) continue;
+
+    // Drop defs with no usable title before they reach INSERT. Claude
+    // occasionally returns title:null (or whitespace) on hallucinated
+    // existing_thread_id paths that fall back to NEW. The DB has a NOT
+    // NULL constraint on title, so without this guard each such def
+    // produced a noisy error log + a wasted Claude call's worth of work.
+    const titleStr = typeof def.title === 'string' ? def.title.trim() : '';
+    if (!titleStr) {
+      console.log(`   🚫 Skipping thread def with empty/null title (article_ids=${def.article_ids.length})`);
+      continue;
+    }
 
     // Only reject NEW threads — never block extensions of existing threads,
     // since those decisions were already made.

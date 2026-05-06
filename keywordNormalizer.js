@@ -154,8 +154,8 @@ async function normalizeRecentKeywords(options) {
   // and the Claude prompt returns null for untranslatable fragments.
   if (anthropicClient) {
     logger.log?.(`   Claude normalizing ${pending.length} recent keywords...`);
-    for (let i = 0; i < pending.length; i += 60) {
-      const batch = pending.slice(i, i + 60);
+    for (let i = 0; i < pending.length; i += batchSize) {
+      const batch = pending.slice(i, i + batchSize);
       try {
         const accepted = await normalizeBatchWithClaude(anthropicClient, batch.map((item) => item.keyword), logger);
         const stats = await persistTranslations(pool, accepted);
@@ -329,16 +329,44 @@ function buildCandidateQuery({ scope, keywordLimit, minRows, minFrequency }) {
 // and loudly logs parse failures so cron logs surface them.
 function _extractJsonObject(rawText) {
   if (!rawText) return null;
-  // Strip ```json or ``` fences if present
   let text = String(rawText).trim();
+  // Strip ```json … ``` fences (anchored). Truncated responses won't have
+  // the closing fence; for those, also strip a leading ```json/``` so the
+  // subsequent salvage path can still find the object body.
   const fenceMatch = text.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/);
-  if (fenceMatch) text = fenceMatch[1].trim();
+  if (fenceMatch) {
+    text = fenceMatch[1].trim();
+  } else {
+    text = text.replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '').trim();
+  }
   // Try whole-body parse first
   try { return JSON.parse(text); } catch (_) {}
-  // Fallback: find the first { ... } block and parse that
+  // Fallback: find the first { ... } block and parse that (greedy match
+  // captures nested contents up to the last `}`).
   const braceMatch = text.match(/\{[\s\S]*\}/);
   if (braceMatch) {
     try { return JSON.parse(braceMatch[0]); } catch (_) {}
+  }
+  // Salvage path for TRUNCATED responses (no closing brace). Walks the
+  // body tracking string state + brace depth, remembers the offset just
+  // after the last complete top-level `"key": value` pair, then closes
+  // the object there. Recovers ~95% of a cut-off batch instead of zero.
+  if (text.startsWith('{')) {
+    let depth = 0, inStr = false, esc = false, lastSafe = -1;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (esc) { esc = false; continue; }
+      if (ch === '\\') { esc = true; continue; }
+      if (ch === '"') { inStr = !inStr; continue; }
+      if (inStr) continue;
+      if (ch === '{') depth++;
+      else if (ch === '}') depth--;
+      else if (ch === ',' && depth === 1) lastSafe = i;
+    }
+    if (lastSafe > 0) {
+      const salvaged = text.slice(0, lastSafe) + '}';
+      try { return JSON.parse(salvaged); } catch (_) {}
+    }
   }
   return null;
 }
@@ -346,7 +374,11 @@ function _extractJsonObject(rawText) {
 async function normalizeBatchWithClaude(client, originals, logger = console) {
   const msg = await client.messages.create({
     model: 'claude-haiku-4-5',
-    max_tokens: 3500,
+    // 3500 was getting truncated mid-string for batches of 60 multilingual
+    // keywords (esp. CJK + diacritics, where each char can take 2-3 tokens).
+    // 6000 leaves headroom; the salvage path in _extractJsonObject still
+    // catches anything that does cut off.
+    max_tokens: 6000,
     messages: [{
       role: 'user',
       content: `Translate these news keywords/phrases to standard English equivalents for keyword indexing.
