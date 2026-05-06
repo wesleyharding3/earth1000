@@ -22195,6 +22195,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // Pass the node object ({name, lat, lon, population, flag, country}) and
       // whether it is a city (true) or country (false) node.
       window.briefingShowLabel = function(nodeObj, isCityNode) {
+        // Hover-label-with-population panel disabled during briefings —
+        // only the primary/secondary flow-arc tier labels render now.
+        return;
         if (!nodeObj) return;
         const arr    = isCityNode ? cities     : countries;
         const posArr = isCityNode ? positions  : countryPositions;
@@ -43116,7 +43119,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
   right: max(12px, env(safe-area-inset-right, 0px));
   z-index: 100018;
   width: 160px;
-  height: 180px;
+  height: 155px;
   pointer-events: all;
   opacity: 0;
   transform: translateY(-8px);
@@ -45102,12 +45105,10 @@ body.ticker-active .gTickerLabel {
       }).join('');
       const svg = `<svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet">${slices}</svg>`;
 
-      const TOP_LEGEND = 4;
+      const TOP_LEGEND = 3;
       const sorted = labels.map((lab, i) => ({ lab, v: Number(values[i]) || 0, i }))
                            .sort((a, b) => b.v - a.v);
       const topItems = sorted.slice(0, TOP_LEGEND);
-      const restCount = Math.max(0, sorted.length - TOP_LEGEND);
-      const restSum = sorted.slice(TOP_LEGEND).reduce((s, x) => s + x.v, 0);
       const esc = (s) => String(s ?? '').replace(/[&<>"']/g, ch => ({
         '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
       }[ch]));
@@ -45119,14 +45120,6 @@ body.ticker-active .gTickerLabel {
           <span class="bSegmentSourcePieLegendPct">${pct}%</span>
         </span>`;
       });
-      if (restCount > 0 && restSum > 0) {
-        const pct = ((restSum / total) * 100).toFixed(0);
-        legendItems.push(`<span class="bSegmentSourcePieLegendItem">
-          <span class="bSegmentSourcePieLegendDot" style="background:rgba(255,255,255,0.25)"></span>
-          <span class="bSegmentSourcePieLegendName">+${restCount} more</span>
-          <span class="bSegmentSourcePieLegendPct">${pct}%</span>
-        </span>`);
-      }
 
       el.innerHTML = `
         <div class="bSegmentSourcePieTitle">Source country</div>
