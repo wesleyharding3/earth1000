@@ -13477,6 +13477,438 @@ window.fmtDate = function(d) {
   };
 })();
 
+/* ── Audio Engine — procedural ambient sound design ─────────────────
+   Single AudioContext wrapper for the whole app. Builds layered
+   drones/sub/stabs from oscillators (no samples). Stays silent until
+   the first user gesture (iOS WKWebView gesture-unlock requirement).
+   Persists master mute in localStorage as 'earth00:audioMuted'.
+
+   API surface (window.audioEngine):
+     unlock()                  – called on first user gesture
+     setLayer(name, on, fade?) – cross-fade a named layer in/out
+     triggerStab(opts?)        – one-shot melodic ping (button feedback)
+     duck(amount, ms)          – pull master down (narrator/video)
+     unduck(ms)                – ramp back to 1.0
+     setMasterMute(bool)       – wire to settings toggle
+     isMuted() / isUnlocked
+
+   Tonal palette: A minor.  Root A2=110Hz, fifth E3=164.81Hz,
+   sub A1=55Hz.  Feels coherent across layers added later.        */
+(function() {
+  const STORAGE_KEY = 'earth00:audioMuted';
+
+  const ROOT_HZ  = 110.00;     // A2
+  const FIFTH_HZ = 164.81;     // E3 (perfect fifth above root)
+  const SUB_HZ   =  55.00;     // A1 (one octave below root)
+  const MASTER_DEFAULT = 0.55; // unmuted target — leaves headroom
+
+  let ctx        = null;
+  let masterGain = null;       // final volume + mute
+  let duckGain   = null;       // pre-master, pulled by narrator/video
+  let unlocked   = false;
+  let muted      = false;
+  let listenersAttached = false;
+
+  const layers = new Map();    // name → built layer object
+
+  // ── Layer factories ─────────────────────────────────────────────
+  // Each returns { gain, start(when), stop(when) }.  gain is the
+  // node connected into duckGain by setLayer().
+
+  function makeDrone() {
+    const out = ctx.createGain();
+    out.gain.value = 0.0001;
+
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 1100;
+    filter.Q.value = 0.7;
+
+    // Slow filter sweep so the timbre breathes
+    const filtLfo = ctx.createOscillator();
+    filtLfo.frequency.value = 0.07;
+    const filtLfoGain = ctx.createGain();
+    filtLfoGain.gain.value = 320;
+    filtLfo.connect(filtLfoGain).connect(filter.frequency);
+
+    // Voice 1 — root, slight downward detune
+    const v1 = ctx.createOscillator();
+    v1.type = 'sine';
+    v1.frequency.value = ROOT_HZ;
+    v1.detune.value = -7;
+    const v1g = ctx.createGain();
+    v1g.gain.value = 0.42;
+    const v1lfo = ctx.createOscillator();
+    v1lfo.frequency.value = 0.11;
+    const v1lfoGain = ctx.createGain();
+    v1lfoGain.gain.value = 0.10;
+    v1lfo.connect(v1lfoGain).connect(v1g.gain);
+    v1.connect(v1g).connect(filter);
+
+    // Voice 2 — fifth, slight upward detune (chorus against v1)
+    const v2 = ctx.createOscillator();
+    v2.type = 'sine';
+    v2.frequency.value = FIFTH_HZ;
+    v2.detune.value = +6;
+    const v2g = ctx.createGain();
+    v2g.gain.value = 0.30;
+    const v2lfo = ctx.createOscillator();
+    v2lfo.frequency.value = 0.083;
+    const v2lfoGain = ctx.createGain();
+    v2lfoGain.gain.value = 0.09;
+    v2lfo.connect(v2lfoGain).connect(v2g.gain);
+    v2.connect(v2g).connect(filter);
+
+    // Voice 3 — octave shimmer, very quiet triangle
+    const v3 = ctx.createOscillator();
+    v3.type = 'triangle';
+    v3.frequency.value = ROOT_HZ * 2;
+    v3.detune.value = +3;
+    const v3g = ctx.createGain();
+    v3g.gain.value = 0.06;
+    v3.connect(v3g).connect(filter);
+
+    filter.connect(out);
+
+    return {
+      gain: out,
+      start(when) {
+        filtLfo.start(when); v1lfo.start(when); v2lfo.start(when);
+        v1.start(when); v2.start(when); v3.start(when);
+      },
+      stop(when) {
+        try { v1.stop(when); v2.stop(when); v3.stop(when); } catch(_){}
+        try { filtLfo.stop(when); v1lfo.stop(when); v2lfo.stop(when); } catch(_){}
+      }
+    };
+  }
+
+  function makeSub() {
+    // 808-style sub at A1 with subtle AM tremolo (heart-rate hint)
+    const out = ctx.createGain();
+    out.gain.value = 0.0001;
+
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.value = SUB_HZ;
+
+    const trem = ctx.createOscillator();
+    trem.frequency.value = 0.25;        // 4-second cycle
+    const tremDepth = ctx.createGain();
+    tremDepth.gain.value = 0.18;
+    trem.connect(tremDepth);
+
+    const oscGain = ctx.createGain();
+    oscGain.gain.value = 0.55;
+    tremDepth.connect(oscGain.gain);    // AM modulation on top of base
+
+    osc.connect(oscGain).connect(out);
+
+    return {
+      gain: out,
+      start(when) { trem.start(when); osc.start(when); },
+      stop(when)  { try { osc.stop(when); trem.stop(when); } catch(_){} }
+    };
+  }
+
+  function makeNewsPad() {
+    // Brighter pad sitting above the drone — C5 + E5 sawtooth voices
+    // through a slow-sweeping lowpass with vibrato. Stays in A-minor.
+    const out = ctx.createGain();
+    out.gain.value = 0.0001;
+
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 1700;
+    filter.Q.value = 0.85;
+
+    const filtLfo = ctx.createOscillator();
+    filtLfo.frequency.value = 0.055;
+    const filtLfoGain = ctx.createGain();
+    filtLfoGain.gain.value = 700;
+    filtLfo.connect(filtLfoGain).connect(filter.frequency);
+
+    const C5_HZ = 523.25, E5_HZ = 659.25;
+    const v1 = ctx.createOscillator();
+    v1.type = 'sawtooth';
+    v1.frequency.value = C5_HZ;
+    v1.detune.value = -9;
+    const v1g = ctx.createGain();
+    v1g.gain.value = 0.07;
+    v1.connect(v1g).connect(filter);
+
+    const v2 = ctx.createOscillator();
+    v2.type = 'sawtooth';
+    v2.frequency.value = E5_HZ;
+    v2.detune.value = +9;
+    const v2g = ctx.createGain();
+    v2g.gain.value = 0.06;
+    v2.connect(v2g).connect(filter);
+
+    // Slow vibrato to humanize the sustained voices
+    const vib = ctx.createOscillator();
+    vib.frequency.value = 4.2;
+    const vibDepth = ctx.createGain();
+    vibDepth.gain.value = 1.6;
+    vib.connect(vibDepth).connect(v1.detune);
+    vib.connect(vibDepth).connect(v2.detune);
+
+    filter.connect(out);
+
+    return {
+      gain: out,
+      start(when) {
+        filtLfo.start(when); v1.start(when); v2.start(when); vib.start(when);
+      },
+      stop(when) {
+        try { v1.stop(when); v2.stop(when); filtLfo.stop(when); vib.stop(when); } catch(_){}
+      }
+    };
+  }
+
+  function makeStatsArp() {
+    // Slow A-minor 7 arpeggio scheduler. Look-ahead pattern: every
+    // ~80ms in wall-clock, queue any notes within the next 200ms.
+    const out = ctx.createGain();
+    out.gain.value = 0.0001;
+
+    const NOTES = [220.00, 261.63, 329.63, 392.00, 329.63, 261.63]; // A3 C4 E4 G4 E4 C4
+    const STEP_SEC = 0.55;        // ~109 BPM eighth-notes, contemplative
+    let stepIdx = 0;
+    let nextAt = 0;
+    let running = false;
+    let timer = null;
+
+    function fireNote(when, hz) {
+      const osc = ctx.createOscillator();
+      osc.type = 'triangle';
+      osc.frequency.value = hz;
+      const filt = ctx.createBiquadFilter();
+      filt.type = 'lowpass';
+      filt.frequency.value = hz * 5;
+      filt.Q.value = 2.0;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, when);
+      g.gain.exponentialRampToValueAtTime(0.16, when + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, when + 0.45);
+      osc.connect(filt).connect(g).connect(out);
+      osc.start(when);
+      osc.stop(when + 0.5);
+    }
+
+    function tick() {
+      if (!running) return;
+      const horizon = ctx.currentTime + 0.20;
+      while (nextAt < horizon) {
+        fireNote(nextAt, NOTES[stepIdx % NOTES.length]);
+        stepIdx++;
+        nextAt += STEP_SEC;
+      }
+      timer = setTimeout(tick, 80);
+    }
+
+    return {
+      gain: out,
+      start(when) {
+        running = true;
+        nextAt = Math.max(when, ctx.currentTime + 0.05);
+        tick();
+      },
+      stop(_when) {
+        running = false;
+        if (timer) { clearTimeout(timer); timer = null; }
+      }
+    };
+  }
+
+  // ── Engine internals ────────────────────────────────────────────
+
+  function buildContext() {
+    if (ctx) return true;
+    try {
+      ctx = new (window.AudioContext || window.webkitAudioContext)();
+    } catch (e) {
+      console.warn('[audioEngine] AudioContext unavailable:', e.message);
+      return false;
+    }
+    duckGain   = ctx.createGain();
+    masterGain = ctx.createGain();
+    duckGain.gain.value   = 1.0;
+    masterGain.gain.value = muted ? 0.0001 : MASTER_DEFAULT;
+    duckGain.connect(masterGain).connect(ctx.destination);
+    return true;
+  }
+
+  function unlock() {
+    if (unlocked) return;
+    if (!buildContext()) return;
+    if (ctx.state === 'suspended') ctx.resume().catch(()=>{});
+    unlocked = true;
+    if (!muted) {
+      setLayer('drone', true);
+      setLayer('sub', true);
+    }
+    try { window.dispatchEvent(new CustomEvent('audioEngine:unlocked')); } catch(_){}
+  }
+
+  function attachUnlockListeners() {
+    if (listenersAttached) return;
+    listenersAttached = true;
+    const onFirstGesture = () => {
+      unlock();
+      window.removeEventListener('touchstart', onFirstGesture, true);
+      window.removeEventListener('mousedown',  onFirstGesture, true);
+      window.removeEventListener('keydown',    onFirstGesture, true);
+    };
+    window.addEventListener('touchstart', onFirstGesture, { capture: true, passive: true });
+    window.addEventListener('mousedown',  onFirstGesture, { capture: true, passive: true });
+    window.addEventListener('keydown',    onFirstGesture, { capture: true });
+  }
+
+  function setLayer(name, on, fadeSec) {
+    if (!ctx) return;
+    const fade = (typeof fadeSec === 'number') ? fadeSec : 1.6;
+    const now = ctx.currentTime;
+    const entry = layers.get(name);
+
+    if (on) {
+      if (entry) return;
+      let factory = null;
+      if (name === 'drone')      factory = makeDrone;
+      else if (name === 'sub')   factory = makeSub;
+      else if (name === 'news')  factory = makeNewsPad;
+      else if (name === 'stats') factory = makeStatsArp;
+      else { console.warn('[audioEngine] unknown layer:', name); return; }
+      const built = factory();
+      built.gain.connect(duckGain);
+      built.start(now);
+      built.gain.gain.setValueAtTime(0.0001, now);
+      built.gain.gain.exponentialRampToValueAtTime(1.0, now + fade);
+      layers.set(name, built);
+    } else {
+      if (!entry) return;
+      const g = entry.gain.gain;
+      g.cancelScheduledValues(now);
+      g.setValueAtTime(g.value, now);
+      g.exponentialRampToValueAtTime(0.0001, now + fade);
+      const stopAt = now + fade + 0.05;
+      try { entry.stop(stopAt); } catch(_){}
+      layers.delete(name);
+      setTimeout(() => { try { entry.gain.disconnect(); } catch(_){} }, (fade + 0.25) * 1000);
+    }
+  }
+
+  // One-shot stab for click feedback — pitched in A minor so it
+  // sits inside the drone harmony.
+  const STAB_NOTES = [220.00, 261.63, 329.63, 392.00, 440.00]; // A3,C4,E4,G4,A4
+  function triggerStab(opts) {
+    if (!ctx || muted) return;
+    opts = opts || {};
+    const now = ctx.currentTime;
+    const noteHz = opts.hz || STAB_NOTES[Math.floor(Math.random() * STAB_NOTES.length)];
+    const dur = opts.dur || 0.55;
+    const vol = (opts.vol == null) ? 0.16 : opts.vol;
+
+    const osc = ctx.createOscillator();
+    osc.type = opts.type || 'triangle';
+    osc.frequency.value = noteHz;
+
+    const filt = ctx.createBiquadFilter();
+    filt.type = 'lowpass';
+    filt.frequency.value = noteHz * 6;
+    filt.Q.value = 4;
+
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, now);
+    g.gain.exponentialRampToValueAtTime(vol, now + 0.006);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+
+    osc.connect(filt).connect(g).connect(duckGain);
+    osc.start(now);
+    osc.stop(now + dur + 0.05);
+  }
+
+  // Soft whoosh — bandpass-filtered white noise sweeping high-to-low,
+  // short envelope. Used for country-polygon focus feedback.
+  function triggerWhoosh(opts) {
+    if (!ctx || muted) return;
+    opts = opts || {};
+    const now = ctx.currentTime;
+    const dur = opts.dur || 0.55;
+    const vol = (opts.vol == null) ? 0.16 : opts.vol;
+    const fStart = opts.fStart || 2400;
+    const fEnd   = opts.fEnd   || 380;
+
+    const sr = ctx.sampleRate;
+    const bufLen = Math.ceil(sr * (dur + 0.05));
+    const buf = ctx.createBuffer(1, bufLen, sr);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < bufLen; i++) data[i] = Math.random() * 2 - 1;
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+
+    const filt = ctx.createBiquadFilter();
+    filt.type = 'bandpass';
+    filt.Q.value = 1.4;
+    filt.frequency.setValueAtTime(fStart, now);
+    filt.frequency.exponentialRampToValueAtTime(fEnd, now + dur);
+
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, now);
+    g.gain.exponentialRampToValueAtTime(vol, now + 0.04);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+
+    src.connect(filt).connect(g).connect(duckGain);
+    src.start(now);
+    src.stop(now + dur + 0.05);
+  }
+
+  function duck(amount, durationMs) {
+    if (!ctx || !duckGain) return;
+    const now = ctx.currentTime;
+    const target = Math.max(0.001, Math.min(1, amount));
+    const t = Math.max(0.05, (durationMs || 600) / 1000);
+    duckGain.gain.cancelScheduledValues(now);
+    duckGain.gain.setValueAtTime(duckGain.gain.value, now);
+    duckGain.gain.exponentialRampToValueAtTime(target, now + t);
+  }
+
+  function unduck(durationMs) { duck(1.0, durationMs || 1200); }
+
+  function setMasterMute(v) {
+    muted = !!v;
+    try { localStorage.setItem(STORAGE_KEY, muted ? '1' : '0'); } catch(_){}
+    if (!ctx || !masterGain) return;
+    const now = ctx.currentTime;
+    masterGain.gain.cancelScheduledValues(now);
+    masterGain.gain.setValueAtTime(Math.max(masterGain.gain.value, 0.0001), now);
+    masterGain.gain.exponentialRampToValueAtTime(muted ? 0.0001 : MASTER_DEFAULT, now + 0.45);
+    if (!muted && unlocked) {
+      // Default ambient layers if they were never started or were torn down
+      setLayer('drone', true);
+      setLayer('sub',   true);
+    }
+  }
+
+  function isMuted()    { return muted; }
+  function isUnlocked() { return unlocked; }
+
+  // Restore mute pref before user touches anything
+  try { muted = localStorage.getItem(STORAGE_KEY) === '1'; } catch(_) {}
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', attachUnlockListeners, { once: true });
+  } else {
+    attachUnlockListeners();
+  }
+
+  window.audioEngine = {
+    unlock, setLayer, triggerStab, triggerWhoosh, duck, unduck,
+    setMasterMute, isMuted, isUnlocked,
+    get ctx() { return ctx; }
+  };
+})();
+
 /* ── Offline / online detection ── */
 (function() {
   let _offlineBanner = null;
@@ -14714,6 +15146,16 @@ window.__arcCtxSegmented = (function() {
           </div>
         </div>
       </div>
+      <!-- Always-visible global control: ambient sound master mute. -->
+      <div class="sidebarSection sidebarSectionGlobal">
+        <div class="sidebarSectionLabel">Sound</div>
+        <div class="themeToggleRow" style="margin-top:0;">
+          <div class="themePill" data-audio-pill>
+            <button class="themePillBtn active" data-audio="on">On</button>
+            <button class="themePillBtn" data-audio="off">Off</button>
+          </div>
+        </div>
+      </div>
       <div class="sidebarDivider"></div>
 
       <!-- Country view -->
@@ -15355,6 +15797,17 @@ window.__arcCtxSegmented = (function() {
 
     window.__currentPage = 1;
     window.__globeActive = true;
+    // When audio unlocks (first user gesture), bring the page-specific
+    // layer in. goTo() also drives this on every page change; this
+    // listener handles the case where the user touches while parked on
+    // Stats or News and never navigates.
+    window.addEventListener('audioEngine:unlocked', () => {
+      const p = window.__currentPage;
+      if (window.audioEngine) {
+        window.audioEngine.setLayer('stats', p === 0);
+        window.audioEngine.setLayer('news',  p === 2);
+      }
+    });
     import * as THREE from "https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.module.js";
     window.THREE = THREE;
 
@@ -18292,6 +18745,35 @@ const settingsToggle     = document.getElementById("settingsToggle");
       });
       // Reflect the persisted choice the main module already applied.
       syncProjectionControls();
+
+      // ── Audio pill (Sound On / Off — master mute) ─────────────────────
+      // Mirrors the projection pill pattern. Reads/writes mute state via
+      // window.audioEngine.setMasterMute, which persists to localStorage.
+      const audioPillBtns = Array.from(document.querySelectorAll(".themePillBtn[data-audio]"));
+      function syncAudioControls() {
+        const muted = !!(window.audioEngine && window.audioEngine.isMuted());
+        audioPillBtns.forEach(btn => {
+          const isOn = btn.dataset.audio === "on";
+          btn.classList.toggle("active", isOn !== muted);
+        });
+      }
+      window.__syncAudioControls = syncAudioControls;
+      audioPillBtns.forEach(btn => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (!window.audioEngine) return;
+          const wantMute = btn.dataset.audio === "off";
+          window.audioEngine.setMasterMute(wantMute);
+          // First-tap unlock if user opens settings before touching anywhere
+          if (!wantMute && !window.audioEngine.isUnlocked()) {
+            window.audioEngine.unlock();
+          }
+          syncAudioControls();
+        });
+        btn.addEventListener("pointerdown", (e) => e.stopPropagation());
+      });
+      syncAudioControls();
+
       // Auto-mount the 2D map after a short delay if the persisted choice is
       // 'map'. We poll briefly because window.__map2d is defined further down
       // in the module — and on some load paths the bottom-of-module init code
@@ -34215,6 +34697,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }
       current = idx;
       window.__currentPage = idx;
+      // Page-aware audio layers: 0=Stats arpeggio, 2=News pad. Drone+sub
+      // stay underneath. setLayer is a no-op if the engine is locked, so
+      // calling unconditionally is safe; the audioEngine:unlocked listener
+      // re-syncs once the user touches.
+      if (window.audioEngine) {
+        window.audioEngine.setLayer('stats', idx === 0);
+        window.audioEngine.setLayer('news',  idx === 2);
+      }
       // Skip animation when jumping more than 1 page to avoid
       // sliding through heavy intermediate pages (e.g. Globe WebGL).
       // Also skip animation for any transition involving the Stats page
@@ -44632,13 +45122,25 @@ body.ticker-active .gTickerLabel {
   }
 
   // Called when narrator audio STARTS playing
-  function bgMusicNarratorStart() { duckBgMusic(BG_VOL_LOW, BG_FADE_OUT); }
+  function bgMusicNarratorStart() {
+    duckBgMusic(BG_VOL_LOW, BG_FADE_OUT);
+    if (window.audioEngine) window.audioEngine.duck(0.18, BG_FADE_OUT * 1000);
+  }
   // Called when narrator audio ENDS (gap between segments)
-  function bgMusicNarratorEnd()   { duckBgMusic(BG_VOL_FULL, BG_FADE_IN); }
+  function bgMusicNarratorEnd()   {
+    duckBgMusic(BG_VOL_FULL, BG_FADE_IN);
+    if (window.audioEngine) window.audioEngine.unduck(BG_FADE_IN * 1000);
+  }
   // Called when YouTube focal video STARTS
-  function bgMusicVideoStart()    { duckBgMusic(BG_VOL_MUTE, BG_FADE_OUT); }
+  function bgMusicVideoStart()    {
+    duckBgMusic(BG_VOL_MUTE, BG_FADE_OUT);
+    if (window.audioEngine) window.audioEngine.duck(0.05, BG_FADE_OUT * 1000);
+  }
   // Called when YouTube focal video ENDS
-  function bgMusicVideoEnd()      { duckBgMusic(BG_VOL_LOW, BG_FADE_IN); }
+  function bgMusicVideoEnd()      {
+    duckBgMusic(BG_VOL_LOW, BG_FADE_IN);
+    if (window.audioEngine) window.audioEngine.duck(0.4, BG_FADE_IN * 1000);
+  }
   // ── End Background Music Engine ──────────────────────────────────────
 
   function addBTimer(t) { briefingTimers.push(t); return t; }
@@ -53649,8 +54151,15 @@ body.ticker-active .gTickerLabel {
   }
 
   function selectCountry(key) {
+    const changed = (selectedKey !== key);
     selectedKey = key;
     repaint();
+    // Soft whoosh on country focus. Suppressed when re-selecting the
+    // already-active country (idempotent calls from briefing/tutorial)
+    // so rapid repeats don't pile up.
+    if (changed && window.audioEngine) {
+      try { window.audioEngine.triggerWhoosh(); } catch (_) {}
+    }
   }
 
   // ── fan UI ────────────────────────────────────────────────────────────
