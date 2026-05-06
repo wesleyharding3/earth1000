@@ -43132,6 +43132,29 @@ const settingsToggle     = document.getElementById("settingsToggle");
 @media (max-width: 720px) {
   .bSegmentArticleRoll { display: block; }
 }
+
+/* ── Briefing-active mobile: claim the bottom screen real estate that
+   the ticker + page-nav normally occupy. Pie + article roll dock at
+   the bottom, controls slot under them at absolute bottom, and both
+   navbars hide so the globe gets the entire upper viewport. */
+@media (max-width: 720px) {
+  body.briefing-active #globalTicker,
+  body.briefing-active #pageNav,
+  body.briefing-active #privacyFooter { display: none !important; }
+  body.briefing-active .bControlsWrap {
+    bottom: calc(env(safe-area-inset-bottom, 0px) + var(--app-bottom-inset, 0px) + 8px);
+  }
+  body.briefing-active .bSegmentSourcePie,
+  body.briefing-active .bSegmentArticleRoll {
+    top: auto;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + var(--app-bottom-inset, 0px) + 96px);
+  }
+  body.briefing-active .bSegmentSourcePie { transform: translateY(8px); }
+  body.briefing-active .bSegmentArticleRoll { transform: translateY(8px); }
+  body.briefing-active .bSegmentSourcePie.visible,
+  body.briefing-active .bSegmentArticleRoll.visible { transform: translateY(0); }
+}
+
 .bSARollViewport {
   position: relative;
   width: 100%;
@@ -53823,7 +53846,7 @@ body.ticker-active .gTickerLabel {
 </script>
 
 <!-- Privacy footer -->
-<div style="position:fixed;bottom:0;left:0;right:0;z-index:9;pointer-events:none;display:flex;justify-content:center;padding-bottom:6px;">
+<div id="privacyFooter" style="position:fixed;bottom:0;left:0;right:0;z-index:9;pointer-events:none;display:flex;justify-content:center;padding-bottom:6px;">
   <a href="/privacy.html" target="_blank" rel="noopener"
      style="pointer-events:auto;font-size:10px;color:rgba(255,255,255,0.22);letter-spacing:0.06em;text-decoration:none;padding:3px 10px;border-radius:999px;transition:color 0.15s;"
      onmouseover="this.style.color='rgba(255,255,255,0.55)'"
