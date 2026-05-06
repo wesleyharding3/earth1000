@@ -44740,6 +44740,23 @@ body.ticker-active .gTickerLabel {
     if (episode.has_music) {
       initBgMusic(episode.id);
     }
+    // Prefetch articles for every story segment so the mobile article
+    // roll renders the moment goToSegment fires instead of waiting on
+    // a per-segment /api/articles/by-ids round-trip. Cache stores the
+    // resolved list (not the Promise) — a parallel goToSegment call
+    // that arrives before this resolves still fires its own fetch, but
+    // by segment 1+ the data is warm.
+    for (const s of (episode.segments || [])) {
+      if (s?.type !== 'story') continue;
+      const ids = Array.isArray(s.article_ids) ? s.article_ids : [];
+      if (!ids.length) continue;
+      const key = ids.slice().sort((x, y) => x - y).join(',');
+      if (_articleRollCache.has(key)) continue;
+      fetch(`${API}/api/articles/by-ids?ids=${ids.join(',')}`)
+        .then(r => r.ok ? r.json() : [])
+        .then(list => { _articleRollCache.set(key, Array.isArray(list) ? list : []); })
+        .catch(() => {});
+    }
     goToSegment(0);
   }
 
@@ -45106,7 +45123,12 @@ body.ticker-active .gTickerLabel {
       const svg = `<svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet">${slices}</svg>`;
 
       const TOP_LEGEND = 3;
+      // Server's computeCoveragePiePanel appends an aggregate "+N more"
+      // label that lumps the long tail. Mobile only has room for three
+      // named countries — strip the synthetic row before picking top-N
+      // so it never displaces Ukraine/Russia/etc in the legend.
       const sorted = labels.map((lab, i) => ({ lab, v: Number(values[i]) || 0, i }))
+                           .filter(x => !/^\+\d+\s+more$/i.test(String(x.lab || '').trim()))
                            .sort((a, b) => b.v - a.v);
       const topItems = sorted.slice(0, TOP_LEGEND);
       const esc = (s) => String(s ?? '').replace(/[&<>"']/g, ch => ({
