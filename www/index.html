@@ -43142,12 +43142,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
   body.briefing-active #pageNav,
   body.briefing-active #privacyFooter { display: none !important; }
   body.briefing-active .bControlsWrap {
-    bottom: calc(env(safe-area-inset-bottom, 0px) + var(--app-bottom-inset, 0px) + 8px);
+    bottom: calc(env(safe-area-inset-bottom, 0px) + var(--app-bottom-inset, 0px) + 0px);
   }
   body.briefing-active .bSegmentSourcePie,
   body.briefing-active .bSegmentArticleRoll {
     top: auto;
-    bottom: calc(env(safe-area-inset-bottom, 0px) + var(--app-bottom-inset, 0px) + 96px);
+    bottom: calc(env(safe-area-inset-bottom, 0px) + var(--app-bottom-inset, 0px) + 72px);
   }
   body.briefing-active .bSegmentSourcePie { transform: translateY(8px); }
   body.briefing-active .bSegmentArticleRoll { transform: translateY(8px); }
@@ -53766,14 +53766,24 @@ body.ticker-active .gTickerLabel {
 
     // Continuous view-mode watcher: toggles overlay visibility so city /
     // regions / ocean / etc. views don't see country polygon highlights.
+    //
+    // Exception: when flowHighlightKeys is populated (an active briefing
+    // segment with arc/primary/secondary countries), keep the overlay
+    // visible and DO NOT clear the canvas. Briefings switch view mode to
+    // 'city' for camera focus, but the flow-highlight polygons must stay
+    // lit — so we treat any non-empty flowHighlightKeys as forcing
+    // overlay-active state regardless of view mode.
     let _lastVM = null;
+    let _lastFlowActive = false;
     (function tickViewMode() {
       requestAnimationFrame(tickViewMode);
       if (!overlaySphere) return;
       const vm = window.__currentViewMode || 'country';
-      if (vm === _lastVM) return;
+      const flowActive = flowHighlightKeys.size > 0;
+      if (vm === _lastVM && flowActive === _lastFlowActive) return;
       _lastVM = vm;
-      const active = (vm === 'country');
+      _lastFlowActive = flowActive;
+      const active = (vm === 'country') || flowActive;
       overlaySphere.visible = active;
       if (!active) {
         hoveredKey = null;
@@ -53786,6 +53796,10 @@ body.ticker-active .gTickerLabel {
         if (renderer && renderer.domElement) {
           renderer.domElement.style.cursor = '';
         }
+      } else if (flowActive) {
+        // Going from city-view-without-flow to city-view-with-flow:
+        // the canvas was cleared earlier, redraw polygons now.
+        repaint();
       }
     })();
 
