@@ -973,7 +973,7 @@ app.get("/api/video-embed", (req, res) => {
   const videoId = (req.query.v || '').replace(/[^a-zA-Z0-9_-]/g, '');
   if (!videoId) return res.status(400).send('Missing video ID');
   const autoplay = req.query.autoplay !== '0' ? '1' : '0';
-  const mute = req.query.mute !== '0' ? '1' : '0';
+  const mute = req.query.mute === '1' ? '1' : '0';
   const enablejsapi = req.query.jsapi === '1' ? '1' : '0';
   const cc = req.query.cc === '1' ? '1' : '0';
   // start/end (seconds) clip the video. Featured-media segments use these
@@ -4945,8 +4945,38 @@ app.put('/api/admin/briefing-editor/segments/:episodeId', requireAdmin, async (r
       return res.status(400).json({ error: 'segments array required' });
     }
 
+    // Strip (0, 0) sentinel arcs/locations — these are blank editor rows
+    // that fall through `parseFloat('') || 0` and render as phantom arcs
+    // to the South Atlantic (visually near Cabo Verde / Gulf of Guinea).
+    const _isZero = (lat, lng) => {
+      if (lat == null || lng == null) return false;
+      return Math.abs(parseFloat(lat)) < 0.01 && Math.abs(parseFloat(lng)) < 0.01;
+    };
+    const cleanSegments = segments.map(seg => {
+      if (!seg || typeof seg !== 'object') return seg;
+      const out = { ...seg };
+      if (Array.isArray(out.flow_arcs)) {
+        out.flow_arcs = out.flow_arcs.filter(a =>
+          !_isZero(a?.from_lat, a?.from_lng ?? a?.from_lon) &&
+          !_isZero(a?.to_lat,   a?.to_lng   ?? a?.to_lon)
+        );
+      }
+      if (Array.isArray(out.secondary_flow_arcs)) {
+        out.secondary_flow_arcs = out.secondary_flow_arcs.filter(a =>
+          !_isZero(a?.from_lat, a?.from_lng ?? a?.from_lon) &&
+          !_isZero(a?.to_lat,   a?.to_lng   ?? a?.to_lon)
+        );
+      }
+      if (Array.isArray(out.secondary_locations)) {
+        out.secondary_locations = out.secondary_locations.filter(loc =>
+          !_isZero(loc?.lat, loc?.lon ?? loc?.lng)
+        );
+      }
+      return out;
+    });
+
     const updates = ['segments = $1'];
-    const params = [JSON.stringify(segments)];
+    const params = [JSON.stringify(cleanSegments)];
     let paramIdx = 2;
 
     if (headline) {
@@ -7492,8 +7522,14 @@ app.get("/api/heatmap", heavyLimiter, async (req, res) => {
         const kwLc = keyword.toLowerCase().trim();
         params.push(kwLc);
         const kwExact = `$${params.length}`;
-        params.push(kwLc + ':*');
-        const kwTs = `$${params.length}`;
+
+        // Tokenize multi-word inputs ("xi jinping" → "xi:* & jinping:*") and
+        // strip tsquery operators (! | ( ) etc.) from the user-supplied string
+        // before sending to to_tsquery — without this, any phrase containing
+        // a space (xi jinping, north korea, supreme court, interest rates,
+        // …) blew up with "syntax error in tsquery". Mirrors the pattern
+        // already used in /api/flows and /api/news/search.
+        const tsTokens = kwLc.replace(/[^a-z0-9 ]+/g, ' ').trim().split(/\s+/).filter(Boolean);
 
         const subDateClauses = [];
         if (fromIso && toIso) {
@@ -7505,13 +7541,25 @@ app.get("/api/heatmap", heavyLimiter, async (req, res) => {
         }
         const subDateFilter = subDateClauses.length ? ` AND ${subDateClauses.join(' AND ')}` : '';
 
-        where.push(`a.id IN (
-          SELECT ak.article_id FROM article_keywords ak
-          JOIN news_articles na ON na.id = ak.article_id
-          WHERE (ak.normalized_keyword = ${kwExact}
-             OR to_tsvector('simple', ak.keyword) @@ to_tsquery('simple', ${kwTs}))
-            ${subDateFilter}
-        )`);
+        if (tsTokens.length) {
+          params.push(tsTokens.map(w => w + ':*').join(' & '));
+          const kwTs = `$${params.length}`;
+          where.push(`a.id IN (
+            SELECT ak.article_id FROM article_keywords ak
+            JOIN news_articles na ON na.id = ak.article_id
+            WHERE (ak.normalized_keyword = ${kwExact}
+               OR to_tsvector('simple', ak.keyword) @@ to_tsquery('simple', ${kwTs}))
+              ${subDateFilter}
+          )`);
+        } else {
+          // Pure non-word input — only the exact normalized lookup is meaningful.
+          where.push(`a.id IN (
+            SELECT ak.article_id FROM article_keywords ak
+            JOIN news_articles na ON na.id = ak.article_id
+            WHERE ak.normalized_keyword = ${kwExact}
+              ${subDateFilter}
+          )`);
+        }
       }
 
       const whereSql = `WHERE ${where.join(' AND ')}`;

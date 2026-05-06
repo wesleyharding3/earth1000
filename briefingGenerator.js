@@ -2366,7 +2366,20 @@ async function buildSegments(narrative, threadData, allArcs, entityCoords = {}) 
       continue;
     }
 
-    const arcs = allArcs.filter(a => a.thread_id === thread.id);
+    // (0, 0) is the editor's "coords not filled in" sentinel — South
+    // Atlantic, never a real entity. Strip arcs whose endpoints land
+    // there so phantom arcs to the Cabo Verde / Gulf of Guinea region
+    // never make it into the persisted segment.
+    const _isZeroSentinel = (lat, lon) => {
+      if (lat == null || lon == null) return false;
+      const la = Math.abs(parseFloat(lat));
+      const lo = Math.abs(parseFloat(lon));
+      return la < 0.01 && lo < 0.01;
+    };
+    const arcs = allArcs
+      .filter(a => a.thread_id === thread.id)
+      .filter(a => !_isZeroSentinel(a.from_lat, a.from_lng) &&
+                   !_isZeroSentinel(a.to_lat,   a.to_lng));
 
     // secondary_locations = all story entities + arc endpoints, deduped by position.
     // Used by the globe player to pulse all relevant nodes, not just the primary.
@@ -2374,6 +2387,7 @@ async function buildSegments(narrative, threadData, allArcs, entityCoords = {}) 
     const seen = new Set();
     const addLoc = (name, lat, lon) => {
       if (lat == null || lon == null) return;
+      if (_isZeroSentinel(lat, lon)) return;
       const key = `${parseFloat(lat).toFixed(2)},${parseFloat(lon).toFixed(2)}`;
       if (!seen.has(key)) { seen.add(key); secondaryLocations.push({ name, lat: parseFloat(lat), lon: parseFloat(lon) }); }
     };

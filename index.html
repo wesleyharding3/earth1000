@@ -12462,7 +12462,7 @@ window._ytEmbedUrl = function(videoId, opts) {
     const API = window.__API || 'https://earth-wjr6.onrender.com';
     const p = new URLSearchParams({ v: videoId });
     if (opts.autoplay === false) p.set('autoplay', '0');
-    if (opts.mute === false) p.set('mute', '0');
+    if (opts.mute === true) p.set('mute', '1');
     if (opts.jsapi) p.set('jsapi', '1');
     if (opts.cc) p.set('cc', '1');
     if (Number.isFinite(opts.start) && opts.start > 0) p.set('start', String(Math.floor(opts.start)));
@@ -12472,7 +12472,7 @@ window._ytEmbedUrl = function(videoId, opts) {
   // Desktop browser: direct YouTube embed
   const p = new URLSearchParams({
     autoplay: opts.autoplay === false ? '0' : '1',
-    mute: opts.mute === false ? '0' : '1',
+    mute: opts.mute === true ? '1' : '0',
     playsinline: '1', rel: '0', modestbranding: '1', controls: '1'
   });
   if (opts.jsapi) { p.set('enablejsapi', '1'); }
@@ -39681,6 +39681,87 @@ const settingsToggle     = document.getElementById("settingsToggle");
   }
 }
 
+/* ── Per-segment source-country pie — top-left, below the title.
+   Reuses the thread detail panel's "Coverage by source country" data
+   so users can clock the geographic distribution at a glance during
+   the briefing. Hidden on non-story segments. */
+.bSegmentSourcePie {
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + 96px);
+  left: 24px;
+  z-index: 100018;
+  width: 150px;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(-8px);
+  transition: opacity 0.45s ease, transform 0.45s cubic-bezier(0.32, 0.72, 0, 1);
+  background: rgba(6, 10, 20, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 8px 10px 10px;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+.bSegmentSourcePie.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+.bSegmentSourcePieTitle {
+  font-size: 8px;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.55);
+  margin-bottom: 4px;
+  line-height: 1.2;
+}
+.bSegmentSourcePieChart {
+  width: 100%;
+  height: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.bSegmentSourcePieChart svg {
+  display: block;
+  width: auto;
+  height: 100%;
+  max-width: 100%;
+}
+.bSegmentSourcePieLegend {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 6px;
+}
+.bSegmentSourcePieLegendItem {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 9px;
+  color: rgba(255, 255, 255, 0.78);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.bSegmentSourcePieLegendDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.bSegmentSourcePieLegendName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+.bSegmentSourcePieLegendPct {
+  opacity: 0.55;
+  flex-shrink: 0;
+}
+@media (max-width: 720px) {
+  .bSegmentSourcePie { display: none; }
+}
+
 /* ── Dots meta label (Earth Briefing + date above dots) ── */
 .bDotsMeta {
   text-align: center;
@@ -39882,6 +39963,35 @@ const settingsToggle     = document.getElementById("settingsToggle");
   box-shadow: 0 8px 32px rgba(0,0,0,0.6);
 }
 .bAPCard:hover { background: rgba(255,255,255,0.07); }
+
+/* Desktop ambient article roll — slow vertical loop through all
+   segment article cards. Paused on hover so users can read and click. */
+.bAPRollViewport {
+  position: relative;
+  height: 360px;
+  width: 100%;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 28px, #000 calc(100% - 28px), transparent 100%);
+}
+.bAPRollTrack {
+  display: flex; flex-direction: column; gap: 8px;
+  animation: bAPRoll var(--bap-roll-duration, 60s) linear infinite;
+  will-change: transform;
+}
+.bAPRollViewport:hover .bAPRollTrack { animation-play-state: paused; }
+@keyframes bAPRoll {
+  from { transform: translateY(0); }
+  to   { transform: translateY(-50%); }
+}
+@media (max-width: 720px) {
+  .bAPRollViewport {
+    height: auto; overflow: visible;
+    -webkit-mask-image: none; mask-image: none;
+  }
+  .bAPRollTrack { animation: none; }
+}
+
 .bAPVideoCard { cursor: default; }
 .bAPVideoCard:hover { background: rgba(6,10,20,0.92); }
 .bAPVideoCard iframe {
@@ -40654,6 +40764,7 @@ body.ticker-active .gTickerLabel {
        [date]". Outro/keywords/summary hide it. -->
   <div class="bSegmentTitle" id="bSegmentTitle"></div>
   <div class="bSegmentCountries" id="bSegmentCountries"></div>
+  <div class="bSegmentSourcePie" id="bSegmentSourcePie" aria-hidden="true"></div>
   <div class="bFocalScrim" id="bFocalScrim"></div>
   <div class="bDotsMeta" id="bDotsMeta"></div>
   <div class="bDots" id="bDots"></div>
@@ -41148,6 +41259,107 @@ body.ticker-active .gTickerLabel {
     el.classList.add('visible');
   }
 
+  // ── Source-country pie cache (keyed by thread_id) ─────────────────────
+  // The panels endpoint computes the pie live but caches for 3h45m
+  // server-side. We add a per-page cache so segment-to-segment hops within
+  // the same briefing don't re-fetch.
+  const _sourcePieCache = new Map();
+  let _sourcePieToken = 0;
+
+  function setSegmentSourcePie(seg) {
+    const el = document.getElementById('bSegmentSourcePie');
+    if (!el) return;
+    const myToken = ++_sourcePieToken;
+    if (seg?.type !== 'story' || !seg.thread_id) {
+      el.classList.remove('visible');
+      el.innerHTML = '';
+      return;
+    }
+    const threadId = seg.thread_id;
+    const render = (panel) => {
+      if (myToken !== _sourcePieToken) return;
+      if (!panel || !window.__renderDataPanelHTML) {
+        el.classList.remove('visible');
+        el.innerHTML = '';
+        return;
+      }
+      const data = (typeof panel.data === 'string') ? JSON.parse(panel.data) : (panel.data || {});
+      const labels = Array.isArray(data.labels) ? data.labels : [];
+      const values = Array.isArray(data.series?.[0]?.values) ? data.series[0].values : [];
+      if (!labels.length || !values.length) {
+        el.classList.remove('visible');
+        el.innerHTML = '';
+        return;
+      }
+      const colors = ['#ff9940', '#60c8ff', '#9be564', '#e07be0', '#ffd266', '#ff7b7b', '#6ba6ff', '#ff9e9e', '#b58cff'];
+      // Build a square SVG so the chart fits the 80px box without empty
+      // sides — the panel renderer's 280×130 box wastes the horizontal slot.
+      const total = values.reduce((a, b) => a + (Number(b) || 0), 0) || 1;
+      let acc = 0;
+      const r = 48, cx = 50, cy = 50;
+      const slices = values.map((v, i) => {
+        const frac = (Number(v) || 0) / total;
+        if (frac <= 0) return '';
+        const a0 = acc * 2 * Math.PI - Math.PI / 2;
+        acc += frac;
+        const a1 = acc * 2 * Math.PI - Math.PI / 2;
+        const large = frac > 0.5 ? 1 : 0;
+        const x0 = cx + Math.cos(a0) * r, y0 = cy + Math.sin(a0) * r;
+        const x1 = cx + Math.cos(a1) * r, y1 = cy + Math.sin(a1) * r;
+        return `<path d="M ${cx} ${cy} L ${x0.toFixed(2)} ${y0.toFixed(2)} A ${r} ${r} 0 ${large} 1 ${x1.toFixed(2)} ${y1.toFixed(2)} Z" fill="${colors[i % colors.length]}" stroke="rgba(0,0,0,0.6)" stroke-width="0.6"/>`;
+      }).join('');
+      const svg = `<svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet">${slices}</svg>`;
+
+      const TOP_LEGEND = 4;
+      const sorted = labels.map((lab, i) => ({ lab, v: Number(values[i]) || 0, i }))
+                           .sort((a, b) => b.v - a.v);
+      const topItems = sorted.slice(0, TOP_LEGEND);
+      const restCount = Math.max(0, sorted.length - TOP_LEGEND);
+      const restSum = sorted.slice(TOP_LEGEND).reduce((s, x) => s + x.v, 0);
+      const esc = (s) => String(s ?? '').replace(/[&<>"']/g, ch => ({
+        '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+      }[ch]));
+      const legendItems = topItems.map(item => {
+        const pct = ((item.v / total) * 100).toFixed(0);
+        return `<span class="bSegmentSourcePieLegendItem">
+          <span class="bSegmentSourcePieLegendDot" style="background:${colors[item.i % colors.length]}"></span>
+          <span class="bSegmentSourcePieLegendName">${esc(item.lab)}</span>
+          <span class="bSegmentSourcePieLegendPct">${pct}%</span>
+        </span>`;
+      });
+      if (restCount > 0 && restSum > 0) {
+        const pct = ((restSum / total) * 100).toFixed(0);
+        legendItems.push(`<span class="bSegmentSourcePieLegendItem">
+          <span class="bSegmentSourcePieLegendDot" style="background:rgba(255,255,255,0.25)"></span>
+          <span class="bSegmentSourcePieLegendName">+${restCount} more</span>
+          <span class="bSegmentSourcePieLegendPct">${pct}%</span>
+        </span>`);
+      }
+
+      el.innerHTML = `
+        <div class="bSegmentSourcePieTitle">Source country</div>
+        <div class="bSegmentSourcePieChart">${svg}</div>
+        <div class="bSegmentSourcePieLegend">${legendItems.join('')}</div>
+      `;
+      el.classList.add('visible');
+    };
+
+    if (_sourcePieCache.has(threadId)) {
+      render(_sourcePieCache.get(threadId));
+      return;
+    }
+    fetch(`${API}/api/threads/${threadId}/panels`)
+      .then(r => r.ok ? r.json() : null)
+      .then(json => {
+        const panels = Array.isArray(json?.panels) ? json.panels : [];
+        const pie = panels.find(p => p?.chart_type === 'pie' &&
+          (p?.title || '').toLowerCase().includes('source country')) || null;
+        _sourcePieCache.set(threadId, pie);
+        render(pie);
+      })
+      .catch(() => render(null));
+  }
+
   // Exposed on window so the tutorial reset can tear down the briefing
   // from outside this IIFE. See www/index.html for full rationale.
   window.__closeBriefing = closeBriefing;
@@ -41179,6 +41391,11 @@ body.ticker-active .gTickerLabel {
     if (_scountries) {
       _scountries.classList.remove('visible');
       setTimeout(() => { _scountries.innerHTML = ''; }, 480);
+    }
+    const _ssourcePie = document.getElementById('bSegmentSourcePie');
+    if (_ssourcePie) {
+      _ssourcePie.classList.remove('visible');
+      setTimeout(() => { _ssourcePie.innerHTML = ''; }, 480);
     }
     if (_focalActive) endFocalVideo();
     clearArcMeshes();
@@ -41294,6 +41511,15 @@ body.ticker-active .gTickerLabel {
     );
   }
 
+  // (0, 0) is the editor's "coords not filled in" sentinel — falls in
+  // the South Atlantic, never a real entity. Renders visually near
+  // Cabo Verde / Gulf of Guinea, hence phantom arcs to those areas.
+  // Filter such endpoints out of all arc + location rendering.
+  function _isZeroSentinel(lat, lng) {
+    if (lat == null || lng == null) return false;
+    return Math.abs(lat) < 0.01 && Math.abs(lng) < 0.01;
+  }
+
   // See www/index.html for full rationale. Reveal duration shared
   // with the to-side label delay so the label "lands with the arc".
   const BRIEFING_ARC_REVEAL_SECS = 1.0;
@@ -41310,6 +41536,9 @@ body.ticker-active .gTickerLabel {
       if (arc.from_lat == null || arc.to_lat == null) return;
       const rawFromLat = arc.from_lat, rawFromLng = arc.from_lng ?? arc.from_lon ?? 0;
       const rawToLat   = arc.to_lat,   rawToLng   = arc.to_lng   ?? arc.to_lon   ?? 0;
+      // Skip arcs whose endpoints are the (0, 0) editor-empty sentinel —
+      // these produce phantom arcs to the South Atlantic.
+      if (_isZeroSentinel(rawFromLat, rawFromLng) || _isZeroSentinel(rawToLat, rawToLng)) return;
 
       const from = _toCountryCentroid(rawFromLat, rawFromLng);
       const to   = _toCountryCentroid(rawToLat,   rawToLng);
@@ -41436,6 +41665,7 @@ body.ticker-active .gTickerLabel {
       const primary   = seg.primary_city || seg.primary_country;
       const isCityPrimary = !!(seg.primary_city);
       const secondary = (seg.secondary_locations || []).filter(loc => {
+        if (_isZeroSentinel(loc.lat, loc.lon ?? loc.lng)) return false;
         if (!primary) return true;
         return Math.abs(loc.lat - primary.lat) > 0.5 || Math.abs(loc.lon - primary.lon) > 0.5;
       });
@@ -41893,6 +42123,7 @@ body.ticker-active .gTickerLabel {
     // outro/keywords/summary hide it.
     setSegmentTitle(seg);
     setSegmentCountries(seg);
+    setSegmentSourcePie(seg);
 
     // Reset globe state — always return to country view so city-view never sticks
     if (_focalActive) endFocalVideo();
@@ -42618,9 +42849,6 @@ body.ticker-active .gTickerLabel {
       if (videoId) {
         const iframe = document.createElement('iframe');
         iframe.id   = 'bVideoIframe';
-        // mute defaults to 1 so browser autoplay policy reliably permits
-        // playback regardless of gesture freshness — see www/index.html
-        // for full rationale. Unmuted via postMessage on load.
         iframe.src  = window._ytEmbedUrl(videoId, {
           jsapi: true, cc: enableCaptions !== false,
           start: startSec, end: endSec,
@@ -42897,6 +43125,24 @@ body.ticker-active .gTickerLabel {
       panel.innerHTML = cards.join('');
       if (cards.length) panel.classList.add('visible');
 
+      // Desktop ambient roll: replace the static 1-2 article cards with a
+      // slow vertical scroller that loops through the full article pool.
+      // Mobile keeps the existing static layout (already fits the viewport).
+      const isDesktopRoll = window.matchMedia('(min-width: 721px)').matches;
+      const useRoller = isDesktopRoll && articlePool.length > rotatingSlotCount;
+      if (useRoller) {
+        panel.querySelectorAll(
+          '.bAPCard:not(.bAPVideoCard):not(.bAPArticleVideoCard):not(.bAPTwitterCard)'
+        ).forEach(el => el.remove());
+        const allCardHTML = articlePool.map(makeAPCard).join('');
+        const SECONDS_PER_CARD = 4;
+        const duration = Math.max(20, articlePool.length * SECONDS_PER_CARD);
+        const wrap = document.createElement('div');
+        wrap.className = 'bAPRollViewport';
+        wrap.innerHTML = `<div class="bAPRollTrack" style="animation-duration:${duration}s">${allCardHTML}${allCardHTML}</div>`;
+        panel.appendChild(wrap);
+      }
+
       // Initialize Twitter embed if present
       const tweetCard = document.getElementById('bVideoCard');
       if (tweetCard?.dataset?.tweetUrl) {
@@ -42914,7 +43160,8 @@ body.ticker-active .gTickerLabel {
       }
 
       // Mid-segment article rotation. Same pattern as www/index.html.
-      if (articlePool.length > rotatingSlotCount) {
+      // Skipped on desktop when the rolling viewport is active.
+      if (!useRoller && articlePool.length > rotatingSlotCount) {
         const dur = getSegmentDuration(snapIdx) * 1000;
         const swapAtMs = Math.max(2000, Math.round(dur / 2));
         addBTimer(setTimeout(() => {

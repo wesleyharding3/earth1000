@@ -13569,7 +13569,7 @@ window._ytEmbedUrl = function(videoId, opts) {
   // Build common params
   const p = new URLSearchParams({
     autoplay: opts.autoplay === false ? '0' : '1',
-    mute: opts.mute === false ? '0' : '1',
+    mute: opts.mute === true ? '1' : '0',
     playsinline: '1', rel: '0', modestbranding: '1', controls: '1'
   });
   if (opts.jsapi) p.set('enablejsapi', '1');
@@ -13586,7 +13586,7 @@ window._ytEmbedUrl = function(videoId, opts) {
     const API = window.__API || 'https://earth-wjr6.onrender.com';
     const proxyP = new URLSearchParams({ v: videoId });
     if (opts.autoplay === false) proxyP.set('autoplay', '0');
-    if (opts.mute === false) proxyP.set('mute', '0');
+    if (opts.mute === true) proxyP.set('mute', '1');
     if (opts.jsapi) proxyP.set('jsapi', '1');
     if (opts.cc) proxyP.set('cc', '1');
     if (Number.isFinite(opts.start) && opts.start > 0) proxyP.set('start', String(Math.floor(opts.start)));
@@ -43026,6 +43026,138 @@ const settingsToggle     = document.getElementById("settingsToggle");
   }
 }
 
+/* ── Per-segment source-country pie — top-left, below the title.
+   Reuses the thread detail panel's "Coverage by source country" data
+   so users can clock the geographic distribution at a glance during
+   the briefing. Hidden on phone-sized layouts. */
+.bSegmentSourcePie {
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + 96px);
+  left: 24px;
+  z-index: 100018;
+  width: 150px;
+  pointer-events: none;
+  opacity: 0;
+  transform: translateY(-8px);
+  transition: opacity 0.45s ease, transform 0.45s cubic-bezier(0.32, 0.72, 0, 1);
+  background: rgba(6, 10, 20, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 8px 10px 10px;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+.bSegmentSourcePie.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+.bSegmentSourcePieTitle {
+  font-size: 8px;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.55);
+  margin-bottom: 4px;
+  line-height: 1.2;
+}
+.bSegmentSourcePieChart {
+  width: 100%;
+  height: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.bSegmentSourcePieChart svg {
+  display: block;
+  width: auto;
+  height: 100%;
+  max-width: 100%;
+}
+.bSegmentSourcePieLegend {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 6px;
+}
+.bSegmentSourcePieLegendItem {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 9px;
+  color: rgba(255, 255, 255, 0.78);
+  white-space: nowrap;
+  overflow: hidden;
+}
+.bSegmentSourcePieLegendDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.bSegmentSourcePieLegendName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+.bSegmentSourcePieLegendPct {
+  opacity: 0.55;
+  flex-shrink: 0;
+}
+@media (max-width: 720px) {
+  .bSegmentSourcePie { display: none; }
+}
+
+/* ── Per-segment mini article roll — mobile only.
+   The mobile briefing drops the desktop's left-side article roll
+   entirely (see loadArticlePanel comment for rationale). This is a
+   single-card-tall mirror that lives in the top-right corner so users
+   on phone screens still see the constituent headlines roll past. */
+.bSegmentArticleRoll {
+  display: none;
+  position: fixed;
+  top: calc(env(safe-area-inset-top, 0px) + 96px);
+  right: max(12px, env(safe-area-inset-right, 0px));
+  z-index: 100018;
+  width: 150px;
+  height: 130px;
+  pointer-events: all;
+  opacity: 0;
+  transform: translateY(-8px);
+  transition: opacity 0.45s ease, transform 0.45s cubic-bezier(0.32, 0.72, 0, 1);
+}
+.bSegmentArticleRoll.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+@media (max-width: 720px) {
+  .bSegmentArticleRoll { display: block; }
+}
+.bSARollViewport {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  border-radius: 10px;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 16px, #000 calc(100% - 16px), transparent 100%);
+  mask-image: linear-gradient(to bottom, transparent 0, #000 16px, #000 calc(100% - 16px), transparent 100%);
+}
+.bSARollTrack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  animation: bSARoll var(--bsar-duration, 32s) linear infinite;
+  will-change: transform;
+}
+.bSARollViewport:active .bSARollTrack { animation-play-state: paused; }
+@keyframes bSARoll {
+  from { transform: translateY(0); }
+  to   { transform: translateY(-50%); }
+}
+.bSegmentArticleRoll .bAPCard {
+  width: 100%;
+  flex-shrink: 0;
+}
+
 /* ── Dots meta label (Earth Briefing + date above dots) ── */
 .bDotsMeta {
   text-align: center;
@@ -44187,6 +44319,8 @@ body.ticker-active .gTickerLabel {
        over the screen). -->
   <div class="bSegmentTitle" id="bSegmentTitle"></div>
   <div class="bSegmentCountries" id="bSegmentCountries"></div>
+  <div class="bSegmentSourcePie" id="bSegmentSourcePie" aria-hidden="true"></div>
+  <div class="bSegmentArticleRoll" id="bSegmentArticleRoll" aria-hidden="true"></div>
   <div class="bFocalScrim" id="bFocalScrim"></div>
   <div class="bDotsMeta" id="bDotsMeta"></div>
   <div class="bDots" id="bDots"></div>
@@ -44770,6 +44904,134 @@ body.ticker-active .gTickerLabel {
     el.classList.add('visible');
   }
 
+  // ── Per-segment mini article roll (mobile only) ──────────────────────
+  // Renders the segment's article pool as a vertically-rolling single-card
+  // viewport in the top-right corner. The mobile briefing has no left-side
+  // article roll (see loadArticlePanel for rationale), so this is the only
+  // place phone users see the segment's constituent headlines surface.
+  let _articleRollToken = 0;
+  function setSegmentArticleRoll(articles, seg) {
+    const el = document.getElementById('bSegmentArticleRoll');
+    if (!el) return;
+    const myToken = ++_articleRollToken;
+    if (seg?.type !== 'story' || !Array.isArray(articles) || !articles.length) {
+      el.classList.remove('visible');
+      el.innerHTML = '';
+      return;
+    }
+    if (myToken !== _articleRollToken) return;
+    const cardsHTML = articles.map(makeAPCard).join('');
+    // Duplicate the card list so the -50% translateY loop is seamless.
+    const SECONDS_PER_CARD = 5;
+    const duration = Math.max(18, articles.length * SECONDS_PER_CARD);
+    el.innerHTML =
+      `<div class="bSARollViewport">` +
+        `<div class="bSARollTrack" style="animation-duration:${duration}s">` +
+          cardsHTML + cardsHTML +
+        `</div>` +
+      `</div>`;
+    el.classList.add('visible');
+  }
+
+  // ── Source-country pie cache (keyed by thread_id) ─────────────────────
+  // The panels endpoint computes the pie live but caches for 3h45m
+  // server-side. We add a per-page cache so segment-to-segment hops within
+  // the same briefing don't re-fetch.
+  const _sourcePieCache = new Map();
+  let _sourcePieToken = 0;
+
+  function setSegmentSourcePie(seg) {
+    const el = document.getElementById('bSegmentSourcePie');
+    if (!el) return;
+    const myToken = ++_sourcePieToken;
+    if (seg?.type !== 'story' || !seg.thread_id) {
+      el.classList.remove('visible');
+      el.innerHTML = '';
+      return;
+    }
+    const threadId = seg.thread_id;
+    const render = (panel) => {
+      if (myToken !== _sourcePieToken) return;
+      if (!panel) {
+        el.classList.remove('visible');
+        el.innerHTML = '';
+        return;
+      }
+      const data = (typeof panel.data === 'string') ? JSON.parse(panel.data) : (panel.data || {});
+      const labels = Array.isArray(data.labels) ? data.labels : [];
+      const values = Array.isArray(data.series?.[0]?.values) ? data.series[0].values : [];
+      if (!labels.length || !values.length) {
+        el.classList.remove('visible');
+        el.innerHTML = '';
+        return;
+      }
+      const colors = ['#ff9940', '#60c8ff', '#9be564', '#e07be0', '#ffd266', '#ff7b7b', '#6ba6ff', '#ff9e9e', '#b58cff'];
+      const total = values.reduce((a, b) => a + (Number(b) || 0), 0) || 1;
+      let acc = 0;
+      const r = 48, cx = 50, cy = 50;
+      const slices = values.map((v, i) => {
+        const frac = (Number(v) || 0) / total;
+        if (frac <= 0) return '';
+        const a0 = acc * 2 * Math.PI - Math.PI / 2;
+        acc += frac;
+        const a1 = acc * 2 * Math.PI - Math.PI / 2;
+        const large = frac > 0.5 ? 1 : 0;
+        const x0 = cx + Math.cos(a0) * r, y0 = cy + Math.sin(a0) * r;
+        const x1 = cx + Math.cos(a1) * r, y1 = cy + Math.sin(a1) * r;
+        return `<path d="M ${cx} ${cy} L ${x0.toFixed(2)} ${y0.toFixed(2)} A ${r} ${r} 0 ${large} 1 ${x1.toFixed(2)} ${y1.toFixed(2)} Z" fill="${colors[i % colors.length]}" stroke="rgba(0,0,0,0.6)" stroke-width="0.6"/>`;
+      }).join('');
+      const svg = `<svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet">${slices}</svg>`;
+
+      const TOP_LEGEND = 4;
+      const sorted = labels.map((lab, i) => ({ lab, v: Number(values[i]) || 0, i }))
+                           .sort((a, b) => b.v - a.v);
+      const topItems = sorted.slice(0, TOP_LEGEND);
+      const restCount = Math.max(0, sorted.length - TOP_LEGEND);
+      const restSum = sorted.slice(TOP_LEGEND).reduce((s, x) => s + x.v, 0);
+      const esc = (s) => String(s ?? '').replace(/[&<>"']/g, ch => ({
+        '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+      }[ch]));
+      const legendItems = topItems.map(item => {
+        const pct = ((item.v / total) * 100).toFixed(0);
+        return `<span class="bSegmentSourcePieLegendItem">
+          <span class="bSegmentSourcePieLegendDot" style="background:${colors[item.i % colors.length]}"></span>
+          <span class="bSegmentSourcePieLegendName">${esc(item.lab)}</span>
+          <span class="bSegmentSourcePieLegendPct">${pct}%</span>
+        </span>`;
+      });
+      if (restCount > 0 && restSum > 0) {
+        const pct = ((restSum / total) * 100).toFixed(0);
+        legendItems.push(`<span class="bSegmentSourcePieLegendItem">
+          <span class="bSegmentSourcePieLegendDot" style="background:rgba(255,255,255,0.25)"></span>
+          <span class="bSegmentSourcePieLegendName">+${restCount} more</span>
+          <span class="bSegmentSourcePieLegendPct">${pct}%</span>
+        </span>`);
+      }
+
+      el.innerHTML = `
+        <div class="bSegmentSourcePieTitle">Source country</div>
+        <div class="bSegmentSourcePieChart">${svg}</div>
+        <div class="bSegmentSourcePieLegend">${legendItems.join('')}</div>
+      `;
+      el.classList.add('visible');
+    };
+
+    if (_sourcePieCache.has(threadId)) {
+      render(_sourcePieCache.get(threadId));
+      return;
+    }
+    fetch(`${API}/api/threads/${threadId}/panels`)
+      .then(r => r.ok ? r.json() : null)
+      .then(json => {
+        const panels = Array.isArray(json?.panels) ? json.panels : [];
+        const pie = panels.find(p => p?.chart_type === 'pie' &&
+          (p?.title || '').toLowerCase().includes('source country')) || null;
+        _sourcePieCache.set(threadId, pie);
+        render(pie);
+      })
+      .catch(() => render(null));
+  }
+
   // Exposed on window so the tutorial reset (and any other surface
   // that wants to forcibly tear down the briefing) can call it from
   // outside this IIFE without dispatching a synthetic Escape keypress.
@@ -44814,6 +45076,16 @@ body.ticker-active .gTickerLabel {
     if (_scountries) {
       _scountries.classList.remove('visible');
       setTimeout(() => { _scountries.innerHTML = ''; }, 480);
+    }
+    const _ssourcePie = document.getElementById('bSegmentSourcePie');
+    if (_ssourcePie) {
+      _ssourcePie.classList.remove('visible');
+      setTimeout(() => { _ssourcePie.innerHTML = ''; }, 480);
+    }
+    const _sarticleRoll = document.getElementById('bSegmentArticleRoll');
+    if (_sarticleRoll) {
+      _sarticleRoll.classList.remove('visible');
+      setTimeout(() => { _sarticleRoll.innerHTML = ''; }, 480);
     }
     if (_focalActive) endFocalVideo();
     clearArcMeshes();
@@ -44931,6 +45203,14 @@ body.ticker-active .gTickerLabel {
     );
   }
 
+  // (0, 0) is the editor's "coords not filled in" sentinel — falls in
+  // the South Atlantic, never a real entity. Renders visually near
+  // Cabo Verde / Gulf of Guinea, hence phantom arcs to those areas.
+  function _isZeroSentinel(lat, lng) {
+    if (lat == null || lng == null) return false;
+    return Math.abs(lat) < 0.01 && Math.abs(lng) < 0.01;
+  }
+
   // Reveal duration shared by buildBriefingArc + the to-endpoint label
   // delay below. Constants aligned: when the arc's reveal animation
   // finishes (uRevealEnd hits 1.0), the to-side label card pops, so the
@@ -44952,6 +45232,9 @@ body.ticker-active .gTickerLabel {
       if (arc.from_lat == null || arc.to_lat == null) return;
       const rawFromLat = arc.from_lat, rawFromLng = arc.from_lng ?? arc.from_lon ?? 0;
       const rawToLat   = arc.to_lat,   rawToLng   = arc.to_lng   ?? arc.to_lon   ?? 0;
+      // Skip arcs whose endpoints are the (0, 0) editor-empty sentinel —
+      // these produce phantom arcs to the South Atlantic.
+      if (_isZeroSentinel(rawFromLat, rawFromLng) || _isZeroSentinel(rawToLat, rawToLng)) return;
 
       // Always shoot arcs from/to country centroids
       const from = _toCountryCentroid(rawFromLat, rawFromLng);
@@ -45115,6 +45398,7 @@ body.ticker-active .gTickerLabel {
       const primary   = seg.primary_city || seg.primary_country;
       const isCityPrimary = !!(seg.primary_city);
       const secondary = (seg.secondary_locations || []).filter(loc => {
+        if (_isZeroSentinel(loc.lat, loc.lon ?? loc.lng)) return false;
         if (!primary) return true;
         return Math.abs(loc.lat - primary.lat) > 0.5 || Math.abs(loc.lon - primary.lon) > 0.5;
       });
@@ -45677,6 +45961,11 @@ body.ticker-active .gTickerLabel {
     // outro/keywords/summary hide it (the recap card takes over).
     setSegmentTitle(seg);
     setSegmentCountries(seg);
+    setSegmentSourcePie(seg);
+    // Clear the previous segment's article roll immediately so it doesn't
+    // linger between the new title appearing and loadArticlePanel's fetch
+    // resolving. Re-populated below from inside loadArticlePanel.
+    setSegmentArticleRoll([], seg);
 
     // Reset globe state — always return to country view so city-view never sticks
     if (_focalActive) endFocalVideo();
@@ -46596,14 +46885,9 @@ body.ticker-active .gTickerLabel {
         const iframe = document.createElement('iframe');
         iframe.id   = 'bVideoIframe';
         // start=startSec pre-positions the playhead so we don't flash
-        // 0:00 before seekTo lands. mute defaults to 1 — browser
-        // autoplay policy reliably permits muted autoplay regardless of
-        // gesture freshness, but unmuted autoplay was being blocked
-        // (gesture from "Start Briefing" can be stale by the time the
-        // focal moment fires N segments in), leaving the player loaded
-        // but paused. We load muted then unmute via postMessage on
-        // load — the canonical YT unmuted-autoplay pattern. The
-        // sub-100ms muted-frame is acceptable.
+        // 0:00 before seekTo lands. Unmuted autoplay relies on the
+        // user gesture from "Start Briefing" — postMessage unMute
+        // after load is kept as a safety net.
         iframe.src  = window._ytEmbedUrl(videoId, {
           jsapi: true, cc: enableCaptions !== false,
           start: startSec, end: endSec,
@@ -46996,6 +47280,10 @@ body.ticker-active .gTickerLabel {
       // The desktop build (index.html) keeps the article cards.
       panel.innerHTML = cards.join('');
       if (cards.length) panel.classList.add('visible');
+
+      // Top-right miniature article roll — mobile-only mirror of the
+      // desktop left-side roll. CSS hides on >720px viewports.
+      setSegmentArticleRoll(articlePool, seg);
 
       // Initialize Twitter embed if present
       const tweetCard = document.getElementById('bVideoCard');
