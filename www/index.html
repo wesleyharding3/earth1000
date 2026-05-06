@@ -43142,12 +43142,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
   body.briefing-active #pageNav,
   body.briefing-active #privacyFooter { display: none !important; }
   body.briefing-active .bControlsWrap {
-    bottom: calc(env(safe-area-inset-bottom, 0px) + var(--app-bottom-inset, 0px) + 0px);
+    bottom: calc(env(safe-area-inset-bottom, 0px) + var(--app-bottom-inset, 0px) - 6px);
   }
   body.briefing-active .bSegmentSourcePie,
   body.briefing-active .bSegmentArticleRoll {
     top: auto;
-    bottom: calc(env(safe-area-inset-bottom, 0px) + var(--app-bottom-inset, 0px) + 72px);
+    bottom: calc(env(safe-area-inset-bottom, 0px) + var(--app-bottom-inset, 0px) + 56px);
   }
   body.briefing-active .bSegmentSourcePie { transform: translateY(8px); }
   body.briefing-active .bSegmentArticleRoll { transform: translateY(8px); }
@@ -43919,12 +43919,19 @@ body.ticker-active .gTickerLabel {
   border-radius: 10px; overflow: hidden;
   box-shadow: 0 8px 32px rgba(0,0,0,0.6);
   opacity: 0; transition: opacity 0.5s ease 0.3s;
-  pointer-events: all;
+  /* pointer-events: none by default so the invisible (opacity: 0) wrap
+     doesn't block clicks on whatever sits behind it on the threads/news
+     pages. The 320x180-ish element lives at right-center of the screen
+     and was eating clicks for the cluster panel close button and any
+     thread card that happened to land in that rectangle. Re-enabled to
+     'all' on .visible so the embedded video + meta bar stay clickable
+     while a story-segment video is actually playing. */
+  pointer-events: none;
   display: flex; flex-direction: column;
   background: rgba(6,10,20,0.95);
   border: 1px solid rgba(255,255,255,0.1);
 }
-.bVideoWrap.visible { opacity: 1; }
+.bVideoWrap.visible { opacity: 1; pointer-events: all; }
 .bVideoWrap iframe {
   width: 100%; aspect-ratio: 16/9;
   display: block; border: none;
@@ -43978,6 +43985,23 @@ body.ticker-active .gTickerLabel {
   min-height: 1em;
 }
 .bCaptions.visible { opacity: 1; }
+
+/* On mobile the captions move from above-the-controls to below-the-
+   country-chip-row, sitting just under the title block and above the
+   globe. The bottom-of-screen real estate is now claimed by the pie
+   graph and article roll, so captions take the top slot. The country
+   chip row's top edge is safe-area-top + 44px and chips are ~30px
+   tall with padding, so we anchor the caption block at safe-area-top
+   + 80px. */
+@media (max-width: 720px) {
+  .bCaptions {
+    top: calc(env(safe-area-inset-top, 0px) + 80px);
+    bottom: auto;
+    max-width: calc(100vw - 32px);
+    font-size: 13px;
+    padding: 6px 12px;
+  }
+}
 /* Character-by-character typewriter — each <span> is one glyph */
 .bCapChar {
   display: inline;
@@ -45607,7 +45631,20 @@ body.ticker-active .gTickerLabel {
       // persist into non-matching segments).
       {
         const isoSet = new Set();
-        const addIso = (iso) => { if (iso) isoSet.add(String(iso).toUpperCase()); };
+        // Add BOTH upper- and lowercase forms. The polygon layer's c.key is
+        // the ISO-2 (uppercase, e.g. "US") for countries with an ISO, but
+        // the LOWERCASED NAME for polygons whose GeoJSON has no/-99 ISO
+        // (Western Sahara, Kosovo, Somaliland) and for polygonless micro-
+        // states. Storing only the uppercase form caused those to silently
+        // miss the `flowHighlightKeys.has(c.key)` check at repaint, leaving
+        // some flow-arc endpoints unlit. Storing both forms makes the
+        // comparison case-insensitive without changing the repaint loop.
+        const addIso = (iso) => {
+          if (!iso) return;
+          const s = String(iso);
+          isoSet.add(s.toUpperCase());
+          isoSet.add(s.toLowerCase());
+        };
 
         // 1. Live computation from current editable fields. This is the
         //    source of truth — matches whatever the editor saved.
@@ -45692,17 +45729,19 @@ body.ticker-active .gTickerLabel {
           addIso(_findIso(loc.name) || _nearestIso(loc.lat, loc.lon));
         }
 
-        // 2. ONLY consult the pre-computed arrays as a fallback when the
-        //    live computation produced nothing — covers very old briefings
-        //    that lack flow_arcs entirely (everything was in arc_isos).
-        //    For modern briefings with editable arcs, step 1 already
-        //    captured every country we want highlighted.
-        if (!isoSet.size) {
-          addIso(seg.primary_country_iso);
-          addIso(seg.primary_city_country_iso);
-          (seg.secondary_country_isos || []).forEach(addIso);
-          (seg.flow_arc_isos || []).forEach(addIso);
-        }
+        // 2. SUPPLEMENT with pre-computed arrays (server-stamped ISOs).
+        //    Was previously a fallback that only ran when the live
+        //    computation returned an empty set — but in practice the
+        //    live computation could return PARTIAL coverage (e.g. only
+        //    the from-side of an arc resolved because the to-side's
+        //    name didn't match polyC.lowerName), and the fallback never
+        //    fired to fill in the gap. Always supplementing is safe
+        //    because the editor's collectEditedSegments now drops these
+        //    arrays on save when they'd be stale.
+        addIso(seg.primary_country_iso);
+        addIso(seg.primary_city_country_iso);
+        (seg.secondary_country_isos || []).forEach(addIso);
+        (seg.flow_arc_isos || []).forEach(addIso);
 
         if (window.__flowHighlightCountries) {
           window.__flowHighlightCountries(isoSet);
@@ -49190,7 +49229,7 @@ body.ticker-active .gTickerLabel {
           const res = await fetch(`${BASE}/api/articles/by-ids?ids=${ids.slice(0, 30).join(",")}`);
           if (res.ok) articles = await res.json();
         } else if (threadId) {
-          const res = await fetch(`${BASE}/api/articles/by-thread?thread_id=${threadId}&limit=30`);
+          const res = await fetch(`${BASE}/api/articles/by-thread?thread_id=${threadId}&limit=100`);
           if (res.ok) articles = await res.json();
         }
         return Array.isArray(articles) ? articles : [];

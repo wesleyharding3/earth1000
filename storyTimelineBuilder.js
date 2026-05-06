@@ -1508,6 +1508,25 @@ async function runArticleUmbrellaPhase(metrics, elapsed) {
   let _consecutiveConnErrs = 0;
   const _CONN_ERR_BAIL_THRESHOLD = 3;
 
+  // Dedicated client with extended statement_timeout for the candidate
+  // scan. The default pool timeout (45s, db.js:40) was killing the
+  // UNION pre-filter query for the largest Lines (Ukraine-Russia,
+  // Israel-Lebanon, Climate, BRICS, Iran-US-Israel) whose nation +
+  // keyword umbrellas span thousands of articles in the 7-day window.
+  // Once umbrella fails, last_updated_at never bumps and the cooldown
+  // pass falsely flips the Line to cooling. Background cron, no user
+  // waiting, so 5 min is fine here. Same pattern as keywordCron.js:101.
+  let _umbClient = null;
+  try {
+    _umbClient = await pool.connect();
+    await _umbClient.query('SET statement_timeout = 300000');
+  } catch (acqErr) {
+    if (_umbClient) { try { _umbClient.release(); } catch (_) {} _umbClient = null; }
+    console.warn(`   ⚠ umbrella phase: could not acquire dedicated client (${acqErr.message}) — skipping`);
+    return;
+  }
+
+  try {
   // 3. For each Line, pre-filter candidate articles via SQL (by nation OR
   //    keyword overlap), then score + attach the ones that clear threshold.
   for (const tl of lines) {
@@ -1542,7 +1561,7 @@ async function runArticleUmbrellaPhase(metrics, elapsed) {
       // Always emit both branches — empty arrays short-circuit via the
       // cardinality() guard so Postgres never scans when that branch has
       // no keys, but the $2/$3 type annotations stay valid either way.
-      const { rows: candidates } = await pool.query(`
+      const { rows: candidates } = await _umbClient.query(`
         SELECT DISTINCT ON (id) id, title, published_at, iso_code
         FROM (
           SELECT a.id, a.title, a.published_at, co.iso_code
@@ -1581,7 +1600,7 @@ async function runArticleUmbrellaPhase(metrics, elapsed) {
       const ctxMap = await loadContextForArticles(candIds);
 
       // 5. Batch-load article_keywords for these candidates
-      const { rows: akRows } = await pool.query(`
+      const { rows: akRows } = await _umbClient.query(`
         SELECT article_id, COALESCE(normalized_keyword, LOWER(keyword)) AS kw
         FROM article_keywords
         WHERE article_id = ANY($1::int[])
@@ -1698,6 +1717,9 @@ async function runArticleUmbrellaPhase(metrics, elapsed) {
         _consecutiveConnErrs = 0;
       }
     }
+  }
+  } finally {
+    try { _umbClient.release(); } catch (_) {}
   }
 
   console.log(

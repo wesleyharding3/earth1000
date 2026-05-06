@@ -7839,13 +7839,13 @@ app.get("/api/articles/by-thread", async (req, res) => {
   try {
     const threadId = parseInt(req.query.thread_id, 10);
     if (!threadId) return res.status(400).json({ error: "thread_id required" });
-    const limit = Math.min(parseInt(req.query.limit, 10) || 20, 40);
+    const limit = Math.min(parseInt(req.query.limit, 10) || 20, 100);
     // 3h45m TTL — same cadence as /api/threads/:id/articles and the
     // thread builder + prewarm-threads cron. The Sources tab on the
     // thread detail panel calls THIS endpoint (not /api/threads/:id
     // /articles), so without a cache here every Sources view was a
     // cold DB read. prewarm-threads now warms this exact URL shape
-    // (limit=30) for the top N threads so opening Sources is instant
+    // (limit=100) for the top N threads so opening Sources is instant
     // for any pre-warmed thread.
     const cacheKey = `articles/by-thread:${threadId}:${limit}`;
     const rows = await ttlCached(cacheKey, 13_500_000, async () => {
@@ -7870,7 +7870,7 @@ app.get("/api/articles/by-thread", async (req, res) => {
         LEFT JOIN countries co ON co.id = a.country_id
         LEFT JOIN cities ci ON ci.id = a.city_id
         WHERE sta.thread_id = $1
-        ORDER BY sta.is_anchor DESC, sta.relevance_score DESC, a.published_at DESC
+        ORDER BY a.published_at DESC, sta.is_anchor DESC, sta.relevance_score DESC
         LIMIT $2
       `, [threadId, limit]);
       return r;

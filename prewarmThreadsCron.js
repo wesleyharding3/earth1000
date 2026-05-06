@@ -126,14 +126,14 @@ const PER_THREAD_ENDPOINTS = [
   { label: 'timeline', path: 'timeline' },
   { label: 'panels',   path: 'panels'   },
   { label: 'flows',    path: '__flows'  },     // /api/flows/thread/:id
-  { label: 'sources',  path: '__sources' },    // /api/articles/by-thread?thread_id=:id&limit=30
+  { label: 'sources',  path: '__sources' },    // /api/articles/by-thread?thread_id=:id&limit=100
 ];
 
 async function processThread(t) {
   // Run all sub-requests in parallel for this thread — different routes,
   // no pool collision (server enforces per-route timeouts). The 'sources'
   // entry warms the EXACT URL the Sources tab on the thread detail panel
-  // calls (/api/articles/by-thread?thread_id=X&limit=30 — see
+  // calls (/api/articles/by-thread?thread_id=X&limit=100 — see
   // www/index.html:48400). Without this entry the thread detail panel's
   // Sources tab cold-reads on every open even when /api/threads/:id
   // /articles is warm — they're separate endpoints with separate caches.
@@ -142,7 +142,7 @@ async function processThread(t) {
     if (ep.path === '__flows') {
       url = `${API_URL}/api/flows/thread/${t.id}`;
     } else if (ep.path === '__sources') {
-      url = `${API_URL}/api/articles/by-thread?thread_id=${t.id}&limit=30`;
+      url = `${API_URL}/api/articles/by-thread?thread_id=${t.id}&limit=100`;
     } else {
       url = `${API_URL}/api/threads/${t.id}/${ep.path}`;
     }
