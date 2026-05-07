@@ -13535,16 +13535,34 @@ window.fmtDate = function(d) {
   // node connected into duckGain by setLayer().
 
   function makeDrone() {
-    // Five-voice Am7 drone (A2 + C3 + E3 + A3 + G4) routed through a
-    // 4-stage all-pass phaser, lowpass, and a parallel send to the
-    // shared reverb bus. Per-voice slow LFOs keep the timbre breathing.
+    // Five-voice Am7 drone (A2 + C3 + E3 + A3 + G4) — underwater feel
+    // via 4-stage phaser → modulated chorus delay → heavy lowpass →
+    // high-shelf cut → random swell → out, plus an independent twinkle
+    // scheduler that fires upper Am7 chord tones with heavy reverb.
     const out = ctx.createGain();
     out.gain.value = 0.0001;
 
     const filter = ctx.createBiquadFilter();
     filter.type = 'lowpass';
-    filter.frequency.value = 1100;
+    filter.frequency.value = 850; // pushed lower for submerged feel
     filter.Q.value = 0.7;
+
+    // High-shelf cut above 3.5kHz — kills any residual brightness so
+    // the timbre sits "underwater" rather than dry.
+    const hishelf = ctx.createBiquadFilter();
+    hishelf.type = 'highshelf';
+    hishelf.frequency.value = 3500;
+    hishelf.gain.value = -10;
+
+    // Chorus delay — modulated DelayNode produces the warbly water-
+    // bend feel. 12ms base, swung ±5ms by a 0.4Hz LFO.
+    const wDelay = ctx.createDelay(0.05);
+    wDelay.delayTime.value = 0.012;
+    const wDelayLfo = ctx.createOscillator();
+    wDelayLfo.frequency.value = 0.4;
+    const wDelayLfoGain = ctx.createGain();
+    wDelayLfoGain.gain.value = 0.005;
+    wDelayLfo.connect(wDelayLfoGain).connect(wDelay.delayTime);
 
     const filtLfo = ctx.createOscillator();
     filtLfo.frequency.value = 0.07;
@@ -13641,14 +13659,53 @@ window.fmtDate = function(d) {
     const swell = ctx.createGain();
     swell.gain.value = 1.0;
 
-    aps[PH_STAGES - 1].connect(filter);
-    filter.connect(swell);
+    // Chain: phaser → chorus-delay → lowpass → high-shelf cut → swell
+    aps[PH_STAGES - 1].connect(wDelay);
+    wDelay.connect(filter);
+    filter.connect(hishelf);
+    hishelf.connect(swell);
     swell.connect(out);
 
     if (reverbIn) {
       const sendGain = ctx.createGain();
       sendGain.gain.value = 0.35;
       swell.connect(sendGain).connect(reverbIn);
+    }
+
+    // ── Twinkles ── Independent of swell. Random short triangle bursts
+    // at upper Am7 chord tones (A5/C6/E6/G6) with ±5¢ detune wander,
+    // heavy reverb send so each blooms into the tail. Interval 6–14s.
+    const TWINKLE_NOTES = [880.00, 1046.50, 1318.51, 1567.98]; // A5 C6 E6 G6
+    const twinkleBus = ctx.createGain();
+    twinkleBus.gain.value = 1.0;
+    twinkleBus.connect(out);
+    if (reverbIn) {
+      const tSend = ctx.createGain();
+      tSend.gain.value = 0.85;
+      twinkleBus.connect(tSend).connect(reverbIn);
+    }
+    let twinkleTimer = null;
+    let twinkleRunning = false;
+    function fireTwinkle() {
+      if (!twinkleRunning || !ctx) return;
+      const now = ctx.currentTime;
+      const noteHz = TWINKLE_NOTES[Math.floor(Math.random() * TWINKLE_NOTES.length)];
+      const detuneCents = (Math.random() - 0.5) * 10;
+      const vol = 0.04 + Math.random() * 0.03;
+      const decay = 0.30 + Math.random() * 0.15;
+      const osc = ctx.createOscillator();
+      osc.type = 'triangle';
+      osc.frequency.value = noteHz;
+      osc.detune.value = detuneCents;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, now);
+      g.gain.exponentialRampToValueAtTime(vol, now + 0.005);
+      g.gain.exponentialRampToValueAtTime(0.0001, now + decay);
+      osc.connect(g).connect(twinkleBus);
+      osc.start(now);
+      osc.stop(now + decay + 0.05);
+      const nextSec = 6 + Math.random() * 8;
+      twinkleTimer = setTimeout(fireTwinkle, nextSec * 1000);
     }
 
     // Random swell scheduler — picks a new target between 0.6× and 1.2×
@@ -13671,47 +13728,115 @@ window.fmtDate = function(d) {
     return {
       gain: out,
       start(when) {
-        filtLfo.start(when); phLfo.start(when);
+        filtLfo.start(when); phLfo.start(when); wDelayLfo.start(when);
         v1lfo.start(when); v2lfo.start(when); v3lfo.start(when); v5lfo.start(when);
         v1.start(when); v2.start(when); v3.start(when); v4.start(when); v5.start(when);
         swellRunning = true;
         swellTimer = setTimeout(scheduleSwell, 1500);
+        twinkleRunning = true;
+        twinkleTimer = setTimeout(fireTwinkle, 4000 + Math.random() * 4000);
       },
       stop(when) {
         swellRunning = false;
-        if (swellTimer) { clearTimeout(swellTimer); swellTimer = null; }
+        twinkleRunning = false;
+        if (swellTimer)   { clearTimeout(swellTimer);   swellTimer = null; }
+        if (twinkleTimer) { clearTimeout(twinkleTimer); twinkleTimer = null; }
         try { v1.stop(when); v2.stop(when); v3.stop(when); v4.stop(when); v5.stop(when); } catch(_){}
-        try { filtLfo.stop(when); phLfo.stop(when);
+        try { filtLfo.stop(when); phLfo.stop(when); wDelayLfo.stop(when);
               v1lfo.stop(when); v2lfo.stop(when); v3lfo.stop(when); v5lfo.stop(when); } catch(_){}
       }
     };
   }
 
   function makeSub() {
-    // 808-style sub at A1 with subtle AM tremolo (heart-rate hint)
+    // 808-style sub: A1 fundamental + A2 octave fed through a tanh
+    // soft-clip waveshaper for harmonic warmth, then a slow filter
+    // sweep (200–400Hz, 0.18Hz) and an independent random swell so
+    // the sub breathes on its own clock relative to the drone.
     const out = ctx.createGain();
     out.gain.value = 0.0001;
 
-    const osc = ctx.createOscillator();
-    osc.type = 'sine';
-    osc.frequency.value = SUB_HZ;
-
+    // A1 fundamental with AM tremolo (heart-rate hint)
+    const osc1 = ctx.createOscillator();
+    osc1.type = 'sine';
+    osc1.frequency.value = SUB_HZ;
     const trem = ctx.createOscillator();
-    trem.frequency.value = 0.25;        // 4-second cycle
+    trem.frequency.value = 0.25;
     const tremDepth = ctx.createGain();
     tremDepth.gain.value = 0.18;
     trem.connect(tremDepth);
+    const osc1Gain = ctx.createGain();
+    osc1Gain.gain.value = 0.42;
+    tremDepth.connect(osc1Gain.gain);
+    osc1.connect(osc1Gain);
 
-    const oscGain = ctx.createGain();
-    oscGain.gain.value = 0.55;
-    tremDepth.connect(oscGain.gain);    // AM modulation on top of base
+    // A2 octave for harmonic body — quieter, no tremolo
+    const osc2 = ctx.createOscillator();
+    osc2.type = 'sine';
+    osc2.frequency.value = SUB_HZ * 2; // 110Hz
+    const osc2Gain = ctx.createGain();
+    osc2Gain.gain.value = 0.10;
+    osc2.connect(osc2Gain);
 
-    osc.connect(oscGain).connect(out);
+    // Soft-clip waveshaper — tanh curve adds gentle saturation harmonics
+    const shaper = ctx.createWaveShaper();
+    const N = 1024;
+    const curve = new Float32Array(N);
+    for (let i = 0; i < N; i++) {
+      const x = (i / (N - 1)) * 2 - 1;
+      curve[i] = Math.tanh(x * 1.3);
+    }
+    shaper.curve = curve;
+    shaper.oversample = '2x';
+
+    osc1Gain.connect(shaper);
+    osc2Gain.connect(shaper);
+
+    // Slow filter sweep so the sub's harmonic content "pumps" gently
+    const subFilt = ctx.createBiquadFilter();
+    subFilt.type = 'lowpass';
+    subFilt.frequency.value = 280;
+    subFilt.Q.value = 0.9;
+    const subFiltLfo = ctx.createOscillator();
+    subFiltLfo.frequency.value = 0.18;
+    const subFiltLfoGain = ctx.createGain();
+    subFiltLfoGain.gain.value = 100; // sweeps roughly 180–380Hz
+    subFiltLfo.connect(subFiltLfoGain).connect(subFilt.frequency);
+
+    // Independent swell — different range from the drone (0.7–1.0)
+    // and different timing so the two layers breathe out of phase.
+    const swell = ctx.createGain();
+    swell.gain.value = 1.0;
+
+    shaper.connect(subFilt).connect(swell).connect(out);
+
+    let swellTimer = null;
+    let swellRunning = false;
+    function scheduleSwell() {
+      if (!swellRunning || !ctx) return;
+      const now = ctx.currentTime;
+      const target = 0.70 + Math.random() * 0.30;
+      const rampSec = 5 + Math.random() * 8;
+      const holdSec = Math.random() * 3;
+      swell.gain.cancelScheduledValues(now);
+      swell.gain.setValueAtTime(swell.gain.value, now);
+      swell.gain.linearRampToValueAtTime(target, now + rampSec);
+      swellTimer = setTimeout(scheduleSwell, (rampSec + holdSec) * 1000);
+    }
 
     return {
       gain: out,
-      start(when) { trem.start(when); osc.start(when); },
-      stop(when)  { try { osc.stop(when); trem.stop(when); } catch(_){} }
+      start(when) {
+        trem.start(when); subFiltLfo.start(when);
+        osc1.start(when); osc2.start(when);
+        swellRunning = true;
+        swellTimer = setTimeout(scheduleSwell, 2200);
+      },
+      stop(when)  {
+        swellRunning = false;
+        if (swellTimer) { clearTimeout(swellTimer); swellTimer = null; }
+        try { osc1.stop(when); osc2.stop(when); trem.stop(when); subFiltLfo.stop(when); } catch(_){}
+      }
     };
   }
 
