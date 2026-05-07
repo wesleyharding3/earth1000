@@ -115,11 +115,40 @@ async function computeTrending({ limit = 50, stopwords = [] } = {}) {
     await refreshMV(client, 'keyword_trending_global');
     const swTable = await ensureStopwordsTable(client, stopwords);
     const t0 = Date.now();
+    // Translation pass mirrors server.js's live-fallback query (the path
+    // that runs on cache miss and previously was the only one that
+    // applied translation). The cron used to write raw `m.keyword` to
+    // the cache, so the cache served untranslated keywords until it
+    // happened to be evicted and the live-fallback wrote translated
+    // rows through. Now the cron writes translated rows directly so
+    // both paths are consistent.
+    //
+    // Stopwords filter runs TWICE: once on the raw form (saves work
+    // and matches existing per-language stopword entries like Russian
+    // "понедельник") and once on the translated form (catches cases
+    // where a non-English word translates to an English stopword like
+    // "monday"). Both reuse the same materialised temp table.
+    //
+    // GROUP BY COALESCE merges language variants — "выборы" + "election"
+    // → single "election" row with summed mentions. days_active is
+    // collapsed via MAX (approximation; exact COUNT(DISTINCT date) across
+    // merged variants would require a third pass over keyword_daily_stats).
     const { rows } = await client.query(`
-      SELECT m.keyword, m.mentions, m.days_active
-      FROM public.keyword_trending_global m
-      WHERE NOT EXISTS (SELECT 1 FROM ${swTable} sw WHERE sw.word = m.keyword)
-      ORDER BY m.mentions DESC, m.keyword ASC
+      WITH translated AS (
+        SELECT
+          COALESCE(kt.normalized_keyword, m.keyword) AS keyword,
+          SUM(m.mentions)::bigint                    AS mentions,
+          MAX(m.days_active)::int                    AS days_active
+        FROM public.keyword_trending_global m
+        LEFT JOIN public.keyword_translations kt
+          ON kt.original_keyword = m.keyword
+        WHERE NOT EXISTS (SELECT 1 FROM ${swTable} sw WHERE sw.word = m.keyword)
+        GROUP BY COALESCE(kt.normalized_keyword, m.keyword)
+      )
+      SELECT t.keyword, t.mentions, t.days_active
+      FROM translated t
+      WHERE NOT EXISTS (SELECT 1 FROM ${swTable} sw WHERE sw.word = t.keyword)
+      ORDER BY t.mentions DESC, t.keyword ASC
       LIMIT $1
     `, [limit]);
     console.log(`[keywordCron] trending read: ${rows.length} rows in ${elapsed(t0)}`);
@@ -140,11 +169,46 @@ async function computeRising({ limit = 30, stopwords = [] } = {}) {
     await refreshMV(client, 'keyword_rising_global');
     const swTable = await ensureStopwordsTable(client, stopwords);
     const t0 = Date.now();
+    // Translation pass — see computeTrending for the rationale. Same
+    // pattern: COALESCE-join keyword_translations, GROUP BY translated
+    // form so language variants merge, double stopwords filter (raw +
+    // translated). Momentum is RECOMPUTED from the merged recent/baseline
+    // counts because two language variants merging changes the ratio:
+    // e.g. raw "election" mentions (5) + raw "выборы" mentions (3) →
+    // translated "election" mentions (8). We must recompute momentum
+    // from the merged numerator/denominator, not naively sum or average
+    // the per-variant momentum values from the MV.
+    //
+    // The 14/3 baseline-to-recent window ratio matches the MV definition
+    // (14-day baseline window, 3-day recent window) — keep this in sync
+    // with migrations/20260503_keyword_intel_materialized_views.sql.
     const { rows } = await client.query(`
-      SELECT m.keyword, m.recent_count, m.baseline_count, m.momentum
-      FROM public.keyword_rising_global m
-      WHERE NOT EXISTS (SELECT 1 FROM ${swTable} sw WHERE sw.word = m.keyword)
-      ORDER BY m.momentum DESC, m.recent_count DESC, m.keyword ASC
+      WITH translated AS (
+        SELECT
+          COALESCE(kt.normalized_keyword, m.keyword) AS keyword,
+          SUM(m.recent_count)::bigint                AS recent_count,
+          SUM(m.baseline_count)::bigint              AS baseline_count
+        FROM public.keyword_rising_global m
+        LEFT JOIN public.keyword_translations kt
+          ON kt.original_keyword = m.keyword
+        WHERE NOT EXISTS (SELECT 1 FROM ${swTable} sw WHERE sw.word = m.keyword)
+        GROUP BY COALESCE(kt.normalized_keyword, m.keyword)
+      )
+      SELECT
+        t.keyword,
+        t.recent_count,
+        t.baseline_count,
+        CASE
+          WHEN t.baseline_count = 0
+            THEN t.recent_count * 10
+          ELSE ROUND(
+            (t.recent_count::numeric / NULLIF(t.baseline_count, 0)::numeric)
+            * (14::numeric / 3::numeric) * 100
+          ) / 100
+        END AS momentum
+      FROM translated t
+      WHERE NOT EXISTS (SELECT 1 FROM ${swTable} sw WHERE sw.word = t.keyword)
+      ORDER BY momentum DESC, t.recent_count DESC, t.keyword ASC
       LIMIT $1
     `, [limit]);
     console.log(`[keywordCron] rising read: ${rows.length} rows in ${elapsed(t0)}`);
