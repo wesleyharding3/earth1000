@@ -42184,12 +42184,14 @@ body.ticker-active .gTickerLabel {
     }
     // Set briefingActive FIRST — see www/index.html for full rationale.
     window.briefingActive = true;
-    // Idempotent music silence + layer teardown — defence in depth.
+    // Idempotent music silence + layer teardown + AudioContext suspend.
+    // Suspend is critical on iOS — see www/index.html for full rationale.
     try {
       window.audioEngine?.duck?.(0.001, 400);
       window.audioEngine?.setLayer?.('stats', false);
       window.audioEngine?.setLayer?.('globe', false);
       window.audioEngine?.setLayer?.('news', false);
+      window.audioEngine?.ctx?.suspend?.();
     } catch (_) {}
     document.body.classList.add('briefing-active');
     document.getElementById('bRecap').classList.remove('open');
@@ -42505,6 +42507,7 @@ body.ticker-active .gTickerLabel {
     window.briefingActive = false;
     document.body.classList.remove('briefing-active');
     try {
+      window.audioEngine?.ctx?.resume?.().catch?.(() => {});
       window.audioEngine?.unduck?.(1500);
       const p = window.__currentPage;
       if (p === 0)      window.audioEngine?.setLayer?.('stats', true);
@@ -44869,20 +44872,22 @@ body.ticker-active .gTickerLabel {
 
   // ── Briefing Launcher ─────────────────────────────────────────────────────
   async function openBriefingLauncher() {
-    // FIRST: silence the procedural music IMMEDIATELY (pre-tier-await)
-    // and tear down layers to free up iOS audio session for narrator.
-    // See www/index.html for full rationale.
+    // FIRST: silence + suspend the procedural engine immediately.
+    // Suspend is critical for iOS audio-session release — see
+    // www/index.html for full rationale.
     try {
       window.audioEngine?.duck?.(0.001, 400);
       window.audioEngine?.setLayer?.('stats', false);
       window.audioEngine?.setLayer?.('globe', false);
       window.audioEngine?.setLayer?.('news', false);
+      window.audioEngine?.ctx?.suspend?.();
     } catch (_) {}
     // Race fix — wait for tier/admin state.
     try { if (window.__tierReady) await window.__tierReady; } catch (_) {}
     if (!window.__checkTier?.('pro')) {
-      // User isn't allowed in — restore music we silenced above.
+      // User isn't allowed in — resume context + restore music.
       try {
+        window.audioEngine?.ctx?.resume?.().catch?.(() => {});
         const p = window.__currentPage;
         window.audioEngine?.unduck?.(800);
         if (p === 0)      window.audioEngine?.setLayer?.('stats', true);
@@ -44983,6 +44988,7 @@ body.ticker-active .gTickerLabel {
     document.getElementById('bLauncher').classList.remove('open');
     if (!window.briefingActive) {
       try {
+        window.audioEngine?.ctx?.resume?.().catch?.(() => {});
         window.audioEngine?.unduck?.(1200);
         const p = window.__currentPage;
         if (p === 0)      window.audioEngine?.setLayer?.('stats', true);

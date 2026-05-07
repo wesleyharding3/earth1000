@@ -46154,19 +46154,26 @@ body.ticker-active .gTickerLabel {
     // synchronously to decide whether to restore the procedural music.
     // The flag flip must happen before any subsequent code yields.
     window.briefingActive = true;
-    // Idempotent music silence + layer teardown — defence in depth.
-    // openBriefingLauncher already does this on the click path, but
-    // some entry points (notification-driven, archive-load races,
-    // direct __openBriefing calls) skip the launcher entirely. Calling
-    // setLayer(name, false) when the layer isn't running is a no-op,
-    // and duck() is idempotent, so this is cheap to repeat. Without
-    // this, briefings that bypass the launcher start with the
-    // procedural music still playing, drowning the narrator.
+    // Tear down procedural layers + duck + SUSPEND the AudioContext.
+    //
+    // Why all three: ducking alone keeps the context "running" with
+    // gains at -60dB. setLayer(name,false) alone removes the
+    // oscillators but leaves the context running. On iOS WKWebView,
+    // any AudioContext in 'running' state holds the audio session —
+    // even with zero oscillators, the narrator HTMLAudio that's about
+    // to play silently fails to claim the speaker. Suspending the
+    // context fully releases the session so the narrator can play.
+    //
+    // closeBriefing's resume path re-enables before re-layering.
     try {
       window.audioEngine?.duck?.(0.001, 400);
       window.audioEngine?.setLayer?.('stats', false);
       window.audioEngine?.setLayer?.('globe', false);
       window.audioEngine?.setLayer?.('news', false);
+      // Suspend AFTER tearing down layers so existing oscillators have
+      // already started their fade — they'll finish on the resumed
+      // context. Suspend is a one-line iOS audio-session release.
+      window.audioEngine?.ctx?.suspend?.();
     } catch (_) {}
     document.body.classList.add('briefing-active');
     document.getElementById('bRecap').classList.remove('open');
@@ -46655,10 +46662,16 @@ body.ticker-active .gTickerLabel {
   function closeBriefing() {
     window.briefingActive = false;
     document.body.classList.remove('briefing-active');
-    // Procedural music was silenced (and layers torn down) when the
-    // launcher opened. Restore as the briefing tears down: unduck
-    // the bus + relaunch the page-appropriate layer.
+    // Procedural engine was suspended + layers torn down when the
+    // briefing opened. Resume context FIRST (so subsequent setLayer
+    // calls can build oscillators on a running context), then unduck,
+    // then re-layer.
     try {
+      // resume() returns a Promise on some browsers; fire-and-forget
+      // is fine — by the time setLayer fires the layer factory only
+      // calls ctx.createOscillator which is sync and works regardless
+      // of whether resume has fully landed.
+      window.audioEngine?.ctx?.resume?.().catch?.(() => {});
       window.audioEngine?.unduck?.(1500);
       const p = window.__currentPage;
       if (p === 0)      window.audioEngine?.setLayer?.('stats', true);
@@ -49551,20 +49564,18 @@ body.ticker-active .gTickerLabel {
 
   // ── Briefing Launcher ─────────────────────────────────────────────────────
   async function openBriefingLauncher() {
-    // FIRST: silence the procedural music IMMEDIATELY on click — before
-    // any tier check or async wait. The earlier version awaited
-    // __tierReady at the top, which meant the music kept playing for
-    // up to 5s while we resolved tier state. We also fully tear down
-    // the layers (not just duck) so iOS's audio session has breathing
-    // room for the narrator HTMLAudio that's about to play —
-    // ducking alone leaves all three sources (procedural + _bgMusic +
-    // narrator) competing on iOS WKWebView, which on some devices
-    // drops the narrator silently while keeping music audible.
+    // FIRST: silence the procedural engine IMMEDIATELY on click —
+    // duck + tear down layers + SUSPEND the AudioContext. Suspending
+    // is the critical step on iOS WKWebView: a 'running' context with
+    // zero oscillators still holds the audio session and silently
+    // blocks any HTMLAudio (the narrator) from playing. Suspend
+    // releases the session so the narrator can claim it.
     try {
       window.audioEngine?.duck?.(0.001, 400);
       window.audioEngine?.setLayer?.('stats', false);
       window.audioEngine?.setLayer?.('globe', false);
       window.audioEngine?.setLayer?.('news', false);
+      window.audioEngine?.ctx?.suspend?.();
     } catch (_) {}
     // Race fix for tier check: __checkTier reads window.__isAdmin /
     // window.__userTier, both populated async after sign-in. Wait for
@@ -49572,8 +49583,9 @@ body.ticker-active .gTickerLabel {
     // timeout in __markTierReady caps the worst-case wait.
     try { if (window.__tierReady) await window.__tierReady; } catch (_) {}
     if (!window.__checkTier?.('pro')) {
-      // User isn't allowed in — restore the music we silenced above.
+      // User isn't allowed in — resume context + restore music.
       try {
+        window.audioEngine?.ctx?.resume?.().catch?.(() => {});
         const p = window.__currentPage;
         window.audioEngine?.unduck?.(800);
         if (p === 0)      window.audioEngine?.setLayer?.('stats', true);
@@ -49683,6 +49695,7 @@ body.ticker-active .gTickerLabel {
     // anyway, so this restore is wasted but harmless.
     if (!window.briefingActive) {
       try {
+        window.audioEngine?.ctx?.resume?.().catch?.(() => {});
         window.audioEngine?.unduck?.(1200);
         const p = window.__currentPage;
         if (p === 0)      window.audioEngine?.setLayer?.('stats', true);
