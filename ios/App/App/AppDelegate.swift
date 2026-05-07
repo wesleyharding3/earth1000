@@ -1,5 +1,6 @@
 import UIKit
 import Capacitor
+import AVFoundation
 
 @UIApplicationMain
 class AppDelegate: UIResponder, UIApplicationDelegate {
@@ -7,7 +8,18 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
     var window: UIWindow?
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
-        // Override point for customization after application launch.
+        // WKWebView defaults to AVAudioSession.Category.ambient, which mutes
+        // Web Audio when the hardware silent switch is on. We override to
+        // .playback so the procedural soundscape (drone, arpeggio, twinkles,
+        // article taps) plays regardless of the ringer position — same
+        // contract Spotify/podcast apps use. .mixWithOthers keeps any audio
+        // the user already has playing (music, podcasts) audible alongside.
+        do {
+            try AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [.mixWithOthers])
+            try AVAudioSession.sharedInstance().setActive(true)
+        } catch {
+            NSLog("AVAudioSession config failed: \(error.localizedDescription)")
+        }
         return true
     }
 

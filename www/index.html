@@ -13497,9 +13497,9 @@ window.fmtDate = function(d) {
 (function() {
   const STORAGE_KEY = 'earth00:audioMuted';
 
-  const ROOT_HZ  = 110.00;     // A2
-  const FIFTH_HZ = 164.81;     // E3 (perfect fifth above root)
-  const SUB_HZ   =  55.00;     // A1 (one octave below root)
+  const ROOT_HZ  = 110.00;     // A2 (legacy — generative field uses pentatonic)
+  const FIFTH_HZ = 164.81;     // E3 (legacy)
+  const SUB_HZ   =  65.41;     // C2 — anchors the bass to the field's tonal center
   const MASTER_DEFAULT = 0.38; // unmuted target — leaves headroom
 
   let ctx        = null;
@@ -13535,215 +13535,126 @@ window.fmtDate = function(d) {
   // node connected into duckGain by setLayer().
 
   function makeDrone() {
-    // Five-voice Am7 drone (A2 + C3 + E3 + A3 + G4) — underwater feel
-    // via 4-stage phaser → modulated chorus delay → heavy lowpass →
-    // high-shelf cut → random swell → out, plus an independent twinkle
-    // scheduler that fires upper Am7 chord tones with heavy reverb.
+    // Generative pentatonic field — five voices each shifting pitch on
+    // independent slow timers through C major pentatonic (C D E G A).
+    // Bright, modal, never lands on the same chord twice. Lower
+    // register only: bass voice holds long (20–40s) for stable ground;
+    // upper voices drift faster (9–22s). Each shift exponentially
+    // ramps over 4–14s so harmony recolors gradually rather than
+    // stepping. activityGate is exposed so user-driven events
+    // (scroll, taps, navigation) briefly bloom the field.
     const out = ctx.createGain();
     out.gain.value = 0.0001;
 
+    // Activity gate — multiplied into out. Idle = 0.55, peak = 1.0.
+    // pulseActivity() ramps this up briefly on user interaction.
+    const activityGate = ctx.createGain();
+    activityGate.gain.value = 0.55;
+
+    // Single shared lowpass with very slow LFO sweep — gives the
+    // whole field a barely-perceptible "breath" underneath the
+    // pitch motion. No phaser, no chorus, no high-shelf cut: those
+    // were what made the prior version feel washed-out and depressed.
     const filter = ctx.createBiquadFilter();
     filter.type = 'lowpass';
-    filter.frequency.value = 850; // pushed lower for submerged feel
-    filter.Q.value = 0.7;
-
-    // High-shelf cut above 3.5kHz — kills any residual brightness so
-    // the timbre sits "underwater" rather than dry.
-    const hishelf = ctx.createBiquadFilter();
-    hishelf.type = 'highshelf';
-    hishelf.frequency.value = 3500;
-    hishelf.gain.value = -10;
-
-    // Chorus delay — modulated DelayNode produces the warbly water-
-    // bend feel. 12ms base, swung ±5ms by a 0.4Hz LFO.
-    const wDelay = ctx.createDelay(0.05);
-    wDelay.delayTime.value = 0.012;
-    const wDelayLfo = ctx.createOscillator();
-    wDelayLfo.frequency.value = 0.4;
-    const wDelayLfoGain = ctx.createGain();
-    wDelayLfoGain.gain.value = 0.005;
-    wDelayLfo.connect(wDelayLfoGain).connect(wDelay.delayTime);
-
+    filter.frequency.value = 1400;
+    filter.Q.value = 0.5;
     const filtLfo = ctx.createOscillator();
-    filtLfo.frequency.value = 0.07;
+    filtLfo.frequency.value = 0.05;
     const filtLfoGain = ctx.createGain();
-    filtLfoGain.gain.value = 320;
+    filtLfoGain.gain.value = 400;
     filtLfo.connect(filtLfoGain).connect(filter.frequency);
 
-    // ── Phaser: 4 all-pass stages, single LFO sweeping all centers ──
-    const PH_STAGES = 4;
-    const aps = [];
-    for (let i = 0; i < PH_STAGES; i++) {
-      const ap = ctx.createBiquadFilter();
-      ap.type = 'allpass';
-      ap.frequency.value = 350 + i * 220; // 350, 570, 790, 1010 Hz
-      ap.Q.value = 0.8;
-      aps.push(ap);
-    }
-    for (let i = 0; i < PH_STAGES - 1; i++) aps[i].connect(aps[i + 1]);
-    const phLfo = ctx.createOscillator();
-    phLfo.frequency.value = 0.13; // ~7.7s sweep cycle
-    const phLfoGain = ctx.createGain();
-    phLfoGain.gain.value = 600;
-    phLfo.connect(phLfoGain);
-    for (let i = 0; i < PH_STAGES; i++) phLfoGain.connect(aps[i].frequency);
+    // C major pentatonic by octave (Hz). Pentatonic means every
+    // combination of voices is consonant — no minor seconds, no
+    // tritones — so random shifts can never produce dissonance.
+    const PENTA_O2 = [65.41, 73.42, 82.41, 98.00, 110.00];      // C2 D2 E2 G2 A2
+    const PENTA_O3 = [130.81, 146.83, 164.81, 196.00, 220.00];  // C3 D3 E3 G3 A3
+    const PENTA_O4 = [261.63, 293.66, 329.63, 392.00, 440.00];  // C4 D4 E4 G4 A4
 
-    // Voice 1 — root A2, slight downward detune
-    const v1 = ctx.createOscillator();
-    v1.type = 'sine';
-    v1.frequency.value = ROOT_HZ;
-    v1.detune.value = -7;
-    const v1g = ctx.createGain();
-    v1g.gain.value = 0.38;
-    const v1lfo = ctx.createOscillator();
-    v1lfo.frequency.value = 0.11;
-    const v1lfoGain = ctx.createGain();
-    v1lfoGain.gain.value = 0.10;
-    v1lfo.connect(v1lfoGain).connect(v1g.gain);
-    v1.connect(v1g).connect(aps[0]);
+    const VOICE_CFG = [
+      // Bass: longest interval, biggest range, sine for warmth.
+      { palette: PENTA_O2, type: 'sine',     gain: 0.30, intervalSec: [20, 40], rampSec: [8, 14] },
+      // Low-mid pair — paired ranges so harmony breathes.
+      { palette: PENTA_O3, type: 'sine',     gain: 0.22, intervalSec: [11, 22], rampSec: [5, 10] },
+      { palette: PENTA_O3, type: 'sine',     gain: 0.18, intervalSec: [13, 24], rampSec: [6, 11] },
+      // Mid: lighter, drifts more, capped at A4=440Hz (no high
+      // sparkle — that's what felt awkward in the prior build).
+      { palette: PENTA_O4, type: 'triangle', gain: 0.10, intervalSec: [9,  18], rampSec: [4,  8] },
+      { palette: PENTA_O4, type: 'triangle', gain: 0.07, intervalSec: [10, 20], rampSec: [5,  9] },
+    ];
 
-    // Voice 2 — fifth E3, slight upward detune (chorus vs v1)
-    const v2 = ctx.createOscillator();
-    v2.type = 'sine';
-    v2.frequency.value = FIFTH_HZ;
-    v2.detune.value = +6;
-    const v2g = ctx.createGain();
-    v2g.gain.value = 0.26;
-    const v2lfo = ctx.createOscillator();
-    v2lfo.frequency.value = 0.083;
-    const v2lfoGain = ctx.createGain();
-    v2lfoGain.gain.value = 0.09;
-    v2lfo.connect(v2lfoGain).connect(v2g.gain);
-    v2.connect(v2g).connect(aps[0]);
-
-    // Voice 3 — minor third C3 (defines the chord as Am, not A power)
-    const v3 = ctx.createOscillator();
-    v3.type = 'sine';
-    v3.frequency.value = 130.81; // C3
-    v3.detune.value = -4;
-    const v3g = ctx.createGain();
-    v3g.gain.value = 0.20;
-    const v3lfo = ctx.createOscillator();
-    v3lfo.frequency.value = 0.097; // prime-ish ratio so voices don't sync
-    const v3lfoGain = ctx.createGain();
-    v3lfoGain.gain.value = 0.08;
-    v3lfo.connect(v3lfoGain).connect(v3g.gain);
-    v3.connect(v3g).connect(aps[0]);
-
-    // Voice 4 — octave shimmer A3, very quiet triangle
-    const v4 = ctx.createOscillator();
-    v4.type = 'triangle';
-    v4.frequency.value = ROOT_HZ * 2;
-    v4.detune.value = +3;
-    const v4g = ctx.createGain();
-    v4g.gain.value = 0.06;
-    v4.connect(v4g).connect(aps[0]);
-
-    // Voice 5 — high m7 G4, jazzy color shimmer (ebbs in/out via LFO)
-    const v5 = ctx.createOscillator();
-    v5.type = 'triangle';
-    v5.frequency.value = 392.00; // G4
-    v5.detune.value = +2;
-    const v5g = ctx.createGain();
-    v5g.gain.value = 0.04;
-    const v5lfo = ctx.createOscillator();
-    v5lfo.frequency.value = 0.061;
-    const v5lfoGain = ctx.createGain();
-    v5lfoGain.gain.value = 0.025;
-    v5lfo.connect(v5lfoGain).connect(v5g.gain);
-    v5.connect(v5g).connect(aps[0]);
-
-    // Swell stage — random unpredictable surges/quiets so the drone
-    // feels alive. Both dry and reverb send tap post-swell so the
-    // breathing carries through the wet tail.
-    const swell = ctx.createGain();
-    swell.gain.value = 1.0;
-
-    // Chain: phaser → chorus-delay → lowpass → high-shelf cut → swell
-    aps[PH_STAGES - 1].connect(wDelay);
-    wDelay.connect(filter);
-    filter.connect(hishelf);
-    hishelf.connect(swell);
-    swell.connect(out);
-
-    if (reverbIn) {
-      const sendGain = ctx.createGain();
-      sendGain.gain.value = 0.35;
-      swell.connect(sendGain).connect(reverbIn);
-    }
-
-    // ── Twinkles ── Independent of swell. Random short triangle bursts
-    // at upper Am7 chord tones (A5/C6/E6/G6) with ±5¢ detune wander,
-    // heavy reverb send so each blooms into the tail. Interval 6–14s.
-    const TWINKLE_NOTES = [880.00, 1046.50, 1318.51, 1567.98]; // A5 C6 E6 G6
-    const twinkleBus = ctx.createGain();
-    twinkleBus.gain.value = 1.0;
-    twinkleBus.connect(out);
-    if (reverbIn) {
-      const tSend = ctx.createGain();
-      tSend.gain.value = 0.85;
-      twinkleBus.connect(tSend).connect(reverbIn);
-    }
-    let twinkleTimer = null;
-    let twinkleRunning = false;
-    function fireTwinkle() {
-      if (!twinkleRunning || !ctx) return;
-      const now = ctx.currentTime;
-      const noteHz = TWINKLE_NOTES[Math.floor(Math.random() * TWINKLE_NOTES.length)];
-      const detuneCents = (Math.random() - 0.5) * 10;
-      const vol = 0.04 + Math.random() * 0.03;
-      const decay = 0.30 + Math.random() * 0.15;
+    const voices = VOICE_CFG.map((cfg) => {
+      const startNote = cfg.palette[Math.floor(Math.random() * cfg.palette.length)];
       const osc = ctx.createOscillator();
-      osc.type = 'triangle';
-      osc.frequency.value = noteHz;
-      osc.detune.value = detuneCents;
-      const g = ctx.createGain();
-      g.gain.setValueAtTime(0.0001, now);
-      g.gain.exponentialRampToValueAtTime(vol, now + 0.005);
-      g.gain.exponentialRampToValueAtTime(0.0001, now + decay);
-      osc.connect(g).connect(twinkleBus);
-      osc.start(now);
-      osc.stop(now + decay + 0.05);
-      const nextSec = 6 + Math.random() * 8;
-      twinkleTimer = setTimeout(fireTwinkle, nextSec * 1000);
+      osc.type = cfg.type;
+      osc.frequency.value = startNote;
+      osc.detune.value = (Math.random() - 0.5) * 8;          // ±4¢ wander
+
+      const vGain = ctx.createGain();
+      vGain.gain.value = cfg.gain;
+
+      // Slow gain LFO — voices ebb and flow on prime-ish ratios so
+      // they never sync. Depth = 30% of base gain (perceptible
+      // motion without ever fully dropping out).
+      const gLfo = ctx.createOscillator();
+      gLfo.frequency.value = 0.04 + Math.random() * 0.08;
+      const gLfoDepth = ctx.createGain();
+      gLfoDepth.gain.value = cfg.gain * 0.30;
+      gLfo.connect(gLfoDepth).connect(vGain.gain);
+
+      osc.connect(vGain).connect(filter);
+
+      return { cfg, osc, vGain, gLfo, timer: null };
+    });
+
+    filter.connect(activityGate).connect(out);
+
+    // Light reverb send — half the prior level (0.20 vs 0.35) so
+    // the field sits in the room rather than washing over it.
+    if (reverbIn) {
+      const send = ctx.createGain();
+      send.gain.value = 0.20;
+      activityGate.connect(send).connect(reverbIn);
     }
 
-    // Random swell scheduler — picks a new target between 0.6× and 1.2×
-    // every few seconds, ramps to it over 4–12s, then waits 0–3s before
-    // rolling the next. Aperiodic ranges keep it from feeling cyclic.
-    let swellTimer = null;
-    let swellRunning = false;
-    function scheduleSwell() {
-      if (!swellRunning || !ctx) return;
+    let running = false;
+
+    function scheduleVoiceShift(idx) {
+      if (!running || !ctx) return;
+      const v = voices[idx];
+      const cfg = v.cfg;
       const now = ctx.currentTime;
-      const target = 0.60 + Math.random() * 0.60;
-      const rampSec = 4 + Math.random() * 8;
-      const holdSec = Math.random() * 3;
-      swell.gain.cancelScheduledValues(now);
-      swell.gain.setValueAtTime(swell.gain.value, now);
-      swell.gain.linearRampToValueAtTime(target, now + rampSec);
-      swellTimer = setTimeout(scheduleSwell, (rampSec + holdSec) * 1000);
+      const newNote = cfg.palette[Math.floor(Math.random() * cfg.palette.length)];
+      const rampSec     = cfg.rampSec[0]     + Math.random() * (cfg.rampSec[1]     - cfg.rampSec[0]);
+      const intervalSec = cfg.intervalSec[0] + Math.random() * (cfg.intervalSec[1] - cfg.intervalSec[0]);
+      v.osc.frequency.cancelScheduledValues(now);
+      v.osc.frequency.setValueAtTime(v.osc.frequency.value, now);
+      v.osc.frequency.exponentialRampToValueAtTime(newNote, now + rampSec);
+      v.timer = setTimeout(() => scheduleVoiceShift(idx), intervalSec * 1000);
     }
 
     return {
       gain: out,
+      activityGate, // pulseActivity() writes here
       start(when) {
-        filtLfo.start(when); phLfo.start(when); wDelayLfo.start(when);
-        v1lfo.start(when); v2lfo.start(when); v3lfo.start(when); v5lfo.start(when);
-        v1.start(when); v2.start(when); v3.start(when); v4.start(when); v5.start(when);
-        swellRunning = true;
-        swellTimer = setTimeout(scheduleSwell, 1500);
-        twinkleRunning = true;
-        twinkleTimer = setTimeout(fireTwinkle, 4000 + Math.random() * 4000);
+        running = true;
+        filtLfo.start(when);
+        voices.forEach((v, i) => {
+          v.gLfo.start(when);
+          v.osc.start(when);
+          // Stagger first shift so all voices don't fire together.
+          const initial = 4 + Math.random() * 12;
+          v.timer = setTimeout(() => scheduleVoiceShift(i), initial * 1000);
+        });
       },
       stop(when) {
-        swellRunning = false;
-        twinkleRunning = false;
-        if (swellTimer)   { clearTimeout(swellTimer);   swellTimer = null; }
-        if (twinkleTimer) { clearTimeout(twinkleTimer); twinkleTimer = null; }
-        try { v1.stop(when); v2.stop(when); v3.stop(when); v4.stop(when); v5.stop(when); } catch(_){}
-        try { filtLfo.stop(when); phLfo.stop(when); wDelayLfo.stop(when);
-              v1lfo.stop(when); v2lfo.stop(when); v3lfo.stop(when); v5lfo.stop(when); } catch(_){}
+        running = false;
+        voices.forEach((v) => {
+          if (v.timer) { clearTimeout(v.timer); v.timer = null; }
+          try { v.osc.stop(when); v.gLfo.stop(when); } catch(_) {}
+        });
+        try { filtLfo.stop(when); } catch(_) {}
       }
     };
   }
@@ -13841,119 +13752,83 @@ window.fmtDate = function(d) {
   }
 
   function makeNewsPad() {
-    // Brighter pad sitting above the drone — same Am7 chord tones an
-    // octave up (A4 + C5 + E5 + G5) so news + globe share the harmony.
-    // Sawtooth voices through a slow-sweeping lowpass with vibrato.
+    // News-page staggered dyad pulse — same Stranger Things-adjacent
+    // technique as the stats arpeggio (LOW + HIGH partner half-step
+    // later, sawtooth through a resonant lowpass, reverb send) but
+    // tuned to sit BEHIND the field rather than in front of it:
+    //   • slower tempo (~109 BPM 8ths vs stats 125 BPM 16ths)
+    //   • longer sustain so notes overlap into a pad (vs staccato)
+    //   • C-pentatonic feel (brighter mood than stats' A-minor)
+    //   • lower cutoff + lower Q (warmer, no zing)
+    //   • significantly quieter peak gain
+    //   • lighter reverb send than stats
     const out = ctx.createGain();
     out.gain.value = 0.0001;
 
     const filter = ctx.createBiquadFilter();
     filter.type = 'lowpass';
-    filter.frequency.value = 1700;
-    filter.Q.value = 0.85;
-
+    filter.frequency.value = 900;
+    filter.Q.value = 3;
     const filtLfo = ctx.createOscillator();
-    filtLfo.frequency.value = 0.055;
+    filtLfo.frequency.value = 0.07;
     const filtLfoGain = ctx.createGain();
-    filtLfoGain.gain.value = 700;
+    filtLfoGain.gain.value = 350;
     filtLfo.connect(filtLfoGain).connect(filter.frequency);
-
-    const A4_HZ = 440.00, C5_HZ = 523.25, E5_HZ = 659.25, G5_HZ = 783.99;
-
-    const v1 = ctx.createOscillator(); // A4 root
-    v1.type = 'sawtooth';
-    v1.frequency.value = A4_HZ;
-    v1.detune.value = -7;
-    const v1g = ctx.createGain();
-    v1g.gain.value = 0.04;
-    v1.connect(v1g).connect(filter);
-
-    const v2 = ctx.createOscillator(); // C5 minor third
-    v2.type = 'sawtooth';
-    v2.frequency.value = C5_HZ;
-    v2.detune.value = +5;
-    const v2g = ctx.createGain();
-    v2g.gain.value = 0.04;
-    v2.connect(v2g).connect(filter);
-
-    const v3 = ctx.createOscillator(); // E5 fifth
-    v3.type = 'sawtooth';
-    v3.frequency.value = E5_HZ;
-    v3.detune.value = -3;
-    const v3g = ctx.createGain();
-    v3g.gain.value = 0.035;
-    v3.connect(v3g).connect(filter);
-
-    const v4 = ctx.createOscillator(); // G5 minor seventh (color)
-    v4.type = 'sawtooth';
-    v4.frequency.value = G5_HZ;
-    v4.detune.value = +6;
-    const v4g = ctx.createGain();
-    v4g.gain.value = 0.025;
-    v4.connect(v4g).connect(filter);
-
-    // Slow vibrato to humanize all four sustained voices
-    const vib = ctx.createOscillator();
-    vib.frequency.value = 4.2;
-    const vibDepth = ctx.createGain();
-    vibDepth.gain.value = 1.6;
-    vib.connect(vibDepth);
-    vibDepth.connect(v1.detune);
-    vibDepth.connect(v2.detune);
-    vibDepth.connect(v3.detune);
-    vibDepth.connect(v4.detune);
 
     filter.connect(out);
 
-    return {
-      gain: out,
-      start(when) {
-        filtLfo.start(when); vib.start(when);
-        v1.start(when); v2.start(when); v3.start(when); v4.start(when);
-      },
-      stop(when) {
-        try { v1.stop(when); v2.stop(when); v3.stop(when); v4.stop(when); } catch(_){}
-        try { filtLfo.stop(when); vib.stop(when); } catch(_){}
-      }
-    };
-  }
+    if (reverbIn) {
+      const send = ctx.createGain();
+      send.gain.value = 0.55;
+      filter.connect(send).connect(reverbIn);
+    }
 
-  function makeStatsArp() {
-    // Slow A-minor 7 arpeggio scheduler. Look-ahead pattern: every
-    // ~80ms in wall-clock, queue any notes within the next 200ms.
-    const out = ctx.createGain();
-    out.gain.value = 0.0001;
-
-    // Am7 chord tones spanning 1.5 octaves — locked to the drone harmony.
-    const NOTES = [220.00, 261.63, 329.63, 392.00, 440.00, 392.00, 329.63, 261.63]; // A3 C4 E4 G4 A4 G4 E4 C4
-    const STEP_SEC = 0.28;        // ~214 BPM eighth-notes — energetic
+    // 6-step pattern, climbs C-pentatonic then descends. Mixed dyad
+    // intervals (5ths, 6ths, minor 3rds) so it feels different from
+    // stats' uniform-5ths pattern. HIGH in counterpoint to LOW.
+    const LOW  = [130.81, 164.81, 196.00, 220.00, 196.00, 164.81]; // C3 E3 G3 A3 G3 E3
+    const HIGH = [196.00, 261.63, 293.66, 329.63, 261.63, 220.00]; // G3 C4 D4 E4 C4 A3
+    const STEP_SEC = 0.55;          // ~109 BPM 8th-note feel
+    const HALF_STEP = STEP_SEC * 0.5;
     let stepIdx = 0;
     let nextAt = 0;
     let running = false;
     let timer = null;
 
-    function fireNote(when, hz) {
-      const osc = ctx.createOscillator();
-      osc.type = 'triangle';
-      osc.frequency.value = hz;
-      const filt = ctx.createBiquadFilter();
-      filt.type = 'lowpass';
-      filt.frequency.value = hz * 5;
-      filt.Q.value = 2.0;
+    function fireNote(when, hz, isHigh) {
+      // Subtle unison detune (±8c, less than stats' ±10c) — softer
+      // analog feel, no aggressive chorus shimmer.
+      const osc1 = ctx.createOscillator();
+      osc1.type = 'sawtooth';
+      osc1.frequency.value = hz;
+      osc1.detune.value = -8;
+      const osc2 = ctx.createOscillator();
+      osc2.type = 'sawtooth';
+      osc2.frequency.value = hz;
+      osc2.detune.value = +8;
+
+      // Quieter than stats (peak ~0.04 vs 0.085); longer sustain so
+      // successive notes overlap into a pad-arpeggio hybrid.
+      const peak = isHigh ? 0.030 : 0.038;
       const g = ctx.createGain();
       g.gain.setValueAtTime(0.0001, when);
-      g.gain.exponentialRampToValueAtTime(0.16, when + 0.02);
-      g.gain.exponentialRampToValueAtTime(0.0001, when + 0.45);
-      osc.connect(filt).connect(g).connect(out);
-      osc.start(when);
-      osc.stop(when + 0.5);
+      g.gain.exponentialRampToValueAtTime(peak, when + 0.04);
+      g.gain.exponentialRampToValueAtTime(0.0001, when + 0.75);
+
+      osc1.connect(g);
+      osc2.connect(g);
+      g.connect(filter);
+      osc1.start(when); osc2.start(when);
+      osc1.stop(when + 0.80); osc2.stop(when + 0.80);
     }
 
     function tick() {
       if (!running) return;
       const horizon = ctx.currentTime + 0.20;
       while (nextAt < horizon) {
-        fireNote(nextAt, NOTES[stepIdx % NOTES.length]);
+        const i = stepIdx % LOW.length;
+        fireNote(nextAt,             LOW[i],  false);
+        fireNote(nextAt + HALF_STEP, HIGH[i], true);
         stepIdx++;
         nextAt += STEP_SEC;
       }
@@ -13964,12 +13839,113 @@ window.fmtDate = function(d) {
       gain: out,
       start(when) {
         running = true;
+        filtLfo.start(when);
         nextAt = Math.max(when, ctx.currentTime + 0.05);
         tick();
       },
       stop(_when) {
         running = false;
         if (timer) { clearTimeout(timer); timer = null; }
+        try { filtLfo.stop(_when); } catch(_) {}
+      }
+    };
+  }
+
+  function makeStatsArp() {
+    // Stranger Things-style staggered dyad arpeggio. Two interleaved
+    // sawtooth voices through a resonant lowpass — every step fires
+    // a LOW note immediately and a HIGH partner half-a-step later,
+    // so the texture is running 16ths even though each step only
+    // schedules two attacks. A-minor pentatonic palette (same notes
+    // as the field, but starting on A so it reads as minor — the
+    // "Kyle Dixon / Michael Stein" Aeolian feel). Heavy reverb send
+    // for the cinematic synth-noir tail. Q ≥ 6 on the lowpass is
+    // what gives it the OB-Xa / Prophet zing.
+    const out = ctx.createGain();
+    out.gain.value = 0.0001;
+
+    // Resonant lowpass with slow LFO sweep — harmonic content
+    // moves so the arpeggio doesn't sit on one tone color.
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 1400;
+    filter.Q.value = 8;
+    const filtLfo = ctx.createOscillator();
+    filtLfo.frequency.value = 0.10;
+    const filtLfoGain = ctx.createGain();
+    filtLfoGain.gain.value = 700;
+    filtLfo.connect(filtLfoGain).connect(filter.frequency);
+
+    filter.connect(out);
+
+    // Heavy reverb send (cinematic tail)
+    if (reverbIn) {
+      const send = ctx.createGain();
+      send.gain.value = 0.75;
+      filter.connect(send).connect(reverbIn);
+    }
+
+    // 8-step pattern, each step = LOW + HIGH partner half-step later.
+    // Net texture: 16 attacks per loop = running-16th feel.
+    const LOW  = [110.00, 130.81, 164.81, 196.00, 220.00, 196.00, 164.81, 130.81]; // A2 C3 E3 G3 A3 G3 E3 C3
+    const HIGH = [164.81, 196.00, 261.63, 293.66, 329.63, 293.66, 261.63, 196.00]; // E3 G3 C4 D4 E4 D4 C4 G3
+    const STEP_SEC = 0.24;          // ~125 BPM 16th-note feel
+    const HALF_STEP = STEP_SEC * 0.5;
+    let stepIdx = 0;
+    let nextAt = 0;
+    let running = false;
+    let timer = null;
+
+    function fireNote(when, hz, isHigh) {
+      // Unison pair detuned ±10c — the "Prophet wobble" that makes
+      // a single sawtooth feel fat/analog.
+      const osc1 = ctx.createOscillator();
+      osc1.type = 'sawtooth';
+      osc1.frequency.value = hz;
+      osc1.detune.value = -10;
+      const osc2 = ctx.createOscillator();
+      osc2.type = 'sawtooth';
+      osc2.frequency.value = hz;
+      osc2.detune.value = +10;
+
+      const peak = isHigh ? 0.07 : 0.085; // low slightly louder (anchor)
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, when);
+      g.gain.exponentialRampToValueAtTime(peak, when + 0.008);
+      g.gain.exponentialRampToValueAtTime(0.0001, when + 0.28);
+
+      osc1.connect(g);
+      osc2.connect(g);
+      g.connect(filter);
+      osc1.start(when); osc2.start(when);
+      osc1.stop(when + 0.32); osc2.stop(when + 0.32);
+    }
+
+    function tick() {
+      if (!running) return;
+      const horizon = ctx.currentTime + 0.20;
+      while (nextAt < horizon) {
+        const i = stepIdx % LOW.length;
+        fireNote(nextAt,             LOW[i],  false);
+        fireNote(nextAt + HALF_STEP, HIGH[i], true);
+        stepIdx++;
+        nextAt += STEP_SEC;
+      }
+      timer = setTimeout(tick, 80);
+    }
+
+    return {
+      gain: out,
+      start(when) {
+        running = true;
+        filtLfo.start(when);
+        nextAt = Math.max(when, ctx.currentTime + 0.05);
+        tick();
+      },
+      stop(_when) {
+        running = false;
+        if (timer) { clearTimeout(timer); timer = null; }
+        try { filtLfo.stop(_when); } catch(_) {}
       }
     };
   }
@@ -14030,6 +14006,19 @@ window.fmtDate = function(d) {
     window.addEventListener('touchstart', onFirstGesture, { capture: true, passive: true });
     window.addEventListener('mousedown',  onFirstGesture, { capture: true, passive: true });
     window.addEventListener('keydown',    onFirstGesture, { capture: true });
+
+    // Activity coupling — passive scroll listener pulses the
+    // generative field's activityGate so the music breathes with
+    // user motion instead of sitting static. Throttled to ≤1
+    // pulse / 350ms; subtle (0.12) so it never feels reactive.
+    let _lastScrollPulseAt = 0;
+    window.addEventListener('scroll', () => {
+      const t = Date.now();
+      if (t - _lastScrollPulseAt > 350) {
+        pulseActivity(0.12);
+        _lastScrollPulseAt = t;
+      }
+    }, { passive: true, capture: true });
   }
 
   function setLayer(name, on, fadeSec) {
@@ -14095,43 +14084,79 @@ window.fmtDate = function(d) {
     osc.stop(now + dur + 0.05);
   }
 
-  // Soft staccato note in the Am7 chord with reverb tail — used for
-  // article-tap feedback on the news feed, threads, and lines pages.
-  // Picks randomly from the upper voicing (A4/C5/E5/G5) so successive
-  // taps trace a quiet melody locked to the drone harmony.
-  const TAP_NOTES = [440.00, 523.25, 659.25, 783.99]; // A4 C5 E5 G5
+  // Low warm thump — sub-pitched sine with a quick downward pitch
+  // envelope (120Hz → 50Hz over 80ms) and a 320ms decay. Replaces
+  // the prior high A4–G5 chord notes (felt awkward and ice-picky
+  // sitting above the new lower-register field). Also pulses
+  // activity so the field briefly blooms in response to the tap.
   function triggerArticleTap(opts) {
     if (!ctx || muted) return;
     opts = opts || {};
     const now = ctx.currentTime;
-    const noteHz = opts.hz || TAP_NOTES[Math.floor(Math.random() * TAP_NOTES.length)];
-    const dur = opts.dur || 0.55;
-    const vol = (opts.vol == null) ? 0.10 : opts.vol;
-    const sendAmt = (opts.reverbSend == null) ? 0.65 : opts.reverbSend;
+    const vol = (opts.vol == null) ? 0.20 : opts.vol;
+    const dur = opts.dur || 0.32;
 
     const osc = ctx.createOscillator();
-    osc.type = opts.type || 'sine';
-    osc.frequency.value = noteHz;
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(120, now);
+    osc.frequency.exponentialRampToValueAtTime(50, now + 0.08);
 
     const filt = ctx.createBiquadFilter();
     filt.type = 'lowpass';
-    filt.frequency.value = noteHz * 4;
-    filt.Q.value = 1.0;
+    filt.frequency.value = 220;
+    filt.Q.value = 0.7;
 
     const g = ctx.createGain();
     g.gain.setValueAtTime(0.0001, now);
-    g.gain.exponentialRampToValueAtTime(vol, now + 0.005);
+    g.gain.exponentialRampToValueAtTime(vol, now + 0.008);
     g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
 
-    osc.connect(filt).connect(g);
-    g.connect(duckGain);
-    if (reverbIn && sendAmt > 0) {
-      const send = ctx.createGain();
-      send.gain.value = sendAmt;
-      g.connect(send).connect(reverbIn);
-    }
+    osc.connect(filt).connect(g).connect(duckGain);
     osc.start(now);
     osc.stop(now + dur + 0.05);
+
+    pulseActivity(0.25);
+  }
+
+  // ── Activity pulsing ────────────────────────────────────────────
+  // User actions (scroll, click, navigate) briefly bloom the
+  // generative field via its activityGate. Decays back to baseline
+  // exponentially over a few seconds. No-op if engine isn't running.
+  let activityLevel = 0;                  // 0..1
+  let activityDecayTimer = null;
+
+  function pulseActivity(amount) {
+    if (!ctx || !unlocked) return;
+    const layer = layers.get('drone');
+    if (!layer || !layer.activityGate) return;
+    const a = (typeof amount === 'number') ? amount : 0.30;
+    activityLevel = Math.min(1, activityLevel + a);
+    applyActivity();
+    if (activityDecayTimer) clearTimeout(activityDecayTimer);
+    decayActivity();
+  }
+
+  function decayActivity() {
+    if (activityLevel <= 0.02) {
+      activityLevel = 0;
+      applyActivity();
+      activityDecayTimer = null;
+      return;
+    }
+    activityLevel = activityLevel * 0.80;
+    applyActivity();
+    activityDecayTimer = setTimeout(decayActivity, 900);
+  }
+
+  function applyActivity() {
+    const layer = layers.get('drone');
+    if (!layer || !layer.activityGate || !ctx) return;
+    const target = 0.55 + activityLevel * 0.45;
+    const now = ctx.currentTime;
+    const gate = layer.activityGate.gain;
+    gate.cancelScheduledValues(now);
+    gate.setValueAtTime(gate.value, now);
+    gate.linearRampToValueAtTime(target, now + 1.4);
   }
 
   // Soft whoosh — bandpass-filtered white noise sweeping high-to-low,
@@ -14210,6 +14235,7 @@ window.fmtDate = function(d) {
 
   window.audioEngine = {
     unlock, setLayer, triggerStab, triggerWhoosh, triggerArticleTap,
+    pulseActivity,
     duck, unduck, setMasterMute, isMuted, isUnlocked,
     get ctx() { return ctx; },
     _debug() {
