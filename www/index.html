@@ -13500,22 +13500,44 @@ window.fmtDate = function(d) {
   const ROOT_HZ  = 110.00;     // A2
   const FIFTH_HZ = 164.81;     // E3 (perfect fifth above root)
   const SUB_HZ   =  55.00;     // A1 (one octave below root)
-  const MASTER_DEFAULT = 0.55; // unmuted target — leaves headroom
+  const MASTER_DEFAULT = 0.38; // unmuted target — leaves headroom
 
   let ctx        = null;
   let masterGain = null;       // final volume + mute
   let duckGain   = null;       // pre-master, pulled by narrator/video
+  let reverbIn   = null;       // shared reverb send bus (any layer can tap)
+  let reverbOut  = null;       // wet return into duckGain
   let unlocked   = false;
   let muted      = false;
   let listenersAttached = false;
 
   const layers = new Map();    // name → built layer object
 
+  // Procedural reverb impulse: stereo decaying noise — exponential-shaped
+  // envelope feels hall-like without sounding like a sample. Built once.
+  function makeReverbIR(durSec, decayExp) {
+    const sr = ctx.sampleRate;
+    const len = Math.max(1, Math.floor(sr * durSec));
+    const buf = ctx.createBuffer(2, len, sr);
+    for (let ch = 0; ch < 2; ch++) {
+      const data = buf.getChannelData(ch);
+      for (let i = 0; i < len; i++) {
+        const t = i / len;
+        const env = Math.pow(1 - t, decayExp);
+        data[i] = (Math.random() * 2 - 1) * env;
+      }
+    }
+    return buf;
+  }
+
   // ── Layer factories ─────────────────────────────────────────────
   // Each returns { gain, start(when), stop(when) }.  gain is the
   // node connected into duckGain by setLayer().
 
   function makeDrone() {
+    // Five-voice Am7 drone (A2 + C3 + E3 + A3 + G4) routed through a
+    // 4-stage all-pass phaser, lowpass, and a parallel send to the
+    // shared reverb bus. Per-voice slow LFOs keep the timbre breathing.
     const out = ctx.createGain();
     out.gain.value = 0.0001;
 
@@ -13524,61 +13546,143 @@ window.fmtDate = function(d) {
     filter.frequency.value = 1100;
     filter.Q.value = 0.7;
 
-    // Slow filter sweep so the timbre breathes
     const filtLfo = ctx.createOscillator();
     filtLfo.frequency.value = 0.07;
     const filtLfoGain = ctx.createGain();
     filtLfoGain.gain.value = 320;
     filtLfo.connect(filtLfoGain).connect(filter.frequency);
 
-    // Voice 1 — root, slight downward detune
+    // ── Phaser: 4 all-pass stages, single LFO sweeping all centers ──
+    const PH_STAGES = 4;
+    const aps = [];
+    for (let i = 0; i < PH_STAGES; i++) {
+      const ap = ctx.createBiquadFilter();
+      ap.type = 'allpass';
+      ap.frequency.value = 350 + i * 220; // 350, 570, 790, 1010 Hz
+      ap.Q.value = 0.8;
+      aps.push(ap);
+    }
+    for (let i = 0; i < PH_STAGES - 1; i++) aps[i].connect(aps[i + 1]);
+    const phLfo = ctx.createOscillator();
+    phLfo.frequency.value = 0.13; // ~7.7s sweep cycle
+    const phLfoGain = ctx.createGain();
+    phLfoGain.gain.value = 600;
+    phLfo.connect(phLfoGain);
+    for (let i = 0; i < PH_STAGES; i++) phLfoGain.connect(aps[i].frequency);
+
+    // Voice 1 — root A2, slight downward detune
     const v1 = ctx.createOscillator();
     v1.type = 'sine';
     v1.frequency.value = ROOT_HZ;
     v1.detune.value = -7;
     const v1g = ctx.createGain();
-    v1g.gain.value = 0.42;
+    v1g.gain.value = 0.38;
     const v1lfo = ctx.createOscillator();
     v1lfo.frequency.value = 0.11;
     const v1lfoGain = ctx.createGain();
     v1lfoGain.gain.value = 0.10;
     v1lfo.connect(v1lfoGain).connect(v1g.gain);
-    v1.connect(v1g).connect(filter);
+    v1.connect(v1g).connect(aps[0]);
 
-    // Voice 2 — fifth, slight upward detune (chorus against v1)
+    // Voice 2 — fifth E3, slight upward detune (chorus vs v1)
     const v2 = ctx.createOscillator();
     v2.type = 'sine';
     v2.frequency.value = FIFTH_HZ;
     v2.detune.value = +6;
     const v2g = ctx.createGain();
-    v2g.gain.value = 0.30;
+    v2g.gain.value = 0.26;
     const v2lfo = ctx.createOscillator();
     v2lfo.frequency.value = 0.083;
     const v2lfoGain = ctx.createGain();
     v2lfoGain.gain.value = 0.09;
     v2lfo.connect(v2lfoGain).connect(v2g.gain);
-    v2.connect(v2g).connect(filter);
+    v2.connect(v2g).connect(aps[0]);
 
-    // Voice 3 — octave shimmer, very quiet triangle
+    // Voice 3 — minor third C3 (defines the chord as Am, not A power)
     const v3 = ctx.createOscillator();
-    v3.type = 'triangle';
-    v3.frequency.value = ROOT_HZ * 2;
-    v3.detune.value = +3;
+    v3.type = 'sine';
+    v3.frequency.value = 130.81; // C3
+    v3.detune.value = -4;
     const v3g = ctx.createGain();
-    v3g.gain.value = 0.06;
-    v3.connect(v3g).connect(filter);
+    v3g.gain.value = 0.20;
+    const v3lfo = ctx.createOscillator();
+    v3lfo.frequency.value = 0.097; // prime-ish ratio so voices don't sync
+    const v3lfoGain = ctx.createGain();
+    v3lfoGain.gain.value = 0.08;
+    v3lfo.connect(v3lfoGain).connect(v3g.gain);
+    v3.connect(v3g).connect(aps[0]);
 
-    filter.connect(out);
+    // Voice 4 — octave shimmer A3, very quiet triangle
+    const v4 = ctx.createOscillator();
+    v4.type = 'triangle';
+    v4.frequency.value = ROOT_HZ * 2;
+    v4.detune.value = +3;
+    const v4g = ctx.createGain();
+    v4g.gain.value = 0.06;
+    v4.connect(v4g).connect(aps[0]);
+
+    // Voice 5 — high m7 G4, jazzy color shimmer (ebbs in/out via LFO)
+    const v5 = ctx.createOscillator();
+    v5.type = 'triangle';
+    v5.frequency.value = 392.00; // G4
+    v5.detune.value = +2;
+    const v5g = ctx.createGain();
+    v5g.gain.value = 0.04;
+    const v5lfo = ctx.createOscillator();
+    v5lfo.frequency.value = 0.061;
+    const v5lfoGain = ctx.createGain();
+    v5lfoGain.gain.value = 0.025;
+    v5lfo.connect(v5lfoGain).connect(v5g.gain);
+    v5.connect(v5g).connect(aps[0]);
+
+    // Swell stage — random unpredictable surges/quiets so the drone
+    // feels alive. Both dry and reverb send tap post-swell so the
+    // breathing carries through the wet tail.
+    const swell = ctx.createGain();
+    swell.gain.value = 1.0;
+
+    aps[PH_STAGES - 1].connect(filter);
+    filter.connect(swell);
+    swell.connect(out);
+
+    if (reverbIn) {
+      const sendGain = ctx.createGain();
+      sendGain.gain.value = 0.35;
+      swell.connect(sendGain).connect(reverbIn);
+    }
+
+    // Random swell scheduler — picks a new target between 0.6× and 1.2×
+    // every few seconds, ramps to it over 4–12s, then waits 0–3s before
+    // rolling the next. Aperiodic ranges keep it from feeling cyclic.
+    let swellTimer = null;
+    let swellRunning = false;
+    function scheduleSwell() {
+      if (!swellRunning || !ctx) return;
+      const now = ctx.currentTime;
+      const target = 0.60 + Math.random() * 0.60;
+      const rampSec = 4 + Math.random() * 8;
+      const holdSec = Math.random() * 3;
+      swell.gain.cancelScheduledValues(now);
+      swell.gain.setValueAtTime(swell.gain.value, now);
+      swell.gain.linearRampToValueAtTime(target, now + rampSec);
+      swellTimer = setTimeout(scheduleSwell, (rampSec + holdSec) * 1000);
+    }
 
     return {
       gain: out,
       start(when) {
-        filtLfo.start(when); v1lfo.start(when); v2lfo.start(when);
-        v1.start(when); v2.start(when); v3.start(when);
+        filtLfo.start(when); phLfo.start(when);
+        v1lfo.start(when); v2lfo.start(when); v3lfo.start(when); v5lfo.start(when);
+        v1.start(when); v2.start(when); v3.start(when); v4.start(when); v5.start(when);
+        swellRunning = true;
+        swellTimer = setTimeout(scheduleSwell, 1500);
       },
       stop(when) {
-        try { v1.stop(when); v2.stop(when); v3.stop(when); } catch(_){}
-        try { filtLfo.stop(when); v1lfo.stop(when); v2lfo.stop(when); } catch(_){}
+        swellRunning = false;
+        if (swellTimer) { clearTimeout(swellTimer); swellTimer = null; }
+        try { v1.stop(when); v2.stop(when); v3.stop(when); v4.stop(when); v5.stop(when); } catch(_){}
+        try { filtLfo.stop(when); phLfo.stop(when);
+              v1lfo.stop(when); v2lfo.stop(when); v3lfo.stop(when); v5lfo.stop(when); } catch(_){}
       }
     };
   }
@@ -13612,8 +13716,9 @@ window.fmtDate = function(d) {
   }
 
   function makeNewsPad() {
-    // Brighter pad sitting above the drone — C5 + E5 sawtooth voices
-    // through a slow-sweeping lowpass with vibrato. Stays in A-minor.
+    // Brighter pad sitting above the drone — same Am7 chord tones an
+    // octave up (A4 + C5 + E5 + G5) so news + globe share the harmony.
+    // Sawtooth voices through a slow-sweeping lowpass with vibrato.
     const out = ctx.createGain();
     out.gain.value = 0.0001;
 
@@ -13628,40 +13733,62 @@ window.fmtDate = function(d) {
     filtLfoGain.gain.value = 700;
     filtLfo.connect(filtLfoGain).connect(filter.frequency);
 
-    const C5_HZ = 523.25, E5_HZ = 659.25;
-    const v1 = ctx.createOscillator();
+    const A4_HZ = 440.00, C5_HZ = 523.25, E5_HZ = 659.25, G5_HZ = 783.99;
+
+    const v1 = ctx.createOscillator(); // A4 root
     v1.type = 'sawtooth';
-    v1.frequency.value = C5_HZ;
-    v1.detune.value = -9;
+    v1.frequency.value = A4_HZ;
+    v1.detune.value = -7;
     const v1g = ctx.createGain();
-    v1g.gain.value = 0.07;
+    v1g.gain.value = 0.04;
     v1.connect(v1g).connect(filter);
 
-    const v2 = ctx.createOscillator();
+    const v2 = ctx.createOscillator(); // C5 minor third
     v2.type = 'sawtooth';
-    v2.frequency.value = E5_HZ;
-    v2.detune.value = +9;
+    v2.frequency.value = C5_HZ;
+    v2.detune.value = +5;
     const v2g = ctx.createGain();
-    v2g.gain.value = 0.06;
+    v2g.gain.value = 0.04;
     v2.connect(v2g).connect(filter);
 
-    // Slow vibrato to humanize the sustained voices
+    const v3 = ctx.createOscillator(); // E5 fifth
+    v3.type = 'sawtooth';
+    v3.frequency.value = E5_HZ;
+    v3.detune.value = -3;
+    const v3g = ctx.createGain();
+    v3g.gain.value = 0.035;
+    v3.connect(v3g).connect(filter);
+
+    const v4 = ctx.createOscillator(); // G5 minor seventh (color)
+    v4.type = 'sawtooth';
+    v4.frequency.value = G5_HZ;
+    v4.detune.value = +6;
+    const v4g = ctx.createGain();
+    v4g.gain.value = 0.025;
+    v4.connect(v4g).connect(filter);
+
+    // Slow vibrato to humanize all four sustained voices
     const vib = ctx.createOscillator();
     vib.frequency.value = 4.2;
     const vibDepth = ctx.createGain();
     vibDepth.gain.value = 1.6;
-    vib.connect(vibDepth).connect(v1.detune);
-    vib.connect(vibDepth).connect(v2.detune);
+    vib.connect(vibDepth);
+    vibDepth.connect(v1.detune);
+    vibDepth.connect(v2.detune);
+    vibDepth.connect(v3.detune);
+    vibDepth.connect(v4.detune);
 
     filter.connect(out);
 
     return {
       gain: out,
       start(when) {
-        filtLfo.start(when); v1.start(when); v2.start(when); vib.start(when);
+        filtLfo.start(when); vib.start(when);
+        v1.start(when); v2.start(when); v3.start(when); v4.start(when);
       },
       stop(when) {
-        try { v1.stop(when); v2.stop(when); filtLfo.stop(when); vib.stop(when); } catch(_){}
+        try { v1.stop(when); v2.stop(when); v3.stop(when); v4.stop(when); } catch(_){}
+        try { filtLfo.stop(when); vib.stop(when); } catch(_){}
       }
     };
   }
@@ -13672,8 +13799,9 @@ window.fmtDate = function(d) {
     const out = ctx.createGain();
     out.gain.value = 0.0001;
 
-    const NOTES = [220.00, 261.63, 329.63, 392.00, 329.63, 261.63]; // A3 C4 E4 G4 E4 C4
-    const STEP_SEC = 0.55;        // ~109 BPM eighth-notes, contemplative
+    // Am7 chord tones spanning 1.5 octaves — locked to the drone harmony.
+    const NOTES = [220.00, 261.63, 329.63, 392.00, 440.00, 392.00, 329.63, 261.63]; // A3 C4 E4 G4 A4 G4 E4 C4
+    const STEP_SEC = 0.28;        // ~214 BPM eighth-notes — energetic
     let stepIdx = 0;
     let nextAt = 0;
     let running = false;
@@ -13736,6 +13864,20 @@ window.fmtDate = function(d) {
     duckGain.gain.value   = 1.0;
     masterGain.gain.value = muted ? 0.0001 : MASTER_DEFAULT;
     duckGain.connect(masterGain).connect(ctx.destination);
+
+    // Shared reverb bus: layers tap reverbIn at any send level they choose.
+    // Pre-filter keeps the tail dark/musical (no hissy highs).
+    reverbIn  = ctx.createGain();
+    reverbOut = ctx.createGain();
+    reverbIn.gain.value  = 1.0;
+    reverbOut.gain.value = 0.85;
+    const reverbPre = ctx.createBiquadFilter();
+    reverbPre.type = 'lowpass';
+    reverbPre.frequency.value = 3500;
+    reverbPre.Q.value = 0.5;
+    const convolver = ctx.createConvolver();
+    convolver.buffer = makeReverbIR(3.6, 2.6);
+    reverbIn.connect(reverbPre).connect(convolver).connect(reverbOut).connect(duckGain);
     return true;
   }
 
@@ -13828,6 +13970,45 @@ window.fmtDate = function(d) {
     osc.stop(now + dur + 0.05);
   }
 
+  // Soft staccato note in the Am7 chord with reverb tail — used for
+  // article-tap feedback on the news feed, threads, and lines pages.
+  // Picks randomly from the upper voicing (A4/C5/E5/G5) so successive
+  // taps trace a quiet melody locked to the drone harmony.
+  const TAP_NOTES = [440.00, 523.25, 659.25, 783.99]; // A4 C5 E5 G5
+  function triggerArticleTap(opts) {
+    if (!ctx || muted) return;
+    opts = opts || {};
+    const now = ctx.currentTime;
+    const noteHz = opts.hz || TAP_NOTES[Math.floor(Math.random() * TAP_NOTES.length)];
+    const dur = opts.dur || 0.55;
+    const vol = (opts.vol == null) ? 0.10 : opts.vol;
+    const sendAmt = (opts.reverbSend == null) ? 0.65 : opts.reverbSend;
+
+    const osc = ctx.createOscillator();
+    osc.type = opts.type || 'sine';
+    osc.frequency.value = noteHz;
+
+    const filt = ctx.createBiquadFilter();
+    filt.type = 'lowpass';
+    filt.frequency.value = noteHz * 4;
+    filt.Q.value = 1.0;
+
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, now);
+    g.gain.exponentialRampToValueAtTime(vol, now + 0.005);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+
+    osc.connect(filt).connect(g);
+    g.connect(duckGain);
+    if (reverbIn && sendAmt > 0) {
+      const send = ctx.createGain();
+      send.gain.value = sendAmt;
+      g.connect(send).connect(reverbIn);
+    }
+    osc.start(now);
+    osc.stop(now + dur + 0.05);
+  }
+
   // Soft whoosh — bandpass-filtered white noise sweeping high-to-low,
   // short envelope. Used for country-polygon focus feedback.
   function triggerWhoosh(opts) {
@@ -13903,8 +14084,8 @@ window.fmtDate = function(d) {
   }
 
   window.audioEngine = {
-    unlock, setLayer, triggerStab, triggerWhoosh, duck, unduck,
-    setMasterMute, isMuted, isUnlocked,
+    unlock, setLayer, triggerStab, triggerWhoosh, triggerArticleTap,
+    duck, unduck, setMasterMute, isMuted, isUnlocked,
     get ctx() { return ctx; }
   };
 })();
@@ -18319,11 +18500,12 @@ function computeCityTiers(cities) {
       let lastTouchTime = 0;     // used to suppress hover labels briefly after touch events
 
       // ── Sound Effects ────────────────────────────────────────────────────────
+      // Country-polygon selection now uses audioEngine.triggerWhoosh() —
+      // the legacy SFX.node sample was removed. SFX.article still drives
+      // flow-arc clicks.
       const SFX = {
-        node:    new Audio('earth00music1.mp3'),
         article: new Audio('earth00music2.mp3'),
       };
-      SFX.node.preload    = 'auto';
       SFX.article.preload = 'auto';
       function playSFX(sfx) {
         try { sfx.currentTime = 0; sfx.play(); } catch(e) {}
@@ -18337,7 +18519,7 @@ function computeCityTiers(cities) {
       function _unlockAudio() {
         if (_audioUnlocked) return;
         _audioUnlocked = true;
-        [SFX.node, SFX.article].forEach(sfx => {
+        [SFX.article].forEach(sfx => {
           sfx.volume = 0;
           sfx.play().then(() => { sfx.pause(); sfx.currentTime = 0; sfx.volume = 1; }).catch(() => { sfx.volume = 1; });
         });
@@ -22267,7 +22449,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         focusInitialAngle = globeQuat.angleTo(focusTargetQuat);
         isFocused = true; yawVelocity = 0; tiltVelocity = 0;
         if (!window.briefingActive) {
-          playSFX(SFX.node);
+          // (country focus whoosh fires from polygon-layer selectCountry)
         } else {
           // Briefing tour: keep the camera WIDE so the whole globe stays
           // in frame as the tour rotates between countries. The previous
@@ -33336,6 +33518,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (article && window.openArticleDetail) {
           window.openArticleDetail(article, { type: 'feed' });
           if (window.__libraryTrackView) window.__libraryTrackView(article);
+          if (window.audioEngine) try { window.audioEngine.triggerArticleTap(); } catch(_){}
         }
       } catch(e) {
         console.warn('Failed to open article:', e);
@@ -43324,6 +43507,116 @@ const settingsToggle     = document.getElementById("settingsToggle");
   .bIntroOverlay .bIntroDate { font-size: 12px; letter-spacing: 0.16em; }
 }
 
+/* ── Outro overlay — full-screen sequence shown during the type:'outro'
+   segment. Twin logos flanking a centered title + date. Same fade /
+   exit treatment as the intro overlay. */
+.bOutroOverlay {
+  position: absolute; inset: 0;
+  z-index: 100020;
+  pointer-events: none;
+  display: flex; align-items: center; justify-content: center;
+}
+.bOutroOverlay .bOutroDim {
+  position: absolute; inset: 0;
+  background:
+    radial-gradient(120% 100% at 50% 50%, rgba(60,80,110,0.25), transparent 65%),
+    linear-gradient(180deg, rgba(18,24,38,0.92), rgba(8,12,22,0.94));
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  opacity: 0;
+  transition: opacity 0.55s ease;
+}
+.bOutroOverlay.visible .bOutroDim { opacity: 1; }
+.bOutroOverlay.exiting .bOutroDim { opacity: 0; }
+
+/* Brand row — two globes flanking the title block. The whole row
+   enters with a small upward float; the title + date inside cross-
+   fade in slightly later for a layered reveal. */
+.bOutroOverlay .bOutroBrand {
+  position: relative;
+  z-index: 1;
+  display: flex; align-items: center; justify-content: center;
+  gap: 56px;
+  opacity: 0;
+  transform: translateY(14px) scale(0.96);
+  transition: opacity 0.7s ease, transform 0.7s cubic-bezier(0.32, 0.72, 0, 1);
+}
+.bOutroOverlay.visible .bOutroBrand {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transition-delay: 0.15s;
+}
+.bOutroOverlay.exiting .bOutroBrand {
+  opacity: 0;
+  transform: translateY(-10px) scale(1.02);
+}
+
+/* Smaller-than-intro globes — they're framing, not hero. */
+.bOutroOverlay .bOutroGlobe .el-globe {
+  width: 130px;
+  height: 130px;
+  filter: drop-shadow(0 0 18px rgba(255, 184, 92, 0.30))
+          drop-shadow(0 0 38px rgba(120, 160, 255, 0.14));
+  animation: siShimmer 3.6s ease-in-out 0.9s infinite;
+}
+.bOutroOverlay .bOutroGlobe .el-e {
+  font-size: 36px !important;
+  bottom: 8px !important;
+  left: 6px !important;
+}
+
+/* Title + date stack centered between the two globes. */
+.bOutroOverlay .bOutroCenter {
+  display: flex; flex-direction: column; align-items: center;
+  text-align: center;
+}
+.bOutroOverlay .bOutroTitle {
+  font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: rgba(255, 240, 215, 0.96);
+  text-shadow: 0 0 18px rgba(255, 184, 92, 0.35);
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 0.7s ease 0.45s, transform 0.7s cubic-bezier(0.32, 0.72, 0, 1) 0.45s;
+}
+.bOutroOverlay.visible .bOutroTitle {
+  opacity: 1; transform: translateY(0);
+}
+.bOutroOverlay.exiting .bOutroTitle {
+  opacity: 0; transform: translateY(-4px);
+  transition-delay: 0s;
+}
+.bOutroOverlay .bOutroDate {
+  margin-top: 12px;
+  font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.20em;
+  text-transform: uppercase;
+  color: rgba(255, 224, 180, 0.78);
+  opacity: 0;
+  transform: translateY(8px);
+  transition: opacity 0.7s ease 0.75s, transform 0.7s cubic-bezier(0.32, 0.72, 0, 1) 0.75s;
+}
+.bOutroOverlay.visible .bOutroDate {
+  opacity: 1; transform: translateY(0);
+}
+.bOutroOverlay.exiting .bOutroDate {
+  opacity: 0; transform: translateY(-4px);
+  transition-delay: 0s;
+}
+
+@media (max-width: 700px) {
+  .bOutroOverlay .bOutroBrand { gap: 22px; }
+  .bOutroOverlay .bOutroGlobe .el-globe { width: 86px; height: 86px; }
+  .bOutroOverlay .bOutroGlobe .el-e { font-size: 24px !important; bottom: 4px !important; }
+  .bOutroOverlay .bOutroTitle { font-size: 16px; letter-spacing: 0.18em; }
+  .bOutroOverlay .bOutroDate  { font-size: 10px; letter-spacing: 0.16em; }
+}
+
 /* ── Segment title — fixed at top-center, slides into the space
    vacated by the top nav buttons during a briefing. Updated per
    segment by goToSegment(). Z-index sits BELOW the intro overlay
@@ -44918,6 +45211,72 @@ body.ticker-active .gTickerLabel {
       <div class="bIntroDate" id="bIntroDate"></div>
     </div>
   </div>
+
+  <!-- Outro overlay — shown during type:'outro' segments. Twin logo
+       globes flank a centered title + date. Reuses the same
+       initLoaderAnim MutationObserver wiring as the intro globe — both
+       SVG instances get the orbiting star/trail for free. -->
+  <div id="bOutroOverlay" class="bOutroOverlay" style="display:none">
+    <div class="bOutroDim"></div>
+    <div class="bOutroBrand">
+      <div class="el-globe-wrap bOutroGlobe">
+        <svg class="el-globe" viewBox="-110 -110 220 220" xmlns="http://www.w3.org/2000/svg">
+          <g class="el-grid">
+            <ellipse cx="0" cy="0" rx="100" ry="100" fill="none"/>
+            <ellipse cx="0" cy="-50" rx="86.6" ry="15" fill="none"/>
+            <ellipse cx="0" cy="-25" rx="96.8" ry="8"  fill="none"/>
+            <ellipse cx="0" cy="0"   rx="100"  ry="20" fill="none"/>
+            <ellipse cx="0" cy="25"  rx="96.8" ry="8"  fill="none"/>
+            <ellipse cx="0" cy="50"  rx="86.6" ry="15" fill="none"/>
+            <path d="M0,-100 Q38,-85 55,0 Q38,85 0,100"/>
+            <path d="M0,-100 Q-38,-85 -55,0 Q-38,85 0,100"/>
+            <path d="M0,-100 Q70,-50 70,0 Q70,50 0,100"/>
+            <path d="M0,-100 Q-70,-50 -70,0 Q-70,50 0,100"/>
+            <path d="M0,-100 Q20,-80 100,0 Q20,80 0,100"/>
+            <path d="M0,-100 Q-20,-80 -100,0 Q-20,80 0,100"/>
+            <path d="M0,-100 Q8,-60 0,100"/>
+            <path d="M0,-100 Q-8,-60 0,100"/>
+          </g>
+          <g transform="rotate(-32)">
+            <path class="el-trail-blur" d=""/>
+            <path class="el-trail-seg" d=""/><path class="el-trail-seg" d=""/><path class="el-trail-seg" d=""/><path class="el-trail-seg" d=""/><path class="el-trail-seg" d=""/><path class="el-trail-seg" d=""/>
+            <polygon class="el-star" points="0,-6.5 1.5,-2.1 6.2,-2.1 2.6,0.8 3.8,5.4 0,3.0 -3.8,5.4 -2.6,0.8 -6.2,-2.1 -1.5,-2.1"/>
+          </g>
+        </svg>
+        <div class="el-e">e</div>
+      </div>
+      <div class="bOutroCenter">
+        <div class="bOutroTitle">Daily Briefing</div>
+        <div class="bOutroDate" id="bOutroDate"></div>
+      </div>
+      <div class="el-globe-wrap bOutroGlobe">
+        <svg class="el-globe" viewBox="-110 -110 220 220" xmlns="http://www.w3.org/2000/svg">
+          <g class="el-grid">
+            <ellipse cx="0" cy="0" rx="100" ry="100" fill="none"/>
+            <ellipse cx="0" cy="-50" rx="86.6" ry="15" fill="none"/>
+            <ellipse cx="0" cy="-25" rx="96.8" ry="8"  fill="none"/>
+            <ellipse cx="0" cy="0"   rx="100"  ry="20" fill="none"/>
+            <ellipse cx="0" cy="25"  rx="96.8" ry="8"  fill="none"/>
+            <ellipse cx="0" cy="50"  rx="86.6" ry="15" fill="none"/>
+            <path d="M0,-100 Q38,-85 55,0 Q38,85 0,100"/>
+            <path d="M0,-100 Q-38,-85 -55,0 Q-38,85 0,100"/>
+            <path d="M0,-100 Q70,-50 70,0 Q70,50 0,100"/>
+            <path d="M0,-100 Q-70,-50 -70,0 Q-70,50 0,100"/>
+            <path d="M0,-100 Q20,-80 100,0 Q20,80 0,100"/>
+            <path d="M0,-100 Q-20,-80 -100,0 Q-20,80 0,100"/>
+            <path d="M0,-100 Q8,-60 0,100"/>
+            <path d="M0,-100 Q-8,-60 0,100"/>
+          </g>
+          <g transform="rotate(-32)">
+            <path class="el-trail-blur" d=""/>
+            <path class="el-trail-seg" d=""/><path class="el-trail-seg" d=""/><path class="el-trail-seg" d=""/><path class="el-trail-seg" d=""/><path class="el-trail-seg" d=""/><path class="el-trail-seg" d=""/>
+            <polygon class="el-star" points="0,-6.5 1.5,-2.1 6.2,-2.1 2.6,0.8 3.8,5.4 0,3.0 -3.8,5.4 -2.6,0.8 -6.2,-2.1 -1.5,-2.1"/>
+          </g>
+        </svg>
+        <div class="el-e">e</div>
+      </div>
+    </div>
+  </div>
   <!-- Segment title — fixed at top-center, replaces the slid-out top
        nav buttons. Updated per segment in goToSegment(): story segments
        show seg.thread_title; the intro segment shows "Daily Briefing ·
@@ -45403,6 +45762,41 @@ body.ticker-active .gTickerLabel {
     }, 720);
   }
 
+  function showOutroOverlay() {
+    const overlay = document.getElementById('bOutroOverlay');
+    if (!overlay) return;
+    if (overlay.classList.contains('visible') && !overlay.classList.contains('exiting')) return;
+    overlay.classList.remove('exiting');
+    overlay.style.display = '';
+    // Stamp the same date the intro shows. Prefer the narrator's
+    // verbatim phrasing (so intro/outro read identically); fall back
+    // to target_date.
+    const dateEl = document.getElementById('bOutroDate');
+    if (dateEl) {
+      const narratorDate = _extractNarratorIntroDate(episode);
+      if (narratorDate) {
+        dateEl.textContent = narratorDate;
+      } else {
+        const d = _parseEpisodeDate(episode?.target_date);
+        dateEl.textContent = d.toLocaleDateString('en-US', {
+          weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
+        });
+      }
+    }
+    void overlay.offsetWidth;
+    overlay.classList.add('visible');
+  }
+  function hideOutroOverlay() {
+    const overlay = document.getElementById('bOutroOverlay');
+    if (!overlay) return;
+    if (!overlay.classList.contains('visible')) return;
+    overlay.classList.add('exiting');
+    setTimeout(() => {
+      overlay.classList.remove('visible', 'exiting');
+      overlay.style.display = 'none';
+    }, 720);
+  }
+
   // ── Segment title control ────────────────────────────────────────────
   // Top-center marquee that replaces the slid-out top nav buttons during
   // the briefing. Updated per segment. Hidden for outro/keywords/summary
@@ -45748,6 +46142,7 @@ body.ticker-active .gTickerLabel {
     clearTimeout(segTimer);
     clearBTimers();
     hideIntroOverlay();
+    hideOutroOverlay();
     // Clear the top-center segment title — its visible class triggers
     // the opacity+translate fade-out via the CSS transition. Text is
     // cleared after the transition completes.
@@ -46640,6 +47035,7 @@ body.ticker-active .gTickerLabel {
     if (!episode || idx >= episode.segments.length) {
       _resumeSingle = false;
       hideIntroOverlay();
+      hideOutroOverlay();
       showRecap();
       return;
     }
@@ -46647,6 +47043,7 @@ body.ticker-active .gTickerLabel {
     if (_resumeSingle && !seek && idx !== segIdx) {
       _resumeSingle = false;
       hideIntroOverlay();
+      hideOutroOverlay();
       showRecap();
       return;
     }
@@ -46661,6 +47058,15 @@ body.ticker-active .gTickerLabel {
       showIntroOverlay();
     } else {
       hideIntroOverlay();
+    }
+
+    // Outro overlay — symmetric counterpart shown during type:'outro'.
+    // Twin logos + title + date sit over the dim while the closing
+    // narration plays.
+    if (seg?.type === 'outro') {
+      showOutroOverlay();
+    } else {
+      hideOutroOverlay();
     }
 
     // Segment title — top-center marquee that replaces the slid-out
@@ -49310,6 +49716,7 @@ body.ticker-active .gTickerLabel {
       const article = JSON.parse(el.dataset.article);
       if (article && window.openArticleDetail) {
         window.openArticleDetail(article, { type: 'thread' });
+        if (window.audioEngine) try { window.audioEngine.triggerArticleTap(); } catch(_){}
       }
     } catch(e) {
       console.warn('Failed to open thread article:', e);
