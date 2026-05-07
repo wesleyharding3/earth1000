@@ -13418,6 +13418,11 @@ window.__arcCtxSegmented = (function() {
     //   • lighter reverb send than stats
     const out = ctx.createGain();
     out.gain.value = 0.0001;
+    const wetGain = reverbIn ? ctx.createGain() : null;
+    if (wetGain) {
+      wetGain.gain.value = 0.0001;
+      wetGain.connect(reverbIn);
+    }
 
     const filter = ctx.createBiquadFilter();
     filter.type = 'lowpass';
@@ -13437,10 +13442,10 @@ window.__arcCtxSegmented = (function() {
     dry.gain.value = 0.07;
     filter.connect(dry).connect(out);
 
-    if (reverbIn) {
+    if (wetGain) {
       const wet = ctx.createGain();
       wet.gain.value = 1.5;
-      filter.connect(wet).connect(reverbIn);
+      filter.connect(wet).connect(wetGain);
     }
 
     // 6-step pattern, climbs C-pentatonic then descends. Mixed dyad
@@ -13522,6 +13527,7 @@ window.__arcCtxSegmented = (function() {
 
     return {
       gain: out,
+      wetGain,
       start(when) {
         running = true;
         filtLfo.start(when);
@@ -13544,6 +13550,11 @@ window.__arcCtxSegmented = (function() {
   function makeGlobeArp() {
     const out = ctx.createGain();
     out.gain.value = 0.0001;
+    const wetGain = reverbIn ? ctx.createGain() : null;
+    if (wetGain) {
+      wetGain.gain.value = 0.0001;
+      wetGain.connect(reverbIn);
+    }
 
     const filter = ctx.createBiquadFilter();
     filter.type = 'lowpass';
@@ -13558,10 +13569,10 @@ window.__arcCtxSegmented = (function() {
     const dry = ctx.createGain();
     dry.gain.value = 0.08;
     filter.connect(dry).connect(out);
-    if (reverbIn) {
+    if (wetGain) {
       const wet = ctx.createGain();
       wet.gain.value = 1.8;
-      filter.connect(wet).connect(reverbIn);
+      filter.connect(wet).connect(wetGain);
     }
 
     const LOW  = [110.00, 130.81, 164.81, 196.00, 220.00, 196.00, 164.81, 130.81]; // A2 C3 E3 G3 A3 G3 E3 C3
@@ -13598,6 +13609,7 @@ window.__arcCtxSegmented = (function() {
 
     return {
       gain: out,
+      wetGain,
       start(when) {
         running = true;
         filtLfo.start(when);
@@ -13617,6 +13629,11 @@ window.__arcCtxSegmented = (function() {
   function makeStatsArp() {
     const out = ctx.createGain();
     out.gain.value = 0.0001;
+    const wetGain = reverbIn ? ctx.createGain() : null;
+    if (wetGain) {
+      wetGain.gain.value = 0.0001;
+      wetGain.connect(reverbIn);
+    }
 
     const filter = ctx.createBiquadFilter();
     filter.type = 'lowpass';
@@ -13641,13 +13658,13 @@ window.__arcCtxSegmented = (function() {
     delaySend.gain.value = 0.55;
     filter.connect(delaySend).connect(delay);
 
-    if (reverbIn) {
+    if (wetGain) {
       const wet = ctx.createGain();
       wet.gain.value = 1.8;
-      filter.connect(wet).connect(reverbIn);
+      filter.connect(wet).connect(wetGain);
       const delayWet = ctx.createGain();
       delayWet.gain.value = 1.2;
-      delay.connect(delayWet).connect(reverbIn);
+      delay.connect(delayWet).connect(wetGain);
     }
 
     const LOW  = [110.00, 130.81, 164.81, 196.00, 220.00, 196.00, 164.81, 130.81];
@@ -13717,6 +13734,7 @@ window.__arcCtxSegmented = (function() {
 
     return {
       gain: out,
+      wetGain,
       start(when) {
         running = true;
         filtLfo.start(when);
@@ -13877,7 +13895,9 @@ window.__arcCtxSegmented = (function() {
 
   function setLayer(name, on, fadeSec) {
     if (!ctx) return;
-    const fade = (typeof fadeSec === 'number') ? fadeSec : 1.6;
+    // 3.5s default — see www/index.html for full rationale (cross-page
+    // music transitions felt like a sudden surge at 1.6s).
+    const fade = (typeof fadeSec === 'number') ? fadeSec : 3.5;
     const now = ctx.currentTime;
     const entry = layers.get(name);
 
@@ -13895,6 +13915,10 @@ window.__arcCtxSegmented = (function() {
       built.start(now);
       built.gain.gain.setValueAtTime(0.0001, now);
       built.gain.gain.exponentialRampToValueAtTime(1.0, now + fade);
+      if (built.wetGain) {
+        built.wetGain.gain.setValueAtTime(0.0001, now);
+        built.wetGain.gain.exponentialRampToValueAtTime(1.0, now + fade);
+      }
       layers.set(name, built);
     } else {
       if (!entry) return;
@@ -13902,6 +13926,12 @@ window.__arcCtxSegmented = (function() {
       g.cancelScheduledValues(now);
       g.setValueAtTime(g.value, now);
       g.exponentialRampToValueAtTime(0.0001, now + fade);
+      if (entry.wetGain) {
+        const wg = entry.wetGain.gain;
+        wg.cancelScheduledValues(now);
+        wg.setValueAtTime(wg.value, now);
+        wg.exponentialRampToValueAtTime(0.0001, now + fade);
+      }
       const stopAt = now + fade + 0.05;
       try { entry.stop(stopAt); } catch(_){}
       layers.delete(name);

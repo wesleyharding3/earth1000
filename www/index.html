@@ -13764,6 +13764,13 @@ window.fmtDate = function(d) {
     //   • lighter reverb send than stats
     const out = ctx.createGain();
     out.gain.value = 0.0001;
+    // Wet master — gates the reverb send so cross-fades affect both
+    // dry and wet in lockstep. See setLayer for the fade automation.
+    const wetGain = reverbIn ? ctx.createGain() : null;
+    if (wetGain) {
+      wetGain.gain.value = 0.0001;
+      wetGain.connect(reverbIn);
+    }
 
     const filter = ctx.createBiquadFilter();
     filter.type = 'lowpass';
@@ -13783,10 +13790,10 @@ window.fmtDate = function(d) {
     dry.gain.value = 0.07;
     filter.connect(dry).connect(out);
 
-    if (reverbIn) {
+    if (wetGain) {
       const wet = ctx.createGain();
       wet.gain.value = 1.5;
-      filter.connect(wet).connect(reverbIn);
+      filter.connect(wet).connect(wetGain);
     }
 
     // 6-step pattern, climbs C-pentatonic then descends. Mixed dyad
@@ -13868,6 +13875,7 @@ window.fmtDate = function(d) {
 
     return {
       gain: out,
+      wetGain,
       start(when) {
         running = true;
         filtLfo.start(when);
@@ -13890,6 +13898,15 @@ window.fmtDate = function(d) {
   function makeGlobeArp() {
     const out = ctx.createGain();
     out.gain.value = 0.0001;
+    // Wet master — gates the reverb send so cross-fades affect BOTH
+    // dry and wet in lockstep. Without this, the convolver bus would
+    // fill at full volume the instant a layer starts, before the dry
+    // signal had ramped in.
+    const wetGain = reverbIn ? ctx.createGain() : null;
+    if (wetGain) {
+      wetGain.gain.value = 0.0001;
+      wetGain.connect(reverbIn);
+    }
 
     const filter = ctx.createBiquadFilter();
     filter.type = 'lowpass';
@@ -13905,10 +13922,10 @@ window.fmtDate = function(d) {
     const dry = ctx.createGain();
     dry.gain.value = 0.08;
     filter.connect(dry).connect(out);
-    if (reverbIn) {
+    if (wetGain) {
       const wet = ctx.createGain();
       wet.gain.value = 1.8;
-      filter.connect(wet).connect(reverbIn);
+      filter.connect(wet).connect(wetGain);
     }
 
     const LOW  = [110.00, 130.81, 164.81, 196.00, 220.00, 196.00, 164.81, 130.81]; // A2 C3 E3 G3 A3 G3 E3 C3
@@ -13945,6 +13962,7 @@ window.fmtDate = function(d) {
 
     return {
       gain: out,
+      wetGain,
       start(when) {
         running = true;
         filtLfo.start(when);
@@ -13974,6 +13992,14 @@ window.fmtDate = function(d) {
   function makeStatsArp() {
     const out = ctx.createGain();
     out.gain.value = 0.0001;
+    // Wet master — gates BOTH the direct wet send and the delay-tail
+    // reverb send so cross-fades affect every reverb-bound signal in
+    // lockstep. See setLayer for the in/out fade automation.
+    const wetGain = reverbIn ? ctx.createGain() : null;
+    if (wetGain) {
+      wetGain.gain.value = 0.0001;
+      wetGain.connect(reverbIn);
+    }
 
     const filter = ctx.createBiquadFilter();
     filter.type = 'lowpass';
@@ -13990,10 +14016,9 @@ window.fmtDate = function(d) {
     dry.gain.value = 0.08;
     filter.connect(dry).connect(out);
 
-    // Feedback delay — echoes also feed the reverb bus so the
-    // tail stays drowned. Without that second send, echoes would
-    // poke out dry against the wet wash and read as a separate
-    // effect rather than part of the texture.
+    // Feedback delay — echoes also feed the wet bus so the tail
+    // stays drowned in reverb. Without that second send, echoes
+    // would poke out dry against the wet wash.
     const delay = ctx.createDelay(2.0);
     delay.delayTime.value = 0.24;        // 1.5x STEP_SEC = polyrhythmic against the pulse
     const feedback = ctx.createGain();
@@ -14003,14 +14028,15 @@ window.fmtDate = function(d) {
     delaySend.gain.value = 0.55;
     filter.connect(delaySend).connect(delay);
 
-    if (reverbIn) {
+    if (wetGain) {
       const wet = ctx.createGain();
       wet.gain.value = 1.8;
-      filter.connect(wet).connect(reverbIn);
-      // Delay echoes also into the reverb — drown them too.
+      filter.connect(wet).connect(wetGain);
+      // Delay echoes also routed through the wet master so they
+      // fade in/out with everything else.
       const delayWet = ctx.createGain();
       delayWet.gain.value = 1.2;
-      delay.connect(delayWet).connect(reverbIn);
+      delay.connect(delayWet).connect(wetGain);
     }
 
     const LOW  = [110.00, 130.81, 164.81, 196.00, 220.00, 196.00, 164.81, 130.81]; // A2 C3 E3 G3 A3 G3 E3 C3
@@ -14089,6 +14115,7 @@ window.fmtDate = function(d) {
 
     return {
       gain: out,
+      wetGain,
       start(when) {
         running = true;
         filtLfo.start(when);
@@ -14249,7 +14276,12 @@ window.fmtDate = function(d) {
 
   function setLayer(name, on, fadeSec) {
     if (!ctx) return;
-    const fade = (typeof fadeSec === 'number') ? fadeSec : 1.6;
+    // 3.5s default — was 1.6s. The shorter fade felt snappy/responsive
+    // for UI buttons, but for cross-page music transitions it read as a
+    // sudden surge: reverb wash arriving before the music. 3.5s is long
+    // enough to feel like atmosphere drifting between rooms while still
+    // completing well before the user might swipe back.
+    const fade = (typeof fadeSec === 'number') ? fadeSec : 3.5;
     const now = ctx.currentTime;
     const entry = layers.get(name);
 
@@ -14267,6 +14299,15 @@ window.fmtDate = function(d) {
       built.start(now);
       built.gain.gain.setValueAtTime(0.0001, now);
       built.gain.gain.exponentialRampToValueAtTime(1.0, now + fade);
+      // Layers that route a wet/reverb send separately from the dry
+      // path expose `wetGain` so we can fade BOTH in lockstep. Without
+      // this, the wet wash arrives at full volume immediately because
+      // the reverb send bypasses the layer's master gain — that was
+      // the "sudden surge" the user reported on page transitions.
+      if (built.wetGain) {
+        built.wetGain.gain.setValueAtTime(0.0001, now);
+        built.wetGain.gain.exponentialRampToValueAtTime(1.0, now + fade);
+      }
       layers.set(name, built);
     } else {
       if (!entry) return;
@@ -14274,6 +14315,16 @@ window.fmtDate = function(d) {
       g.cancelScheduledValues(now);
       g.setValueAtTime(g.value, now);
       g.exponentialRampToValueAtTime(0.0001, now + fade);
+      // Mirror the wet master fade-out — without this, reverb echoes
+      // and delay tails would continue pumping into the convolver bus
+      // at full intensity for several seconds after the layer's "out"
+      // had already faded.
+      if (entry.wetGain) {
+        const wg = entry.wetGain.gain;
+        wg.cancelScheduledValues(now);
+        wg.setValueAtTime(wg.value, now);
+        wg.exponentialRampToValueAtTime(0.0001, now + fade);
+      }
       const stopAt = now + fade + 0.05;
       try { entry.stop(stopAt); } catch(_){}
       layers.delete(name);
