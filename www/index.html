@@ -14211,7 +14211,17 @@ window.fmtDate = function(d) {
   window.audioEngine = {
     unlock, setLayer, triggerStab, triggerWhoosh, triggerArticleTap,
     duck, unduck, setMasterMute, isMuted, isUnlocked,
-    get ctx() { return ctx; }
+    get ctx() { return ctx; },
+    _debug() {
+      return {
+        unlocked, muted,
+        ctxState: ctx?.state,
+        masterGain: masterGain?.gain?.value,
+        duckGain:   duckGain?.gain?.value,
+        layers:     [...layers.keys()],
+        layerGains: [...layers.entries()].map(([k, v]) => [k, v.gain?.gain?.value]),
+      };
+    }
   };
 })();
 
@@ -18979,7 +18989,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // flips at the user's local sunset/sunrise without a reload. The
       // actual applied theme still flows through window.__setGlobeTheme,
       // which is what downstream code (overlays, opacity, biome) listens to.
-      const themePillBtns = Array.from(document.querySelectorAll(".themePillBtn"));
+      const themePillBtns = Array.from(document.querySelectorAll(".themePillBtn[data-theme]"));
       const THEME_MODE_KEY = "earth00:themeMode";
       function resolveAutoTheme() {
         const h = new Date().getHours(); // local hour, 0–23
