@@ -13126,6 +13126,848 @@ window.__arcCtxSegmented = (function() {
 })();
 </script>
 
+<!-- ── Procedural ambient audio engine — mirrors mobile www/index.html.
+     Single AudioContext wrapper, page-aware layer playback driven by
+     window.__currentPage. See goTo() / sound pill click handler for
+     the wiring. ── -->
+<script>
+/* ── Audio Engine — procedural ambient sound design ─────────────────
+   Single AudioContext wrapper for the whole app. Builds layered
+   drones/sub/stabs from oscillators (no samples). Stays silent until
+   the first user gesture (iOS WKWebView gesture-unlock requirement).
+   Persists master mute in localStorage as 'earth00:audioMuted'.
+
+   API surface (window.audioEngine):
+     unlock()                  – called on first user gesture
+     setLayer(name, on, fade?) – cross-fade a named layer in/out
+     triggerStab(opts?)        – one-shot melodic ping (button feedback)
+     duck(amount, ms)          – pull master down (narrator/video)
+     unduck(ms)                – ramp back to 1.0
+     setMasterMute(bool)       – wire to settings toggle
+     isMuted() / isUnlocked
+
+   Tonal palette: A minor.  Root A2=110Hz, fifth E3=164.81Hz,
+   sub A1=55Hz.  Feels coherent across layers added later.        */
+(function() {
+  const STORAGE_KEY = 'earth00:audioMuted';
+
+  const ROOT_HZ  = 110.00;     // A2 (legacy — generative field uses pentatonic)
+  const FIFTH_HZ = 164.81;     // E3 (legacy)
+  const SUB_HZ   =  65.41;     // C2 — anchors the bass to the field's tonal center
+  const MASTER_DEFAULT = 0.38; // unmuted target — leaves headroom
+
+  let ctx        = null;
+  let masterGain = null;       // final volume + mute
+  let duckGain   = null;       // pre-master, pulled by narrator/video
+  let reverbIn   = null;       // shared reverb send bus (any layer can tap)
+  let reverbOut  = null;       // wet return into duckGain
+  let unlocked   = false;
+  let muted      = false;
+  let listenersAttached = false;
+
+  const layers = new Map();    // name → built layer object
+
+  // Procedural reverb impulse: stereo decaying noise — exponential-shaped
+  // envelope feels hall-like without sounding like a sample. Built once.
+  function makeReverbIR(durSec, decayExp) {
+    const sr = ctx.sampleRate;
+    const len = Math.max(1, Math.floor(sr * durSec));
+    const buf = ctx.createBuffer(2, len, sr);
+    for (let ch = 0; ch < 2; ch++) {
+      const data = buf.getChannelData(ch);
+      for (let i = 0; i < len; i++) {
+        const t = i / len;
+        const env = Math.pow(1 - t, decayExp);
+        data[i] = (Math.random() * 2 - 1) * env;
+      }
+    }
+    return buf;
+  }
+
+  // ── Layer factories ─────────────────────────────────────────────
+  // Each returns { gain, start(when), stop(when) }.  gain is the
+  // node connected into duckGain by setLayer().
+
+  function makeDrone() {
+    // Generative pentatonic field — five voices each shifting pitch on
+    // independent slow timers through C major pentatonic (C D E G A).
+    // Bright, modal, never lands on the same chord twice. Lower
+    // register only: bass voice holds long (20–40s) for stable ground;
+    // upper voices drift faster (9–22s). Each shift exponentially
+    // ramps over 4–14s so harmony recolors gradually rather than
+    // stepping. activityGate is exposed so user-driven events
+    // (scroll, taps, navigation) briefly bloom the field.
+    const out = ctx.createGain();
+    out.gain.value = 0.0001;
+
+    // Activity gate — multiplied into out. Idle = 0.55, peak = 1.0.
+    // pulseActivity() ramps this up briefly on user interaction.
+    const activityGate = ctx.createGain();
+    activityGate.gain.value = 0.55;
+
+    // Single shared lowpass with very slow LFO sweep — gives the
+    // whole field a barely-perceptible "breath" underneath the
+    // pitch motion. No phaser, no chorus, no high-shelf cut: those
+    // were what made the prior version feel washed-out and depressed.
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 1400;
+    filter.Q.value = 0.5;
+    const filtLfo = ctx.createOscillator();
+    filtLfo.frequency.value = 0.05;
+    const filtLfoGain = ctx.createGain();
+    filtLfoGain.gain.value = 400;
+    filtLfo.connect(filtLfoGain).connect(filter.frequency);
+
+    // C major pentatonic by octave (Hz). Pentatonic means every
+    // combination of voices is consonant — no minor seconds, no
+    // tritones — so random shifts can never produce dissonance.
+    const PENTA_O2 = [65.41, 73.42, 82.41, 98.00, 110.00];      // C2 D2 E2 G2 A2
+    const PENTA_O3 = [130.81, 146.83, 164.81, 196.00, 220.00];  // C3 D3 E3 G3 A3
+    const PENTA_O4 = [261.63, 293.66, 329.63, 392.00, 440.00];  // C4 D4 E4 G4 A4
+
+    const VOICE_CFG = [
+      // Bass: longest interval, biggest range, sine for warmth.
+      { palette: PENTA_O2, type: 'sine',     gain: 0.30, intervalSec: [20, 40], rampSec: [8, 14] },
+      // Low-mid pair — paired ranges so harmony breathes.
+      { palette: PENTA_O3, type: 'sine',     gain: 0.22, intervalSec: [11, 22], rampSec: [5, 10] },
+      { palette: PENTA_O3, type: 'sine',     gain: 0.18, intervalSec: [13, 24], rampSec: [6, 11] },
+      // Mid: lighter, drifts more, capped at A4=440Hz (no high
+      // sparkle — that's what felt awkward in the prior build).
+      { palette: PENTA_O4, type: 'triangle', gain: 0.10, intervalSec: [9,  18], rampSec: [4,  8] },
+      { palette: PENTA_O4, type: 'triangle', gain: 0.07, intervalSec: [10, 20], rampSec: [5,  9] },
+    ];
+
+    const voices = VOICE_CFG.map((cfg) => {
+      const startNote = cfg.palette[Math.floor(Math.random() * cfg.palette.length)];
+      const osc = ctx.createOscillator();
+      osc.type = cfg.type;
+      osc.frequency.value = startNote;
+      osc.detune.value = (Math.random() - 0.5) * 8;          // ±4¢ wander
+
+      const vGain = ctx.createGain();
+      vGain.gain.value = cfg.gain;
+
+      // Slow gain LFO — voices ebb and flow on prime-ish ratios so
+      // they never sync. Depth = 30% of base gain (perceptible
+      // motion without ever fully dropping out).
+      const gLfo = ctx.createOscillator();
+      gLfo.frequency.value = 0.04 + Math.random() * 0.08;
+      const gLfoDepth = ctx.createGain();
+      gLfoDepth.gain.value = cfg.gain * 0.30;
+      gLfo.connect(gLfoDepth).connect(vGain.gain);
+
+      osc.connect(vGain).connect(filter);
+
+      return { cfg, osc, vGain, gLfo, timer: null };
+    });
+
+    filter.connect(activityGate).connect(out);
+
+    // Light reverb send — half the prior level (0.20 vs 0.35) so
+    // the field sits in the room rather than washing over it.
+    if (reverbIn) {
+      const send = ctx.createGain();
+      send.gain.value = 0.20;
+      activityGate.connect(send).connect(reverbIn);
+    }
+
+    let running = false;
+
+    function scheduleVoiceShift(idx) {
+      if (!running || !ctx) return;
+      const v = voices[idx];
+      const cfg = v.cfg;
+      const now = ctx.currentTime;
+      const newNote = cfg.palette[Math.floor(Math.random() * cfg.palette.length)];
+      const rampSec     = cfg.rampSec[0]     + Math.random() * (cfg.rampSec[1]     - cfg.rampSec[0]);
+      const intervalSec = cfg.intervalSec[0] + Math.random() * (cfg.intervalSec[1] - cfg.intervalSec[0]);
+      v.osc.frequency.cancelScheduledValues(now);
+      v.osc.frequency.setValueAtTime(v.osc.frequency.value, now);
+      v.osc.frequency.exponentialRampToValueAtTime(newNote, now + rampSec);
+      v.timer = setTimeout(() => scheduleVoiceShift(idx), intervalSec * 1000);
+    }
+
+    return {
+      gain: out,
+      activityGate, // pulseActivity() writes here
+      start(when) {
+        running = true;
+        filtLfo.start(when);
+        voices.forEach((v, i) => {
+          v.gLfo.start(when);
+          v.osc.start(when);
+          // Stagger first shift so all voices don't fire together.
+          const initial = 4 + Math.random() * 12;
+          v.timer = setTimeout(() => scheduleVoiceShift(i), initial * 1000);
+        });
+      },
+      stop(when) {
+        running = false;
+        voices.forEach((v) => {
+          if (v.timer) { clearTimeout(v.timer); v.timer = null; }
+          try { v.osc.stop(when); v.gLfo.stop(when); } catch(_) {}
+        });
+        try { filtLfo.stop(when); } catch(_) {}
+      }
+    };
+  }
+
+  function makeSub() {
+    // 808-style sub: A1 fundamental + A2 octave fed through a tanh
+    // soft-clip waveshaper for harmonic warmth, then a slow filter
+    // sweep (200–400Hz, 0.18Hz) and an independent random swell so
+    // the sub breathes on its own clock relative to the drone.
+    const out = ctx.createGain();
+    out.gain.value = 0.0001;
+
+    // A1 fundamental with AM tremolo (heart-rate hint)
+    const osc1 = ctx.createOscillator();
+    osc1.type = 'sine';
+    osc1.frequency.value = SUB_HZ;
+    const trem = ctx.createOscillator();
+    trem.frequency.value = 0.25;
+    const tremDepth = ctx.createGain();
+    tremDepth.gain.value = 0.18;
+    trem.connect(tremDepth);
+    const osc1Gain = ctx.createGain();
+    osc1Gain.gain.value = 0.42;
+    tremDepth.connect(osc1Gain.gain);
+    osc1.connect(osc1Gain);
+
+    // A2 octave for harmonic body — quieter, no tremolo
+    const osc2 = ctx.createOscillator();
+    osc2.type = 'sine';
+    osc2.frequency.value = SUB_HZ * 2; // 110Hz
+    const osc2Gain = ctx.createGain();
+    osc2Gain.gain.value = 0.10;
+    osc2.connect(osc2Gain);
+
+    // Soft-clip waveshaper — tanh curve adds gentle saturation harmonics
+    const shaper = ctx.createWaveShaper();
+    const N = 1024;
+    const curve = new Float32Array(N);
+    for (let i = 0; i < N; i++) {
+      const x = (i / (N - 1)) * 2 - 1;
+      curve[i] = Math.tanh(x * 1.3);
+    }
+    shaper.curve = curve;
+    shaper.oversample = '2x';
+
+    osc1Gain.connect(shaper);
+    osc2Gain.connect(shaper);
+
+    // Slow filter sweep so the sub's harmonic content "pumps" gently
+    const subFilt = ctx.createBiquadFilter();
+    subFilt.type = 'lowpass';
+    subFilt.frequency.value = 280;
+    subFilt.Q.value = 0.9;
+    const subFiltLfo = ctx.createOscillator();
+    subFiltLfo.frequency.value = 0.18;
+    const subFiltLfoGain = ctx.createGain();
+    subFiltLfoGain.gain.value = 100; // sweeps roughly 180–380Hz
+    subFiltLfo.connect(subFiltLfoGain).connect(subFilt.frequency);
+
+    // Independent swell — different range from the drone (0.7–1.0)
+    // and different timing so the two layers breathe out of phase.
+    const swell = ctx.createGain();
+    swell.gain.value = 1.0;
+
+    shaper.connect(subFilt).connect(swell).connect(out);
+
+    let swellTimer = null;
+    let swellRunning = false;
+    function scheduleSwell() {
+      if (!swellRunning || !ctx) return;
+      const now = ctx.currentTime;
+      const target = 0.70 + Math.random() * 0.30;
+      const rampSec = 5 + Math.random() * 8;
+      const holdSec = Math.random() * 3;
+      swell.gain.cancelScheduledValues(now);
+      swell.gain.setValueAtTime(swell.gain.value, now);
+      swell.gain.linearRampToValueAtTime(target, now + rampSec);
+      swellTimer = setTimeout(scheduleSwell, (rampSec + holdSec) * 1000);
+    }
+
+    return {
+      gain: out,
+      start(when) {
+        trem.start(when); subFiltLfo.start(when);
+        osc1.start(when); osc2.start(when);
+        swellRunning = true;
+        swellTimer = setTimeout(scheduleSwell, 2200);
+      },
+      stop(when)  {
+        swellRunning = false;
+        if (swellTimer) { clearTimeout(swellTimer); swellTimer = null; }
+        try { osc1.stop(when); osc2.stop(when); trem.stop(when); subFiltLfo.stop(when); } catch(_){}
+      }
+    };
+  }
+
+  function makeNewsPad() {
+    // News-page staggered dyad pulse — same Stranger Things-adjacent
+    // technique as the stats arpeggio (LOW + HIGH partner half-step
+    // later, sawtooth through a resonant lowpass, reverb send) but
+    // tuned to sit BEHIND the field rather than in front of it:
+    //   • slower tempo (~109 BPM 8ths vs stats 125 BPM 16ths)
+    //   • longer sustain so notes overlap into a pad (vs staccato)
+    //   • C-pentatonic feel (brighter mood than stats' A-minor)
+    //   • lower cutoff + lower Q (warmer, no zing)
+    //   • significantly quieter peak gain
+    //   • lighter reverb send than stats
+    const out = ctx.createGain();
+    out.gain.value = 0.0001;
+
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 900;
+    filter.Q.value = 3;
+    const filtLfo = ctx.createOscillator();
+    filtLfo.frequency.value = 0.07;
+    const filtLfoGain = ctx.createGain();
+    filtLfoGain.gain.value = 350;
+    filtLfo.connect(filtLfoGain).connect(filter.frequency);
+
+    // Wet/dry mix — heavy reverb but no longer drowning. Earlier
+    // values (dry 0.12 / wet 1.2) buried the dyads to the point the
+    // melody disappeared into wash; this keeps the cinematic tail
+    // the user asked for while letting the attacks read.
+    const dry = ctx.createGain();
+    dry.gain.value = 0.16;
+    filter.connect(dry).connect(out);
+
+    if (reverbIn) {
+      const wet = ctx.createGain();
+      wet.gain.value = 0.5;
+      filter.connect(wet).connect(reverbIn);
+    }
+
+    // 6-step pattern, climbs C-pentatonic then descends. Mixed dyad
+    // intervals (5ths, 6ths, minor 3rds) so it feels different from
+    // stats' uniform-5ths pattern. HIGH in counterpoint to LOW.
+    const LOW  = [130.81, 164.81, 196.00, 220.00, 196.00, 164.81]; // C3 E3 G3 A3 G3 E3
+    const HIGH = [196.00, 261.63, 293.66, 329.63, 261.63, 220.00]; // G3 C4 D4 E4 C4 A3
+    const STEP_SEC = 0.55;          // ~109 BPM 8th-note feel
+    const HALF_STEP = STEP_SEC * 0.5;
+    let stepIdx = 0;
+    let nextAt = 0;
+    let running = false;
+    let timer = null;
+
+    function fireNote(when, hz, isHigh) {
+      // Subtle unison detune (±8c, less than stats' ±10c) — softer
+      // analog feel, no aggressive chorus shimmer.
+      const osc1 = ctx.createOscillator();
+      osc1.type = 'sawtooth';
+      osc1.frequency.value = hz;
+      osc1.detune.value = -8;
+      const osc2 = ctx.createOscillator();
+      osc2.type = 'sawtooth';
+      osc2.frequency.value = hz;
+      osc2.detune.value = +8;
+
+      // Quieter than stats (peak ~0.04 vs 0.085); longer sustain so
+      // successive notes overlap into a pad-arpeggio hybrid.
+      const peak = isHigh ? 0.030 : 0.038;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, when);
+      g.gain.exponentialRampToValueAtTime(peak, when + 0.04);
+      g.gain.exponentialRampToValueAtTime(0.0001, when + 0.75);
+
+      osc1.connect(g);
+      osc2.connect(g);
+      g.connect(filter);
+      osc1.start(when); osc2.start(when);
+      osc1.stop(when + 0.80); osc2.stop(when + 0.80);
+    }
+
+    function tick() {
+      if (!running) return;
+      const horizon = ctx.currentTime + 0.20;
+      while (nextAt < horizon) {
+        const i = stepIdx % LOW.length;
+        fireNote(nextAt,             LOW[i],  false);
+        fireNote(nextAt + HALF_STEP, HIGH[i], true);
+        stepIdx++;
+        nextAt += STEP_SEC;
+      }
+      timer = setTimeout(tick, 80);
+    }
+
+    return {
+      gain: out,
+      start(when) {
+        running = true;
+        filtLfo.start(when);
+        nextAt = Math.max(when, ctx.currentTime + 0.05);
+        tick();
+      },
+      stop(_when) {
+        running = false;
+        if (timer) { clearTimeout(timer); timer = null; }
+        try { filtLfo.stop(_when); } catch(_) {}
+      }
+    };
+  }
+
+  function makeStatsArp() {
+    // Stranger Things-style staggered dyad arpeggio. Two interleaved
+    // sawtooth voices through a resonant lowpass — every step fires
+    // a LOW note immediately and a HIGH partner half-a-step later,
+    // so the texture is running 16ths even though each step only
+    // schedules two attacks. A-minor pentatonic palette (same notes
+    // as the field, but starting on A so it reads as minor — the
+    // "Kyle Dixon / Michael Stein" Aeolian feel). Heavy reverb send
+    // for the cinematic synth-noir tail. Q ≥ 6 on the lowpass is
+    // what gives it the OB-Xa / Prophet zing.
+    const out = ctx.createGain();
+    out.gain.value = 0.0001;
+
+    // Resonant lowpass with slow LFO sweep — harmonic content
+    // moves so the arpeggio doesn't sit on one tone color.
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 1400;
+    filter.Q.value = 8;
+    const filtLfo = ctx.createOscillator();
+    filtLfo.frequency.value = 0.10;
+    const filtLfoGain = ctx.createGain();
+    filtLfoGain.gain.value = 700;
+    filtLfo.connect(filtLfoGain).connect(filter.frequency);
+
+    // Wet/dry mix — heavy reverb but no longer drowning. Earlier
+    // values (dry 0.12 / wet 1.4) buried the dyads to the point the
+    // melody disappeared into wash; this keeps the cinematic tail
+    // the user asked for while letting the attacks read.
+    const dry = ctx.createGain();
+    dry.gain.value = 0.18;
+    filter.connect(dry).connect(out);
+
+    if (reverbIn) {
+      const wet = ctx.createGain();
+      wet.gain.value = 0.6;
+      filter.connect(wet).connect(reverbIn);
+    }
+
+    // 8-step pattern, each step = LOW + HIGH partner half-step later.
+    // Net texture: 16 attacks per loop = running-16th feel.
+    const LOW  = [110.00, 130.81, 164.81, 196.00, 220.00, 196.00, 164.81, 130.81]; // A2 C3 E3 G3 A3 G3 E3 C3
+    const HIGH = [164.81, 196.00, 261.63, 293.66, 329.63, 293.66, 261.63, 196.00]; // E3 G3 C4 D4 E4 D4 C4 G3
+    const STEP_SEC = 0.24;          // ~125 BPM 16th-note feel
+    const HALF_STEP = STEP_SEC * 0.5;
+    let stepIdx = 0;
+    let nextAt = 0;
+    let running = false;
+    let timer = null;
+
+    function fireNote(when, hz, isHigh) {
+      // Unison pair detuned ±10c — the "Prophet wobble" that makes
+      // a single sawtooth feel fat/analog.
+      const osc1 = ctx.createOscillator();
+      osc1.type = 'sawtooth';
+      osc1.frequency.value = hz;
+      osc1.detune.value = -10;
+      const osc2 = ctx.createOscillator();
+      osc2.type = 'sawtooth';
+      osc2.frequency.value = hz;
+      osc2.detune.value = +10;
+
+      const peak = isHigh ? 0.07 : 0.085; // low slightly louder (anchor)
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, when);
+      g.gain.exponentialRampToValueAtTime(peak, when + 0.008);
+      g.gain.exponentialRampToValueAtTime(0.0001, when + 0.28);
+
+      osc1.connect(g);
+      osc2.connect(g);
+      g.connect(filter);
+      osc1.start(when); osc2.start(when);
+      osc1.stop(when + 0.32); osc2.stop(when + 0.32);
+    }
+
+    function tick() {
+      if (!running) return;
+      const horizon = ctx.currentTime + 0.20;
+      while (nextAt < horizon) {
+        const i = stepIdx % LOW.length;
+        fireNote(nextAt,             LOW[i],  false);
+        fireNote(nextAt + HALF_STEP, HIGH[i], true);
+        stepIdx++;
+        nextAt += STEP_SEC;
+      }
+      timer = setTimeout(tick, 80);
+    }
+
+    return {
+      gain: out,
+      start(when) {
+        running = true;
+        filtLfo.start(when);
+        nextAt = Math.max(when, ctx.currentTime + 0.05);
+        tick();
+      },
+      stop(_when) {
+        running = false;
+        if (timer) { clearTimeout(timer); timer = null; }
+        try { filtLfo.stop(_when); } catch(_) {}
+      }
+    };
+  }
+
+  // ── Engine internals ────────────────────────────────────────────
+
+  function buildContext() {
+    if (ctx) return true;
+    try {
+      ctx = new (window.AudioContext || window.webkitAudioContext)();
+    } catch (e) {
+      console.warn('[audioEngine] AudioContext unavailable:', e.message);
+      return false;
+    }
+    duckGain   = ctx.createGain();
+    masterGain = ctx.createGain();
+    duckGain.gain.value   = 1.0;
+    masterGain.gain.value = muted ? 0.0001 : MASTER_DEFAULT;
+    duckGain.connect(masterGain).connect(ctx.destination);
+
+    // Shared reverb bus: layers tap reverbIn at any send level they choose.
+    // Pre-filter keeps the tail dark/musical (no hissy highs).
+    reverbIn  = ctx.createGain();
+    reverbOut = ctx.createGain();
+    reverbIn.gain.value  = 1.0;
+    reverbOut.gain.value = 0.85;
+    const reverbPre = ctx.createBiquadFilter();
+    reverbPre.type = 'lowpass';
+    reverbPre.frequency.value = 3500;
+    reverbPre.Q.value = 0.5;
+    const convolver = ctx.createConvolver();
+    convolver.buffer = makeReverbIR(5.5, 2.4);
+    reverbIn.connect(reverbPre).connect(convolver).connect(reverbOut).connect(duckGain);
+    return true;
+  }
+
+  // iOS WKWebView routinely suspends AudioContext after backgrounding,
+  // screen lock, briefing playback, or interruption (call/alarm). The
+  // suspension is silent — ctx exists, layers are wired, but no audio
+  // reaches the speaker until ctx.resume() is called from a user gesture.
+  // Call this at the top of every public entry point so the engine
+  // self-heals on the next interaction.
+  function ensureRunning() {
+    if (!ctx) return false;
+    if (ctx.state === 'suspended' || ctx.state === 'interrupted') {
+      try { ctx.resume().catch(()=>{}); } catch(_) {}
+    }
+    return ctx.state !== 'closed';
+  }
+
+  function unlock() {
+    if (unlocked) return;
+    if (!buildContext()) return;
+    ensureRunning();
+    unlocked = true;
+    // Constant ambient layers (drone/sub) intentionally NOT started.
+    // The audio identity is sparse: page-specific dyad arpeggios
+    // (stats arp covers Stats AND Globe; news pad covers News),
+    // plus one-shot tap thumps. Other pages stay silent.
+    //
+    // We start the page-appropriate layer synchronously HERE, before
+    // dispatching the unlock event. Two reasons:
+    //   • belt-and-suspenders if a listener attaches late or never,
+    //   • on iOS WKWebView the audioEngine:unlocked event has been
+    //     observed to dispatch before the module-script listener
+    //     attaches on cold launch, leaving Globe silent until a page
+    //     change. Direct call removes the race.
+    try {
+      const p = window.__currentPage;
+      if (p === 0 || p === 1)      setLayer('stats', true);
+      else if (p === 2)            setLayer('news',  true);
+    } catch (_) {}
+    try { window.dispatchEvent(new CustomEvent('audioEngine:unlocked')); } catch(_){}
+  }
+
+  // iOS may suspend the AudioContext while the app is backgrounded or
+  // the screen is locked. When the user returns, fire a resume so the
+  // ambient layers come back without requiring another tap.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') ensureRunning();
+  });
+  // Capacitor lifecycle — resume() also runs on app foreground via
+  // the App plugin if available. Wrapped in optional chaining so it's
+  // a no-op on web / older Capacitor.
+  try {
+    const App = window.Capacitor?.Plugins?.App;
+    if (App?.addListener) {
+      App.addListener('appStateChange', (s) => {
+        if (s?.isActive) ensureRunning();
+      });
+    }
+  } catch(_) {}
+
+  function attachUnlockListeners() {
+    if (listenersAttached) return;
+    listenersAttached = true;
+    const onFirstGesture = () => {
+      unlock();
+      window.removeEventListener('touchstart', onFirstGesture, true);
+      window.removeEventListener('mousedown',  onFirstGesture, true);
+      window.removeEventListener('keydown',    onFirstGesture, true);
+    };
+    window.addEventListener('touchstart', onFirstGesture, { capture: true, passive: true });
+    window.addEventListener('mousedown',  onFirstGesture, { capture: true, passive: true });
+    window.addEventListener('keydown',    onFirstGesture, { capture: true });
+
+    // Activity coupling — passive scroll listener pulses the
+    // generative field's activityGate so the music breathes with
+    // user motion instead of sitting static. Throttled to ≤1
+    // pulse / 350ms; subtle (0.12) so it never feels reactive.
+    let _lastScrollPulseAt = 0;
+    window.addEventListener('scroll', () => {
+      const t = Date.now();
+      if (t - _lastScrollPulseAt > 350) {
+        pulseActivity(0.12);
+        _lastScrollPulseAt = t;
+      }
+    }, { passive: true, capture: true });
+  }
+
+  function setLayer(name, on, fadeSec) {
+    if (!ctx) return;
+    const fade = (typeof fadeSec === 'number') ? fadeSec : 1.6;
+    const now = ctx.currentTime;
+    const entry = layers.get(name);
+
+    if (on) {
+      if (entry) return;
+      let factory = null;
+      if (name === 'drone')      factory = makeDrone;
+      else if (name === 'sub')   factory = makeSub;
+      else if (name === 'news')  factory = makeNewsPad;
+      else if (name === 'stats') factory = makeStatsArp;
+      else { console.warn('[audioEngine] unknown layer:', name); return; }
+      const built = factory();
+      built.gain.connect(duckGain);
+      built.start(now);
+      built.gain.gain.setValueAtTime(0.0001, now);
+      built.gain.gain.exponentialRampToValueAtTime(1.0, now + fade);
+      layers.set(name, built);
+    } else {
+      if (!entry) return;
+      const g = entry.gain.gain;
+      g.cancelScheduledValues(now);
+      g.setValueAtTime(g.value, now);
+      g.exponentialRampToValueAtTime(0.0001, now + fade);
+      const stopAt = now + fade + 0.05;
+      try { entry.stop(stopAt); } catch(_){}
+      layers.delete(name);
+      setTimeout(() => { try { entry.gain.disconnect(); } catch(_){} }, (fade + 0.25) * 1000);
+    }
+  }
+
+  // One-shot stab for click feedback — pitched in A minor so it
+  // sits inside the drone harmony.
+  const STAB_NOTES = [220.00, 261.63, 329.63, 392.00, 440.00]; // A3,C4,E4,G4,A4
+  function triggerStab(opts) {
+    if (!ctx || muted) return;
+    opts = opts || {};
+    const now = ctx.currentTime;
+    const noteHz = opts.hz || STAB_NOTES[Math.floor(Math.random() * STAB_NOTES.length)];
+    const dur = opts.dur || 0.55;
+    const vol = (opts.vol == null) ? 0.16 : opts.vol;
+
+    const osc = ctx.createOscillator();
+    osc.type = opts.type || 'triangle';
+    osc.frequency.value = noteHz;
+
+    const filt = ctx.createBiquadFilter();
+    filt.type = 'lowpass';
+    filt.frequency.value = noteHz * 6;
+    filt.Q.value = 4;
+
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, now);
+    g.gain.exponentialRampToValueAtTime(vol, now + 0.006);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+
+    osc.connect(filt).connect(g).connect(duckGain);
+    osc.start(now);
+    osc.stop(now + dur + 0.05);
+  }
+
+  // Low warm thump — sub-pitched sine with a quick downward pitch
+  // envelope (120Hz → 50Hz over 80ms) and a 320ms decay. Replaces
+  // the prior high A4–G5 chord notes (felt awkward and ice-picky
+  // sitting above the new lower-register field). Also pulses
+  // activity so the field briefly blooms in response to the tap.
+  function triggerArticleTap(opts) {
+    if (!ctx || muted) return;
+    opts = opts || {};
+    const now = ctx.currentTime;
+    const vol = (opts.vol == null) ? 0.20 : opts.vol;
+    const dur = opts.dur || 0.32;
+
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(120, now);
+    osc.frequency.exponentialRampToValueAtTime(50, now + 0.08);
+
+    const filt = ctx.createBiquadFilter();
+    filt.type = 'lowpass';
+    filt.frequency.value = 220;
+    filt.Q.value = 0.7;
+
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, now);
+    g.gain.exponentialRampToValueAtTime(vol, now + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+
+    osc.connect(filt).connect(g).connect(duckGain);
+    osc.start(now);
+    osc.stop(now + dur + 0.05);
+
+    pulseActivity(0.25);
+  }
+
+  // ── Activity pulsing ────────────────────────────────────────────
+  // User actions (scroll, click, navigate) briefly bloom the
+  // generative field via its activityGate. Decays back to baseline
+  // exponentially over a few seconds. No-op if engine isn't running.
+  let activityLevel = 0;                  // 0..1
+  let activityDecayTimer = null;
+
+  function pulseActivity(amount) {
+    if (!ctx || !unlocked) return;
+    const layer = layers.get('drone');
+    if (!layer || !layer.activityGate) return;
+    const a = (typeof amount === 'number') ? amount : 0.30;
+    activityLevel = Math.min(1, activityLevel + a);
+    applyActivity();
+    if (activityDecayTimer) clearTimeout(activityDecayTimer);
+    decayActivity();
+  }
+
+  function decayActivity() {
+    if (activityLevel <= 0.02) {
+      activityLevel = 0;
+      applyActivity();
+      activityDecayTimer = null;
+      return;
+    }
+    activityLevel = activityLevel * 0.80;
+    applyActivity();
+    activityDecayTimer = setTimeout(decayActivity, 900);
+  }
+
+  function applyActivity() {
+    const layer = layers.get('drone');
+    if (!layer || !layer.activityGate || !ctx) return;
+    const target = 0.55 + activityLevel * 0.45;
+    const now = ctx.currentTime;
+    const gate = layer.activityGate.gain;
+    gate.cancelScheduledValues(now);
+    gate.setValueAtTime(gate.value, now);
+    gate.linearRampToValueAtTime(target, now + 1.4);
+  }
+
+  // Soft whoosh — bandpass-filtered white noise sweeping high-to-low,
+  // short envelope. Used for country-polygon focus feedback.
+  function triggerWhoosh(opts) {
+    if (!ctx || muted) return;
+    opts = opts || {};
+    const now = ctx.currentTime;
+    const dur = opts.dur || 0.55;
+    const vol = (opts.vol == null) ? 0.16 : opts.vol;
+    const fStart = opts.fStart || 2400;
+    const fEnd   = opts.fEnd   || 380;
+
+    const sr = ctx.sampleRate;
+    const bufLen = Math.ceil(sr * (dur + 0.05));
+    const buf = ctx.createBuffer(1, bufLen, sr);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < bufLen; i++) data[i] = Math.random() * 2 - 1;
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+
+    const filt = ctx.createBiquadFilter();
+    filt.type = 'bandpass';
+    filt.Q.value = 1.4;
+    filt.frequency.setValueAtTime(fStart, now);
+    filt.frequency.exponentialRampToValueAtTime(fEnd, now + dur);
+
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, now);
+    g.gain.exponentialRampToValueAtTime(vol, now + 0.04);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+
+    src.connect(filt).connect(g).connect(duckGain);
+    src.start(now);
+    src.stop(now + dur + 0.05);
+  }
+
+  function duck(amount, durationMs) {
+    if (!ctx || !duckGain) return;
+    const now = ctx.currentTime;
+    const target = Math.max(0.001, Math.min(1, amount));
+    const t = Math.max(0.05, (durationMs || 600) / 1000);
+    duckGain.gain.cancelScheduledValues(now);
+    duckGain.gain.setValueAtTime(duckGain.gain.value, now);
+    duckGain.gain.exponentialRampToValueAtTime(target, now + t);
+  }
+
+  function unduck(durationMs) { duck(1.0, durationMs || 1200); }
+
+  function setMasterMute(v) {
+    muted = !!v;
+    try { localStorage.setItem(STORAGE_KEY, muted ? '1' : '0'); } catch(_){}
+    if (!ctx || !masterGain) return;
+    const now = ctx.currentTime;
+    masterGain.gain.cancelScheduledValues(now);
+    masterGain.gain.setValueAtTime(Math.max(masterGain.gain.value, 0.0001), now);
+    masterGain.gain.exponentialRampToValueAtTime(muted ? 0.0001 : MASTER_DEFAULT, now + 0.45);
+    // When unmuting, also re-sync the page-appropriate layer in case
+    // the user toggled mute during a session where the layer had been
+    // torn down (e.g. visited a silent page in between). No-op if the
+    // layer is already running.
+    if (!muted) {
+      try {
+        const p = window.__currentPage;
+        if (p === 0 || p === 1)      setLayer('stats', true);
+        else if (p === 2)            setLayer('news',  true);
+      } catch (_) {}
+    }
+  }
+
+  function isMuted()    { return muted; }
+  function isUnlocked() { return unlocked; }
+
+  // Restore mute pref before user touches anything
+  try { muted = localStorage.getItem(STORAGE_KEY) === '1'; } catch(_) {}
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', attachUnlockListeners, { once: true });
+  } else {
+    attachUnlockListeners();
+  }
+
+  window.audioEngine = {
+    unlock, setLayer, triggerStab, triggerWhoosh, triggerArticleTap,
+    pulseActivity,
+    duck, unduck, setMasterMute, isMuted, isUnlocked,
+    get ctx() { return ctx; },
+    _debug() {
+      return {
+        unlocked, muted,
+        ctxState: ctx?.state,
+        masterGain: masterGain?.gain?.value,
+        duckGain:   duckGain?.gain?.value,
+        layers:     [...layers.keys()],
+        layerGains: [...layers.entries()].map(([k, v]) => [k, v.gain?.gain?.value]),
+      };
+    }
+  };
+})();
+</script>
+
 <!-- SVG gradient defs shared by site + panel loaders -->
 <svg width="0" height="0" style="position:absolute;pointer-events:none">
   <defs>
@@ -13637,6 +14479,16 @@ window.__arcCtxSegmented = (function() {
           <div class="themePill" data-projection-pill>
             <button class="themePillBtn active" data-projection="globe">Globe</button>
             <button class="themePillBtn" data-projection="map">Map</button>
+          </div>
+        </div>
+      </div>
+      <!-- Always-visible global control: ambient sound master mute. -->
+      <div class="sidebarSection sidebarSectionGlobal">
+        <div class="sidebarSectionLabel">Sound</div>
+        <div class="themeToggleRow" style="margin-top:0;">
+          <div class="themePill" data-audio-pill>
+            <button class="themePillBtn active" data-audio="on">On</button>
+            <button class="themePillBtn" data-audio="off">Off</button>
           </div>
         </div>
       </div>
@@ -17055,6 +17907,39 @@ const settingsToggle     = document.getElementById("settingsToggle");
         btn.addEventListener("pointerdown", (e) => e.stopPropagation());
       });
       syncProjectionControls();
+
+      // ── Audio pill (Sound On / Off — master mute) ─────────────────────
+      // Mirrors the projection pill pattern. Reads/writes mute state via
+      // window.audioEngine.setMasterMute, which persists to localStorage.
+      // Filters by [data-audio] so clicks here can never accidentally
+      // pick up theme/projection pills with the same .themePillBtn class.
+      const audioPillBtns = Array.from(document.querySelectorAll(".themePillBtn[data-audio]"));
+      function syncAudioControls() {
+        const muted = !!(window.audioEngine && window.audioEngine.isMuted());
+        audioPillBtns.forEach(btn => {
+          const isOn = btn.dataset.audio === "on";
+          btn.classList.toggle("active", isOn !== muted);
+        });
+      }
+      window.__syncAudioControls = syncAudioControls;
+      audioPillBtns.forEach(btn => {
+        btn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          if (!window.audioEngine) return;
+          const wantMute = btn.dataset.audio === "off";
+          window.audioEngine.setMasterMute(wantMute);
+          // First-tap unlock if user opens settings before touching anywhere.
+          // The unlock() call self-syncs the page-appropriate layer based on
+          // window.__currentPage (stats arp on Globe/Stats, news pad on News).
+          if (!wantMute && !window.audioEngine.isUnlocked()) {
+            window.audioEngine.unlock();
+          }
+          syncAudioControls();
+        });
+        btn.addEventListener("pointerdown", (e) => e.stopPropagation());
+      });
+      syncAudioControls();
+
       // Auto-mount the 2D map after a short delay if the persisted choice is
       // 'map'. We poll because window.__map2d is defined further down in the
       // module — by the time this fires it's available on window.__map2d.
@@ -31586,6 +32471,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }
       current = idx;
       window.__currentPage = idx;
+      // Page-aware audio layers: 0=Stats and 1=Globe both run the
+      // reverb-drowned dyad arpeggio; 2=News runs its own pad. setLayer
+      // is a no-op if the engine is locked, so unconditional calls are
+      // safe — first-touch unlock then re-syncs in the engine itself.
+      if (window.audioEngine) {
+        window.audioEngine.setLayer('stats', idx === 0 || idx === 1);
+        window.audioEngine.setLayer('news',  idx === 2);
+      }
       // Skip animation when jumping more than 1 page to avoid
       // sliding through heavy intermediate pages (e.g. Globe WebGL).
       // Also skip animation for any transition involving the Stats page

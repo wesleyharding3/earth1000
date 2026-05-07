@@ -13775,15 +13775,17 @@ window.fmtDate = function(d) {
     filtLfoGain.gain.value = 350;
     filtLfo.connect(filtLfoGain).connect(filter.frequency);
 
-    // Wet/dry mix — buried in reverb. Dry is barely audible (0.12);
-    // wet send is hot (1.2) so the tail dominates the perceived sound.
+    // Wet/dry mix — heavy reverb but no longer drowning. Earlier
+    // values (dry 0.12 / wet 1.2) buried the dyads to the point the
+    // melody disappeared into wash; this keeps the cinematic tail
+    // the user asked for while letting the attacks read.
     const dry = ctx.createGain();
-    dry.gain.value = 0.12;
+    dry.gain.value = 0.16;
     filter.connect(dry).connect(out);
 
     if (reverbIn) {
       const wet = ctx.createGain();
-      wet.gain.value = 1.2;
+      wet.gain.value = 0.5;
       filter.connect(wet).connect(reverbIn);
     }
 
@@ -13880,15 +13882,17 @@ window.fmtDate = function(d) {
     filtLfoGain.gain.value = 700;
     filtLfo.connect(filtLfoGain).connect(filter.frequency);
 
-    // Wet/dry mix — buried in reverb. Dry is barely audible (0.12);
-    // wet send is hot (1.4) so the tail dominates the perceived sound.
+    // Wet/dry mix — heavy reverb but no longer drowning. Earlier
+    // values (dry 0.12 / wet 1.4) buried the dyads to the point the
+    // melody disappeared into wash; this keeps the cinematic tail
+    // the user asked for while letting the attacks read.
     const dry = ctx.createGain();
-    dry.gain.value = 0.12;
+    dry.gain.value = 0.18;
     filter.connect(dry).connect(out);
 
     if (reverbIn) {
       const wet = ctx.createGain();
-      wet.gain.value = 1.4;
+      wet.gain.value = 0.6;
       filter.connect(wet).connect(reverbIn);
     }
 
@@ -14009,8 +14013,22 @@ window.fmtDate = function(d) {
     ensureRunning();
     unlocked = true;
     // Constant ambient layers (drone/sub) intentionally NOT started.
-    // The audio identity is now sparse: page-specific arpeggios
-    // (news, stats) and one-shot tap thumps. Globe page is silent.
+    // The audio identity is sparse: page-specific dyad arpeggios
+    // (stats arp covers Stats AND Globe; news pad covers News),
+    // plus one-shot tap thumps. Other pages stay silent.
+    //
+    // We start the page-appropriate layer synchronously HERE, before
+    // dispatching the unlock event. Two reasons:
+    //   • belt-and-suspenders if a listener attaches late or never,
+    //   • on iOS WKWebView the audioEngine:unlocked event has been
+    //     observed to dispatch before the module-script listener
+    //     attaches on cold launch, leaving Globe silent until a page
+    //     change. Direct call removes the race.
+    try {
+      const p = window.__currentPage;
+      if (p === 0 || p === 1)      setLayer('stats', true);
+      else if (p === 2)            setLayer('news',  true);
+    } catch (_) {}
     try { window.dispatchEvent(new CustomEvent('audioEngine:unlocked')); } catch(_){}
   }
 
@@ -14252,7 +14270,17 @@ window.fmtDate = function(d) {
     masterGain.gain.cancelScheduledValues(now);
     masterGain.gain.setValueAtTime(Math.max(masterGain.gain.value, 0.0001), now);
     masterGain.gain.exponentialRampToValueAtTime(muted ? 0.0001 : MASTER_DEFAULT, now + 0.45);
-    // Drone/sub intentionally not auto-started — see unlock() comment.
+    // When unmuting, also re-sync the page-appropriate layer in case
+    // the user toggled mute during a session where the layer had been
+    // torn down (e.g. visited a silent page in between). No-op if the
+    // layer is already running.
+    if (!muted) {
+      try {
+        const p = window.__currentPage;
+        if (p === 0 || p === 1)      setLayer('stats', true);
+        else if (p === 2)            setLayer('news',  true);
+      } catch (_) {}
+    }
   }
 
   function isMuted()    { return muted; }
