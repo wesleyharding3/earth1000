@@ -42182,7 +42182,15 @@ body.ticker-active .gTickerLabel {
         && typeof window.__setProjection === 'function') {
       try { window.__setProjection('globe'); } catch (_) {}
     }
+    // Set briefingActive FIRST — see www/index.html for full rationale.
     window.briefingActive = true;
+    // Idempotent music silence + layer teardown — defence in depth.
+    try {
+      window.audioEngine?.duck?.(0.001, 400);
+      window.audioEngine?.setLayer?.('stats', false);
+      window.audioEngine?.setLayer?.('globe', false);
+      window.audioEngine?.setLayer?.('news', false);
+    } catch (_) {}
     document.body.classList.add('briefing-active');
     document.getElementById('bRecap').classList.remove('open');
     // Dots meta: "Earth Briefing" + date above nav dots
@@ -44960,8 +44968,11 @@ body.ticker-active .gTickerLabel {
       }
       episode = await res.json();
       archiveLoaded = false; // allow archive to reload next time
-      closeBriefingLauncher();
+      // openBriefing FIRST so briefingActive=true before
+      // closeBriefingLauncher's restore-music branch runs. See
+      // www/index.html for full rationale.
       openBriefing();
+      closeBriefingLauncher();
     } catch (e) {
       list.innerHTML = origHTML;
       alert('Failed to load briefing: ' + e.message);
@@ -45004,8 +45015,9 @@ body.ticker-active .gTickerLabel {
   document.getElementById('bLauncherStartToday')?.addEventListener('click', () => {
     // Restore today's episode before opening (in case a past briefing was viewed)
     if (_todayEpisode) episode = _todayEpisode;
-    closeBriefingLauncher();
+    // openBriefing FIRST — see www/index.html for full rationale.
     openBriefing();
+    closeBriefingLauncher();
   });
 
   // ── Event wiring ──────────────────────────────────────────────────────────

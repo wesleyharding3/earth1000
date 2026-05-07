@@ -46150,7 +46150,24 @@ body.ticker-active .gTickerLabel {
         && typeof window.__setProjection === 'function') {
       try { window.__setProjection('globe'); } catch (_) {}
     }
+    // Set briefingActive FIRST — closeBriefingLauncher checks this
+    // synchronously to decide whether to restore the procedural music.
+    // The flag flip must happen before any subsequent code yields.
     window.briefingActive = true;
+    // Idempotent music silence + layer teardown — defence in depth.
+    // openBriefingLauncher already does this on the click path, but
+    // some entry points (notification-driven, archive-load races,
+    // direct __openBriefing calls) skip the launcher entirely. Calling
+    // setLayer(name, false) when the layer isn't running is a no-op,
+    // and duck() is idempotent, so this is cheap to repeat. Without
+    // this, briefings that bypass the launcher start with the
+    // procedural music still playing, drowning the narrator.
+    try {
+      window.audioEngine?.duck?.(0.001, 400);
+      window.audioEngine?.setLayer?.('stats', false);
+      window.audioEngine?.setLayer?.('globe', false);
+      window.audioEngine?.setLayer?.('news', false);
+    } catch (_) {}
     document.body.classList.add('briefing-active');
     document.getElementById('bRecap').classList.remove('open');
     // Dots meta: "Earth Briefing" + date above nav dots
@@ -49643,8 +49660,14 @@ body.ticker-active .gTickerLabel {
       }
       episode = await res.json();
       archiveLoaded = false; // allow archive to reload next time
-      closeBriefingLauncher();
+      // CRITICAL: openBriefing FIRST so window.briefingActive = true is
+      // set, THEN closeBriefingLauncher. The reverse order let
+      // closeBriefingLauncher's `if (!briefingActive)` restore-music
+      // branch run a tick before openBriefing flipped the flag — which
+      // un-silenced the procedural music right before the briefing
+      // started, defeating the silencing we did in openBriefingLauncher.
       openBriefing();
+      closeBriefingLauncher();
     } catch (e) {
       list.innerHTML = origHTML;
       alert('Failed to load briefing: ' + e.message);
@@ -49692,8 +49715,11 @@ body.ticker-active .gTickerLabel {
   document.getElementById('bLauncherStartToday')?.addEventListener('click', () => {
     // Restore today's episode before opening (in case a past briefing was viewed)
     if (_todayEpisode) episode = _todayEpisode;
-    closeBriefingLauncher();
+    // openBriefing FIRST — see the archive-load handler above for full
+    // rationale (briefingActive flag must be set before closeBriefingLauncher
+    // runs so its restore-music branch is skipped).
     openBriefing();
+    closeBriefingLauncher();
   });
 
   // ── Event wiring ──────────────────────────────────────────────────────────
