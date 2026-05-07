@@ -17671,30 +17671,12 @@ function computeCityTiers(cities) {
       let lastTouchTime = 0;     // used to suppress hover labels briefly after touch events
 
       // ── Sound Effects ────────────────────────────────────────────────────────
-      // Country-polygon selection sample removed. SFX.article still drives
-      // flow-arc clicks.
-      const SFX = {
-        article: new Audio('earth00music2.mp3'),
-      };
-      SFX.article.preload = 'auto';
-      function playSFX(sfx) {
-        try { sfx.currentTime = 0; sfx.play(); } catch(e) {}
-      }
+      // All sample-based SFX retired in favour of the procedural audio
+      // engine — see www/index.html for full rationale. Shims kept so
+      // any old caller still works as a no-op.
+      function playSFX(_sfx) { /* legacy no-op — see triggerArticleTap */ }
       window.playSFX = playSFX;
-      window.SFX = SFX;
-
-      // iOS WKWebView blocks audio until the audio context is unlocked by a user gesture.
-      // On first touchstart, silently play+pause each track at volume 0 to unlock it.
-      let _audioUnlocked = false;
-      function _unlockAudio() {
-        if (_audioUnlocked) return;
-        _audioUnlocked = true;
-        [SFX.article].forEach(sfx => {
-          sfx.volume = 0;
-          sfx.play().then(() => { sfx.pause(); sfx.currentTime = 0; sfx.volume = 1; }).catch(() => { sfx.volume = 1; });
-        });
-      }
-      window.addEventListener('touchstart', _unlockAudio, { once: true, passive: true });
+      window.SFX = {};
       // ─────────────────────────────────────────────────────────────────────────
 
       let touchStartX = 0, touchStartY = 0;
@@ -26478,7 +26460,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       .slice(0, FLOW_MAX_FAN)
       .map(([arc]) => arc);
 
-    window.playSFX?.(window.SFX?.article);
+    try { window.audioEngine?.triggerArticleTap?.(); } catch (_) {}
     showFlowArcCard(ordered, e);
   }
   // Globe click → info card disabled; arc selection handled via live arcs panel
@@ -40776,12 +40758,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
      so we don't lose vertical centering during the transition. */
   transform: translateY(calc(-50% - 8px));
   transition: opacity 0.45s ease, transform 0.45s cubic-bezier(0.32, 0.72, 0, 1);
-  background: rgba(6, 10, 20, 0.55);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  /* More translucent (0.55 → 0.32) — mirrors www/index.html. */
+  background: rgba(6, 10, 20, 0.32);
+  border: 1px solid rgba(255, 255, 255, 0.10);
   border-radius: 10px;
   padding: 8px 10px 10px;
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
+  backdrop-filter: blur(14px) saturate(1.2);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
 }
 .bSegmentSourcePie.visible {
   opacity: 1;
@@ -41038,12 +41021,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
   .bAPVideoCard iframe { aspect-ratio: 16/9; min-height: 120px; }
 }
 .bAPCard {
-  background: rgba(6,10,20,0.92); border: 1px solid rgba(255,255,255,0.1);
+  /* More translucent (0.92 → 0.55) — see www/index.html .bSARollCard. */
+  background: rgba(6,10,20,0.55); border: 1px solid rgba(255,255,255,0.10);
   border-radius: 10px; overflow: hidden; cursor: pointer;
   transition: background 0.2s;
   box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+  backdrop-filter: blur(12px) saturate(1.2);
+  -webkit-backdrop-filter: blur(12px) saturate(1.2);
 }
-.bAPCard:hover { background: rgba(255,255,255,0.07); }
+.bAPCard:hover { background: rgba(255,255,255,0.10); }
 
 /* Desktop ambient article roll — slow vertical loop through all
    segment article cards. Paused on hover so users can read and click. */
@@ -41511,26 +41497,59 @@ body.ticker-active .gTickerLabel {
 .bSeekSlider::-moz-range-thumb {
   width: 12px; height: 12px; border-radius: 50%; background: #60c8ff; border: none; cursor: pointer;
 }
+/* Glass treatment matches the .bControls pill — see www/index.html
+   for full rationale. Radial sheen + linear body + inset highlights. */
 .bControlBtn {
-  background: rgba(255,255,255,0.12); border: 1px solid rgba(255,255,255,0.2);
+  background:
+    radial-gradient(ellipse 120% 60% at 30% 0%, rgba(255,255,255,0.18) 0%, transparent 60%),
+    linear-gradient(180deg, rgba(255,255,255,0.10) 0%, rgba(7,12,22,0.45) 50%, rgba(7,12,22,0.55) 100%);
+  border: 1px solid rgba(255,255,255,0.18);
   border-radius: 50%; width: 38px; height: 38px;
   display: flex; align-items: center; justify-content: center;
   cursor: pointer; color: #fff; font-size: 14px;
-  transition: background 0.2s;
+  box-shadow:
+    0 4px 12px rgba(0,0,0,0.30),
+    inset 0 1px 1px 0 rgba(255,255,255,0.28),
+    inset 0 -1px 2px -1px rgba(0,0,0,0.15);
+  backdrop-filter: blur(10px) saturate(1.2);
+  -webkit-backdrop-filter: blur(10px) saturate(1.2);
+  transition: background 0.2s, box-shadow 0.2s;
 }
-.bControlBtn:hover { background: rgba(255,255,255,0.25); }
+.bControlBtn:hover {
+  box-shadow:
+    0 6px 16px rgba(0,0,0,0.36),
+    inset 0 1px 1px 0 rgba(255,255,255,0.40),
+    inset 0 -1px 2px -1px rgba(0,0,0,0.18);
+}
 .bControlBtn.primary {
   width: 46px; height: 46px; font-size: 17px;
-  background: rgba(96,200,255,0.2); border-color: rgba(96,200,255,0.5);
+  background:
+    radial-gradient(ellipse 120% 60% at 30% 0%, rgba(160,220,255,0.32) 0%, transparent 60%),
+    linear-gradient(180deg, rgba(96,200,255,0.28) 0%, rgba(20,60,100,0.55) 100%);
+  border-color: rgba(96,200,255,0.55);
+  box-shadow:
+    0 6px 18px rgba(0,0,0,0.38),
+    0 0 16px 2px rgba(96,200,255,0.18),
+    inset 0 1px 1px 0 rgba(255,255,255,0.32),
+    inset 0 -1px 2px -1px rgba(0,0,0,0.20);
 }
-.bControlBtn.primary:hover { background: rgba(96,200,255,0.35); }
+.bControlBtn.primary:hover {
+  box-shadow:
+    0 8px 22px rgba(0,0,0,0.42),
+    0 0 22px 3px rgba(96,200,255,0.28),
+    inset 0 1px 1px 0 rgba(255,255,255,0.42),
+    inset 0 -1px 2px -1px rgba(0,0,0,0.20);
+}
 .bControlBtn.speed {
   width: auto; border-radius: 18px; padding: 0 10px;
   font-size: 11px; font-weight: 700; letter-spacing: 0.5px;
   color: rgba(255,255,255,0.55);
 }
 .bControlBtn.speed.active {
-  background: rgba(96,200,255,0.2); border-color: rgba(96,200,255,0.5);
+  background:
+    radial-gradient(ellipse 120% 60% at 30% 0%, rgba(160,220,255,0.30) 0%, transparent 60%),
+    linear-gradient(180deg, rgba(96,200,255,0.26) 0%, rgba(20,60,100,0.50) 100%);
+  border-color: rgba(96,200,255,0.55);
   color: #60c8ff;
 }
 .bControlBtn.cc {
@@ -41539,7 +41558,10 @@ body.ticker-active .gTickerLabel {
   color: rgba(255,255,255,0.55);
 }
 .bControlBtn.cc.active {
-  background: rgba(96,200,255,0.2); border-color: rgba(96,200,255,0.5);
+  background:
+    radial-gradient(ellipse 120% 60% at 30% 0%, rgba(160,220,255,0.30) 0%, transparent 60%),
+    linear-gradient(180deg, rgba(96,200,255,0.26) 0%, rgba(20,60,100,0.50) 100%);
+  border-color: rgba(96,200,255,0.55);
   color: #60c8ff;
 }
 .bControlBtn.close {
@@ -42469,6 +42491,7 @@ body.ticker-active .gTickerLabel {
   function closeBriefing() {
     window.briefingActive = false;
     document.body.classList.remove('briefing-active');
+    try { window.audioEngine?.unduck?.(1500); } catch (_) {}
     // Reset to country view if briefing closed mid city-focused segment.
     // See www/index.html for full rationale.
     try {
@@ -44850,6 +44873,9 @@ body.ticker-active .gTickerLabel {
       if (el) el.style.display = '';
     }
     document.getElementById('bLauncher').classList.add('open');
+    // Begin fading the procedural music immediately on briefing button
+    // press — see www/index.html for full rationale.
+    try { window.audioEngine?.duck?.(0.001, 600); } catch (_) {}
     loadArchive();
   }
 
@@ -44915,6 +44941,9 @@ body.ticker-active .gTickerLabel {
 
   function closeBriefingLauncher() {
     document.getElementById('bLauncher').classList.remove('open');
+    if (!window.briefingActive) {
+      try { window.audioEngine?.unduck?.(1200); } catch (_) {}
+    }
   }
 
   // ── Launcher event wiring ──────────────────────────────────────────────────
