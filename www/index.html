@@ -14091,20 +14091,42 @@ window.fmtDate = function(d) {
     try { window.dispatchEvent(new CustomEvent('audioEngine:unlocked')); } catch(_){}
   }
 
-  // iOS may suspend the AudioContext while the app is backgrounded or
-  // the screen is locked. When the user returns, fire a resume so the
-  // ambient layers come back without requiring another tap.
+  // Suspend the AudioContext when the app/tab goes to background and
+  // resume on return. Two reasons we have to do this in JS instead of
+  // relying on iOS:
+  //   • AppDelegate.swift sets AVAudioSession category to .playback so
+  //     the silent switch doesn't mute us. .playback ALSO grants
+  //     background-audio rights, which means iOS will happily keep our
+  //     procedural music running while the app is backgrounded — not
+  //     what we want for ambient app sound. Explicitly suspending here
+  //     overrides that.
+  //   • ctx.suspend() freezes ctx.currentTime, which keeps the layer
+  //     schedulers (which compare nextAt vs ctx.currentTime+0.20) from
+  //     queueing a backlog of notes that would all fire as a burst on
+  //     resume. State is preserved; resume picks up cleanly with the
+  //     next scheduled note.
+  function suspendIfRunning() {
+    if (!ctx) return;
+    if (ctx.state === 'running') {
+      try { ctx.suspend().catch(()=>{}); } catch(_) {}
+    }
+  }
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') ensureRunning();
+    else                                         suspendIfRunning();
   });
-  // Capacitor lifecycle — resume() also runs on app foreground via
+  // Capacitor lifecycle — fires on iOS app foreground/background via
   // the App plugin if available. Wrapped in optional chaining so it's
-  // a no-op on web / older Capacitor.
+  // a no-op on web / older Capacitor. visibilitychange covers most of
+  // these on iOS too, but the Capacitor signal is more reliable for
+  // the app-switcher → home → background sequence (where the webview
+  // doesn't always emit a hide event).
   try {
     const App = window.Capacitor?.Plugins?.App;
     if (App?.addListener) {
       App.addListener('appStateChange', (s) => {
         if (s?.isActive) ensureRunning();
+        else             suspendIfRunning();
       });
     }
   } catch(_) {}

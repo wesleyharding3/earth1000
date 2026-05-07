@@ -458,6 +458,23 @@ function _jitteredExpiry(ttlMs) {
   return Date.now() + Math.round(ttlMs * factor);
 }
 
+// Borrow a dedicated pool client with a longer statement_timeout than the
+// 45s pool default. Used by prewarm-tagged routes (?prewarm=1) so cron
+// runs at off-hours can complete heavy queries on cold buffer that would
+// otherwise trip the 45s ceiling and 500. Caller MUST .release() when done
+// (use try/finally). Looks/quacks like a Pool to the inside-the-handler
+// callees that just want `.query()`.
+async function _withStatementTimeout(timeoutMs) {
+  const client = await pool.connect();
+  try {
+    await client.query(`SET statement_timeout = ${timeoutMs}`);
+    return client;
+  } catch (e) {
+    client.release();
+    throw e;
+  }
+}
+
 async function ttlCached(key, ttlMs, producer) {
   const now = Date.now();
   const hit = _ttlCache.get(key);
@@ -1416,6 +1433,11 @@ app.get("/api/news/city/:cityId/global", async (req, res) => {
     const limit  = Math.min(parseOptionalPositiveInt(req.query.limit, 200), 500);
     const offset = Math.max(parseInt(req.query.offset) || 0,  0);
     const tagId  = req.query.tag ? parseInt(req.query.tag) : null;
+    // Mirror of /api/news/country/:countryId/global — see that handler
+    // for the prewarm-flag rationale. Same article_locations cross-join
+    // pattern, same risk of tripping the 45s pool default for high-
+    // volume cities (NYC, London, Moscow…) on cold buffer.
+    const isPrewarm = req.query.prewarm === '1';
 
     // Same caching rationale as /api/news/city/:cityId above. The
     // global variant aggregates across article_locations rather than
@@ -1437,7 +1459,9 @@ app.get("/api/news/city/:cityId/global", async (req, res) => {
     const tagOuter    = tagId ? `sub.score DESC NULLS LAST, sub.published_at DESC NULLS LAST`
                               : `sub.published_at DESC NULLS LAST`;
 
-    const { rows } = await pool.query(`
+    const runner = isPrewarm ? await _withStatementTimeout(90_000) : pool;
+    try {
+    const { rows } = await runner.query(`
       SELECT sub.*
       FROM (
         SELECT DISTINCT ON (a.id)
@@ -1498,6 +1522,9 @@ app.get("/api/news/city/:cityId/global", async (req, res) => {
     `, limit ? [cityId, limit, offset] : [cityId, offset]);
 
     return rows;
+    } finally {
+      if (isPrewarm) runner.release?.();
+    }
     }); // end ttlCached
     res.json(cached);
   } catch (err) {
@@ -1554,6 +1581,13 @@ app.get("/api/news/country/:countryId/global", async (req, res) => {
     const limit  = Math.min(parseOptionalPositiveInt(req.query.limit, 200), 500);
     const offset = Math.max(parseInt(req.query.offset) || 0,  0);
     const tagId  = req.query.tag ? parseInt(req.query.tag) : null;
+    // Prewarm path: prewarmFeedCron appends ?prewarm=1 so high-volume
+    // countries (US, GB, RU, CN, IR, IL, UA, IN, DE — the ones that 500'd
+    // in the cron log) get 90s instead of the 45s pool default. The
+    // article_locations × news_articles join with content+source routing
+    // crosses millions of rows for these countries on cold buffer. Real
+    // users keep 45s.
+    const isPrewarm = req.query.prewarm === '1';
 
     // 55 min TTL — matches the hourly article fetcher + hourly prewarm-feed
     // cron. Was 60s; the cron warm decayed in a minute and almost every
@@ -1568,7 +1602,9 @@ app.get("/api/news/country/:countryId/global", async (req, res) => {
     const tagOuter    = tagId ? `sub.score DESC NULLS LAST, sub.published_at DESC NULLS LAST`
                               : `sub.published_at DESC NULLS LAST`;
 
-    const { rows } = await pool.query(`
+    const runner = isPrewarm ? await _withStatementTimeout(90_000) : pool;
+    try {
+    const { rows } = await runner.query(`
       SELECT sub.*
       FROM (
         SELECT DISTINCT ON (a.id)
@@ -1629,6 +1665,9 @@ app.get("/api/news/country/:countryId/global", async (req, res) => {
     `, limit ? [countryId, limit, offset] : [countryId, offset]);
 
     return rows;
+    } finally {
+      if (isPrewarm) runner.release?.();
+    }
     }); // end ttlCached
     res.json(cached);
   } catch (err) {
@@ -3771,6 +3810,13 @@ app.get("/api/flows/thread/:id", async (req, res) => {
     const threadId = parseInt(req.params.id, 10);
     if (!threadId) return res.status(400).json({ error: "Invalid thread ID" });
 
+    // Prewarm path: prewarmThreadsCron appends ?prewarm=1 so cold-buffer
+    // tier aggregations on big threads (1000+ articles) get 90s instead
+    // of the 45s pool default. The prewarm log was seeing flows=ERR(HTTP
+    // 500) on a handful of high-article threads exactly because
+    // _buildTieredFlows' GROUP-BY across article_entity_mentions slipped
+    // past 45s on cold cache. Real users keep the 45s limit.
+    const isPrewarm = req.query.prewarm === '1';
     // 3h45m — thread builder + prewarm-threads cron both run every 4h.
     // TTL just under that cadence so cache never expires between warms.
     const _cached = await ttlCached(`flows/thread:${threadId}`, 13_500_000, async () => {
@@ -3780,6 +3826,7 @@ app.get("/api/flows/thread/:id", async (req, res) => {
         rowTable: 'story_threads',
         articleJoinTable: 'story_thread_articles',
         articleJoinKey: 'thread_id',
+        statementTimeoutMs: isPrewarm ? 90_000 : null,
       });
     });
     res.json(_cached);
@@ -3812,9 +3859,14 @@ const TIER_MAX_ARCS           = 20;   // hard cap per endpoint response
 const TIER_MAX_SECONDARIES    = 8;    // matches classifier's cap
 const TIER_FALLBACK_LIMIT     = 10;   // for legacy linear-chain fallback
 
-async function _buildTieredFlows({ kind, id, rowTable, articleJoinTable, articleJoinKey }) {
+async function _buildTieredFlows({ kind, id, rowTable, articleJoinTable, articleJoinKey, statementTimeoutMs = null }) {
+  // statementTimeoutMs is null on the user-facing path (45s pool default
+  // applies). Prewarm passes ~90_000 so heavy GROUP-BY on cold buffer
+  // doesn't trip the 45s ceiling — see /api/flows/thread/:id callsite.
+  const runner = statementTimeoutMs ? await _withStatementTimeout(statementTimeoutMs) : pool;
+  try {
   // 1. Pull tier arrays + use them to compute involved country coords.
-  const { rows: rowRs } = await pool.query(
+  const { rows: rowRs } = await runner.query(
     `SELECT primary_nations, secondary_nations FROM ${rowTable} WHERE id = $1`,
     [id]
   );
@@ -3846,7 +3898,7 @@ async function _buildTieredFlows({ kind, id, rowTable, articleJoinTable, article
     // with GROUP BY, then LEFT JOIN the focal list. One scan, one group.
     // Complements the partial index on entities(country_code) added in
     // migrations/20260424_thread_flows_indexes.sql.
-    const { rows: coords } = await pool.query(`
+    const { rows: coords } = await runner.query(`
       WITH focal AS (
         SELECT UPPER(TRIM(iso)) AS iso_upper
         FROM unnest($1::text[]) AS iso
@@ -3945,7 +3997,7 @@ async function _buildTieredFlows({ kind, id, rowTable, articleJoinTable, article
   // Row has empty/sparse tier data (pre-sweep row or extraction gap). Use
   // the old entity → content-routing chain and return untiered flows so
   // the frontend renders them as plain routing arcs.
-  const { rows: entityCountries } = await pool.query(`
+  const { rows: entityCountries } = await runner.query(`
     SELECT DISTINCT
       co.id, co.name AS place, co.latitude AS lat, co.longitude AS lon,
       co.iso_code AS iso,
@@ -3968,7 +4020,7 @@ async function _buildTieredFlows({ kind, id, rowTable, articleJoinTable, article
   let involvedCountries = entityCountries;
 
   if (involvedCountries.length < 2) {
-    const { rows: contentCountries } = await pool.query(`
+    const { rows: contentCountries } = await runner.query(`
       SELECT
         co.id, co.name AS place, co.latitude AS lat, co.longitude AS lon,
         co.iso_code AS iso,
@@ -4005,6 +4057,12 @@ async function _buildTieredFlows({ kind, id, rowTable, articleJoinTable, article
   }
   const maxCount = flows.length ? Math.max(...flows.map(f => f.count), 1) : 1;
   return { flows, maxCount, tier_primary: [], tier_secondary: [] };
+  } finally {
+    // Release the dedicated client iff we acquired one (statementTimeoutMs
+    // was provided). When statementTimeoutMs is null, runner === pool and
+    // there's nothing to release — `release` is undefined on a Pool.
+    if (statementTimeoutMs) runner.release?.();
+  }
 }
 
 function _normIsoArr(arr) {
@@ -7840,6 +7898,11 @@ app.get("/api/articles/by-thread", async (req, res) => {
     const threadId = parseInt(req.query.thread_id, 10);
     if (!threadId) return res.status(400).json({ error: "thread_id required" });
     const limit = Math.min(parseInt(req.query.limit, 10) || 20, 100);
+    // Prewarm path: prewarmThreadsCron appends ?prewarm=1 so the
+    // sources query — a 7-table left-join over potentially thousands
+    // of articles in big threads — gets 90s on cold buffer instead of
+    // tripping the 45s pool default. Real users keep 45s.
+    const isPrewarm = req.query.prewarm === '1';
     // 3h45m TTL — same cadence as /api/threads/:id/articles and the
     // thread builder + prewarm-threads cron. The Sources tab on the
     // thread detail panel calls THIS endpoint (not /api/threads/:id
@@ -7849,7 +7912,9 @@ app.get("/api/articles/by-thread", async (req, res) => {
     // for any pre-warmed thread.
     const cacheKey = `articles/by-thread:${threadId}:${limit}`;
     const rows = await ttlCached(cacheKey, 13_500_000, async () => {
-      const { rows: r } = await pool.query(`
+      const runner = isPrewarm ? await _withStatementTimeout(90_000) : pool;
+      try {
+      const { rows: r } = await runner.query(`
         SELECT
           a.id, a.title, a.translated_title, a.summary, a.translated_summary,
           a.published_at, a.url, a.video_id, a.media_type,
@@ -7874,6 +7939,9 @@ app.get("/api/articles/by-thread", async (req, res) => {
         LIMIT $2
       `, [threadId, limit]);
       return r;
+      } finally {
+        if (isPrewarm) runner.release?.();
+      }
     });
     res.set("Cache-Control", "public, max-age=300, s-maxage=600, stale-while-revalidate=3600");
     res.json(rows);
@@ -11384,14 +11452,28 @@ app.get("/api/threads/:threadId/panels", async (req, res) => {
   try {
     const threadId = parseInt(req.params.threadId, 10);
     if (!Number.isFinite(threadId)) return res.status(400).json({ error: "bad id" });
+    // Prewarm path: prewarmThreadsCron appends ?prewarm=1 so we can grant
+    // a longer statement_timeout (90s vs the 45s pool default) without
+    // affecting user-facing requests. Big threads on cold buffer were
+    // tripping the 45s default on the coverage-pie + data-panels
+    // Promise.all and returning HTTP 500 to the prewarm — the warm
+    // cache then never populated. Real users still get 45s so a spinner
+    // never lingers (and they hit warm cache anyway because of this
+    // prewarm path).
+    const isPrewarm = req.query.prewarm === '1';
     // 3h45m TTL — thread builder + prewarm-threads cron both every 4h.
     const _cached = await ttlCached(`threads/${threadId}/panels`, 13_500_000, async () => {
-      const [coverage, rows] = await Promise.all([
-        computeCoveragePiePanel(pool, { type: 'thread', id: threadId }),
-        dataPanels.loadPanels(pool, { type: 'thread', id: threadId }),
-      ]);
-      const panels = [...(coverage ? [coverage] : []), ...rows];
-      return { thread_id: threadId, panels, count: panels.length };
+      const runner = isPrewarm ? await _withStatementTimeout(90_000) : pool;
+      try {
+        const [coverage, rows] = await Promise.all([
+          computeCoveragePiePanel(runner, { type: 'thread', id: threadId }),
+          dataPanels.loadPanels(runner, { type: 'thread', id: threadId }),
+        ]);
+        const panels = [...(coverage ? [coverage] : []), ...rows];
+        return { thread_id: threadId, panels, count: panels.length };
+      } finally {
+        if (isPrewarm) runner.release?.();
+      }
     });
     res.json(_cached);
   } catch (err) {

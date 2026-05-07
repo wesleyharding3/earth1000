@@ -137,14 +137,22 @@ async function processThread(t) {
   // www/index.html:48400). Without this entry the thread detail panel's
   // Sources tab cold-reads on every open even when /api/threads/:id
   // /articles is warm — they're separate endpoints with separate caches.
+  // Append ?prewarm=1 to every URL. Server-side handlers for
+  // /api/threads/:id/panels, /api/flows/thread/:id, and
+  // /api/articles/by-thread check this flag and grant a 90s
+  // statement_timeout (instead of the 45s pool default) for the
+  // duration of this request. Real users still get the aggressive
+  // 45s — they shouldn't sit watching a spinner. The flag is also a
+  // legible audit hint in pg_stat_activity / Render logs about why
+  // a long query is running.
   const tasks = PER_THREAD_ENDPOINTS.map(ep => {
     let url;
     if (ep.path === '__flows') {
-      url = `${API_URL}/api/flows/thread/${t.id}`;
+      url = `${API_URL}/api/flows/thread/${t.id}?prewarm=1`;
     } else if (ep.path === '__sources') {
-      url = `${API_URL}/api/articles/by-thread?thread_id=${t.id}&limit=100`;
+      url = `${API_URL}/api/articles/by-thread?thread_id=${t.id}&limit=100&prewarm=1`;
     } else {
-      url = `${API_URL}/api/threads/${t.id}/${ep.path}`;
+      url = `${API_URL}/api/threads/${t.id}/${ep.path}?prewarm=1`;
     }
     return warm(ep.label, url);
   });

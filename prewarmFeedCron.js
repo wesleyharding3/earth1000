@@ -206,10 +206,16 @@ async function main() {
     const batch = countries.slice(i, i + CONCURRENCY);
     const out = await Promise.all(batch.map(async c => {
       // Warm both pages for both surfaces (4 requests per country).
+      // The /global URLs get &prewarm=1 so the server grants a 90s
+      // statement_timeout (vs the 45s pool default) — high-volume
+      // countries (US, GB, RU, CN, IR, IL, UA, IN, DE) were tripping
+      // the 45s on the article_locations × news_articles cross-join
+      // and returning HTTP 500 here. The local feed isn't failing so
+      // it stays on the default budget.
       const tasks = [];
       for (const qs of FEED_PAGES) {
         tasks.push(warm('local',  `${API_URL}/api/news/country/${c.id}${qs}`));
-        tasks.push(warm('global', `${API_URL}/api/news/country/${c.id}/global${qs}`));
+        tasks.push(warm('global', `${API_URL}/api/news/country/${c.id}/global${qs}&prewarm=1`));
       }
       const results = await Promise.all(tasks);
       // Flatten into local/global summary so the existing log format still
@@ -241,10 +247,13 @@ async function main() {
       for (let i = 0; i < cities.length; i += CONCURRENCY) {
         const batch = cities.slice(i, i + CONCURRENCY);
         const out = await Promise.all(batch.map(async c => {
+          // Cities mirror the country pattern — global gets &prewarm=1
+          // for the 90s budget, local stays on the default. See country
+          // phase above for full rationale.
           const tasks = [];
           for (const qs of FEED_PAGES) {
             tasks.push(warm('local',  `${API_URL}/api/news/city/${c.id}${qs}`));
-            tasks.push(warm('global', `${API_URL}/api/news/city/${c.id}/global${qs}`));
+            tasks.push(warm('global', `${API_URL}/api/news/city/${c.id}/global${qs}&prewarm=1`));
           }
           const results = await Promise.all(tasks);
           const local  = results.filter(r => r.label === 'local').reduce((a, r) => a.err || (r.ms > (a.ms || 0)) ? r : a, results[0]);
