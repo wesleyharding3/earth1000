@@ -13775,17 +13775,17 @@ window.fmtDate = function(d) {
     filtLfoGain.gain.value = 350;
     filtLfo.connect(filtLfoGain).connect(filter.frequency);
 
-    // Wet/dry mix — heavy reverb but no longer drowning. Earlier
-    // values (dry 0.12 / wet 1.2) buried the dyads to the point the
-    // melody disappeared into wash; this keeps the cinematic tail
-    // the user asked for while letting the attacks read.
+    // Wet/dry mix — drowned in reverb. Dry is barely a whisper (0.07);
+    // the wet send is hot (1.5) so the convolver tail IS the sound.
+    // Slightly less wet than stats so news doesn't compete with the
+    // bright text content visually/sonically.
     const dry = ctx.createGain();
-    dry.gain.value = 0.16;
+    dry.gain.value = 0.07;
     filter.connect(dry).connect(out);
 
     if (reverbIn) {
       const wet = ctx.createGain();
-      wet.gain.value = 0.5;
+      wet.gain.value = 1.5;
       filter.connect(wet).connect(reverbIn);
     }
 
@@ -13802,16 +13802,12 @@ window.fmtDate = function(d) {
     let timer = null;
 
     function fireNote(when, hz, isHigh) {
-      // Subtle unison detune (±8c, less than stats' ±10c) — softer
-      // analog feel, no aggressive chorus shimmer.
-      const osc1 = ctx.createOscillator();
-      osc1.type = 'sawtooth';
-      osc1.frequency.value = hz;
-      osc1.detune.value = -8;
-      const osc2 = ctx.createOscillator();
-      osc2.type = 'sawtooth';
-      osc2.frequency.value = hz;
-      osc2.detune.value = +8;
+      // Single sawtooth (no unison) — same iOS perf reasoning as
+      // stats: the wobble is inaudible once buried in reverb and
+      // halving oscillators eases the main thread.
+      const osc = ctx.createOscillator();
+      osc.type = 'sawtooth';
+      osc.frequency.value = hz;
 
       // Quieter than stats (peak ~0.04 vs 0.085); longer sustain so
       // successive notes overlap into a pad-arpeggio hybrid.
@@ -13821,11 +13817,10 @@ window.fmtDate = function(d) {
       g.gain.exponentialRampToValueAtTime(peak, when + 0.04);
       g.gain.exponentialRampToValueAtTime(0.0001, when + 0.75);
 
-      osc1.connect(g);
-      osc2.connect(g);
+      osc.connect(g);
       g.connect(filter);
-      osc1.start(when); osc2.start(when);
-      osc1.stop(when + 0.80); osc2.stop(when + 0.80);
+      osc.start(when);
+      osc.stop(when + 0.80);
     }
 
     function tick() {
@@ -13882,17 +13877,18 @@ window.fmtDate = function(d) {
     filtLfoGain.gain.value = 700;
     filtLfo.connect(filtLfoGain).connect(filter.frequency);
 
-    // Wet/dry mix — heavy reverb but no longer drowning. Earlier
-    // values (dry 0.12 / wet 1.4) buried the dyads to the point the
-    // melody disappeared into wash; this keeps the cinematic tail
-    // the user asked for while letting the attacks read.
+    // Wet/dry mix — drowned in reverb. Dry is barely a whisper (0.08);
+    // the wet send is hot (1.8) so the convolver tail IS the sound.
+    // What you hear is essentially a pure-reverb arpeggio — the
+    // attacks bloom inside the tail rather than poking out in front
+    // of it.
     const dry = ctx.createGain();
-    dry.gain.value = 0.18;
+    dry.gain.value = 0.08;
     filter.connect(dry).connect(out);
 
     if (reverbIn) {
       const wet = ctx.createGain();
-      wet.gain.value = 0.6;
+      wet.gain.value = 1.8;
       filter.connect(wet).connect(reverbIn);
     }
 
@@ -13908,16 +13904,14 @@ window.fmtDate = function(d) {
     let timer = null;
 
     function fireNote(when, hz, isHigh) {
-      // Unison pair detuned ±10c — the "Prophet wobble" that makes
-      // a single sawtooth feel fat/analog.
-      const osc1 = ctx.createOscillator();
-      osc1.type = 'sawtooth';
-      osc1.frequency.value = hz;
-      osc1.detune.value = -10;
-      const osc2 = ctx.createOscillator();
-      osc2.type = 'sawtooth';
-      osc2.frequency.value = hz;
-      osc2.detune.value = +10;
+      // Single sawtooth (no unison detune). The Prophet-style wobble
+      // is inaudible once the signal is buried this deep in reverb,
+      // and halving the oscillator count noticeably eases the iOS
+      // main-thread cost — the user reported the music dragging
+      // the UI at ~16 simultaneous oscillators.
+      const osc = ctx.createOscillator();
+      osc.type = 'sawtooth';
+      osc.frequency.value = hz;
 
       const peak = isHigh ? 0.07 : 0.085; // low slightly louder (anchor)
       const g = ctx.createGain();
@@ -13925,11 +13919,10 @@ window.fmtDate = function(d) {
       g.gain.exponentialRampToValueAtTime(peak, when + 0.008);
       g.gain.exponentialRampToValueAtTime(0.0001, when + 0.28);
 
-      osc1.connect(g);
-      osc2.connect(g);
+      osc.connect(g);
       g.connect(filter);
-      osc1.start(when); osc2.start(when);
-      osc1.stop(when + 0.32); osc2.stop(when + 0.32);
+      osc.start(when);
+      osc.stop(when + 0.32);
     }
 
     function tick() {
@@ -13988,7 +13981,12 @@ window.fmtDate = function(d) {
     reverbPre.frequency.value = 3500;
     reverbPre.Q.value = 0.5;
     const convolver = ctx.createConvolver();
-    convolver.buffer = makeReverbIR(5.5, 2.4);
+    // IR length is the dominant cost for the convolver — FFT
+    // convolution is roughly proportional to it. 5.5s was tanking
+    // the iOS main thread enough that the user reported visible UI
+    // slowdown; 2.8s keeps a long, dark cinematic tail (most film
+    // reverbs sit at 1.5–3s) at roughly half the CPU cost.
+    convolver.buffer = makeReverbIR(2.8, 2.2);
     reverbIn.connect(reverbPre).connect(convolver).connect(reverbOut).connect(duckGain);
     return true;
   }
