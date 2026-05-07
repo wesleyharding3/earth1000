@@ -2873,13 +2873,16 @@ app.get("/api/flows", heavyLimiter, async (req, res) => {
     //     interval so each user request always lands on warm cache that
     //     was just refreshed by the most recent cron tick. 1h buffer
     //     covers cron drift / longer-than-expected runs.
-    //   • keyword or anything else            → 55m. Article fetcher runs
-    //     hourly; 55m sits just under that so each fetcher tick triggers
-    //     exactly one refresh per hot key.
+    //   • keyword or anything else            → 65m. Aligned with
+    //     prewarmKeywordCacheCron's hourly cadence — TTL is just past
+    //     the cron interval so each tick refreshes a near-expiry cache
+    //     and users hitting between ticks land on warm data. Was 55m
+    //     (back when prewarmKeywordCacheCron ran every 5 min); the
+    //     hourly cron makes 60-65m the right floor.
     const _flowCacheKey = `flows:${mode}:${viewMode}:${limit}:${fromDate||''}:${toDate||''}:${fromCountry||''}:${fromCity||''}:${aboutCountry||''}:${aboutCity||''}:${keyword||''}:${normalize}`;
     const _flowTtl = (!keyword && !fromCity && !aboutCity && (fromCountry || aboutCountry))
       ? 46_800_000   // 13h — country-aggregate, prewarmed twice daily
-      : 3_300_000;   // 55m — keyword / city / unfiltered
+      : 3_900_000;   // 65m — keyword / city / unfiltered, prewarmed hourly
     const _flowResult = await ttlCached(_flowCacheKey, _flowTtl, async () => {
 
     // ── Keyword aggregate fast-path ──────────────────────────────────────
@@ -7418,9 +7421,21 @@ app.get("/api/heatmap", heavyLimiter, async (req, res) => {
 
     // cache key — v2 adds the country-wash + city-cluster split
     const _cacheKey = `heatmap:v2:${mode}:${bucket}:${keyword}:${threadId||''}:${days}:${fromIso||''}:${toIso||''}`;
-    // Bucketed queries from snapshots are cheap; live-query fallback is expensive.
-    // TS snapshot hit: 60s. TS live fallback (7d_hour, 14d_hour): 3 min. Standard: 1 min.
-    const _cacheTtl = bucket !== 'none' ? (useTsSnapshot ? 60_000 : 180_000) : 60_000;
+    // TTL aligned with prewarmKeywordCacheCron's hourly cadence so that
+    // each cron tick lands on a cache that's near-expiry but still warm,
+    // and refreshes it. Was 60s — that left ~57 of every 60 minutes
+    // cold between hourly cron ticks, defeating the whole point of the
+    // prewarm. ttlCached's stale-while-revalidate (2× TTL = 130 min)
+    // gives additional buffer for cron drift / late runs.
+    //   • bucket='none'  (cron's request shape):    65 min
+    //   • bucket=hour TS-snapshot (cheap):          65 min
+    //   • bucket=hour TS live fallback (expensive): 3 min — these are
+    //     keyboard-grain time series that the user actively scrubs and
+    //     doesn't want to see staler than the article fetcher cadence.
+    //     Not warmed by the cron, so a longer TTL just means staler UI.
+    const _cacheTtl = bucket !== 'none'
+      ? (useTsSnapshot ? 3_900_000 : 180_000)
+      : 3_900_000;
     const _cached = await ttlCached(_cacheKey, _cacheTtl, async () => {
 
       if (useSnapshot) {
@@ -12639,20 +12654,28 @@ app.get("/api/keywords/rising", async (req, res) => {
 });
 
 // GET /api/keywords/autocomplete?q=clim
-// Returns up to 10 distinct keywords matching the prefix
+// Returns up to 10 distinct keywords matching the prefix.
+//
+// Single-letter queries are allowed: the user expects typing "a" to surface
+// every keyword that starts with "a". The 2-char minimum that was here was
+// a perf workaround — it sidestepped the full table scan caused by
+// `WHERE LOWER(keyword) LIKE $1` defeating idx_ak_keyword (a btree on the
+// raw column). Now that we drop the LOWER() call (the extractor already
+// lowercases on insert — keywordExtractor.js:80), the existing index does
+// a fast range scan and 1-char prefixes are cheap.
 app.get("/api/keywords/autocomplete", async (req, res) => {
   const q = normalizeLowerString(req.query.q) || "";
-  if (q.length < 2) return res.json([]);
+  if (q.length < 1) return res.json([]);
   try {
     const cacheKey = makeKeywordCacheKey("autocomplete", [q]);
 
     setKeywordCacheHeaders(res, KEYWORD_ROUTE_TTLS.autocomplete);
     const rows = await getCachedKeywordPayload(cacheKey, KEYWORD_ROUTE_TTLS.autocomplete, async () => {
       const result = await pool.query(
-        `SELECT DISTINCT LOWER(keyword) AS keyword
+        `SELECT DISTINCT keyword
          FROM article_keywords
-         WHERE LOWER(keyword) LIKE $1
-           AND NOT EXISTS (SELECT 1 FROM stopwords sw WHERE sw.word = LOWER(article_keywords.keyword))
+         WHERE keyword LIKE $1
+           AND NOT EXISTS (SELECT 1 FROM stopwords sw WHERE sw.word = article_keywords.keyword)
          ORDER BY keyword ASC
          LIMIT 10`,
         [`${q}%`]

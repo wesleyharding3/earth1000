@@ -13882,21 +13882,15 @@ window.fmtDate = function(d) {
     };
   }
 
-  function makeStatsArp() {
-    // Stranger Things-style staggered dyad arpeggio. Two interleaved
-    // sawtooth voices through a resonant lowpass — every step fires
-    // a LOW note immediately and a HIGH partner half-a-step later,
-    // so the texture is running 16ths even though each step only
-    // schedules two attacks. A-minor pentatonic palette (same notes
-    // as the field, but starting on A so it reads as minor — the
-    // "Kyle Dixon / Michael Stein" Aeolian feel). Heavy reverb send
-    // for the cinematic synth-noir tail. Q ≥ 6 on the lowpass is
-    // what gives it the OB-Xa / Prophet zing.
+  // ── Globe arp: sparse cousin of stats. Same A-minor dyad palette
+  // and reverb routing so the page-to-page transition is a density
+  // crossfade rather than a tonal jump. NO sparkle, NO syncopation,
+  // NO delay — those rich elements live exclusively on Stats so
+  // moving between the two pages reads as "calm vs energised".
+  function makeGlobeArp() {
     const out = ctx.createGain();
     out.gain.value = 0.0001;
 
-    // Resonant lowpass with slow LFO sweep — harmonic content
-    // moves so the arpeggio doesn't sit on one tone color.
     const filter = ctx.createBiquadFilter();
     filter.type = 'lowpass';
     filter.frequency.value = 1400;
@@ -13907,78 +13901,33 @@ window.fmtDate = function(d) {
     filtLfoGain.gain.value = 700;
     filtLfo.connect(filtLfoGain).connect(filter.frequency);
 
-    // Wet/dry mix — drowned in reverb. Dry is barely a whisper (0.08);
-    // the wet send is hot (1.8) so the convolver tail IS the sound.
-    // What you hear is essentially a pure-reverb arpeggio — the
-    // attacks bloom inside the tail rather than poking out in front
-    // of it.
+    // Drowned in reverb — dry is a whisper, wet dominates.
     const dry = ctx.createGain();
     dry.gain.value = 0.08;
     filter.connect(dry).connect(out);
-
     if (reverbIn) {
       const wet = ctx.createGain();
       wet.gain.value = 1.8;
       filter.connect(wet).connect(reverbIn);
     }
 
-    // 8-step pattern, each step = LOW + HIGH partner half-step later.
-    // Net texture: 16 attacks per loop = running-16th feel.
     const LOW  = [110.00, 130.81, 164.81, 196.00, 220.00, 196.00, 164.81, 130.81]; // A2 C3 E3 G3 A3 G3 E3 C3
     const HIGH = [164.81, 196.00, 261.63, 293.66, 329.63, 293.66, 261.63, 196.00]; // E3 G3 C4 D4 E4 D4 C4 G3
-    // Sparkle voice — A-minor pentatonic high register, triangle wave
-    // for a bell-like character that distinguishes the stats page from
-    // news and reads through the deep reverb. Fires sparsely (every
-    // 4th step = twice per 8-step loop) so it adds shimmer without
-    // crowding the dyad pulse or adding meaningful CPU cost.
-    const SPARKLE = [659.25, 880.00, 783.99, 587.33]; // E5 A5 G5 D5
-    const STEP_SEC = 0.24;          // ~125 BPM 16th-note feel
+    const STEP_SEC = 0.24;          // ~125 BPM 16th-note feel — calm cadence
     const HALF_STEP = STEP_SEC * 0.5;
-    let stepIdx = 0;
-    let nextAt = 0;
-    let running = false;
-    let timer = null;
+    let stepIdx = 0, nextAt = 0, running = false, timer = null;
 
     function fireNote(when, hz, isHigh) {
-      // Single sawtooth (no unison detune). The Prophet-style wobble
-      // is inaudible once the signal is buried this deep in reverb,
-      // and halving the oscillator count noticeably eases the iOS
-      // main-thread cost — the user reported the music dragging
-      // the UI at ~16 simultaneous oscillators.
       const osc = ctx.createOscillator();
       osc.type = 'sawtooth';
       osc.frequency.value = hz;
-
-      const peak = isHigh ? 0.07 : 0.085; // low slightly louder (anchor)
+      const peak = isHigh ? 0.07 : 0.085;
       const g = ctx.createGain();
       g.gain.setValueAtTime(0.0001, when);
       g.gain.exponentialRampToValueAtTime(peak, when + 0.008);
       g.gain.exponentialRampToValueAtTime(0.0001, when + 0.28);
-
-      osc.connect(g);
-      g.connect(filter);
-      osc.start(when);
-      osc.stop(when + 0.32);
-    }
-
-    function fireSparkle(when, hz) {
-      // Triangle wave at high-register pitch, longer envelope so it
-      // hangs in the reverb tail. Routed through the same filter
-      // (which means same wet/dry balance) so it bathes in the same
-      // convolver as the dyads.
-      const osc = ctx.createOscillator();
-      osc.type = 'triangle';
-      osc.frequency.value = hz;
-
-      const g = ctx.createGain();
-      g.gain.setValueAtTime(0.0001, when);
-      g.gain.exponentialRampToValueAtTime(0.045, when + 0.02);
-      g.gain.exponentialRampToValueAtTime(0.0001, when + 0.65);
-
-      osc.connect(g);
-      g.connect(filter);
-      osc.start(when);
-      osc.stop(when + 0.70);
+      osc.connect(g); g.connect(filter);
+      osc.start(when); osc.stop(when + 0.32);
     }
 
     function tick() {
@@ -13988,8 +13937,147 @@ window.fmtDate = function(d) {
         const i = stepIdx % LOW.length;
         fireNote(nextAt,             LOW[i],  false);
         fireNote(nextAt + HALF_STEP, HIGH[i], true);
-        // Sparkle every 4th step, lands on the dyad's HIGH attack
-        // (slight delay) so it feels like a halo on the upbeat.
+        stepIdx++;
+        nextAt += STEP_SEC;
+      }
+      timer = setTimeout(tick, 80);
+    }
+
+    return {
+      gain: out,
+      start(when) {
+        running = true;
+        filtLfo.start(when);
+        nextAt = Math.max(when, ctx.currentTime + 0.05);
+        tick();
+      },
+      stop(_when) {
+        running = false;
+        if (timer) { clearTimeout(timer); timer = null; }
+        try { filtLfo.stop(_when); } catch(_) {}
+      }
+    };
+  }
+
+  // ── Stats arp: rich variant of the same Stranger-Things-adjacent
+  // dyad pulse. Layered on top of the Globe arp's pattern:
+  //   • STEP_SEC 0.16 (vs Globe's 0.24)  — the pulse drives, doesn't breathe
+  //   • SYNC dyad on the 75% offbeat   — two notes octave-up of HIGH
+  //                                       create the syncopated push
+  //   • SPARKLE voice (high register) — A-minor pentatonic, triangle,
+  //                                       sparse (every 4th step) — the
+  //                                       only place high notes are heard
+  //   • Feedback delay tap            — 0.24s delay, 0.45 feedback;
+  //                                       echoes route to reverbIn so the
+  //                                       whole stack stays buried in the
+  //                                       convolver tail
+  function makeStatsArp() {
+    const out = ctx.createGain();
+    out.gain.value = 0.0001;
+
+    const filter = ctx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.frequency.value = 1400;
+    filter.Q.value = 8;
+    const filtLfo = ctx.createOscillator();
+    filtLfo.frequency.value = 0.10;
+    const filtLfoGain = ctx.createGain();
+    filtLfoGain.gain.value = 700;
+    filtLfo.connect(filtLfoGain).connect(filter.frequency);
+
+    // Same dry/wet ratios as Globe — only density changes.
+    const dry = ctx.createGain();
+    dry.gain.value = 0.08;
+    filter.connect(dry).connect(out);
+
+    // Feedback delay — echoes also feed the reverb bus so the
+    // tail stays drowned. Without that second send, echoes would
+    // poke out dry against the wet wash and read as a separate
+    // effect rather than part of the texture.
+    const delay = ctx.createDelay(2.0);
+    delay.delayTime.value = 0.24;        // 1.5x STEP_SEC = polyrhythmic against the pulse
+    const feedback = ctx.createGain();
+    feedback.gain.value = 0.45;          // ~10 echoes before -60dB, ~2.5s tail
+    delay.connect(feedback).connect(delay);
+    const delaySend = ctx.createGain();
+    delaySend.gain.value = 0.55;
+    filter.connect(delaySend).connect(delay);
+
+    if (reverbIn) {
+      const wet = ctx.createGain();
+      wet.gain.value = 1.8;
+      filter.connect(wet).connect(reverbIn);
+      // Delay echoes also into the reverb — drown them too.
+      const delayWet = ctx.createGain();
+      delayWet.gain.value = 1.2;
+      delay.connect(delayWet).connect(reverbIn);
+    }
+
+    const LOW  = [110.00, 130.81, 164.81, 196.00, 220.00, 196.00, 164.81, 130.81]; // A2 C3 E3 G3 A3 G3 E3 C3
+    const HIGH = [164.81, 196.00, 261.63, 293.66, 329.63, 293.66, 261.63, 196.00]; // E3 G3 C4 D4 E4 D4 C4 G3
+    // SYNC: octave up of LOW + HIGH (two notes per offbeat = the
+    // "two-note syncopation"). Pitch-only differentiation; same
+    // sawtooth timbre keeps the texture cohesive.
+    const SYNC_LOW  = [220.00, 261.63, 329.63, 392.00, 440.00, 392.00, 329.63, 261.63]; // A3 C4 E4 G4 A4 G4 E4 C4
+    const SYNC_HIGH = [329.63, 392.00, 523.25, 587.33, 659.25, 587.33, 523.25, 392.00]; // E4 G4 C5 D5 E5 D5 C5 G4
+    // SPARKLE: high-register triangle, Stats-only — these are the
+    // "higher-pitched notes" the spec says should never sound on Globe.
+    const SPARKLE = [659.25, 880.00, 783.99, 587.33]; // E5 A5 G5 D5
+    const STEP_SEC = 0.16;                            // ~187 BPM 16th-note feel
+    const HALF_STEP   = STEP_SEC * 0.5;
+    const SYNC_OFFSET = STEP_SEC * 0.75;              // 75% through the step = the syncopated lift
+    let stepIdx = 0, nextAt = 0, running = false, timer = null;
+
+    function fireNote(when, hz, isHigh) {
+      const osc = ctx.createOscillator();
+      osc.type = 'sawtooth';
+      osc.frequency.value = hz;
+      const peak = isHigh ? 0.07 : 0.085;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, when);
+      g.gain.exponentialRampToValueAtTime(peak, when + 0.008);
+      g.gain.exponentialRampToValueAtTime(0.0001, when + 0.22);
+      osc.connect(g); g.connect(filter);
+      osc.start(when); osc.stop(when + 0.26);
+    }
+
+    function fireSync(when, hz) {
+      // Quieter (0.045 peak) and shorter (0.18s) than the main dyad
+      // — these are accent notes pushing the rhythm, not focal events.
+      const osc = ctx.createOscillator();
+      osc.type = 'sawtooth';
+      osc.frequency.value = hz;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, when);
+      g.gain.exponentialRampToValueAtTime(0.045, when + 0.006);
+      g.gain.exponentialRampToValueAtTime(0.0001, when + 0.16);
+      osc.connect(g); g.connect(filter);
+      osc.start(when); osc.stop(when + 0.20);
+    }
+
+    function fireSparkle(when, hz) {
+      const osc = ctx.createOscillator();
+      osc.type = 'triangle';
+      osc.frequency.value = hz;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, when);
+      g.gain.exponentialRampToValueAtTime(0.045, when + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, when + 0.65);
+      osc.connect(g); g.connect(filter);
+      osc.start(when); osc.stop(when + 0.70);
+    }
+
+    function tick() {
+      if (!running) return;
+      const horizon = ctx.currentTime + 0.20;
+      while (nextAt < horizon) {
+        const i = stepIdx % LOW.length;
+        fireNote(nextAt,             LOW[i],  false);
+        fireNote(nextAt + HALF_STEP, HIGH[i], true);
+        // Two-note syncopated dyad on the 75% offbeat.
+        fireSync(nextAt + SYNC_OFFSET, SYNC_LOW[i]);
+        fireSync(nextAt + SYNC_OFFSET, SYNC_HIGH[i]);
+        // Sparkle every 4th step — high register, Stats-only.
         if (stepIdx % 4 === 0) {
           fireSparkle(nextAt + HALF_STEP, SPARKLE[(stepIdx / 4) % SPARKLE.length]);
         }
@@ -14085,8 +14173,9 @@ window.fmtDate = function(d) {
     //     change. Direct call removes the race.
     try {
       const p = window.__currentPage;
-      if (p === 0 || p === 1)      setLayer('stats', true);
-      else if (p === 2)            setLayer('news',  true);
+      if (p === 0)      setLayer('stats', true);   // Stats: rich variant (sparkle / sync / delay)
+      else if (p === 1) setLayer('globe', true);   // Globe: sparse variant (no high notes / no sync / no delay)
+      else if (p === 2) setLayer('news',  true);   // News: dyad pad
     } catch (_) {}
     try { window.dispatchEvent(new CustomEvent('audioEngine:unlocked')); } catch(_){}
   }
@@ -14171,6 +14260,7 @@ window.fmtDate = function(d) {
       else if (name === 'sub')   factory = makeSub;
       else if (name === 'news')  factory = makeNewsPad;
       else if (name === 'stats') factory = makeStatsArp;
+      else if (name === 'globe') factory = makeGlobeArp;
       else { console.warn('[audioEngine] unknown layer:', name); return; }
       const built = factory();
       built.gain.connect(duckGain);
@@ -14358,8 +14448,9 @@ window.fmtDate = function(d) {
     if (!muted) {
       try {
         const p = window.__currentPage;
-        if (p === 0 || p === 1)      setLayer('stats', true);
-        else if (p === 2)            setLayer('news',  true);
+        if (p === 0)      setLayer('stats', true);
+        else if (p === 1) setLayer('globe', true);
+        else if (p === 2) setLayer('news',  true);
       } catch (_) {}
     }
   }
@@ -16289,10 +16380,14 @@ window.__arcCtxSegmented = (function() {
     window.addEventListener('audioEngine:unlocked', () => {
       const p = window.__currentPage;
       if (window.audioEngine) {
-        // Stats arpeggio (heavily reverbed dyad pulse) is the audio
-        // identity for both the globe (p=1) and the stats page (p=0).
-        // News page (p=2) gets its own pad. Other pages are silent.
-        window.audioEngine.setLayer('stats', p === 0 || p === 1);
+        // Per-page audio identities, all routed through the shared
+        // reverb bus so transitions read as density crossfades:
+        //   p=0 Stats → 'stats' (rich: sparkle + sync + delay)
+        //   p=1 Globe → 'globe' (sparse: dyad pulse only)
+        //   p=2 News  → 'news'  (dyad pad)
+        // Other pages are silent.
+        window.audioEngine.setLayer('stats', p === 0);
+        window.audioEngine.setLayer('globe', p === 1);
         window.audioEngine.setLayer('news',  p === 2);
       }
     });
@@ -35187,14 +35282,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }
       current = idx;
       window.__currentPage = idx;
-      // Page-aware audio layers: 0=Stats and 1=Globe both run the
-      // reverb-drowned dyad arpeggio (same layer; fade only happens
-      // on transition in/out of the [0,1] set). 2=News runs its own
-      // pad. setLayer is a no-op if the engine is locked, so calling
-      // unconditionally is safe; the audioEngine:unlocked listener
-      // re-syncs once the user touches.
+      // Page-aware audio layers — each page has its own factory, so
+      // navigating between Globe and Stats does a 1.6s density
+      // crossfade rather than reusing one layer for both. Stats =
+      // rich variant (sparkle/sync/delay), Globe = sparse, News =
+      // its own pad. setLayer is a no-op if the engine is locked, so
+      // calling unconditionally is safe; the audioEngine:unlocked
+      // listener re-syncs once the user touches.
       if (window.audioEngine) {
-        window.audioEngine.setLayer('stats', idx === 0 || idx === 1);
+        window.audioEngine.setLayer('stats', idx === 0);
+        window.audioEngine.setLayer('globe', idx === 1);
         window.audioEngine.setLayer('news',  idx === 2);
       }
       // Skip animation when jumping more than 1 page to avoid
@@ -38459,7 +38556,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
     clearTimeout(kwiAcTimer);
     const q = val.trim();
     const requestId = ++kwiSearchAcRequestId;
-    if (q.length < 2) { kwiCloseAC(); return; }
+    // Single-letter queries are allowed — the server-side index range scan
+    // makes `keyword LIKE 'a%'` cheap. Empty string still bails (closes the
+    // dropdown when the user clears the field).
+    if (q.length < 1) { kwiCloseAC(); return; }
     kwiAcTimer = setTimeout(async () => {
       const nextList = await fetchAC(q);
       if (requestId !== kwiSearchAcRequestId) return;
@@ -38976,7 +39076,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
     const ac = document.getElementById('kwiGraphAC');
     const q = val.trim();
     const requestId = ++kwiGraphAcRequestId;
-    if (!q || q.length < 2) {
+    // Single-letter queries are allowed — see the kwiOnInput rationale.
+    if (!q) {
       ac.classList.remove('open');
       kwiGraphAcItems = [];
       kwiGraphAcIndex = -1;

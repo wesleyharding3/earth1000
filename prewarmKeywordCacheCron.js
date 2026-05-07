@@ -4,16 +4,26 @@
 /**
  * prewarmKeywordCacheCron.js
  *
- * Hits /api/heatmap and /api/flows for the top news keywords on the
- * standard 7-day window so the in-memory TTL caches stay warm. Both
- * endpoints already cache results (heatmap: 60s + stale-while-revalidate,
- * flows: 600s); this cron just makes sure the user never pays the cold-
- * miss latency for the highest-traffic queries.
+ * Hits /api/heatmap and /api/flows for the keywords with the highest
+ * recent momentum on the standard 7-day window so the in-memory TTL
+ * caches stay warm. Both endpoints' TTLs (heatmap and flows-keyword
+ * are both 65 min) are deliberately aligned with this cron's HOURLY
+ * cadence so each tick lands on a near-expiry cache and refreshes
+ * it — the user never pays the cold-miss latency.
+ *
+ * Keyword source (rolling, in order of preference):
+ *   1. PREWARM_KEYWORDS env var — manual override, ops/debug only
+ *   2. /api/keywords/rising?limit=N — the live, momentum-ranked list
+ *      (default N=40, override via PREWARM_RISING_LIMIT). Resolved on
+ *      every cron tick so newly-spiking keywords get warmed within a
+ *      cycle and ones that have cooled off automatically drop out.
+ *   3. DEFAULT_KEYWORDS — hand-curated fallback used only when the
+ *      rising endpoint is unreachable (transient keywordCron failure).
  *
  * For "trump" + 7 days the cold latency is ~3–5s on flows and ~1s on
- * heatmap. With this cron running every 5 minutes (recommended cadence
- * given flows' 600s TTL — slightly faster than expiry to bridge any
- * cron drift), the user-facing requests are always cache hits at <10ms.
+ * heatmap. With this cron running every 60 minutes and both endpoint
+ * caches set to 65 min TTL (5 min drift buffer), the user-facing
+ * requests are always cache hits at <10ms.
  *
  * Why HTTP and not direct DB calls:
  *   This script runs as a separate Node process, so it can't share the
@@ -21,14 +31,15 @@
  *   the only way to populate the running server's cache.
  *
  * Env vars:
- *   API_URL              base URL of the API (default: http://localhost:3000)
- *   PREWARM_KEYWORDS     comma-separated keyword list (overrides defaults)
- *   PREWARM_TIMEOUT_MS   per-request timeout (default: 12000)
+ *   API_URL                 base URL of the API (default: http://localhost:3000)
+ *   PREWARM_KEYWORDS        comma-separated keyword list (manual override)
+ *   PREWARM_RISING_LIMIT    how many rising keywords to warm (default: 40)
+ *   PREWARM_TIMEOUT_MS      per-request timeout (default: 95000)
  *
  * Run:  node prewarmKeywordCacheCron.js
  *
- * Wire to Render Cron / system cron at every 5 minutes:
- *   `* /5 * * * * cd /app && node prewarmKeywordCacheCron.js`
+ * Wire to Render Cron / system cron once per hour, e.g. at :00:
+ *   `0 * * * * cd /app && node prewarmKeywordCacheCron.js`
  */
 
 require('dotenv').config({ override: true });
@@ -61,8 +72,9 @@ if (!process.env.API_URL) {
   console.warn('[prewarm-kw]          (e.g. https://earth-wjr6.onrender.com) or every request will fail.');
 }
 
-// Default top-30. Hand-curated from typical news traffic; tune via env.
-// Lowercased — both endpoints lowercase server-side.
+// Hand-curated fallback list. Used only when the rising-keywords API is
+// unreachable / empty (e.g. keywordCron.js failed and the DB cache is
+// stale). Lowercased — both endpoints lowercase server-side.
 const DEFAULT_KEYWORDS = [
   'trump', 'biden', 'putin', 'xi jinping',
   'ukraine', 'russia', 'china', 'israel', 'gaza', 'iran',
@@ -75,9 +87,52 @@ const DEFAULT_KEYWORDS = [
   'oil', 'opec',
 ];
 
-const KEYWORDS = (process.env.PREWARM_KEYWORDS
-  ? process.env.PREWARM_KEYWORDS.split(',').map(s => s.trim()).filter(Boolean)
-  : DEFAULT_KEYWORDS);
+// Top-N rising keywords to warm. The cron used to read a 30-entry
+// curated list (DEFAULT_KEYWORDS above) which went stale fast — newly-
+// spiking stories ("hormuz", "rubio vatican") had cold caches because
+// they weren't on the list, while keywords that had cooled off
+// ("interest rates" in a quiet week) wasted cron cycles. Now we read
+// from the rising endpoint each run, so warming naturally tracks
+// what users are most likely to search for.
+const RISING_LIMIT = parseInt(process.env.PREWARM_RISING_LIMIT || '40', 10);
+
+// Resolve the keyword list once per run. Order of preference:
+//   1. PREWARM_KEYWORDS env var (manual override — handy for ops or
+//      reproducing a specific failure scenario)
+//   2. Top-N rising keywords from /api/keywords/rising — the live,
+//      rolling source. New high-momentum keywords appear here as soon
+//      as keywordCron.js's next refresh writes them; old ones drop
+//      out automatically when their momentum decays.
+//   3. DEFAULT_KEYWORDS — hand-curated fallback, used only when
+//      rising is unreachable / empty so a transient outage doesn't
+//      leave the entire cache cold.
+async function pickKeywordsToWarm() {
+  if (process.env.PREWARM_KEYWORDS) {
+    const list = process.env.PREWARM_KEYWORDS.split(',').map(s => s.trim()).filter(Boolean);
+    console.log(`${TAG} using PREWARM_KEYWORDS env override (${list.length} keywords)`);
+    return list;
+  }
+  try {
+    const r = await fetchWithTimeout(`${API_URL}/api/keywords/rising?limit=${RISING_LIMIT}`);
+    if (r.ok) {
+      const data = await r.json();
+      const arr = Array.isArray(data) ? data : (data?.keywords || []);
+      const list = arr
+        .map(item => item && typeof item.keyword === 'string' ? item.keyword.trim().toLowerCase() : null)
+        .filter(Boolean);
+      if (list.length) {
+        console.log(`${TAG} discovered ${list.length} rising keywords from /api/keywords/rising`);
+        return list;
+      }
+      console.warn(`${TAG} /api/keywords/rising returned empty — falling back to DEFAULTS`);
+    } else {
+      console.warn(`${TAG} /api/keywords/rising HTTP ${r.status} — falling back to DEFAULTS`);
+    }
+  } catch (err) {
+    console.warn(`${TAG} /api/keywords/rising fetch failed: ${err.message} — falling back to DEFAULTS`);
+  }
+  return DEFAULT_KEYWORDS;
+}
 
 const TAG = '[prewarm-kw]';
 
@@ -144,6 +199,10 @@ async function warmOne(keyword) {
 
 async function main() {
   const t0 = Date.now();
+  // Resolve the keyword list per-run so each cycle picks up the latest
+  // rising set. KEYWORDS used to be a module-level constant (curated
+  // list); now it's dynamic so warming follows real momentum.
+  const KEYWORDS = await pickKeywordsToWarm();
   console.log(`${TAG} start ${new Date().toISOString()} api=${API_URL} keywords=${KEYWORDS.length} concurrency=${CONCURRENCY} timeout=${TIMEOUT_MS}ms`);
 
   console.log(`${TAG} keywords: warming ${KEYWORDS.length} keyword × (heatmap, flows)…`);
