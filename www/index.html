@@ -45949,9 +45949,15 @@ body.ticker-active .gTickerLabel {
   }
 
   // Called when narrator audio STARTS playing
+  // Procedural engine ducks to ~0 (effectively muted) so the narrator
+  // is never competing with the arpeggio/reverb wash. Was 0.18 — that
+  // left the music audible enough to bury narration on speakers with
+  // weak mids. The legacy _bgMusic HTMLAudioElement still ducks to
+  // BG_VOL_LOW (0.08) since it's a different mix and the briefing's
+  // own composed bed is meant to sit under the voice.
   function bgMusicNarratorStart() {
     duckBgMusic(BG_VOL_LOW, BG_FADE_OUT);
-    if (window.audioEngine) window.audioEngine.duck(0.18, BG_FADE_OUT * 1000);
+    if (window.audioEngine) window.audioEngine.duck(0.001, BG_FADE_OUT * 1000);
   }
   // Called when narrator audio ENDS (gap between segments)
   function bgMusicNarratorEnd()   {
@@ -45959,9 +45965,11 @@ body.ticker-active .gTickerLabel {
     if (window.audioEngine) window.audioEngine.unduck(BG_FADE_IN * 1000);
   }
   // Called when YouTube focal video STARTS
+  // Same near-zero duck as narrator — video has its own audio that
+  // shouldn't compete with the procedural music either.
   function bgMusicVideoStart()    {
     duckBgMusic(BG_VOL_MUTE, BG_FADE_OUT);
-    if (window.audioEngine) window.audioEngine.duck(0.05, BG_FADE_OUT * 1000);
+    if (window.audioEngine) window.audioEngine.duck(0.001, BG_FADE_OUT * 1000);
   }
   // Called when YouTube focal video ENDS
   function bgMusicVideoEnd()      {
@@ -47598,7 +47606,25 @@ body.ticker-active .gTickerLabel {
         // Start background music on first segment, duck for narrator
         startBgMusic();
         bgMusicNarratorStart();
-        sa.play().catch(e => console.warn('[briefing] play blocked:', e.message));
+        // sa.play() can reject on iOS with NotAllowedError when audio
+        // session timing is awkward — multiple AudioContexts initialising
+        // around the same moment (procedural engine + _bgMusicCtx + this
+        // briefing path) occasionally trip it. The previous handler just
+        // console.warn'd and gave up, so the entire narrator went silent
+        // for the segment. One retry after 200ms recovers the common
+        // case; on hard failure we still log loudly so the issue is
+        // visible in Render / Safari console rather than silent.
+        const tryPlay = (attempt = 0) => {
+          sa.play().catch(e => {
+            if (attempt === 0 && segIdx === curIdx && playing) {
+              console.warn(`[briefing] play() rejected on attempt 1 (${e.message}) — retrying in 200ms`);
+              setTimeout(() => tryPlay(1), 200);
+              return;
+            }
+            console.error(`[briefing] play() failed for segment ${curIdx} after ${attempt + 1} attempt(s):`, e);
+          });
+        };
+        tryPlay();
 
         // Segment advance is driven by `audio.ended` (line below) — the
         // ONLY reliable signal that the narrator has actually finished

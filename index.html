@@ -42007,10 +42007,25 @@ body.ticker-active .gTickerLabel {
       _bgMusicGain.gain.exponentialRampToValueAtTime(Math.max(targetVol, 0.001), now + fadeSec);
     } else { _bgMusic.volume = targetVol; }
   }
-  function bgMusicNarratorStart() { duckBgMusic(BG_VOL_LOW, BG_FADE_OUT); }
-  function bgMusicNarratorEnd()   { duckBgMusic(BG_VOL_FULL, BG_FADE_IN); }
-  function bgMusicVideoStart()    { duckBgMusic(BG_VOL_MUTE, BG_FADE_OUT); }
-  function bgMusicVideoEnd()      { duckBgMusic(BG_VOL_LOW, BG_FADE_IN); }
+  // Duck the procedural audio engine to ~0 alongside the legacy _bgMusic
+  // ducking so the narrator (and YouTube focal video) plays clean. Mirrors
+  // www/index.html — see that file for full rationale.
+  function bgMusicNarratorStart() {
+    duckBgMusic(BG_VOL_LOW, BG_FADE_OUT);
+    if (window.audioEngine) window.audioEngine.duck(0.001, BG_FADE_OUT * 1000);
+  }
+  function bgMusicNarratorEnd()   {
+    duckBgMusic(BG_VOL_FULL, BG_FADE_IN);
+    if (window.audioEngine) window.audioEngine.unduck(BG_FADE_IN * 1000);
+  }
+  function bgMusicVideoStart()    {
+    duckBgMusic(BG_VOL_MUTE, BG_FADE_OUT);
+    if (window.audioEngine) window.audioEngine.duck(0.001, BG_FADE_OUT * 1000);
+  }
+  function bgMusicVideoEnd()      {
+    duckBgMusic(BG_VOL_LOW, BG_FADE_IN);
+    if (window.audioEngine) window.audioEngine.duck(0.4, BG_FADE_IN * 1000);
+  }
   // ── End Background Music Engine ──────────────────────────────────────
 
   function addBTimer(t) { briefingTimers.push(t); return t; }
