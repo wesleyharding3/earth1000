@@ -13775,12 +13775,16 @@ window.fmtDate = function(d) {
     filtLfoGain.gain.value = 350;
     filtLfo.connect(filtLfoGain).connect(filter.frequency);
 
-    filter.connect(out);
+    // Wet/dry mix — buried in reverb. Dry is barely audible (0.12);
+    // wet send is hot (1.2) so the tail dominates the perceived sound.
+    const dry = ctx.createGain();
+    dry.gain.value = 0.12;
+    filter.connect(dry).connect(out);
 
     if (reverbIn) {
-      const send = ctx.createGain();
-      send.gain.value = 0.55;
-      filter.connect(send).connect(reverbIn);
+      const wet = ctx.createGain();
+      wet.gain.value = 1.2;
+      filter.connect(wet).connect(reverbIn);
     }
 
     // 6-step pattern, climbs C-pentatonic then descends. Mixed dyad
@@ -13876,13 +13880,16 @@ window.fmtDate = function(d) {
     filtLfoGain.gain.value = 700;
     filtLfo.connect(filtLfoGain).connect(filter.frequency);
 
-    filter.connect(out);
+    // Wet/dry mix — buried in reverb. Dry is barely audible (0.12);
+    // wet send is hot (1.4) so the tail dominates the perceived sound.
+    const dry = ctx.createGain();
+    dry.gain.value = 0.12;
+    filter.connect(dry).connect(out);
 
-    // Heavy reverb send (cinematic tail)
     if (reverbIn) {
-      const send = ctx.createGain();
-      send.gain.value = 0.75;
-      filter.connect(send).connect(reverbIn);
+      const wet = ctx.createGain();
+      wet.gain.value = 1.4;
+      filter.connect(wet).connect(reverbIn);
     }
 
     // 8-step pattern, each step = LOW + HIGH partner half-step later.
@@ -13977,22 +13984,53 @@ window.fmtDate = function(d) {
     reverbPre.frequency.value = 3500;
     reverbPre.Q.value = 0.5;
     const convolver = ctx.createConvolver();
-    convolver.buffer = makeReverbIR(3.6, 2.6);
+    convolver.buffer = makeReverbIR(5.5, 2.4);
     reverbIn.connect(reverbPre).connect(convolver).connect(reverbOut).connect(duckGain);
     return true;
+  }
+
+  // iOS WKWebView routinely suspends AudioContext after backgrounding,
+  // screen lock, briefing playback, or interruption (call/alarm). The
+  // suspension is silent — ctx exists, layers are wired, but no audio
+  // reaches the speaker until ctx.resume() is called from a user gesture.
+  // Call this at the top of every public entry point so the engine
+  // self-heals on the next interaction.
+  function ensureRunning() {
+    if (!ctx) return false;
+    if (ctx.state === 'suspended' || ctx.state === 'interrupted') {
+      try { ctx.resume().catch(()=>{}); } catch(_) {}
+    }
+    return ctx.state !== 'closed';
   }
 
   function unlock() {
     if (unlocked) return;
     if (!buildContext()) return;
-    if (ctx.state === 'suspended') ctx.resume().catch(()=>{});
+    ensureRunning();
     unlocked = true;
-    if (!muted) {
-      setLayer('drone', true);
-      setLayer('sub', true);
-    }
+    // Constant ambient layers (drone/sub) intentionally NOT started.
+    // The audio identity is now sparse: page-specific arpeggios
+    // (news, stats) and one-shot tap thumps. Globe page is silent.
     try { window.dispatchEvent(new CustomEvent('audioEngine:unlocked')); } catch(_){}
   }
+
+  // iOS may suspend the AudioContext while the app is backgrounded or
+  // the screen is locked. When the user returns, fire a resume so the
+  // ambient layers come back without requiring another tap.
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') ensureRunning();
+  });
+  // Capacitor lifecycle — resume() also runs on app foreground via
+  // the App plugin if available. Wrapped in optional chaining so it's
+  // a no-op on web / older Capacitor.
+  try {
+    const App = window.Capacitor?.Plugins?.App;
+    if (App?.addListener) {
+      App.addListener('appStateChange', (s) => {
+        if (s?.isActive) ensureRunning();
+      });
+    }
+  } catch(_) {}
 
   function attachUnlockListeners() {
     if (listenersAttached) return;
@@ -14214,11 +14252,7 @@ window.fmtDate = function(d) {
     masterGain.gain.cancelScheduledValues(now);
     masterGain.gain.setValueAtTime(Math.max(masterGain.gain.value, 0.0001), now);
     masterGain.gain.exponentialRampToValueAtTime(muted ? 0.0001 : MASTER_DEFAULT, now + 0.45);
-    if (!muted && unlocked) {
-      // Default ambient layers if they were never started or were torn down
-      setLayer('drone', true);
-      setLayer('sub',   true);
-    }
+    // Drone/sub intentionally not auto-started — see unlock() comment.
   }
 
   function isMuted()    { return muted; }
@@ -16146,7 +16180,10 @@ window.__arcCtxSegmented = (function() {
     window.addEventListener('audioEngine:unlocked', () => {
       const p = window.__currentPage;
       if (window.audioEngine) {
-        window.audioEngine.setLayer('stats', p === 0);
+        // Stats arpeggio (heavily reverbed dyad pulse) is the audio
+        // identity for both the globe (p=1) and the stats page (p=0).
+        // News page (p=2) gets its own pad. Other pages are silent.
+        window.audioEngine.setLayer('stats', p === 0 || p === 1);
         window.audioEngine.setLayer('news',  p === 2);
       }
     });
@@ -35041,12 +35078,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }
       current = idx;
       window.__currentPage = idx;
-      // Page-aware audio layers: 0=Stats arpeggio, 2=News pad. Drone+sub
-      // stay underneath. setLayer is a no-op if the engine is locked, so
-      // calling unconditionally is safe; the audioEngine:unlocked listener
+      // Page-aware audio layers: 0=Stats and 1=Globe both run the
+      // reverb-drowned dyad arpeggio (same layer; fade only happens
+      // on transition in/out of the [0,1] set). 2=News runs its own
+      // pad. setLayer is a no-op if the engine is locked, so calling
+      // unconditionally is safe; the audioEngine:unlocked listener
       // re-syncs once the user touches.
       if (window.audioEngine) {
-        window.audioEngine.setLayer('stats', idx === 0);
+        window.audioEngine.setLayer('stats', idx === 0 || idx === 1);
         window.audioEngine.setLayer('news',  idx === 2);
       }
       // Skip animation when jumping more than 1 page to avoid
