@@ -2,7 +2,11 @@
 
 const deepl = require('deepl-node');
 
-const DEFAULT_BATCH_SIZE = 50;
+// Batch size dropped from 50 → 30 after observing 3 truncated batches in a
+// 5000-keyword run. With multilingual input (CJK + diacritics push 2-3x
+// tokens per char vs ASCII), 50 was running into the 6000 max_tokens cap.
+// 30 leaves comfortable headroom while still amortising round-trip latency.
+const DEFAULT_BATCH_SIZE = 30;
 const DEFAULT_KEYWORD_LIMIT = 800;
 const DEFAULT_CHAR_CAP = 80000;
 const DEFAULT_MIN_ROWS = 2;
@@ -326,7 +330,7 @@ function buildCandidateQuery({ scope, keywordLimit, minRows, minFrequency }) {
 // the whole batch. That's why normalizer coverage was sitting at
 // ~0% — every batch silently returned []. This strips fences, tries a
 // whole-body parse, falls back to the first balanced-brace extraction,
-// and loudly logs parse failures so cron logs surface them.
+// then to a depth-tracking salvage, then to a regex-pair fallback.
 function _extractJsonObject(rawText) {
   if (!rawText) return null;
   let text = String(rawText).trim();
@@ -339,6 +343,13 @@ function _extractJsonObject(rawText) {
   } else {
     text = text.replace(/^```(?:json)?\s*/, '').replace(/\s*```$/, '').trim();
   }
+  // Some responses include a prose preamble ("Here are the translations:")
+  // before the JSON body. Find the first `{` and parse from there if the
+  // raw text doesn't already start with one.
+  if (!text.startsWith('{')) {
+    const braceStart = text.indexOf('{');
+    if (braceStart >= 0) text = text.slice(braceStart);
+  }
   // Try whole-body parse first
   try { return JSON.parse(text); } catch (_) {}
   // Fallback: find the first { ... } block and parse that (greedy match
@@ -350,7 +361,7 @@ function _extractJsonObject(rawText) {
   // Salvage path for TRUNCATED responses (no closing brace). Walks the
   // body tracking string state + brace depth, remembers the offset just
   // after the last complete top-level `"key": value` pair, then closes
-  // the object there. Recovers ~95% of a cut-off batch instead of zero.
+  // the object there.
   if (text.startsWith('{')) {
     let depth = 0, inStr = false, esc = false, lastSafe = -1;
     for (let i = 0; i < text.length; i++) {
@@ -367,6 +378,23 @@ function _extractJsonObject(rawText) {
       const salvaged = text.slice(0, lastSafe) + '}';
       try { return JSON.parse(salvaged); } catch (_) {}
     }
+  }
+  // FINAL fallback: regex-extract every `"key":"value"` (or `"key":null`)
+  // pair, anywhere in the text. This is robust to broken fences, nested
+  // quirks, missing/extra braces, prose interleaving — anything that
+  // confuses the structural scanners but leaves clean pairs intact. It
+  // is the last line of defense against silent batch drops; we'd rather
+  // recover 47/50 from a malformed response than zero.
+  const pairs = [...text.matchAll(/"((?:[^"\\]|\\.)*)"\s*:\s*(?:"((?:[^"\\]|\\.)*)"|(null))/g)];
+  if (pairs.length) {
+    const result = {};
+    for (const [, key, valStr, valNull] of pairs) {
+      try {
+        const decKey = JSON.parse('"' + key + '"');
+        result[decKey] = (valNull === 'null') ? null : JSON.parse('"' + valStr + '"');
+      } catch (_) {}
+    }
+    if (Object.keys(result).length) return result;
   }
   return null;
 }
@@ -394,12 +422,30 @@ JSON only:`
   });
 
   const rawText = msg.content?.[0]?.text || '';
+  const stopReason = msg.stop_reason || 'unknown';
   const map = _extractJsonObject(rawText);
   if (!map) {
-    // Loud: previously this was a silent return []. That's how coverage
-    // collapsed to 0% without anyone noticing. Log the first 200 chars
-    // of the raw body so we can diagnose drift in Claude's output format.
-    logger.warn?.(`[keywordNormalizer] Claude JSON parse failed — dropping batch of ${originals.length}. Raw: ${rawText.slice(0, 200)}`);
+    // All four extraction paths failed. Log stop_reason + a longer raw
+    // tail (the truncation point is what we actually need to see) and,
+    // if the batch is splittable, retry as halves so we don't lose 50
+    // keywords to a single bad response.
+    logger.warn?.(
+      `[keywordNormalizer] Claude JSON parse failed — batch of ${originals.length}. ` +
+      `stop_reason=${stopReason}. ` +
+      `head: ${rawText.slice(0, 160)} ... tail: ${rawText.slice(-120)}`
+    );
+    if (originals.length >= 4) {
+      // Recursive split — each half independently retries the full
+      // four-tier extraction. Caps at len<4 so we don't loop forever
+      // on a single keyword that always fails.
+      const mid = Math.floor(originals.length / 2);
+      logger.warn?.(`[keywordNormalizer] Retrying as halves (${mid} + ${originals.length - mid}).`);
+      const [left, right] = await Promise.all([
+        normalizeBatchWithClaude(client, originals.slice(0, mid), logger).catch(() => []),
+        normalizeBatchWithClaude(client, originals.slice(mid),    logger).catch(() => [])
+      ]);
+      return [...left, ...right];
+    }
     return [];
   }
 

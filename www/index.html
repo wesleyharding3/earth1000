@@ -13794,7 +13794,12 @@ window.fmtDate = function(d) {
     // stats' uniform-5ths pattern. HIGH in counterpoint to LOW.
     const LOW  = [130.81, 164.81, 196.00, 220.00, 196.00, 164.81]; // C3 E3 G3 A3 G3 E3
     const HIGH = [196.00, 261.63, 293.66, 329.63, 261.63, 220.00]; // G3 C4 D4 E4 C4 A3
-    const STEP_SEC = 0.55;          // ~109 BPM 8th-note feel
+    // Sparkle voice — C-pentatonic high register, sine wave for a
+    // soft chime distinct from stats' triangle. Twice per 6-step
+    // loop (steps 0 and 3) so the news page feels lightly arpeggiated
+    // rather than purely pad-y.
+    const SPARKLE = [880.00, 1046.50, 783.99, 659.25]; // A5 C6 G5 E5
+    const STEP_SEC = 0.42;          // sped up from 0.55 — feels arp-y
     const HALF_STEP = STEP_SEC * 0.5;
     let stepIdx = 0;
     let nextAt = 0;
@@ -13809,18 +13814,38 @@ window.fmtDate = function(d) {
       osc.type = 'sawtooth';
       osc.frequency.value = hz;
 
-      // Quieter than stats (peak ~0.04 vs 0.085); longer sustain so
-      // successive notes overlap into a pad-arpeggio hybrid.
+      // Quieter than stats (peak ~0.04 vs 0.085); sustains shortened
+      // alongside the tempo bump so steps articulate as arpeggio
+      // rather than smearing into a pad.
       const peak = isHigh ? 0.030 : 0.038;
       const g = ctx.createGain();
       g.gain.setValueAtTime(0.0001, when);
       g.gain.exponentialRampToValueAtTime(peak, when + 0.04);
-      g.gain.exponentialRampToValueAtTime(0.0001, when + 0.75);
+      g.gain.exponentialRampToValueAtTime(0.0001, when + 0.55);
 
       osc.connect(g);
       g.connect(filter);
       osc.start(when);
-      osc.stop(when + 0.80);
+      osc.stop(when + 0.60);
+    }
+
+    function fireSparkle(when, hz) {
+      // Sine wave high-register sparkle. Quieter than the stats
+      // triangle sparkle (0.025 vs 0.045) — news already has more
+      // notes per loop; the texture should be a glint, not a feature.
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.value = hz;
+
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, when);
+      g.gain.exponentialRampToValueAtTime(0.025, when + 0.04);
+      g.gain.exponentialRampToValueAtTime(0.0001, when + 0.85);
+
+      osc.connect(g);
+      g.connect(filter);
+      osc.start(when);
+      osc.stop(when + 0.90);
     }
 
     function tick() {
@@ -13830,6 +13855,11 @@ window.fmtDate = function(d) {
         const i = stepIdx % LOW.length;
         fireNote(nextAt,             LOW[i],  false);
         fireNote(nextAt + HALF_STEP, HIGH[i], true);
+        // Sparkle on the 1 and 4 of the 6-step loop (twice per loop).
+        const m = stepIdx % 6;
+        if (m === 0 || m === 3) {
+          fireSparkle(nextAt, SPARKLE[Math.floor(stepIdx / 3) % SPARKLE.length]);
+        }
         stepIdx++;
         nextAt += STEP_SEC;
       }
@@ -13896,6 +13926,12 @@ window.fmtDate = function(d) {
     // Net texture: 16 attacks per loop = running-16th feel.
     const LOW  = [110.00, 130.81, 164.81, 196.00, 220.00, 196.00, 164.81, 130.81]; // A2 C3 E3 G3 A3 G3 E3 C3
     const HIGH = [164.81, 196.00, 261.63, 293.66, 329.63, 293.66, 261.63, 196.00]; // E3 G3 C4 D4 E4 D4 C4 G3
+    // Sparkle voice — A-minor pentatonic high register, triangle wave
+    // for a bell-like character that distinguishes the stats page from
+    // news and reads through the deep reverb. Fires sparsely (every
+    // 4th step = twice per 8-step loop) so it adds shimmer without
+    // crowding the dyad pulse or adding meaningful CPU cost.
+    const SPARKLE = [659.25, 880.00, 783.99, 587.33]; // E5 A5 G5 D5
     const STEP_SEC = 0.24;          // ~125 BPM 16th-note feel
     const HALF_STEP = STEP_SEC * 0.5;
     let stepIdx = 0;
@@ -13925,6 +13961,26 @@ window.fmtDate = function(d) {
       osc.stop(when + 0.32);
     }
 
+    function fireSparkle(when, hz) {
+      // Triangle wave at high-register pitch, longer envelope so it
+      // hangs in the reverb tail. Routed through the same filter
+      // (which means same wet/dry balance) so it bathes in the same
+      // convolver as the dyads.
+      const osc = ctx.createOscillator();
+      osc.type = 'triangle';
+      osc.frequency.value = hz;
+
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, when);
+      g.gain.exponentialRampToValueAtTime(0.045, when + 0.02);
+      g.gain.exponentialRampToValueAtTime(0.0001, when + 0.65);
+
+      osc.connect(g);
+      g.connect(filter);
+      osc.start(when);
+      osc.stop(when + 0.70);
+    }
+
     function tick() {
       if (!running) return;
       const horizon = ctx.currentTime + 0.20;
@@ -13932,6 +13988,11 @@ window.fmtDate = function(d) {
         const i = stepIdx % LOW.length;
         fireNote(nextAt,             LOW[i],  false);
         fireNote(nextAt + HALF_STEP, HIGH[i], true);
+        // Sparkle every 4th step, lands on the dyad's HIGH attack
+        // (slight delay) so it feels like a halo on the upbeat.
+        if (stepIdx % 4 === 0) {
+          fireSparkle(nextAt + HALF_STEP, SPARKLE[(stepIdx / 4) % SPARKLE.length]);
+        }
         stepIdx++;
         nextAt += STEP_SEC;
       }
@@ -44129,13 +44190,21 @@ const settingsToggle     = document.getElementById("settingsToggle");
   z-index: 100018;
   width: 160px;
   height: 155px;
-  pointer-events: all;
+  /* pointer-events MUST default to none. The mobile media query below
+     promotes display:none → display:block so the transition can play,
+     which means an opacity:0 box was sitting at top-right with
+     `pointer-events: all` and silently swallowing every tap inside its
+     160×155 footprint (~the upper-right quadrant of the viewport).
+     Mirrors the bSegmentSourcePie pattern: pointer-events stays none
+     until the briefing actually toggles `.visible`. */
+  pointer-events: none;
   opacity: 0;
   transform: translateY(-8px);
   transition: opacity 0.45s ease, transform 0.45s cubic-bezier(0.32, 0.72, 0, 1);
 }
 .bSegmentArticleRoll.visible {
   opacity: 1;
+  pointer-events: auto;
   transform: translateY(0);
 }
 @media (max-width: 720px) {
