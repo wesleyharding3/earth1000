@@ -38259,7 +38259,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
 .flowNodeLabel {
   position: fixed;
   pointer-events: none;
-  z-index: 190;
+  /* z-index 5060 sits ONE above the briefingFlowLabelSvg leader-line
+     SVG (5050) and the tutorial overlay (5050) and well above the
+     in-globe node halos (which render in WebGL canvas, z 0). Was 190,
+     which left the leader lines drawing on top of the cards and the
+     primary/secondary halos appearing to overlap the labels. */
+  z-index: 5060;
   background: rgba(6,10,20,0.82);
   border: 1px solid rgba(255,180,80,0.28);
   border-radius: 8px;
@@ -38273,7 +38278,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
   font-family: inherit;
   color: rgba(255,255,255,0.94);
   white-space: nowrap;
-  transform: translate(-50%, -100%) translateY(-8px);
+  /* Vertical offset bumped 8 → 32 so the label sits well above the
+     arc launch zone. Flow arcs lift off the globe surface and curve
+     toward their destination; with only an 8px gap the labels were
+     parked right where the arcs were rendering, making the cards
+     visually slice through the arcs. 32px parks them above the
+     typical apex of short arcs and along the side of long ones, with
+     the leader line bridging the gap so the connection to the node
+     stays legible. */
+  transform: translate(-50%, -100%) translateY(-32px);
   transition: opacity 0.35s ease;
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
@@ -44272,16 +44285,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
   opacity: 0;
   transform: translateY(-8px);
   transition: opacity 0.45s ease, transform 0.45s cubic-bezier(0.32, 0.72, 0, 1);
-  /* More translucent than before (0.55 → 0.32) — the briefing's globe
-     and arcs should read THROUGH the pie panel as ambient context, not
-     get blocked by an opaque slab. Stronger backdrop blur (6 → 14)
-     compensates so the panel still has visual density. */
-  background: rgba(6, 10, 20, 0.32);
+  /* Matches the article-roll card opacity (0.55) so the two side
+     panels read as a visual pair. Backdrop blur preserves legibility. */
+  background: rgba(6, 10, 20, 0.55);
   border: 1px solid rgba(255, 255, 255, 0.10);
   border-radius: 10px;
   padding: 8px 10px 10px;
-  backdrop-filter: blur(14px) saturate(1.2);
-  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  backdrop-filter: blur(12px) saturate(1.2);
+  -webkit-backdrop-filter: blur(12px) saturate(1.2);
 }
 .bSegmentSourcePie.visible {
   opacity: 1;
@@ -46627,9 +46638,16 @@ body.ticker-active .gTickerLabel {
   function closeBriefing() {
     window.briefingActive = false;
     document.body.classList.remove('briefing-active');
-    // Procedural music was ducked when the launcher opened (or when
-    // narrator-start fired); restore it as the briefing tears down.
-    try { window.audioEngine?.unduck?.(1500); } catch (_) {}
+    // Procedural music was silenced (and layers torn down) when the
+    // launcher opened. Restore as the briefing tears down: unduck
+    // the bus + relaunch the page-appropriate layer.
+    try {
+      window.audioEngine?.unduck?.(1500);
+      const p = window.__currentPage;
+      if (p === 0)      window.audioEngine?.setLayer?.('stats', true);
+      else if (p === 1) window.audioEngine?.setLayer?.('globe', true);
+      else if (p === 2) window.audioEngine?.setLayer?.('news',  true);
+    } catch (_) {}
     // Reset the globe view to country mode if a city-focused segment
     // was running when the briefing was closed mid-flight. setBriefingViewMode
     // (the briefing-player's internal mode setter) updates currentViewMode +
@@ -49515,8 +49533,36 @@ body.ticker-active .gTickerLabel {
   }
 
   // ── Briefing Launcher ─────────────────────────────────────────────────────
-  function openBriefingLauncher() {
+  async function openBriefingLauncher() {
+    // FIRST: silence the procedural music IMMEDIATELY on click — before
+    // any tier check or async wait. The earlier version awaited
+    // __tierReady at the top, which meant the music kept playing for
+    // up to 5s while we resolved tier state. We also fully tear down
+    // the layers (not just duck) so iOS's audio session has breathing
+    // room for the narrator HTMLAudio that's about to play —
+    // ducking alone leaves all three sources (procedural + _bgMusic +
+    // narrator) competing on iOS WKWebView, which on some devices
+    // drops the narrator silently while keeping music audible.
+    try {
+      window.audioEngine?.duck?.(0.001, 400);
+      window.audioEngine?.setLayer?.('stats', false);
+      window.audioEngine?.setLayer?.('globe', false);
+      window.audioEngine?.setLayer?.('news', false);
+    } catch (_) {}
+    // Race fix for tier check: __checkTier reads window.__isAdmin /
+    // window.__userTier, both populated async after sign-in. Wait for
+    // tier state to settle before deciding pro vs free. 5s safety
+    // timeout in __markTierReady caps the worst-case wait.
+    try { if (window.__tierReady) await window.__tierReady; } catch (_) {}
     if (!window.__checkTier?.('pro')) {
+      // User isn't allowed in — restore the music we silenced above.
+      try {
+        const p = window.__currentPage;
+        window.audioEngine?.unduck?.(800);
+        if (p === 0)      window.audioEngine?.setLayer?.('stats', true);
+        else if (p === 1) window.audioEngine?.setLayer?.('globe', true);
+        else if (p === 2) window.audioEngine?.setLayer?.('news',  true);
+      } catch (_) {}
       window.__openPricing?.();
       return;
     }
@@ -49539,13 +49585,9 @@ body.ticker-active .gTickerLabel {
       if (el) el.style.display = '';
     }
     document.getElementById('bLauncher').classList.add('open');
-    // Begin fading the procedural music the moment the briefing
-    // launcher opens, not just when narrator audio starts. The user
-    // perceives the briefing flow as starting at the button press —
-    // hearing music continue through the launcher modal feels like
-    // it's not responding to the action. If the user dismisses the
-    // launcher without playing, closeBriefingLauncher unducks below.
-    try { window.audioEngine?.duck?.(0.001, 600); } catch (_) {}
+    // Music + procedural layers were already silenced at the top of
+    // this function, before the tier-await — so by the time we get
+    // here they've been quiet for the whole launcher-render time.
     loadArchive();
   }
 
@@ -49612,12 +49654,18 @@ body.ticker-active .gTickerLabel {
   function closeBriefingLauncher() {
     document.getElementById('bLauncher').classList.remove('open');
     // If the user dismissed the launcher without starting a briefing,
-    // unduck the procedural music we faded out in openBriefingLauncher.
-    // When a briefing IS starting, openBriefing fires next and the
-    // narrator-active duck takes over — the unduck/reduck is harmless
-    // since both ramps are short and into the same gain.
+    // restore the music we silenced at the top of openBriefingLauncher
+    // (unduck + restart whichever page-layer was active). When a
+    // briefing IS starting, openBriefing fires next and re-silences
+    // anyway, so this restore is wasted but harmless.
     if (!window.briefingActive) {
-      try { window.audioEngine?.unduck?.(1200); } catch (_) {}
+      try {
+        window.audioEngine?.unduck?.(1200);
+        const p = window.__currentPage;
+        if (p === 0)      window.audioEngine?.setLayer?.('stats', true);
+        else if (p === 1) window.audioEngine?.setLayer?.('globe', true);
+        else if (p === 2) window.audioEngine?.setLayer?.('news',  true);
+      } catch (_) {}
     }
   }
 

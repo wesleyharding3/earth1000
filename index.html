@@ -2048,7 +2048,10 @@ body.ticker-active #flowControls {
 .flowNodeLabel {
   position: fixed;
   pointer-events: none;
-  z-index: 190;
+  /* z-index 5060 — above briefingFlowLabelSvg (5050) so leader lines
+     don't draw on top of the cards. See www/index.html for full
+     rationale. */
+  z-index: 5060;
   background: rgba(6,10,20,0.82);
   border: 1px solid rgba(255,180,80,0.28);
   border-radius: 8px;
@@ -2061,7 +2064,9 @@ body.ticker-active #flowControls {
   font-family: inherit;
   color: rgba(255,255,255,0.94);
   white-space: nowrap;
-  transform: translate(-50%, -100%) translateY(-8px);
+  /* 32px gap between label and node so flow arcs have a clear launch
+     zone — see www/index.html for full rationale. */
+  transform: translate(-50%, -100%) translateY(-32px);
   transition: opacity 0.35s ease;
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
@@ -40758,13 +40763,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
      so we don't lose vertical centering during the transition. */
   transform: translateY(calc(-50% - 8px));
   transition: opacity 0.45s ease, transform 0.45s cubic-bezier(0.32, 0.72, 0, 1);
-  /* More translucent (0.55 → 0.32) — mirrors www/index.html. */
-  background: rgba(6, 10, 20, 0.32);
+  /* Matches the article-roll card opacity (0.55) — mirrors www/. */
+  background: rgba(6, 10, 20, 0.55);
   border: 1px solid rgba(255, 255, 255, 0.10);
   border-radius: 10px;
   padding: 8px 10px 10px;
-  backdrop-filter: blur(14px) saturate(1.2);
-  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  backdrop-filter: blur(12px) saturate(1.2);
+  -webkit-backdrop-filter: blur(12px) saturate(1.2);
 }
 .bSegmentSourcePie.visible {
   opacity: 1;
@@ -42491,7 +42496,13 @@ body.ticker-active .gTickerLabel {
   function closeBriefing() {
     window.briefingActive = false;
     document.body.classList.remove('briefing-active');
-    try { window.audioEngine?.unduck?.(1500); } catch (_) {}
+    try {
+      window.audioEngine?.unduck?.(1500);
+      const p = window.__currentPage;
+      if (p === 0)      window.audioEngine?.setLayer?.('stats', true);
+      else if (p === 1) window.audioEngine?.setLayer?.('globe', true);
+      else if (p === 2) window.audioEngine?.setLayer?.('news',  true);
+    } catch (_) {}
     // Reset to country view if briefing closed mid city-focused segment.
     // See www/index.html for full rationale.
     try {
@@ -44849,8 +44860,27 @@ body.ticker-active .gTickerLabel {
   }
 
   // ── Briefing Launcher ─────────────────────────────────────────────────────
-  function openBriefingLauncher() {
+  async function openBriefingLauncher() {
+    // FIRST: silence the procedural music IMMEDIATELY (pre-tier-await)
+    // and tear down layers to free up iOS audio session for narrator.
+    // See www/index.html for full rationale.
+    try {
+      window.audioEngine?.duck?.(0.001, 400);
+      window.audioEngine?.setLayer?.('stats', false);
+      window.audioEngine?.setLayer?.('globe', false);
+      window.audioEngine?.setLayer?.('news', false);
+    } catch (_) {}
+    // Race fix — wait for tier/admin state.
+    try { if (window.__tierReady) await window.__tierReady; } catch (_) {}
     if (!window.__checkTier?.('pro')) {
+      // User isn't allowed in — restore music we silenced above.
+      try {
+        const p = window.__currentPage;
+        window.audioEngine?.unduck?.(800);
+        if (p === 0)      window.audioEngine?.setLayer?.('stats', true);
+        else if (p === 1) window.audioEngine?.setLayer?.('globe', true);
+        else if (p === 2) window.audioEngine?.setLayer?.('news',  true);
+      } catch (_) {}
       window.__openPricing?.();
       return;
     }
@@ -44873,9 +44903,8 @@ body.ticker-active .gTickerLabel {
       if (el) el.style.display = '';
     }
     document.getElementById('bLauncher').classList.add('open');
-    // Begin fading the procedural music immediately on briefing button
-    // press — see www/index.html for full rationale.
-    try { window.audioEngine?.duck?.(0.001, 600); } catch (_) {}
+    // Music + procedural layers were silenced at the top of this
+    // function (pre-tier-await). No-op here.
     loadArchive();
   }
 
@@ -44942,7 +44971,13 @@ body.ticker-active .gTickerLabel {
   function closeBriefingLauncher() {
     document.getElementById('bLauncher').classList.remove('open');
     if (!window.briefingActive) {
-      try { window.audioEngine?.unduck?.(1200); } catch (_) {}
+      try {
+        window.audioEngine?.unduck?.(1200);
+        const p = window.__currentPage;
+        if (p === 0)      window.audioEngine?.setLayer?.('stats', true);
+        else if (p === 1) window.audioEngine?.setLayer?.('globe', true);
+        else if (p === 2) window.audioEngine?.setLayer?.('news',  true);
+      } catch (_) {}
     }
   }
 
