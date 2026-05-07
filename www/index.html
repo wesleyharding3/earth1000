@@ -14276,12 +14276,11 @@ window.fmtDate = function(d) {
 
   function setLayer(name, on, fadeSec) {
     if (!ctx) return;
-    // 3.5s default — was 1.6s. The shorter fade felt snappy/responsive
-    // for UI buttons, but for cross-page music transitions it read as a
-    // sudden surge: reverb wash arriving before the music. 3.5s is long
-    // enough to feel like atmosphere drifting between rooms while still
-    // completing well before the user might swipe back.
-    const fade = (typeof fadeSec === 'number') ? fadeSec : 3.5;
+    // 1s default. The wet-master gating (see built.wetGain ramp below)
+    // is what actually fixed the cross-page surge; with that in place,
+    // the duration is purely a taste choice. 1s reads as a clean,
+    // intentional crossfade without lingering.
+    const fade = (typeof fadeSec === 'number') ? fadeSec : 1.0;
     const now = ctx.currentTime;
     const entry = layers.get(name);
 

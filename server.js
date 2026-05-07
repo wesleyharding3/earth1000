@@ -1410,8 +1410,11 @@ app.get("/api/news/city/:cityId", async (req, res) => {
     // gap during the prewarm work and added so the prewarm-countries
     // cron can actually populate something useful for the city path.
     const cacheKey = `city-feed:v1:${cityId}:${limit || 'all'}:${offset}:${tagId || 'none'}:${ambient ? 'amb' : 'std'}`;
-    // 55 min TTL — matches hourly article fetcher + hourly prewarm-feed cron.
-    const ttlMs = ambient ? 300_000 : 3_300_000;
+    // 65 min TTL aligned with the hourly prewarm-feed cron. Was 55m,
+    // which left a 5-min cold-cache window each hour for the case where
+    // a user request landed AFTER the cache expired but BEFORE the next
+    // cron tick — felt like "feeds aren't loading" on cold buffer.
+    const ttlMs = ambient ? 300_000 : 3_900_000;
     const ranked = await ttlCached(cacheKey, ttlMs, () =>
       getRankedCityArticles(cityId, { limit, offset, tagId, ambient })
     );
@@ -1444,8 +1447,9 @@ app.get("/api/news/city/:cityId/global", async (req, res) => {
     // a.city_id directly, so cold queries are typically slower than
     // the local variant — caching matters even more here.
     const cacheKey = `city-feed-global:v1:${cityId}:${limit || 'all'}:${offset}:${tagId || 'none'}`;
-    // 55 min TTL — matches hourly article fetcher + hourly prewarm-feed cron.
-    const cached = await ttlCached(cacheKey, 3_300_000, async () => {
+    // 65 min TTL aligned with the hourly prewarm-feed cron — see
+    // /api/news/city/:cityId for the rationale.
+    const cached = await ttlCached(cacheKey, 3_900_000, async () => {
 
     const tagJoin  = tagId ? `JOIN article_tags at ON at.article_id = a.id` : "";
     const tagWhere = tagId ? `AND at.tag_id = ${tagId}` : "";
@@ -1548,14 +1552,14 @@ app.get("/api/news/country/:countryId", async (req, res) => {
 
     // TTL cache so concurrent fan-out on the same feed collapses to one DB
     // query. Article fetcher runs hourly, so the underlying data only
-    // changes once an hour — 55 min TTL keeps users in warm cache for the
-    // whole window between fetches and is matched by prewarm-feed cron's
-    // hourly cadence (with cron drift headroom). Was 60s; that meant the
-    // cron warm decayed in a minute and 98% of user requests hit cold DB.
-    // Ambient buckets stay at the 5min cap they had — they fan out to
-    // many keys, no need for the full hourly TTL.
+    // changes once an hour — 65 min TTL keeps users in warm cache for the
+    // whole window between fetches and exceeds prewarm-feed cron's hourly
+    // cadence by 5 min so a slightly-late cron tick can still re-warm a
+    // freshly-stale entry without a cold-buffer gap. Was 55m, which left
+    // a 5-min cold-cache window each hour and felt like "feeds aren't
+    // loading" on heavy countries. Ambient buckets stay at the 5min cap.
     const cacheKey = `country-feed:v1:${countryId}:${limit || 'all'}:${offset}:${tagId || 'none'}:${ambient ? 'amb' : 'std'}`;
-    const ttlMs = ambient ? 300_000 : 3_300_000;
+    const ttlMs = ambient ? 300_000 : 3_900_000;
     const ranked = await ttlCached(cacheKey, ttlMs, () =>
       getRankedArticles(countryId, { limit, offset, tagId, ambient })
     );
@@ -1589,11 +1593,10 @@ app.get("/api/news/country/:countryId/global", async (req, res) => {
     // users keep 45s.
     const isPrewarm = req.query.prewarm === '1';
 
-    // 55 min TTL — matches the hourly article fetcher + hourly prewarm-feed
-    // cron. Was 60s; the cron warm decayed in a minute and almost every
-    // user request paid the full DB cost.
+    // 65 min TTL aligned with the hourly prewarm-feed cron — see
+    // /api/news/country/:countryId for the rationale.
     const cacheKey = `country-feed-global:v1:${countryId}:${limit || 'all'}:${offset}:${tagId || 'none'}`;
-    const cached = await ttlCached(cacheKey, 3_300_000, async () => {
+    const cached = await ttlCached(cacheKey, 3_900_000, async () => {
 
     const tagJoin  = tagId ? `JOIN article_tags at ON at.article_id = a.id` : "";
     const tagWhere = tagId ? `AND at.tag_id = ${tagId}` : "";

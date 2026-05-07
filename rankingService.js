@@ -228,6 +228,126 @@ function _applyPerSourceCap(rows, maxPerSource) {
   return out;
 }
 
+// Side-channel pool of YouTube videos for the given scope. The regular
+// _loadCandidatePool is recency-ordered and capped (NATIONAL_POOL_LIMIT
+// = 500-ish); videos are ~0.2% of ingest volume, so for any country
+// the recency-limited pool typically contains ZERO videos — they get
+// filtered out before ranking can ever surface them.
+//
+// This query bypasses the ambient/tag filters that gate the regular
+// pool (so videos always show even on niche-content browsing) and
+// pulls the most recent N videos for the scope. The caller merges these
+// with the regular pool, deduplicating by article id so a video that
+// happens to be in both pools doesn't double-count.
+//
+// CRITICAL: this MUST be fault-tolerant. It runs in Promise.all alongside
+// _loadCandidatePool, so a slow/errored video query would otherwise reject
+// the whole Promise.all and 500 the entire feed — the bug pattern we hit
+// when this was first added. An empty array on failure means "no extra
+// videos this request"; the regular pool is unaffected.
+const VIDEO_POOL_LIMIT = 12;
+const VIDEO_POOL_TIMEOUT_MS = 5_000;
+async function _loadVideoPool({ scopeSql, scopeParams }) {
+  // Tight statement_timeout so the side-channel can never pull down the
+  // main feed query — this side path is "best effort." Use a dedicated
+  // client so the timeout doesn't leak to neighbouring queries.
+  const client = await pool.connect();
+  try {
+    await client.query(`SET statement_timeout = ${VIDEO_POOL_TIMEOUT_MS}`);
+    const { rows } = await client.query(`
+      SELECT ${ARTICLE_FIELDS},
+        false AS in_thread,
+        NULL AS thread_status
+      FROM news_articles a
+      ${ARTICLE_JOINS}
+      WHERE ${scopeSql}
+        AND a.youtube_source_id IS NOT NULL
+        AND a.published_at > NOW() - INTERVAL '${CANDIDATE_WINDOW_HOURS} hours'
+      ORDER BY a.published_at DESC NULLS LAST
+      LIMIT ${VIDEO_POOL_LIMIT}
+    `, scopeParams);
+    return rows;
+  } catch (err) {
+    // Swallow and continue with the regular pool. Logged at warn so the
+    // miss is visible in cron/Render logs without paging.
+    console.warn(`[rankingService] video pool query failed (continuing without): ${err.message}`);
+    return [];
+  } finally {
+    // Best-effort reset so the pool default is restored before the
+    // connection goes back; release happens regardless.
+    try { await client.query('SET statement_timeout = 45000'); } catch (_) {}
+    client.release();
+  }
+}
+
+function _isVideo(a) {
+  return a.media_type === 'video' || (a.video_id != null && a.video_id !== '');
+}
+
+// Mirrors getRankedFeedArticles' video boost + guaranteed-slot logic
+// so country and city feeds also surface videos consistently. Returns
+// the final slice (or full ranked list when no limit given).
+//
+// Two stages:
+//   1. Multiply each video's priority by VIDEO_BOOST (2.5×). This
+//      pushes them up the rank order without disturbing the
+//      diversityRerank that already ran inside rankArticles — the
+//      boost only nudges within an equivalence class.
+//   2. After slicing for offset/limit, if the slice contains fewer
+//      than MIN_VIDEOS videos and there are videos lower in the
+//      pool, swap the lowest-priority text article in the slice for
+//      the highest-priority video outside it. Guarantees ≥2 videos
+//      per page even when the boost alone wasn't enough.
+const VIDEO_BOOST = 2.5;
+const MIN_VIDEOS_PER_SLICE = 2;
+function _applyVideoBoostAndGuaranteedSlot(ranked, limit, offset) {
+  for (const a of ranked) {
+    if (_isVideo(a)) a.priority = (a.priority || 0) * VIDEO_BOOST;
+  }
+  ranked.sort((a, b) => (b.priority || 0) - (a.priority || 0));
+
+  if (!limit) return ranked.slice(offset);
+
+  const slice = ranked.slice(offset, offset + limit);
+  const sliceVideos = slice.filter(_isVideo);
+  if (sliceVideos.length >= MIN_VIDEOS_PER_SLICE) return slice;
+
+  const sliceIdSet = new Set(slice.map(a => a.id));
+  const promotable = ranked
+    .filter(a => !sliceIdSet.has(a.id) && _isVideo(a))
+    .slice(0, MIN_VIDEOS_PER_SLICE - sliceVideos.length);
+  if (!promotable.length) return slice;
+
+  const replaceableIdx = slice
+    .map((r, i) => ({ i, r }))
+    .filter(({ r }) => !_isVideo(r))
+    .sort((a, b) => (a.r.priority || 0) - (b.r.priority || 0))
+    .slice(0, promotable.length)
+    .map(x => x.i);
+  for (let i = 0; i < promotable.length; i++) {
+    const slot = replaceableIdx[i];
+    if (slot == null) break;
+    slice[slot] = promotable[i];
+  }
+  slice.sort((a, b) => (b.priority || 0) - (a.priority || 0));
+  return slice;
+}
+
+// Merge regular pool + video pool, deduplicating by article id. Videos
+// already present in the regular pool are kept (single entry); new
+// videos from the side-channel are appended.
+function _mergeVideoPool(regular, videos) {
+  const seen = new Set(regular.map(r => r.id));
+  const out = regular.slice();
+  for (const v of videos) {
+    if (!seen.has(v.id)) {
+      out.push(v);
+      seen.add(v.id);
+    }
+  }
+  return out;
+}
+
 // ─────────────────────────────────────────────────────────────
 // NATIONAL FEED
 // ─────────────────────────────────────────────────────────────
@@ -238,18 +358,28 @@ async function getRankedArticles(countryId, options = {}) {
   const tagId  = options.tagId ? parseInt(options.tagId) : null;
   const ambient = !!options.ambient;
 
-  const prelim = await _loadCandidatePool({
-    scopeSql: `a.country_id = $1 AND a.city_id IS NULL`,
-    scopeParams: [countryId],
-    ambient,
-    tagId,
-    poolLimit: ambient ? AMBIENT_NATIONAL_POOL_LIMIT : NATIONAL_POOL_LIMIT,
-  });
+  // Two parallel pools: the regular by-recency candidates AND a
+  // side-channel of recent videos for this country. Without the
+  // side-channel, the regular pool's recency cap excludes videos
+  // entirely (~0.2% of ingest volume). See _loadVideoPool docstring.
+  const scopeSql = `a.country_id = $1 AND a.city_id IS NULL`;
+  const scopeParams = [countryId];
+  const [prelim, videoPool] = await Promise.all([
+    _loadCandidatePool({
+      scopeSql,
+      scopeParams,
+      ambient,
+      tagId,
+      poolLimit: ambient ? AMBIENT_NATIONAL_POOL_LIMIT : NATIONAL_POOL_LIMIT,
+    }),
+    _loadVideoPool({ scopeSql, scopeParams }),
+  ]);
+  const merged = _mergeVideoPool(prelim, videoPool);
 
-  const rows = _applyPerSourceCap(prelim, MAX_PER_SOURCE);
+  const rows = _applyPerSourceCap(merged, MAX_PER_SOURCE);
   const maxIntensity = Math.max(...rows.map(r => parseFloat(r.intensity) || 0), 1);
   const ranked = rankArticles(rows, maxIntensity);
-  return limit ? ranked.slice(offset, offset + limit) : ranked.slice(offset);
+  return _applyVideoBoostAndGuaranteedSlot(ranked, limit, offset);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -262,18 +392,24 @@ async function getRankedCityArticles(cityId, options = {}) {
   const tagId  = options.tagId ? parseInt(options.tagId) : null;
   const ambient = !!options.ambient;
 
-  const prelim = await _loadCandidatePool({
-    scopeSql: `a.city_id = $1`,
-    scopeParams: [cityId],
-    ambient,
-    tagId,
-    poolLimit: ambient ? AMBIENT_CITY_POOL_LIMIT : CITY_POOL_LIMIT,
-  });
+  const scopeSql = `a.city_id = $1`;
+  const scopeParams = [cityId];
+  const [prelim, videoPool] = await Promise.all([
+    _loadCandidatePool({
+      scopeSql,
+      scopeParams,
+      ambient,
+      tagId,
+      poolLimit: ambient ? AMBIENT_CITY_POOL_LIMIT : CITY_POOL_LIMIT,
+    }),
+    _loadVideoPool({ scopeSql, scopeParams }),
+  ]);
+  const merged = _mergeVideoPool(prelim, videoPool);
 
-  const rows = _applyPerSourceCap(prelim, MAX_PER_SOURCE);
+  const rows = _applyPerSourceCap(merged, MAX_PER_SOURCE);
   const maxIntensity = Math.max(...rows.map(r => parseFloat(r.intensity) || 0), 1);
   const ranked = rankArticles(rows, maxIntensity, { skipCityPenalty: true });
-  return limit ? ranked.slice(offset, offset + limit) : ranked.slice(offset);
+  return _applyVideoBoostAndGuaranteedSlot(ranked, limit, offset);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -376,61 +512,15 @@ async function getRankedFeedArticles(options = {}) {
   const maxIntensity = Math.max(...rows.map(r => parseFloat(r.intensity) || 0), 1);
   const ranked = rankArticles(rows, maxIntensity);
 
-  // Apply country_boost + video_boost as terminal multipliers on
-  // priority, then stable-resort by boosted priority. We don't full-
-  // sort because rankArticles already ran diversityRerank and the
-  // boost should nudge within equivalence classes, not blow up the
-  // diversity arrangement.
-  //
-  // VIDEO_BOOST (2.5×): kept in sync with server.js's same-named
-  // constant in _finalizeSearchResults. Videos are ~0.2% of ingest
-  // volume with comparable base_priority to text — empirically a 1.5×
-  // boost produced zero video surfaces in the top 100 pool; 2.0×
-  // produced one; 2.5× produces ~12. Landing 2–3 videos per feed
-  // page is the target.
-  const VIDEO_BOOST = 2.5;
+  // country_boost is unique to the global feed (the country and city
+  // feeds don't carry it). Apply it before delegating to the shared
+  // video-boost + guaranteed-slot helper, which handles VIDEO_BOOST,
+  // re-sort, and the slot-swap safety net for all three feed flavours.
   for (const a of ranked) {
     const countryBoost = parseFloat(a.country_boost) || 1;
-    const isVideo = a.media_type === 'video' || (a.video_id != null && a.video_id !== '');
-    const videoBoost = isVideo ? VIDEO_BOOST : 1.0;
-    a.priority = (a.priority || 0) * countryBoost * videoBoost;
+    a.priority = (a.priority || 0) * countryBoost;
   }
-  ranked.sort((a, b) => (b.priority || 0) - (a.priority || 0));
-
-  // Guaranteed-slot safety net — mirrors _finalizeSearchResults.
-  // After the boosted re-sort, if the returned slice would contain no
-  // videos despite the pool having some, swap the lowest-priority text
-  // article in the slice for the top-ranked video outside the slice.
-  // Applied only to the slice that will actually be returned; keeps the
-  // cost O(slice).
-  if (limit) {
-    const slice = ranked.slice(offset, offset + limit);
-    const MIN_VIDEOS = 2;
-    const sliceVideos = slice.filter(a => a.media_type === 'video' || (a.video_id != null && a.video_id !== ''));
-    if (sliceVideos.length < MIN_VIDEOS) {
-      const sliceIdSet = new Set(slice.map(a => a.id));
-      const promotable = ranked
-        .filter(a => !sliceIdSet.has(a.id) && (a.media_type === 'video' || (a.video_id != null && a.video_id !== '')))
-        .slice(0, MIN_VIDEOS - sliceVideos.length);
-      if (promotable.length) {
-        const replaceableIdx = slice
-          .map((r, i) => ({ i, r }))
-          .filter(({ r }) => !(r.media_type === 'video' || (r.video_id != null && r.video_id !== '')))
-          .sort((a, b) => (a.r.priority || 0) - (b.r.priority || 0))
-          .slice(0, promotable.length)
-          .map(x => x.i);
-        for (let i = 0; i < promotable.length; i++) {
-          const slot = replaceableIdx[i];
-          if (slot == null) break;
-          slice[slot] = promotable[i];
-        }
-        slice.sort((a, b) => (b.priority || 0) - (a.priority || 0));
-        return slice;
-      }
-    }
-    return slice;
-  }
-  return ranked.slice(offset);
+  return _applyVideoBoostAndGuaranteedSlot(ranked, limit, offset);
 }
 
 module.exports = { getRankedArticles, getRankedCityArticles, getRankedFeedArticles };
