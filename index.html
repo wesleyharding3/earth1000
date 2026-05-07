@@ -16644,11 +16644,11 @@ function computeCityTiers(cities) {
       let lastTouchTime = 0;     // used to suppress hover labels briefly after touch events
 
       // ── Sound Effects ────────────────────────────────────────────────────────
+      // Country-polygon selection sample removed. SFX.article still drives
+      // flow-arc clicks.
       const SFX = {
-        node:    new Audio('earth00music1.mp3'),
         article: new Audio('earth00music2.mp3'),
       };
-      SFX.node.preload    = 'auto';
       SFX.article.preload = 'auto';
       function playSFX(sfx) {
         try { sfx.currentTime = 0; sfx.play(); } catch(e) {}
@@ -16662,7 +16662,7 @@ function computeCityTiers(cities) {
       function _unlockAudio() {
         if (_audioUnlocked) return;
         _audioUnlocked = true;
-        [SFX.node, SFX.article].forEach(sfx => {
+        [SFX.article].forEach(sfx => {
           sfx.volume = 0;
           sfx.play().then(() => { sfx.pause(); sfx.currentTime = 0; sfx.volume = 1; }).catch(() => { sfx.volume = 1; });
         });
@@ -20123,7 +20123,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         focusInitialAngle = globeQuat.angleTo(focusTargetQuat);
         isFocused = true; yawVelocity = 0; tiltVelocity = 0;
         if (!window.briefingActive) {
-          playSFX(SFX.node);
+          // (country-selection sample removed)
         } else {
           // Briefing tour: keep the camera WIDE so the whole globe stays
           // in frame as the tour rotates between countries. The previous
