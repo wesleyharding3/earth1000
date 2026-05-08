@@ -21743,8 +21743,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
           _bflProj.copy(_bflPos).project(camera);
           const sx = rect.left + (_bflProj.x + 1) / 2 * rect.width;
           const sy = rect.top  + (-_bflProj.y + 1) / 2 * rect.height;
-          const w = l._w || (l._w = l.cardEl.offsetWidth  || 120);
-          const h = l._h || (l._h = l.cardEl.offsetHeight || 32);
+          // See www/index.html for full rationale on per-frame
+          // re-measurement (cached _w/_h drifted with late flag-image
+          // loads + segment label changes).
+          const w = l.cardEl.offsetWidth  || 120;
+          const h = l.cardEl.offsetHeight || 32;
           visible.push({
             l,
             ax: sx, ay: sy,
@@ -21755,8 +21758,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
           });
         }
 
-        const PAD = 4;
-        const ITERS = 3;
+        // Collision separation — push along the SHORTER overlap axis,
+        // 8 iterations, 8px pad. See www/index.html for full rationale.
+        const PAD = 8;
+        const ITERS = 8;
+        const vw = window.innerWidth, vh = window.innerHeight;
         for (let iter = 0; iter < ITERS; iter++) {
           let moved = false;
           for (let i = 0; i < visible.length; i++) {
@@ -21769,13 +21775,27 @@ const settingsToggle     = document.getElementById("settingsToggle");
               const overlapX = Math.min(aRight, bRight) - Math.max(aLeft, bLeft);
               const overlapY = Math.min(aBot,   bBot)   - Math.max(aTop,  bTop);
               if (overlapX <= -PAD || overlapY <= -PAD) continue;
-              const push = (overlapY + PAD) / 2;
-              if (a.py < b.py) { a.py -= push; b.py += push; }
-              else             { a.py += push; b.py -= push; }
+              if (overlapY < overlapX) {
+                const push = (overlapY + PAD) / 2;
+                if (a.py < b.py) { a.py -= push; b.py += push; }
+                else             { a.py += push; b.py -= push; }
+              } else {
+                const push = (overlapX + PAD) / 2;
+                if (a.px < b.px) { a.px -= push; b.px += push; }
+                else             { a.px += push; b.px -= push; }
+              }
               moved = true;
             }
           }
           if (!moved) break;
+        }
+        // Viewport clamp so collision-pushed labels don't escape.
+        for (const r of visible) {
+          const half = r.w / 2;
+          if (r.px - half < 4)        r.px = half + 4;
+          if (r.px + half > vw - 4)   r.px = vw - half - 4;
+          if (r.py - 8 - r.h < 4)     r.py = 4 + 8 + r.h;
+          if (r.py - 8 > vh - 4)      r.py = vh - 4 + 8;
         }
 
         const LEADER_MIN = 6;
@@ -42483,20 +42503,34 @@ body.ticker-active .gTickerLabel {
       // Build a square SVG so the chart fits the 80px box without empty
       // sides — the panel renderer's 280×130 box wastes the horizontal slot.
       const total = values.reduce((a, b) => a + (Number(b) || 0), 0) || 1;
-      let acc = 0;
       const r = 48, cx = 50, cy = 50;
-      const slices = values.map((v, i) => {
-        const frac = (Number(v) || 0) / total;
-        if (frac <= 0) return '';
-        const a0 = acc * 2 * Math.PI - Math.PI / 2;
-        acc += frac;
-        const a1 = acc * 2 * Math.PI - Math.PI / 2;
-        const large = frac > 0.5 ? 1 : 0;
-        const x0 = cx + Math.cos(a0) * r, y0 = cy + Math.sin(a0) * r;
-        const x1 = cx + Math.cos(a1) * r, y1 = cy + Math.sin(a1) * r;
-        return `<path d="M ${cx} ${cy} L ${x0.toFixed(2)} ${y0.toFixed(2)} A ${r} ${r} 0 ${large} 1 ${x1.toFixed(2)} ${y1.toFixed(2)} Z" fill="${colors[i % colors.length]}" stroke="rgba(0,0,0,0.6)" stroke-width="0.6"/>`;
-      }).join('');
-      const svg = `<svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet">${slices}</svg>`;
+      // Single-slice / 100%-coverage special case — see www/index.html
+      // for full rationale (SVG arcs degenerate when start==end).
+      const nonZero = values
+        .map((v, i) => ({ v: Number(v) || 0, i }))
+        .filter(x => x.v > 0);
+      let svg;
+      if (nonZero.length === 1) {
+        const only = nonZero[0];
+        svg = `<svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet">` +
+          `<circle cx="${cx}" cy="${cy}" r="${r}" ` +
+          `fill="${colors[only.i % colors.length]}" stroke="rgba(0,0,0,0.6)" stroke-width="0.6"/>` +
+          `</svg>`;
+      } else {
+        let acc = 0;
+        const slices = values.map((v, i) => {
+          const frac = (Number(v) || 0) / total;
+          if (frac <= 0) return '';
+          const a0 = acc * 2 * Math.PI - Math.PI / 2;
+          acc += frac;
+          const a1 = acc * 2 * Math.PI - Math.PI / 2;
+          const large = frac > 0.5 ? 1 : 0;
+          const x0 = cx + Math.cos(a0) * r, y0 = cy + Math.sin(a0) * r;
+          const x1 = cx + Math.cos(a1) * r, y1 = cy + Math.sin(a1) * r;
+          return `<path d="M ${cx} ${cy} L ${x0.toFixed(2)} ${y0.toFixed(2)} A ${r} ${r} 0 ${large} 1 ${x1.toFixed(2)} ${y1.toFixed(2)} Z" fill="${colors[i % colors.length]}" stroke="rgba(0,0,0,0.6)" stroke-width="0.6"/>`;
+        }).join('');
+        svg = `<svg viewBox="0 0 100 100" preserveAspectRatio="xMidYMid meet">${slices}</svg>`;
+      }
 
       const TOP_LEGEND = 4;
       const sorted = labels.map((lab, i) => ({ lab, v: Number(values[i]) || 0, i }))
@@ -43109,14 +43143,25 @@ body.ticker-active .gTickerLabel {
       // a fallback to the legacy `video_focal` / `video.focal` shape.
       {
         const fm = seg.featured_video || seg.video?.focal || seg.video_focal || null;
-        // mediaType resolution chain: featured_video.media_type (legacy
-        // editor shape) → seg.media_type (current persisted shape from
-        // briefingGenerator) → fallback. Heatmap segments only carry
-        // media_type at the top level today, so the seg.media_type
-        // fallback is essential — without it heatmap segments resolved
-        // as "youtube", the focal trigger required a video_id, and the
-        // heatmap moment silently never fired.
-        const mediaType = fm?.media_type || seg.media_type || 'youtube';
+        // mediaType resolution + data-shape inference for heatmap.
+        // See www/index.html for full rationale. If media_type is
+        // missing entirely, we look for heatmap_question / _resolved
+        // fields and infer 'heatmap' so segments where the metadata
+        // wasn't tagged still fire the visual.
+        let mediaType = fm?.media_type || seg.media_type;
+        if (!mediaType) {
+          const _hasHmData =
+            (seg.heatmap_question && String(seg.heatmap_question).trim()) ||
+            (seg.heatmap_resolved?.values?.length > 0) ||
+            (fm?.heatmap_question && String(fm.heatmap_question).trim()) ||
+            (fm?.heatmap_resolved?.values?.length > 0);
+          if (_hasHmData && !seg.video_id) {
+            mediaType = 'heatmap';
+            console.warn(`[briefing/heatmap] seg ${idx} media_type missing — inferred 'heatmap' from data shape.`);
+          } else {
+            mediaType = 'youtube';
+          }
+        }
 
         const ytId      = mediaType === 'youtube' ? seg.video_id : null;
         const tweetUrl  = (mediaType === 'twitter_post' || mediaType === 'twitter_video')
@@ -43147,6 +43192,23 @@ body.ticker-active .gTickerLabel {
         const isHeatmap    = mediaType === 'heatmap';
         const fireTakeover = !isHeatmap && fm?.enabled && hasMedia;
         const fireHeatmap  = isHeatmap && hasMedia;
+
+        // Diagnostic — log when a segment carries heatmap data but
+        // can't fire (missing media_type tag, missing data, etc).
+        // See www/index.html for full rationale.
+        const _hasHeatmapData =
+          (seg.heatmap_question && seg.heatmap_question.trim()) ||
+          (seg.heatmap_resolved?.values?.length) ||
+          (fm?.heatmap_question && fm.heatmap_question.trim()) ||
+          (fm?.heatmap_resolved?.values?.length);
+        if (_hasHeatmapData && !fireHeatmap) {
+          console.warn(
+            `[briefing/heatmap] seg ${idx} has heatmap data but WILL NOT fire — ` +
+            `mediaType=${mediaType} hasMedia=${hasMedia} ` +
+            `hmQ=${!!(seg.heatmap_question || fm?.heatmap_question)} ` +
+            `hmResolved=${!!(seg.heatmap_resolved?.values?.length || fm?.heatmap_resolved?.values?.length)}`
+          );
+        }
 
         if (fireTakeover || fireHeatmap) {
           const fStart      = fm?.start_sec ?? 0;
@@ -44159,7 +44221,11 @@ body.ticker-active .gTickerLabel {
 
     if (mediaType === 'youtube') {
       const iframe = document.getElementById('bVideoIframe');
+      // Pause the video on segment end — see www/index.html for full
+      // rationale. Was mute-only which left the iframe ticking after
+      // the focal card retreated.
       if (iframe) {
+        _postYTCommand(iframe, 'pauseVideo');
         _postYTCommand(iframe, 'mute');
         _postYTCommand(iframe, 'setVolume', [0]);
       }
