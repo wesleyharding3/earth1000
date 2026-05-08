@@ -14278,11 +14278,15 @@ window.__arcCtxSegmented = (function() {
     filt.frequency.setValueAtTime(fStart, now);
     filt.frequency.exponentialRampToValueAtTime(fEnd, now + dur);
 
-    const tilt = ctx.createBiquadFilter();
-    tilt.type = 'lowshelf';
-    tilt.frequency.value = 800;
-    tilt.gain.setValueAtTime(0, now);
-    tilt.gain.linearRampToValueAtTime(3, now + dur * 0.7);
+    // Lowshelf removed. It used to ramp +3dB at 800Hz over the first 70%
+    // of the duration, which baked a direction-dependent asymmetry into
+    // the sound: 'down' sweeps (forward nav) ended in the bass region
+    // exactly as the boost reached its peak — the bass tail got
+    // ~1.4× linear gain, making forward navs sound noticeably louder
+    // and beefier than backward navs even at the same nominal vol.
+    // Without the tilt, both directions are pure bandpass-filtered
+    // noise sweeps with identical envelope, distinguished only by
+    // the pitch trajectory. Symmetric.
 
     const dryGain = ctx.createGain();
     dryGain.gain.setValueAtTime(0.0001, now);
@@ -14290,14 +14294,14 @@ window.__arcCtxSegmented = (function() {
     dryGain.gain.linearRampToValueAtTime(vol * 0.55, now + dur * 0.45);
     dryGain.gain.exponentialRampToValueAtTime(0.0001, now + dur);
 
-    src.connect(filt).connect(tilt).connect(dryGain).connect(duckGain);
+    src.connect(filt).connect(dryGain).connect(duckGain);
     if (reverbIn) {
       const wetGain = ctx.createGain();
       wetGain.gain.setValueAtTime(0.0001, now);
       wetGain.gain.exponentialRampToValueAtTime(vol * 0.45, now + 0.1);
       wetGain.gain.linearRampToValueAtTime(vol * 0.30, now + dur * 0.6);
       wetGain.gain.exponentialRampToValueAtTime(0.0001, now + dur + 0.4);
-      tilt.connect(wetGain).connect(reverbIn);
+      filt.connect(wetGain).connect(reverbIn);
     }
     src.start(now);
     src.stop(now + dur + 0.5);

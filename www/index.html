@@ -14597,34 +14597,30 @@ window.fmtDate = function(d) {
     filt.frequency.setValueAtTime(fStart, now);
     filt.frequency.exponentialRampToValueAtTime(fEnd, now + dur);
 
-    // Slight downward tilt at the very end so the whoosh "settles"
-    // into the new layer instead of just clipping off at peak energy.
-    const tilt = ctx.createBiquadFilter();
-    tilt.type = 'lowshelf';
-    tilt.frequency.value = 800;
-    tilt.gain.setValueAtTime(0, now);
-    tilt.gain.linearRampToValueAtTime(3, now + dur * 0.7);
+    // Lowshelf removed — used to ramp +3dB at 800Hz over 70% of the
+    // duration. That baked a direction-dependent asymmetry into the
+    // sound: 'down' (forward nav) sweeps ended in bass exactly as the
+    // boost peaked, giving forward navs ~1.4× linear gain in the bass
+    // tail while backward navs ('up' sweeps, bass at start) got no
+    // such boost. With the tilt removed, both directions are pure
+    // bandpass-filtered noise sweeps with the same envelope and only
+    // the pitch trajectory flips. Symmetric loudness perception.
 
     const dryGain = ctx.createGain();
     dryGain.gain.setValueAtTime(0.0001, now);
     // Slow attack (~80ms) so the whoosh feels intentional, not snappy.
-    // Long tail uses linear-then-exp so the noise mass sticks around
-    // long enough to mask the layer crossfade beneath it.
     dryGain.gain.exponentialRampToValueAtTime(vol, now + 0.08);
     dryGain.gain.linearRampToValueAtTime(vol * 0.55, now + dur * 0.45);
     dryGain.gain.exponentialRampToValueAtTime(0.0001, now + dur);
 
-    src.connect(filt).connect(tilt).connect(dryGain).connect(duckGain);
+    src.connect(filt).connect(dryGain).connect(duckGain);
     if (reverbIn) {
-      // Wet send — convolves the whoosh into the same reverb the music
-      // layers use, so the transition tail blooms into the new layer's
-      // wash. wetVol kept low so the dry sweep still leads.
       const wetGain = ctx.createGain();
       wetGain.gain.setValueAtTime(0.0001, now);
       wetGain.gain.exponentialRampToValueAtTime(vol * 0.45, now + 0.1);
       wetGain.gain.linearRampToValueAtTime(vol * 0.30, now + dur * 0.6);
       wetGain.gain.exponentialRampToValueAtTime(0.0001, now + dur + 0.4);
-      tilt.connect(wetGain).connect(reverbIn);
+      filt.connect(wetGain).connect(reverbIn);
     }
     src.start(now);
     src.stop(now + dur + 0.5);
