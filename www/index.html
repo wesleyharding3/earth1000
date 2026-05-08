@@ -15789,6 +15789,18 @@ window.__arcCtxSegmented = (function() {
                seeing the event. window.__replayTutorial wraps the
                cleanup (close dropdown, reset Settings sub-view back to
                main) + start() so the reel fires from a clean canvas. -->
+          <!-- Replay Welcome — clears the intro-seen flag and reloads so
+               the first-visit chain (welcome overlay → 16s intro →
+               "Take the full tour?" prompt) plays again. Distinct from
+               "Replay Tour" below, which jumps straight into the
+               12-chapter narrated reel without the welcome. -->
+          <div class="acctDpBtn" id="replayWelcomeBtn" onclick="window.__earthResetIntro?.()">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"/>
+              <text x="12" y="16.5" text-anchor="middle" font-style="italic" font-family="Georgia, serif" font-weight="900" font-size="13" stroke="none" fill="currentColor">e</text>
+            </svg>
+            Replay Welcome
+          </div>
           <div class="acctDpBtn" id="replayTutorialBtn" onclick="window.__replayTutorial?.()">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <circle cx="12" cy="12" r="10"/>
@@ -59560,6 +59572,21 @@ body.ticker-active .gTickerLabel {
     document.getElementById('earthWelcome')?.remove();
     aborted = false;
     play();
+  };
+
+  // Public reset helper — wipes the seen flags and reloads so the
+  // next maybeStart() runs the full first-visit chain again
+  // (welcome overlay → 16s intro → "Take the full tour?" prompt).
+  // Wired to the "Replay Welcome" button in the account dropdown and
+  // exposed on `window` so iOS Capacitor builds can hit it from Safari
+  // Web Inspector when DevTools are otherwise unreachable.
+  window.__earthResetIntro = function () {
+    try {
+      localStorage.removeItem(STORAGE_KEY);            // __earthIntroSeen
+      localStorage.removeItem('earth00:tutorialSeen'); // tour reel flag
+    } catch (_) {}
+    try { document.getElementById('accountDropdown')?.classList.remove('open'); } catch (_) {}
+    setTimeout(() => { try { location.reload(); } catch (_) {} }, 240);
   };
 
   if (document.readyState === 'loading') {
