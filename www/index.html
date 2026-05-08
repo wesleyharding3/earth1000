@@ -59003,44 +59003,48 @@ body.ticker-active .gTickerLabel {
   #earthWelcome.show { opacity: 1; }
   #earthWelcome.hide { opacity: 0; pointer-events: none; }
 
-  /* Wireframe globe sitting behind the card. Same gold-stroke aesthetic
-     as the loader's #siteLoader globe so the welcome reads as a continuation
-     of that moment. Slow drift around the vertical axis. */
+  /* Wireframe globe — full-viewport background. Sized to 150vmax so the
+     silhouette extends off-screen; the user sees a "close-up" of the
+     globe with curved lat/long lines arcing across the whole window.
+     A radial mask softens the outer edges so the globe blends into the
+     surrounding black. Two parallel animations (rock + breathe) give
+     it organic, subtle life. */
   #earthWelcomeGlobe {
     position: absolute;
-    width: 78vmin; height: 78vmin;
+    width: 150vmax; height: 150vmax;
     left: 50%; top: 50%;
-    transform: translate(-50%, -50%) rotate(-12deg);
+    transform: translate(-50%, -50%) rotate(-8deg);
     pointer-events: none;
-    opacity: 0.85;
+    opacity: 0.6;
     z-index: 0;
-    animation: ewGlobeDrift 90s linear infinite;
+    -webkit-mask-image: radial-gradient(ellipse at center, #000 28%, rgba(0,0,0,0.55) 70%, transparent 100%);
+            mask-image: radial-gradient(ellipse at center, #000 28%, rgba(0,0,0,0.55) 70%, transparent 100%);
+    animation: ewGlobeRock 32s ease-in-out infinite,
+               ewGlobeBreathe 9s ease-in-out infinite;
   }
   #earthWelcomeGlobe svg { width: 100%; height: 100%; overflow: visible; display: block; }
-  .ewGlobeOutline {
-    fill: none;
-    stroke: rgba(255, 200, 80, 0.55);
-    stroke-width: 0.9;
-    filter: url(#ewGlobeGlow);
-  }
   .ewGlobeLine {
     fill: none;
-    stroke: rgba(255, 195, 80, 0.32);
-    stroke-width: 0.6;
+    stroke: rgba(255, 195, 80, 0.34);
+    stroke-width: 0.55;
     filter: url(#ewGlobeGlow);
   }
   .ewGlobeLineFaint {
     fill: none;
     stroke: rgba(255, 195, 80, 0.18);
-    stroke-width: 0.5;
+    stroke-width: 0.45;
     filter: url(#ewGlobeGlow);
   }
-  @keyframes ewGlobeDrift {
-    from { transform: translate(-50%, -50%) rotate(-12deg); }
-    to   { transform: translate(-50%, -50%) rotate(348deg); }
+  @keyframes ewGlobeRock {
+    0%, 100% { transform: translate(-50%, -50%) rotate(-8deg); }
+    50%      { transform: translate(-50%, -50%) rotate(4deg); }
+  }
+  @keyframes ewGlobeBreathe {
+    0%, 100% { opacity: 0.55; }
+    50%      { opacity: 0.72; }
   }
   @media (prefers-reduced-motion: reduce) {
-    #earthWelcomeGlobe { animation: none; }
+    #earthWelcomeGlobe { animation: none; opacity: 0.6; }
   }
 
   #earthWelcomeStars {
@@ -59187,9 +59191,14 @@ body.ticker-active .gTickerLabel {
     pointer-events: none;
     font-family: inherit;
   }
+  /* Anchored below #topLeftCluster's icon row. Cluster sits at
+     env(safe-area-inset-top) + 10px on mobile (with 36px buttons) and
+     20px on desktop (with 40px buttons), so the caption needs the same
+     safe-area baseline plus button-height + a gap to clear it on
+     notched devices. */
   #introCaption {
     position: absolute;
-    top: 88px; left: 50%;
+    top: calc(env(safe-area-inset-top, 0px) + 70px); left: 50%;
     transform: translate(-50%, -8px);
     background: rgba(8, 12, 18, 0.82);
     -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
@@ -59475,23 +59484,29 @@ body.ticker-active .gTickerLabel {
     w.innerHTML =
       '<div id="earthWelcomeStars"></div>' +
       '<div id="earthWelcomeGlobe" aria-hidden="true">' +
-        '<svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">' +
+        '<svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid slice">' +
           '<defs>' +
             '<filter id="ewGlobeGlow" x="-50%" y="-50%" width="200%" height="200%">' +
-              '<feGaussianBlur stdDeviation="1.2" result="b"/>' +
+              '<feGaussianBlur stdDeviation="0.9" result="b"/>' +
               '<feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>' +
             '</filter>' +
           '</defs>' +
-          '<circle class="ewGlobeOutline" cx="100" cy="100" r="92"/>' +
-          '<ellipse class="ewGlobeLineFaint" cx="100" cy="38"  rx="52" ry="6"/>'  +
-          '<ellipse class="ewGlobeLine"      cx="100" cy="62"  rx="78" ry="10"/>' +
-          '<ellipse class="ewGlobeLine"      cx="100" cy="100" rx="92" ry="13"/>' +
-          '<ellipse class="ewGlobeLine"      cx="100" cy="138" rx="78" ry="10"/>' +
-          '<ellipse class="ewGlobeLineFaint" cx="100" cy="162" rx="52" ry="6"/>'  +
-          '<ellipse class="ewGlobeLine"      cx="100" cy="100" rx="14" ry="92"/>' +
-          '<ellipse class="ewGlobeLineFaint" cx="100" cy="100" rx="38" ry="92"/>' +
-          '<ellipse class="ewGlobeLine"      cx="100" cy="100" rx="60" ry="92"/>' +
-          '<ellipse class="ewGlobeLineFaint" cx="100" cy="100" rx="80" ry="92"/>' +
+          '<ellipse class="ewGlobeLineFaint" cx="100" cy="22"  rx="32" ry="3"/>'  +
+          '<ellipse class="ewGlobeLineFaint" cx="100" cy="42"  rx="62" ry="6"/>'  +
+          '<ellipse class="ewGlobeLine"      cx="100" cy="62"  rx="82" ry="9"/>'  +
+          '<ellipse class="ewGlobeLine"      cx="100" cy="82"  rx="94" ry="12"/>' +
+          '<ellipse class="ewGlobeLine"      cx="100" cy="100" rx="98" ry="14"/>' +
+          '<ellipse class="ewGlobeLine"      cx="100" cy="118" rx="94" ry="12"/>' +
+          '<ellipse class="ewGlobeLine"      cx="100" cy="138" rx="82" ry="9"/>'  +
+          '<ellipse class="ewGlobeLineFaint" cx="100" cy="158" rx="62" ry="6"/>'  +
+          '<ellipse class="ewGlobeLineFaint" cx="100" cy="178" rx="32" ry="3"/>'  +
+          '<ellipse class="ewGlobeLineFaint" cx="100" cy="100" rx="8"  ry="98"/>' +
+          '<ellipse class="ewGlobeLine"      cx="100" cy="100" rx="26" ry="98"/>' +
+          '<ellipse class="ewGlobeLineFaint" cx="100" cy="100" rx="44" ry="98"/>' +
+          '<ellipse class="ewGlobeLine"      cx="100" cy="100" rx="62" ry="98"/>' +
+          '<ellipse class="ewGlobeLineFaint" cx="100" cy="100" rx="78" ry="98"/>' +
+          '<ellipse class="ewGlobeLine"      cx="100" cy="100" rx="90" ry="98"/>' +
+          '<ellipse class="ewGlobeLineFaint" cx="100" cy="100" rx="98" ry="98"/>' +
         '</svg>' +
       '</div>' +
       '<div id="earthWelcomeCard">' +
