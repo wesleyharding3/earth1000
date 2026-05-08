@@ -30,7 +30,7 @@ const heatmapResolver = require("./heatmapResolver");
 const jwt = require("jsonwebtoken");
 const payments = require("./payments");
 const sba = require("./supabaseAdmin");
-const { checkTranslation, checkExplanation, checkKwExplanation, checkBriefingAccess } = require("./tierLimits");
+const { checkTranslation, checkBriefingAccess } = require("./tierLimits");
 const credits = require("./creditLedger");
 
 // Turn a creditLedger access object into a JSON-safe block for API
@@ -10251,10 +10251,11 @@ app.get("/api/briefing/today", async (req, res) => {
 
     const episode = rows[0];
 
-    // Free-tier weekly access gate (2 briefings per rolling 7 days)
+    // Per-episode credit gate (briefing_listen). First listen of an
+    // episode debits credits; re-listens are free via briefing_access_log.
     if (req.user?.id) {
       const tier = req.user.tier || "free";
-      const access = await checkBriefingAccess(req.user.id, episode.id, tier).catch(() => ({ allowed: true }));
+      const access = await checkBriefingAccess(req.user.id, episode.id, tier, { isAdmin: !!req.user.is_admin }).catch(() => ({ allowed: true }));
       if (!access.allowed) {
         return res.status(403).json({
           error:       access.resetNote || "Weekly briefing limit reached",
@@ -10324,7 +10325,7 @@ app.get("/api/briefing/audio/:id/:segIdx", async (req, res) => {
     const segIdx    = parseInt(req.params.segIdx);
     if (!Number.isFinite(episodeId)) return res.status(400).json({ error: "Bad episode id" });
     const tier = user.tier || "free";
-    const access = await checkBriefingAccess(user.id, episodeId, tier).catch(() => ({ allowed: true }));
+    const access = await checkBriefingAccess(user.id, episodeId, tier, { isAdmin: !!user.is_admin }).catch(() => ({ allowed: true }));
     if (!access.allowed) {
       return res.status(403).json({
         error: access.resetNote || "Weekly briefing limit reached",
@@ -10365,7 +10366,7 @@ app.get("/api/briefing/audio/:id", async (req, res) => {
     const episodeId = parseInt(req.params.id);
     if (!Number.isFinite(episodeId)) return res.status(400).json({ error: "Bad episode id" });
     const tier = user.tier || "free";
-    const access = await checkBriefingAccess(user.id, episodeId, tier).catch(() => ({ allowed: true }));
+    const access = await checkBriefingAccess(user.id, episodeId, tier, { isAdmin: !!user.is_admin }).catch(() => ({ allowed: true }));
     if (!access.allowed) {
       return res.status(403).json({
         error: access.resetNote || "Weekly briefing limit reached",
@@ -10419,10 +10420,10 @@ app.get("/api/briefing/episode/:id", async (req, res) => {
     `, [parseInt(req.params.id)]);
     if (!rows.length) return res.status(404).json({ error: "Briefing not found" });
 
-    // Free-tier weekly access gate
+    // Per-episode credit gate (re-listens are idempotent via the access log)
     if (req.user?.id) {
       const tier = req.user.tier || "free";
-      const access = await checkBriefingAccess(req.user.id, rows[0].id, tier).catch(() => ({ allowed: true }));
+      const access = await checkBriefingAccess(req.user.id, rows[0].id, tier, { isAdmin: !!req.user.is_admin }).catch(() => ({ allowed: true }));
       if (!access.allowed) {
         return res.status(403).json({
           error: access.resetNote || "Weekly briefing limit reached",
@@ -11740,12 +11741,12 @@ app.post("/api/translate", aiLimiter, async (req, res) => {
     }
   }
 
-  // Tier-based translation limits (only gate MISSES — hits above already
+  // Credit-based translation gate (only spend on MISSES — hits above
   // returned before this point, so users aren't billed for cached reads).
-  // Admins bypass the quota: they're internal/support users whose usage
-  // shouldn't count against any cap, same short-circuit as requireTier().
-  if (req.user?.id && !req.user.is_admin) {
-    const tlAccess = await checkTranslation(req.user.id, req.user.tier || "free").catch(() => ({ allowed: true }));
+  // Admins bypass the gate: their consumeCredits short-circuits with
+  // result.admin=true (creditLedger.js), same as every other AI route.
+  if (req.user?.id) {
+    const tlAccess = await checkTranslation(req.user.id, req.user.tier || "free", { isAdmin: !!req.user.is_admin }).catch(() => ({ allowed: true }));
     if (!tlAccess.allowed) {
       return res.status(429).json({
         error:       tlAccess.resetNote || "Translation limit reached",
@@ -11824,15 +11825,15 @@ app.post("/api/translate", aiLimiter, async (req, res) => {
 /* =========================================
    AI Context Explanation
    Generates a ≤250-char contextual writeup for an article or story thread.
-   Tier limits: Free = 1/day, Pro = 5/day, Enterprise = 20/day.
+   Gated by credit ledger (article_analysis: 8 credits/call).
 ========================================= */
 app.post("/api/explain", aiLimiter, async (req, res) => {
   const user = req.user?.id ? req.user : await resolveSupabaseUserFromRequest(req);
   if (!user?.id) return res.status(401).json({ error: "Authentication required" });
 
   const tier = user.tier || "free";
-  // Credit-based gate (replaces checkExplanation hard cap). Deducts
-  // CREDIT_COSTS.article_analysis = 8 credits atomically; 429 on empty.
+  // Credit-based gate. Deducts CREDIT_COSTS.article_analysis = 8 credits
+  // atomically; 429 on empty pool.
   const access = await credits.consumeCredits(user.id, tier, 'article_analysis', { isAdmin: !!user.is_admin }).catch(() => ({ allowed: false }));
   if (!access.allowed) {
     return res.status(429).json({
@@ -11945,7 +11946,7 @@ app.post("/api/keywords/explain", aiLimiter, async (req, res) => {
   if (!user?.id) return res.status(401).json({ error: "Authentication required" });
 
   const tier = user.tier || "free";
-  // Credit gate (replaces checkKwExplanation). 7 credits per keyword context.
+  // Credit gate — 7 credits per keyword context call.
   const access = await credits.consumeCredits(user.id, tier, 'keyword_context', { isAdmin: !!user.is_admin }).catch(() => ({ allowed: false }));
   if (!access.allowed) {
     return res.status(429).json({

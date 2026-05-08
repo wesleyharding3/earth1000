@@ -29173,10 +29173,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
   (function setupTutorial() {
     const STORAGE_KEY = 'earth00:tutorialSeen';
-    // Desktop is served from the project root; the MP3s live in
-    // www/audio/tutorial. Mobile (Capacitor) serves from www/ so it
-    // uses './audio/tutorial/' instead.
-    const AUDIO_BASE  = './www/audio/tutorial/';
+    // Desktop is served from project root; native (Capacitor) is already
+    // rooted at www/, so the prefix differs. Without this branch the
+    // native build silently 404s on every chapter mp3.
+    const _IS_NATIVE  = !!(window.Capacitor && (window.Capacitor.isNativePlatform?.() || window.Capacitor.isNative));
+    const AUDIO_BASE  = _IS_NATIVE ? './audio/tutorial/' : './www/audio/tutorial/';
 
     // ── Spotlight overlay ──────────────────────────────────────────
     // Full-viewport dim with a punched-out rounded-rect over the
@@ -30472,24 +30473,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
       setTimeout(() => { try { startReel(); } catch (_) {} }, 280);
     };
 
-    // ── Auto-fire on first launch ─────────────────────────────────
-    // Wait for preload (or its 4s ceiling) so the user lands on a
-    // populated app, then a half-second grace, then show the welcome
-    // prompt. Skips if the seen flag is already set or if a critical
-    // modal is up.
-    (async () => {
-      try {
-        let seen = false;
-        try { seen = !!localStorage.getItem(STORAGE_KEY); } catch (_) {}
-        if (seen) return;
-        try { await (window.__preloadReady || Promise.resolve()); } catch (_) {}
-        await new Promise(r => setTimeout(r, 500));
-        if (document.body.classList.contains('auth-modal-open')) return;
-        showWelcome();
-      } catch (err) {
-        console.warn('[tutorial] auto-start skipped:', err && err.message);
-      }
-    })();
+    // First-launch entry now goes through the #earthWelcome overlay
+    // and the 16-second intro instead of this gold #tutWelcome pill.
+    // The intro's end-of-tour card (#introTourCard) calls
+    // __startTutorialReel directly when the user chooses "Take the
+    // full tour", which bypasses showWelcome entirely. The pill is
+    // kept around for explicit "Replay tour" requests via the account
+    // dropdown, but it no longer auto-fires on a fresh visit — that
+    // was racing the intro's own welcome path.
   })();
 
   /* Hold-down tooltip — see www/index.html for full rationale. */
@@ -52088,8 +52079,173 @@ body.ticker-active .gTickerLabel {
      is blocked for fresh visitors). Beats: globe nav glows → news nav
      glows → stats nav glows → "take the full tour?" card. Long tutorial
      remains accessible via the existing __replayTutorial / settings entry.
+
+     A stylized welcome overlay (#earthWelcome) precedes the 16s walkthrough
+     on first visit. Required for two reasons: (1) the user explicitly taps
+     "Begin", which is the gesture that lets the voiceover audio play with
+     sound on iOS/Safari (muted-only autoplay otherwise); (2) it gives a
+     stranger a clear value statement before the globe starts narrating
+     things. Same localStorage gate (__earthIntroSeen) covers both surfaces.
 ═══════════════════════════════════════════════════════════════════════ -->
 <style>
+  /* ─── Welcome overlay (pre-intro) ──────────────────────────────────
+     Full-viewport stylized landing card. Animated starfield backdrop,
+     italic gold "e" mark borrowed from the loader, title + subtitle +
+     Begin/Skip buttons. Fades out before the 16s intro starts. */
+  #earthWelcome {
+    position: fixed; inset: 0; z-index: 5300;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    background: radial-gradient(ellipse at center,
+                  rgba(20, 14, 6, 0.96) 0%,
+                  rgba(6, 8, 14, 0.99) 60%,
+                  rgba(0, 0, 0, 1) 100%);
+    opacity: 0;
+    transition: opacity 520ms ease;
+    overflow: hidden;
+    pointer-events: auto;
+  }
+  #earthWelcome.show { opacity: 1; }
+  #earthWelcome.hide { opacity: 0; pointer-events: none; }
+
+  /* Twinkling starfield drawn behind the card. Pure CSS so it costs
+     nothing to render and won't fight the loader's canvas starfield. */
+  #earthWelcomeStars {
+    position: absolute; inset: 0;
+    background-image:
+      radial-gradient(1px 1px at 12% 22%, rgba(255,220,180,0.85), transparent 60%),
+      radial-gradient(1px 1px at 78% 14%, rgba(255,210,160,0.7), transparent 60%),
+      radial-gradient(1px 1px at 33% 78%, rgba(255,235,200,0.9), transparent 60%),
+      radial-gradient(1px 1px at 88% 64%, rgba(255,200,140,0.6), transparent 60%),
+      radial-gradient(1px 1px at 22% 52%, rgba(255,225,180,0.55), transparent 60%),
+      radial-gradient(1.5px 1.5px at 65% 38%, rgba(255,240,200,0.95), transparent 60%),
+      radial-gradient(1px 1px at 50% 88%, rgba(255,210,160,0.5), transparent 60%),
+      radial-gradient(1.5px 1.5px at 8% 70%, rgba(255,235,200,0.85), transparent 60%);
+    animation: ewTwinkle 4.2s ease-in-out infinite;
+    pointer-events: none;
+  }
+  @keyframes ewTwinkle {
+    0%, 100% { opacity: 0.55; }
+    50%      { opacity: 1.0; }
+  }
+
+  /* Slow ambient gold glow drifting behind the title — the "warm sun on
+     the dark side of the globe" feel the loader hints at. */
+  #earthWelcome::before {
+    content: '';
+    position: absolute;
+    width: 70vmin; height: 70vmin;
+    left: 50%; top: 50%;
+    transform: translate(-50%, -50%);
+    background: radial-gradient(circle,
+                  rgba(255, 170, 60, 0.18) 0%,
+                  rgba(255, 130, 30, 0.06) 40%,
+                  transparent 70%);
+    filter: blur(20px);
+    animation: ewBreathe 7s ease-in-out infinite;
+    pointer-events: none;
+  }
+  @keyframes ewBreathe {
+    0%, 100% { transform: translate(-50%, -50%) scale(1.0); opacity: 0.85; }
+    50%      { transform: translate(-50%, -50%) scale(1.12); opacity: 1.0; }
+  }
+
+  #earthWelcomeCard {
+    position: relative; z-index: 1;
+    display: flex; flex-direction: column; align-items: center;
+    max-width: min(440px, 88vw);
+    padding: 0 22px;
+    transform: translateY(8px);
+    opacity: 0;
+    animation: ewCardIn 720ms cubic-bezier(0.22, 1, 0.36, 1) 180ms forwards;
+  }
+  @keyframes ewCardIn {
+    to { transform: translateY(0); opacity: 1; }
+  }
+
+  #earthWelcomeMark {
+    font-family: "Georgia", "Times New Roman", serif;
+    font-style: italic; font-weight: 900;
+    font-size: 96px; line-height: 1;
+    color: rgba(255, 175, 50, 1);
+    text-shadow: 0 0 24px rgba(255, 140, 30, 0.6),
+                 0 0 60px rgba(255, 100, 20, 0.35);
+    letter-spacing: -0.04em;
+    margin-bottom: 8px;
+    user-select: none;
+  }
+  #earthWelcomeTitle {
+    font-family: "Chakra Petch", -apple-system, BlinkMacSystemFont, sans-serif;
+    font-weight: 700;
+    font-size: clamp(22px, 5.4vw, 30px);
+    color: rgba(255, 240, 215, 0.98);
+    letter-spacing: 0.01em;
+    text-align: center;
+    margin: 4px 0 10px;
+    text-shadow: 0 0 18px rgba(255, 160, 70, 0.18);
+  }
+  #earthWelcomeSub {
+    font-size: clamp(13px, 3.4vw, 14.5px);
+    line-height: 1.55;
+    font-weight: 500;
+    color: rgba(255, 230, 200, 0.72);
+    text-align: center;
+    margin-bottom: 26px;
+    max-width: 340px;
+  }
+  #earthWelcomeBtns {
+    display: flex; flex-direction: column; align-items: center; gap: 10px;
+    width: 100%; max-width: 280px;
+  }
+  .ewBtn {
+    width: 100%;
+    padding: 13px 18px;
+    border-radius: 12px;
+    font-family: inherit;
+    font-size: 14px; font-weight: 700;
+    letter-spacing: 0.04em;
+    cursor: pointer;
+    transition: transform 0.14s ease, filter 0.14s ease, background 0.18s ease;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .ewBtn:active { transform: scale(0.97); }
+  .ewBtnBegin {
+    background: linear-gradient(135deg, rgba(255, 170, 60, 0.95), rgba(255, 200, 90, 0.95));
+    color: #1a1207;
+    border: 1px solid rgba(255, 200, 90, 1);
+    box-shadow: 0 6px 22px rgba(255, 140, 30, 0.32),
+                inset 0 1px 0 rgba(255, 255, 255, 0.35);
+    animation: ewBeginPulse 2.4s ease-in-out infinite;
+  }
+  @keyframes ewBeginPulse {
+    0%, 100% { box-shadow: 0 6px 22px rgba(255, 140, 30, 0.32),
+                           inset 0 1px 0 rgba(255, 255, 255, 0.35); }
+    50%      { box-shadow: 0 6px 32px rgba(255, 140, 30, 0.55),
+                           0 0 0 4px rgba(255, 170, 60, 0.18),
+                           inset 0 1px 0 rgba(255, 255, 255, 0.4); }
+  }
+  .ewBtnBegin:hover { filter: brightness(1.06); }
+  .ewBtnSkip {
+    background: transparent;
+    color: rgba(255, 230, 200, 0.55);
+    border: none;
+    font-size: 12.5px;
+    font-weight: 500;
+    letter-spacing: 0.05em;
+    padding: 8px 12px;
+    text-decoration: underline;
+    text-underline-offset: 3px;
+    text-decoration-color: rgba(255, 230, 200, 0.25);
+  }
+  .ewBtnSkip:hover { color: rgba(255, 230, 200, 0.85); }
+
+  @media (prefers-reduced-motion: reduce) {
+    #earthWelcomeStars,
+    #earthWelcome::before,
+    .ewBtnBegin { animation: none; }
+    #earthWelcomeCard { animation-duration: 1ms; opacity: 1; transform: none; }
+  }
+
   #introOverlay {
     position: fixed; inset: 0; z-index: 5050;
     pointer-events: none;
@@ -52201,9 +52357,11 @@ body.ticker-active .gTickerLabel {
   'use strict';
 
   const STORAGE_KEY = '__earthIntroSeen';
-  // Web build is served from repo root, so the audio lives at this path.
-  // Mobile (www/index.html) uses './audio/intro/welcome.mp3'.
-  const AUDIO_URL   = './www/audio/intro/welcome.mp3';
+  // Web build is served from repo root → audio is under ./www/.
+  // Native (Capacitor) serves from www/ already → audio is under ./audio/.
+  // Without this branch the native build silently 404s on the voiceover.
+  const _IS_NATIVE  = !!(window.Capacitor && (window.Capacitor.isNativePlatform?.() || window.Capacitor.isNative));
+  const AUDIO_URL   = _IS_NATIVE ? './audio/intro/welcome.mp3' : './www/audio/intro/welcome.mp3';
   const START_DELAY = 3500;   // ms after first paint
   const HARD_END    = 16000;  // ms — total runtime ceiling
 
@@ -52361,6 +52519,50 @@ body.ticker-active .gTickerLabel {
     removeWatch = watchOutsideInteraction();
   }
 
+  // Pre-intro welcome overlay. Stylized landing card with title +
+  // value statement + Begin/Skip. The user's tap on Begin is the
+  // gesture that lets the intro voiceover play with sound on iOS
+  // Safari / Capacitor — without it, audio silently stays muted
+  // because of autoplay-with-sound restrictions.
+  function showWelcome() {
+    if (document.getElementById('earthWelcome')) return;
+    const w = document.createElement('div');
+    w.id = 'earthWelcome';
+    w.innerHTML =
+      '<div id="earthWelcomeStars"></div>' +
+      '<div id="earthWelcomeCard">' +
+        '<div id="earthWelcomeMark">e</div>' +
+        '<div id="earthWelcomeTitle">Welcome to Earth00</div>' +
+        '<div id="earthWelcomeSub">Real-time global news, mapped to a 3D globe. Tap any country, follow any story, surface any pattern.</div>' +
+        '<div id="earthWelcomeBtns">' +
+          '<button class="ewBtn ewBtnBegin"  type="button" id="ewBegin">Begin</button>' +
+          '<button class="ewBtn ewBtnSkip"   type="button" id="ewSkip">Skip — I’ll explore</button>' +
+        '</div>' +
+      '</div>';
+    document.body.appendChild(w);
+
+    // Preload the voiceover while the welcome is visible so the first
+    // beat doesn't stutter on play. Best-effort — silent if the asset
+    // 404s or the browser refuses preload.
+    try {
+      const pre = new Audio(); pre.preload = 'auto'; pre.src = AUDIO_URL;
+    } catch (_) {}
+
+    requestAnimationFrame(() => w.classList.add('show'));
+
+    function dismissWelcome(after) {
+      w.classList.remove('show'); w.classList.add('hide');
+      setTimeout(() => { try { w.remove(); } catch (_) {} if (after) after(); }, 540);
+    }
+    w.querySelector('#ewBegin').addEventListener('click', () => {
+      dismissWelcome(() => { try { play(); } catch (_) {} });
+    });
+    w.querySelector('#ewSkip').addEventListener('click', () => {
+      markSeen();
+      dismissWelcome();
+    });
+  }
+
   function maybeStart() {
     try { if (localStorage.getItem(STORAGE_KEY)) return; } catch (_) {}
     if (document.hidden) {
@@ -52371,10 +52573,13 @@ body.ticker-active .gTickerLabel {
       document.addEventListener('visibilitychange', onVis);
       return;
     }
+    // Brief delay lets the loader finish its fade so the welcome doesn't
+    // pop on top of a half-faded loader. Then show the welcome card —
+    // the user's "Begin" tap drives the actual intro.
     setTimeout(() => {
       if (document.hidden) return;
       try { if (localStorage.getItem(STORAGE_KEY)) return; } catch (_) {}
-      play();
+      showWelcome();
     }, START_DELAY);
   }
 
@@ -52382,10 +52587,14 @@ body.ticker-active .gTickerLabel {
   // Clears any pending beat timers from a still-running session before
   // restarting; otherwise old timeouts would mutate the new session's
   // caption mid-beat (surfaced during preview testing).
+  // Replay path skips the welcome overlay (the user already knows what
+  // Earth00 is — they're explicitly replaying), and goes straight to the
+  // 16-second walkthrough.
   window.__playIntroTutorial = function (force = true) {
     if (force) { try { localStorage.removeItem(STORAGE_KEY); } catch (_) {} }
     timers.forEach(clearTimeout); timers = [];
     document.getElementById('introOverlay')?.remove();
+    document.getElementById('earthWelcome')?.remove();
     aborted = false;
     play();
   };

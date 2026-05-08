@@ -1072,11 +1072,19 @@ router.post('/revenuecat/webhook', async (req, res) => {
 });
 
 // ─── Usage snapshot ────────────────────────────────────────────────────────
+// Now an alias of /api/credits/me — returns the unified credit balance
+// (weekly base + addon + per-feature costs). The legacy per-day/per-week
+// counters were retired when tierLimits.js was unified onto creditLedger.
+// Kept under /api/payments/usage so existing frontend callers continue to
+// work without churn; new code should prefer /api/credits/me directly.
 router.get('/usage', requireAuth, async (req, res) => {
   const { getUsageSnapshot } = require('./tierLimits');
   try {
-    const snap = await getUsageSnapshot(req.user.id, req.user.tier || 'free');
-    res.json(snap);
+    const bal = await getUsageSnapshot(req.user.id, req.user.tier || 'free', { isAdmin: !!req.user.is_admin });
+    // Match /api/credits/me's Infinity → null serialization so admin
+    // accounts render as "unlimited" on the frontend without special cases.
+    const safe = JSON.parse(JSON.stringify(bal, (_k, v) => v === Infinity ? null : v));
+    res.json(safe);
   } catch (err) {
     console.error('[payments/usage]', err.message);
     res.status(500).json({ error: 'Failed to fetch usage' });

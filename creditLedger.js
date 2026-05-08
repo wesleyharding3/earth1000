@@ -39,6 +39,12 @@ const CREDIT_COSTS = Object.freeze({
   // + curated rows are FREE — credits only charged when we actually
   // invoke Claude. (~$0.025-0.030)
   heatmap_qa:       30,
+  // Per-episode listen gate. The episode itself is generated once globally
+  // (no per-user AI cost), so 10 is a pure pacing cost — chosen so free's
+  // 20 credit/week base = 2 briefings/week, preserving the prior policy.
+  // First listen for a (user, episode) deducts; subsequent listens of the
+  // same episode are idempotent (briefing_access_log) and free.
+  briefing_listen:  10,
 });
 
 // ─── Weekly base allowance by tier ──────────────────────────────────────────
