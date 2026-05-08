@@ -13855,6 +13855,26 @@ window.fmtDate = function(d) {
       osc.stop(when + 0.90);
     }
 
+    // Sub-bass voice — single low sine fired once per 6-step loop,
+    // alternating C2 (65.41 Hz) and G2 (98.00 Hz) for slow tonal
+    // motion under the dyad. 0.30s slow attack + 2.4s decay so the
+    // bass sits under the pad rather than articulating with it.
+    // Routed through the same filter + reverb so it stays unified.
+    const BASS = [65.41, 98.00];
+    function fireBass(when, hz) {
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.value = hz;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, when);
+      g.gain.exponentialRampToValueAtTime(0.07, when + 0.30);
+      g.gain.exponentialRampToValueAtTime(0.0001, when + 2.4);
+      osc.connect(g);
+      g.connect(filter);
+      osc.start(when);
+      osc.stop(when + 2.5);
+    }
+
     function tick() {
       if (!running) return;
       const horizon = ctx.currentTime + 0.20;
@@ -13866,6 +13886,11 @@ window.fmtDate = function(d) {
         const m = stepIdx % 6;
         if (m === 0 || m === 3) {
           fireSparkle(nextAt, SPARKLE[Math.floor(stepIdx / 3) % SPARKLE.length]);
+        }
+        // Sub-bass on step 0 of each loop. Alternates root / fifth
+        // every loop iteration for a slow tonal pulse.
+        if (m === 0) {
+          fireBass(nextAt, BASS[Math.floor(stepIdx / 6) % BASS.length]);
         }
         stepIdx++;
         nextAt += STEP_SEC;
@@ -14001,31 +14026,32 @@ window.fmtDate = function(d) {
       wetGain.connect(reverbIn);
     }
 
+    // Q reduced 8 → 4 + LFO range 700 → 450 to stop the filter from
+    // singing aggressively. SYNC voices below were retired — the mix
+    // had too many simultaneous attacks per step and read as chaotic.
     const filter = ctx.createBiquadFilter();
     filter.type = 'lowpass';
     filter.frequency.value = 1400;
-    filter.Q.value = 8;
+    filter.Q.value = 4;
     const filtLfo = ctx.createOscillator();
     filtLfo.frequency.value = 0.10;
     const filtLfoGain = ctx.createGain();
-    filtLfoGain.gain.value = 700;
+    filtLfoGain.gain.value = 450;
     filtLfo.connect(filtLfoGain).connect(filter.frequency);
 
-    // Same dry/wet ratios as Globe — only density changes.
     const dry = ctx.createGain();
     dry.gain.value = 0.08;
     filter.connect(dry).connect(out);
 
-    // Feedback delay — echoes also feed the wet bus so the tail
-    // stays drowned in reverb. Without that second send, echoes
-    // would poke out dry against the wet wash.
+    // Delay tamed: send 0.55 → 0.30, feedback 0.45 → 0.28. Echoes
+    // still present but no longer stack 4-5 generations per step.
     const delay = ctx.createDelay(2.0);
-    delay.delayTime.value = 0.24;        // 1.5x STEP_SEC = polyrhythmic against the pulse
+    delay.delayTime.value = 0.24;
     const feedback = ctx.createGain();
-    feedback.gain.value = 0.45;          // ~10 echoes before -60dB, ~2.5s tail
+    feedback.gain.value = 0.28;
     delay.connect(feedback).connect(delay);
     const delaySend = ctx.createGain();
-    delaySend.gain.value = 0.55;
+    delaySend.gain.value = 0.30;
     filter.connect(delaySend).connect(delay);
 
     if (wetGain) {
@@ -14039,19 +14065,16 @@ window.fmtDate = function(d) {
       delay.connect(delayWet).connect(wetGain);
     }
 
+    // SYNC voices retired — they fired simultaneously at the offbeat,
+    // stacking 4 sawtooth attacks per step on top of LOW + HIGH. Pattern
+    // is now LOW (on step) + HIGH (half-step) + occasional SPARKLE.
     const LOW  = [110.00, 130.81, 164.81, 196.00, 220.00, 196.00, 164.81, 130.81]; // A2 C3 E3 G3 A3 G3 E3 C3
     const HIGH = [164.81, 196.00, 261.63, 293.66, 329.63, 293.66, 261.63, 196.00]; // E3 G3 C4 D4 E4 D4 C4 G3
-    // SYNC: octave up of LOW + HIGH (two notes per offbeat = the
-    // "two-note syncopation"). Pitch-only differentiation; same
-    // sawtooth timbre keeps the texture cohesive.
-    const SYNC_LOW  = [220.00, 261.63, 329.63, 392.00, 440.00, 392.00, 329.63, 261.63]; // A3 C4 E4 G4 A4 G4 E4 C4
-    const SYNC_HIGH = [329.63, 392.00, 523.25, 587.33, 659.25, 587.33, 523.25, 392.00]; // E4 G4 C5 D5 E5 D5 C5 G4
-    // SPARKLE: high-register triangle, Stats-only — these are the
-    // "higher-pitched notes" the spec says should never sound on Globe.
     const SPARKLE = [659.25, 880.00, 783.99, 587.33]; // E5 A5 G5 D5
-    const STEP_SEC = 0.16;                            // ~187 BPM 16th-note feel
-    const HALF_STEP   = STEP_SEC * 0.5;
-    const SYNC_OFFSET = STEP_SEC * 0.75;              // 75% through the step = the syncopated lift
+    // Tempo eased 0.16 → 0.20 so the dyad reads as an arpeggio rather
+    // than a flurry. Notes per second drops ~25 → ~10.
+    const STEP_SEC = 0.20;
+    const HALF_STEP = STEP_SEC * 0.5;
     let stepIdx = 0, nextAt = 0, running = false, timer = null;
 
     function fireNote(when, hz, isHigh) {
@@ -14100,10 +14123,7 @@ window.fmtDate = function(d) {
         const i = stepIdx % LOW.length;
         fireNote(nextAt,             LOW[i],  false);
         fireNote(nextAt + HALF_STEP, HIGH[i], true);
-        // Two-note syncopated dyad on the 75% offbeat.
-        fireSync(nextAt + SYNC_OFFSET, SYNC_LOW[i]);
-        fireSync(nextAt + SYNC_OFFSET, SYNC_HIGH[i]);
-        // Sparkle every 4th step — high register, Stats-only.
+        // SYNC voices removed — see filter/delay block above.
         if (stepIdx % 4 === 0) {
           fireSparkle(nextAt + HALF_STEP, SPARKLE[(stepIdx / 4) % SPARKLE.length]);
         }
@@ -14361,74 +14381,87 @@ window.fmtDate = function(d) {
     osc.stop(now + dur + 0.05);
   }
 
-  // Low warm thump — sub-pitched sine with a quick downward pitch
-  // envelope (120Hz → 50Hz over 80ms) and a 320ms decay. Replaces
-  // the prior high A4–G5 chord notes (felt awkward and ice-picky
-  // sitting above the new lower-register field). Also pulses
-  // activity so the field briefly blooms in response to the tap.
-  function triggerArticleTap(opts) {
+  // Hollowed-out soft electric pulse — shared synth used by the three
+  // selection-feedback triggers below (thread / line / article). FM
+  // synthesis (sine modulator → sine carrier frequency) for the
+  // electric-with-vowel timbre, resonant bandpass for hollowness,
+  // 12ms soft attack + exponential decay so each tap feels gentle.
+  function triggerHollowPulse(opts) {
     if (!ctx || muted) return;
     opts = opts || {};
     const now = ctx.currentTime;
-    const vol = (opts.vol == null) ? 0.20 : opts.vol;
-    const dur = opts.dur || 0.32;
+    const carrier   = opts.carrier   || 720;
+    const mod       = opts.mod       || carrier * 1.25;
+    const modIndex  = opts.modIndex  || 80;
+    const filtFreq  = opts.filter    || carrier * 1.5;
+    const filtQ     = opts.q         || 4.5;
+    const dur       = opts.dur       || 0.20;
+    const vol       = (opts.vol == null) ? 0.11 : opts.vol;
 
-    const osc = ctx.createOscillator();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(120, now);
-    osc.frequency.exponentialRampToValueAtTime(50, now + 0.08);
+    const car = ctx.createOscillator();
+    car.type = 'sine';
+    car.frequency.value = carrier;
+
+    const modulator = ctx.createOscillator();
+    modulator.type = 'sine';
+    modulator.frequency.value = mod;
+
+    const modGain = ctx.createGain();
+    modGain.gain.value = modIndex;
+    modulator.connect(modGain).connect(car.frequency);
 
     const filt = ctx.createBiquadFilter();
-    filt.type = 'lowpass';
-    filt.frequency.value = 220;
-    filt.Q.value = 0.7;
+    filt.type = 'bandpass';
+    filt.frequency.value = filtFreq;
+    filt.Q.value = filtQ;
 
     const g = ctx.createGain();
     g.gain.setValueAtTime(0.0001, now);
-    g.gain.exponentialRampToValueAtTime(vol, now + 0.008);
+    g.gain.exponentialRampToValueAtTime(vol, now + 0.012);
     g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
 
-    osc.connect(filt).connect(g).connect(duckGain);
-    osc.start(now);
-    osc.stop(now + dur + 0.05);
+    car.connect(filt).connect(g).connect(duckGain);
+    car.start(now);
+    modulator.start(now);
+    car.stop(now + dur + 0.05);
+    modulator.stop(now + dur + 0.05);
 
-    pulseActivity(0.25);
+    pulseActivity(0.18);
   }
 
-  // Nav-button click — small, fast, percussive tick deliberately
-  // tuned to sit ABOVE triggerArticleTap's bass thump so the two
-  // never get confused. A short noise burst through a tight bandpass
-  // (~3.5kHz) gives the "tip of a pen on glass" character; layered
-  // with a sine blip (1500Hz → 700Hz over 35ms) for the body. Total
-  // duration ~80ms so rapid taps don't smear. Volume 0.10 — quieter
-  // than article taps because nav clicks are casual / frequent and
-  // shouldn't punch through whatever procedural pad is playing.
+  // Three pitch-distinct siblings — same family, different identities.
+  function triggerThreadTap(opts) {
+    triggerHollowPulse(Object.assign({
+      carrier: 540, mod: 475,  modIndex: 70,  filter: 720,  q: 4.0, dur: 0.22, vol: 0.11,
+    }, opts || {}));
+  }
+  function triggerLineTap(opts) {
+    triggerHollowPulse(Object.assign({
+      carrier: 720, mod: 920,  modIndex: 90,  filter: 1100, q: 5.0, dur: 0.26, vol: 0.10,
+    }, opts || {}));
+  }
+  function triggerArticleTap(opts) {
+    triggerHollowPulse(Object.assign({
+      carrier: 980, mod: 1140, modIndex: 110, filter: 1500, q: 5.5, dur: 0.18, vol: 0.10,
+    }, opts || {}));
+  }
+
+  // Nav-button click — pure transient, no pitched content. Prior
+  // version layered a 1500→700Hz sine chirp under a noise burst; the
+  // chirp read as a synth pip rather than a button click. Stripped to
+  // a tight bandpass-filtered noise burst — same pattern a real UI
+  // click uses (relay click / plastic-on-plastic). Bandpass center
+  // 1800Hz / Q 1.4 puts the noise in the "fingertip tap" range
+  // without resonating into a pip.
   function triggerNavClick(opts) {
     if (!ctx || muted) return;
     opts = opts || {};
     const now = ctx.currentTime;
-    const vol = (opts.vol == null) ? 0.10 : opts.vol;
-    const dur = 0.08;
+    const vol = (opts.vol == null) ? 0.07 : opts.vol;
+    const dur = 0.035;
 
-    // Sine body — quick downward chirp gives the click a "settled" tail
-    // instead of a sterile sine pip.
-    const osc = ctx.createOscillator();
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(1500, now);
-    osc.frequency.exponentialRampToValueAtTime(700, now + 0.035);
-
-    const oscGain = ctx.createGain();
-    oscGain.gain.setValueAtTime(0.0001, now);
-    oscGain.gain.exponentialRampToValueAtTime(vol, now + 0.004);
-    oscGain.gain.exponentialRampToValueAtTime(0.0001, now + dur);
-
-    osc.connect(oscGain).connect(duckGain);
-    osc.start(now);
-    osc.stop(now + dur + 0.02);
-
-    // Noise tick — lazy-build a short noise buffer once, reuse it.
     if (!triggerNavClick._noiseBuf) {
-      const nb = ctx.createBuffer(1, Math.floor(ctx.sampleRate * 0.05), ctx.sampleRate);
+      const nb = ctx.createBuffer(1, Math.floor(ctx.sampleRate * 0.04), ctx.sampleRate);
       const data = nb.getChannelData(0);
       for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * 0.6;
       triggerNavClick._noiseBuf = nb;
@@ -14438,17 +14471,17 @@ window.fmtDate = function(d) {
 
     const bp = ctx.createBiquadFilter();
     bp.type = 'bandpass';
-    bp.frequency.value = 3500;
-    bp.Q.value = 6;
+    bp.frequency.value = 1800;
+    bp.Q.value = 1.4;
 
-    const noiseGain = ctx.createGain();
-    noiseGain.gain.setValueAtTime(0.0001, now);
-    noiseGain.gain.exponentialRampToValueAtTime(vol * 0.9, now + 0.002);
-    noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.05);
+    const g = ctx.createGain();
+    g.gain.setValueAtTime(0.0001, now);
+    g.gain.exponentialRampToValueAtTime(vol, now + 0.0015);
+    g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
 
-    noise.connect(bp).connect(noiseGain).connect(duckGain);
+    noise.connect(bp).connect(g).connect(duckGain);
     noise.start(now);
-    noise.stop(now + 0.06);
+    noise.stop(now + dur + 0.01);
   }
 
   // ── Activity pulsing ────────────────────────────────────────────
@@ -14542,7 +14575,8 @@ window.fmtDate = function(d) {
     opts = opts || {};
     const now = ctx.currentTime;
     const dur = opts.dur || 0.95;
-    const vol = (opts.vol == null) ? 0.22 : opts.vol;
+    // Default 0.12 (was 0.22) — see root index.html for full rationale.
+    const vol = (opts.vol == null) ? 0.12 : opts.vol;
     const direction = opts.direction === 'up' ? 'up' : 'down';
     const fLow = opts.fLow || 320;
     const fHigh = opts.fHigh || 4200;
@@ -14644,6 +14678,7 @@ window.fmtDate = function(d) {
 
   window.audioEngine = {
     unlock, setLayer, triggerStab, triggerWhoosh, triggerArticleTap,
+    triggerThreadTap, triggerLineTap,
     triggerNavClick, triggerPageWhoosh,
     pulseActivity,
     duck, unduck, setMasterMute, isMuted, isUnlocked,
@@ -34779,8 +34814,22 @@ const settingsToggle     = document.getElementById("settingsToggle");
         }
       }
 
-      window.openThreadInPanel = async function(input) {
+      window.openThreadInPanel = async function(input, opts) {
         if (!input) return;
+        // Selection-feedback pulse — distinct timbres for thread vs line.
+        // opts.kind is the canonical hint (passed by typed feed items);
+        // we fall back to inspecting input's own type fields. Inner
+        // recursion intentionally bypasses this so a single click only
+        // fires one pulse.
+        try {
+          const isLine =
+            (opts && opts.kind === 'timeline') ||
+            input?.entity_type === 'timeline' ||
+            input?.kind === 'timeline';
+          if (isLine) window.audioEngine?.triggerLineTap?.();
+          else        window.audioEngine?.triggerThreadTap?.();
+        } catch (_) {}
+
         if (typeof input === 'object') {
           return openThreadInPanel(input);
         }
@@ -40663,13 +40712,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
   
   // ── Open article detail panel ──────────────────────────────────────────────
   window.openArticleDetail = function(article, context) {
+    // Selection-feedback pulse for any article opened in detail. Skipped
+    // when opening in response to a flow-arc click — that gesture point
+    // already played the same sound, no double-trigger.
+    try {
+      if (context?.type !== 'flow') window.audioEngine?.triggerArticleTap?.();
+    } catch (_) {}
     if (contentCleanupTimer) {
       clearTimeout(contentCleanupTimer);
       contentCleanupTimer = null;
     }
     currentArticle = article;
     returnContext = context || null;
-    
+
     // Save flow state if coming from flow animation
     if (context?.type === 'flow') {
       flowStateBeforeOpen = {
@@ -42881,7 +42936,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // this works without a network fetch and without needing
         // separate fetch endpoints per type).
         if ((it.type === 'thread' || it.type === 'timeline') && it.data && window.openThreadInPanel) {
-          window.openThreadInPanel(it.data);
+          // Pass kind so openThreadInPanel picks the right pulse.
+          window.openThreadInPanel(it.data, { kind: it.type });
           getLibPanel()?.classList.remove('open');
           return;
         }
