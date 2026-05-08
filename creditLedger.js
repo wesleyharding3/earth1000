@@ -28,8 +28,20 @@ const pool = require('./db');
 // adjust when prompts grow. Budget 20% headroom above measured cost.
 const CREDIT_COSTS = Object.freeze({
   article_analysis:  8,   // /api/explain  (Haiku: ~3K in + 900 out ≈ $0.008)
+  // /api/explain when type='timeline' — see /api/explain timeline-deep
+  // path. Heavier than article_analysis: stratified sample of ~30
+  // articles + entity roster → structured JSON (~$0.015 in Haiku).
+  timeline_analysis: 15,
   keyword_context:   7,   // /api/keywords/explain (~$0.007)
-  cluster_analysis: 13,   // /api/cluster-node/summary (~$0.013)
+  cluster_analysis: 13,   // /api/cluster-node/summary, threads
+  // /api/cluster-node/summary, timelines — same primary/secondary actor
+  // analysis as cluster_analysis, plus an additional time-indexed event
+  // walkthrough and per-entity arcs in the same response. Output is
+  // ~50% larger than the thread variant (extra structured fields), so
+  // the credit cost steps up from 13 → 17. The time-indexed extension
+  // is line-only — threads don't have a strong time axis, and the
+  // existing actor analysis already covers what they need.
+  cluster_timeline_analysis: 17,
   flow_context:     10,   // /api/ai/flow-context (~$0.010)
   translate:         1,   // DeepL — nominal (real cost ~$0.0005)
   // /api/heatmap/ask — Claude tool-use call returning ~200 country

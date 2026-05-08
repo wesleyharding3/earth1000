@@ -8492,6 +8492,87 @@ button.arcCtxSegDot,
       animation: cdPulseAnim 1.2s ease-in-out infinite;
     }
     @keyframes cdPulseAnim { 0%, 100% { opacity: 0.2; transform: scale(0.8); } 50% { opacity: 1; transform: scale(1.1); } }
+    /* Cluster-analysis time-indexed extras (Lines only) — see root index.html. */
+    .cdAnalysisExtras { margin-top: 16px; }
+    .cdAnalysisExtras .cdExtrasLabel {
+      font-size: 10px; font-weight: 800; letter-spacing: 0.2em;
+      text-transform: uppercase;
+      color: rgba(255,200,80,0.65);
+      margin: 0 0 10px;
+      padding-top: 14px;
+      border-top: 1px solid rgba(255,255,255,0.08);
+    }
+    .cdEventList { display: flex; flex-direction: column; }
+    .cdEventRow {
+      display: flex; gap: 12px; padding: 9px 0;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+    }
+    .cdEventRow:last-child { border-bottom: none; }
+    .cdEventDate {
+      flex-shrink: 0; width: 56px;
+      font-size: 11px; font-weight: 700;
+      color: rgba(255,200,80,0.78);
+      letter-spacing: 0.04em;
+      padding-top: 1px;
+    }
+    .cdEventBody { flex: 1; min-width: 0; }
+    .cdEventTitle {
+      font-size: 13px; font-weight: 600;
+      color: rgba(255,255,255,0.92);
+      margin-bottom: 3px;
+      line-height: 1.3;
+    }
+    .cdEventWhat {
+      font-size: 12px; line-height: 1.5;
+      color: rgba(255,255,255,0.62);
+    }
+    .cdEntArc {
+      margin-top: 10px;
+      padding: 11px 13px;
+      background: rgba(255,255,255,0.025);
+      border-radius: 8px;
+      border-left: 2px solid rgba(255,200,80,0.5);
+    }
+    .cdEntArc:first-child { margin-top: 0; }
+    .cdEntArcHead {
+      display: flex; flex-wrap: wrap; gap: 8px;
+      align-items: baseline;
+      margin-bottom: 8px;
+    }
+    .cdEntArcName {
+      font-size: 13px; font-weight: 700;
+      color: rgba(255,255,255,0.95);
+    }
+    .cdEntArcType {
+      font-size: 10px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.1em;
+      color: rgba(255,200,80,0.65);
+      padding: 1px 7px; border-radius: 6px;
+      background: rgba(255,200,80,0.1);
+    }
+    .cdEntArcSpan {
+      font-size: 11px;
+      color: rgba(255,255,255,0.45);
+      margin-left: auto;
+      letter-spacing: 0.02em;
+    }
+    .cdEntArcMoment {
+      display: flex; gap: 10px;
+      font-size: 11.5px; line-height: 1.5;
+      padding: 3px 0;
+    }
+    .cdEntArcMomentDate {
+      flex-shrink: 0;
+      color: rgba(255,200,80,0.7);
+      font-weight: 600;
+      font-size: 10.5px;
+      width: 48px;
+      letter-spacing: 0.02em;
+    }
+    .cdEntArcMomentAction {
+      color: rgba(255,255,255,0.72);
+      flex: 1;
+    }
     .cdTimeline { position: relative; padding-left: 20px; }
     .cdTimeline::before {
       content: ''; position: absolute; left: 5px; top: 4px; bottom: 4px; width: 1px;
@@ -16553,9 +16634,9 @@ window.__arcCtxSegmented = (function() {
   <div id="semHeatPanel">
     <!-- Minimized bar -->
     <div class="semHeatMinBar" id="semHeatMinBar">
+      <!-- Minimized bar deliberately spare: label + expand + close.
+           See root index.html for the rationale. -->
       <span class="semHeatMinLabel">Heatmap</span>
-      <span class="semHeatMinStats" id="semHeatMinStats"></span>
-      <button class="semHeatMinPlayBtn" id="semHeatMinPlayBtn" title="Play / Pause" onclick="window.__semHeatMinTogglePlay?.()">▶</button>
       <button class="semHeatMinExpandBtn" id="semHeatMinExpandBtn" title="Expand" onclick="window.__semHeatExpand?.()">↑</button>
       <button class="semHeatMinCloseBtn" id="semHeatMinCloseBtn" title="Close" onclick="window.__semHeatClose?.()">✕</button>
     </div>
@@ -43033,7 +43114,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
           getLibPanel()?.classList.remove('open');
           return;
         }
-        if (it.url) window.open(it.url, '_blank');
+        // Defensive URL validation — older entries may still contain a
+        // bare fingerprint hash where a real URL belongs (would open as
+        // relative earth00.com/<hash> and 404). Only navigate when the
+        // value is unambiguously absolute.
+        if (it.url && /^https?:\/\//i.test(it.url)) {
+          window.open(it.url, '_blank');
+        }
       });
     });
     lc.querySelectorAll('.libItemRemove').forEach(btn => {
@@ -43086,6 +43173,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
   // threads/timelines we also stash the full source object on `data`
   // so reopening from the library doesn't need a network fetch (and
   // works for timelines, which lack a /api/timelines/id/{id} endpoint).
+  // news_articles has TWO url-shaped columns: `url` is the dedup
+  // fingerprint hash (looks like a 64-char hex string, NOT a real URL),
+  // and `article_url` is the publisher's canonical URL. Library entries
+  // formerly stored `item.url` directly — that wrote fingerprints into
+  // localStorage, and clicking a row navigated to earth00.com/<hash>
+  // (relative URL → 404). _resolveItemUrl prefers article_url and only
+  // accepts URL-shaped values.
+  function _resolveItemUrl(item) {
+    const candidate = item?.article_url || item?.url || '';
+    if (!candidate) return '';
+    return /^(https?:\/\/|\/)/.test(candidate) ? candidate : '';
+  }
+
   window.__librarySave = function(item) {
     const t = item.type || 'article';
     if (_savedItems.some(s => s.id === item.id && (s.type || 'article') === t)) return;
@@ -43094,7 +43194,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       type: t,
       title: item.title,
       source: item.source_name || item.source || '',
-      url: item.url || '',
+      url: _resolveItemUrl(item),
       date: item.published_at ? item.published_at.slice(0, 10) : (item.date || ''),
       data: t === 'article' ? null : (item.data || item),
     });
@@ -43136,7 +43236,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
   };
   window.__libraryTrackView = function(item) {
     _historyItems = _historyItems.filter(h => h.id !== item.id);
-    _historyItems.unshift({ id: item.id, title: item.title, source: item.source_name || item.source || '', url: item.url || '', date: new Date().toISOString().slice(0, 10) });
+    _historyItems.unshift({ id: item.id, title: item.title, source: item.source_name || item.source || '', url: _resolveItemUrl(item), date: new Date().toISOString().slice(0, 10) });
     if (_historyItems.length > 500) _historyItems.length = 500;
     _persistHistory();
   };
@@ -44034,6 +44134,75 @@ const settingsToggle     = document.getElementById("settingsToggle");
   //   idle → loading → (success → button removed, content rendered)
   //                  ↘ error   → error class, click retries
   //                  ↘ locked  → locked class + open pricing modal
+  // Render the time-indexed event walkthrough + entity arcs below the
+  // actor analysis stream. Lines-only payload from cluster-summary;
+  // for threads the arrays are empty and this is a no-op.
+  window.__renderClusterAnalysisExtras = function (bodyEl, data) {
+    if (!bodyEl || !data) return;
+    const timeline   = Array.isArray(data.timeline)    ? data.timeline    : [];
+    const entityArcs = Array.isArray(data.entity_arcs) ? data.entity_arcs : [];
+    if (!timeline.length && !entityArcs.length) return;
+
+    const esc = (s) => String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    const fmt = (s) => {
+      if (!s) return '';
+      try {
+        const d = new Date(`${s}T12:00:00Z`);
+        if (Number.isNaN(d.getTime())) return s;
+        return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+      } catch (_) { return s; }
+    };
+
+    let html = '<div class="cdAnalysisExtras">';
+
+    if (timeline.length) {
+      const events = timeline.map(t => `
+        <div class="cdEventRow">
+          <div class="cdEventDate">${esc(fmt(t.date))}</div>
+          <div class="cdEventBody">
+            ${t.title ? `<div class="cdEventTitle">${esc(t.title)}</div>` : ''}
+            <div class="cdEventWhat">${esc(t.what)}</div>
+          </div>
+        </div>`).join('');
+      html += `
+        <div class="cdExtrasLabel">Event timeline</div>
+        <div class="cdEventList">${events}</div>`;
+    }
+
+    if (entityArcs.length) {
+      const arcs = entityArcs.map(e => {
+        const moments = (e.key_moments || []).map(km => `
+          <div class="cdEntArcMoment">
+            <span class="cdEntArcMomentDate">${esc(fmt(km.date))}</span>
+            <span class="cdEntArcMomentAction">${esc(km.action)}</span>
+          </div>`).join('');
+        const span = (e.first_appearance || e.last_appearance)
+          ? `<span class="cdEntArcSpan">${esc(fmt(e.first_appearance))} → ${esc(fmt(e.last_appearance))}</span>`
+          : '';
+        return `
+          <div class="cdEntArc">
+            <div class="cdEntArcHead">
+              <span class="cdEntArcName">${esc(e.name)}</span>
+              ${e.type ? `<span class="cdEntArcType">${esc(e.type)}</span>` : ''}
+              ${span}
+            </div>
+            ${moments ? `<div class="cdEntArcMoments">${moments}</div>` : ''}
+          </div>`;
+      }).join('');
+      html += `
+        <div class="cdExtrasLabel">Entity arcs</div>
+        <div class="cdEntArcList">${arcs}</div>`;
+    }
+
+    html += '</div>';
+
+    const wrap = document.createElement('div');
+    wrap.innerHTML = html;
+    while (wrap.firstChild) bodyEl.appendChild(wrap.firstChild);
+  };
+
   window.__triggerClusterAnalysis = async function (btn, opts) {
     opts = opts || {};
     if (!btn || btn.classList.contains('loading')) return;
@@ -44144,6 +44313,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
         return;
       }
       await window.__earthAnalysis?.stream(bodyEl, blocks);
+      // Time-indexed extras (Lines only — empty arrays no-op for threads).
+      try { window.__renderClusterAnalysisExtras?.(bodyEl, data); } catch (_) {}
       if (data.credits) window.__updateCreditMeterFromResponse?.(data.credits);
     } catch (err) {
       // Aborted fetches are expected when the user closes/switches panels
@@ -54967,32 +55138,16 @@ body.ticker-active .gTickerLabel {
 
   window.__semHeatMinimize = function() {
     panel.classList.add('minimized');
-    const statsEl = document.getElementById('semHeatMinStats');
-    if (statsEl) {
-      const mode = state.mode || 'coverage';
-      statsEl.textContent = mode.charAt(0).toUpperCase() + mode.slice(1);
-    }
-    const pb = document.getElementById('semHeatMinPlayBtn');
-    if (pb) {
-      const isTS = state.ctl === 'timeseries';
-      pb.classList.toggle('hidden-mode', !isTS);
-      pb.textContent = state.playing ? '' : '▶';
-      pb.classList.toggle('playing', !!state.playing);
-    }
   };
 
   window.__semHeatExpand = function() {
     panel.classList.remove('minimized');
   };
 
+  // Retired alongside the minimized-bar play button — kept as a no-op
+  // stub for safety in case any cached HTML still wires the old onclick.
   window.__semHeatMinTogglePlay = function() {
-    if (state.ctl !== 'timeseries') return;
-    if (state.playing) stopPlayback(); else startPlayback();
-    const pb = document.getElementById('semHeatMinPlayBtn');
-    if (pb) {
-      pb.textContent = state.playing ? '' : '▶';
-      pb.classList.toggle('playing', !!state.playing);
-    }
+    /* no-op */
   };
 
   // Card-level sentiment openers removed — heatmap accessible via globe toolbar only.

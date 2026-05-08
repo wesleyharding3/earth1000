@@ -9380,13 +9380,20 @@ app.post("/api/cluster-node/summary", aiLimiter, async (req, res) => {
   }
   const mode = isTimeline ? "timeline" : "thread";
   const id   = isTimeline ? timelineId : threadId;
-  const cacheKey = `cluster-node-summary:${mode}:${id}`;
+  // Cache key bumped v1 → v2 because the response shape gained `timeline`
+  // and `entity_arcs` fields for the timeline path. Old cached payloads
+  // from before this change are now invalidated and will rebuild on
+  // first request.
+  const cacheKey = `cluster-node-summary:v2:${mode}:${id}`;
 
-  // Credit gate. Cluster analysis is the most expensive call type
-  // (Haiku ~$0.013 per response) — 13 credits. Signed-in required.
+  // Credit gate. Threads charge cluster_analysis (13 credits, ~$0.013).
+  // Timelines additionally produce time-indexed event + entity arcs in
+  // the same response, ~50% more output → cluster_timeline_analysis
+  // (17 credits). Signed-in required.
   const user = req.user?.id ? req.user : await resolveSupabaseUserFromRequest(req);
   if (!user?.id) return res.status(401).json({ error: "Authentication required" });
-  const _access = await credits.consumeCredits(user.id, user.tier || 'free', 'cluster_analysis', { referenceId: `${mode}:${id}`, isAdmin: !!user.is_admin })
+  const _creditFeature = isTimeline ? 'cluster_timeline_analysis' : 'cluster_analysis';
+  const _access = await credits.consumeCredits(user.id, user.tier || 'free', _creditFeature, { referenceId: `${mode}:${id}`, isAdmin: !!user.is_admin })
     .catch(() => ({ allowed: false }));
   if (!_access.allowed) {
     return res.status(429).json({
@@ -9408,51 +9415,71 @@ app.post("/api/cluster-node/summary", aiLimiter, async (req, res) => {
 
   try {
     // 11h — Claude-derived cluster summary; deterministic per input.
-    // Bumped from 10m once we confirmed the keyword stats cron runs 2x/day.
     const cached = await ttlCached(cacheKey, 39_600_000, async () => {
-    // Deep article search: fetch articles for this thread or timeline with
-    // full context. Ordering anchors/recency prefers the most narratively
-    // representative sample when truncated to 30.
-    const articlesQuery = isTimeline
-      ? {
-          text: `
-            SELECT
-              a.title, a.translated_title, a.summary, a.translated_summary,
-              a.published_at, a.media_type,
-              COALESCE(ns.name, ys.name) AS source_name,
-              co.name AS country_name
-            FROM story_timeline_articles sta
-            JOIN news_articles a ON a.id = sta.article_id
-            LEFT JOIN news_sources ns ON ns.id = a.source_id
-            LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
-            LEFT JOIN countries co ON co.id = a.country_id
-            WHERE sta.timeline_id = $1
-            ORDER BY sta.is_anchor DESC, sta.parabolic_weight DESC NULLS LAST, a.published_at DESC
-            LIMIT 30
-          `,
-          params: [id],
-        }
-      : {
-          text: `
-            SELECT
-              a.title, a.translated_title, a.summary, a.translated_summary,
-              a.published_at, a.media_type,
-              COALESCE(ns.name, ys.name) AS source_name,
-              co.name AS country_name
-            FROM story_thread_articles sta
-            JOIN news_articles a ON a.id = sta.article_id
-            LEFT JOIN news_sources ns ON ns.id = a.source_id
-            LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
-            LEFT JOIN countries co ON co.id = a.country_id
-            WHERE sta.thread_id = $1
-            ORDER BY sta.is_anchor DESC, a.published_at ASC
-            LIMIT 30
-          `,
-          params: [id],
-        };
-    const { rows: articles } = await pool.query(articlesQuery.text, articlesQuery.params);
+    // Deep article search. Threads fetch the 30 most narratively
+    // representative articles (anchors first, then by date). Timelines
+    // fetch ALL articles ordered chronologically and JS-stratify the
+    // sample so the time-indexed walkthrough and entity arcs see the
+    // full temporal spread, not just the busiest peak.
+    let articles;
+    if (isTimeline) {
+      const { rows: allArticles } = await pool.query(`
+        SELECT
+          a.id, a.title, a.translated_title, a.summary, a.translated_summary,
+          a.published_at, a.media_type,
+          COALESCE(ns.name, ys.name) AS source_name,
+          co.name AS country_name,
+          sta.parabolic_weight, sta.is_anchor
+        FROM story_timeline_articles sta
+        JOIN news_articles a ON a.id = sta.article_id
+        LEFT JOIN news_sources ns ON ns.id = a.source_id
+        LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+        LEFT JOIN countries co ON co.id = a.country_id
+        WHERE sta.timeline_id = $1
+        ORDER BY a.published_at ASC
+      `, [id]);
 
-    // Entity metadata.
+      const SAMPLE_CAP = 30;
+      if (allArticles.length <= SAMPLE_CAP) {
+        articles = allArticles;
+      } else {
+        // 10 time-buckets × top-by-importance within each → 30 articles
+        // distributed across the full date span.
+        const buckets = 10;
+        const perBucket = Math.ceil(SAMPLE_CAP / buckets);
+        const sampled = [];
+        for (let b = 0; b < buckets; b++) {
+          const start = Math.floor(b * allArticles.length / buckets);
+          const end   = Math.floor((b + 1) * allArticles.length / buckets);
+          const slice = allArticles.slice(start, end);
+          slice.sort((a, c) => (c.parabolic_weight || 0) - (a.parabolic_weight || 0));
+          sampled.push(...slice.slice(0, perBucket));
+        }
+        sampled.sort((a, b) => new Date(a.published_at) - new Date(b.published_at));
+        articles = sampled.slice(0, SAMPLE_CAP);
+      }
+      // Stash total + sampled counts so the response can surface them.
+      articles.__totalCount = allArticles.length;
+    } else {
+      const { rows: tArticles } = await pool.query(`
+        SELECT
+          a.id, a.title, a.translated_title, a.summary, a.translated_summary,
+          a.published_at, a.media_type,
+          COALESCE(ns.name, ys.name) AS source_name,
+          co.name AS country_name
+        FROM story_thread_articles sta
+        JOIN news_articles a ON a.id = sta.article_id
+        LEFT JOIN news_sources ns ON ns.id = a.source_id
+        LEFT JOIN youtube_sources ys ON ys.id = a.youtube_source_id
+        LEFT JOIN countries co ON co.id = a.country_id
+        WHERE sta.thread_id = $1
+        ORDER BY sta.is_anchor DESC, a.published_at ASC
+        LIMIT 30
+      `, [id]);
+      articles = tArticles;
+    }
+
+    // Entity metadata for the cluster.
     const metaQuery = isTimeline
       ? { text: `SELECT title, description, primary_category, keywords FROM story_timelines WHERE id = $1`, params: [id] }
       : { text: `SELECT title, description, primary_category, keywords FROM story_threads   WHERE id = $1`, params: [id] };
@@ -9463,6 +9490,52 @@ app.post("/api/cluster-node/summary", aiLimiter, async (req, res) => {
       // Signal 404 through the cache by returning a sentinel; the caller
       // branches on it to preserve the HTTP status code.
       return { _notFound: true };
+    }
+
+    // For timelines, additionally pull article→entity rows so the prompt
+    // can carry an entity roster with first/last appearance dates.
+    let entityRoster = '';
+    let topEntities = [];
+    if (isTimeline && articles.length) {
+      const articleIds = articles.map(a => a.id).filter(Boolean);
+      if (articleIds.length) {
+        const { rows: entityRows } = await pool.query(`
+          SELECT ae.article_id, ae.entity_text, ae.entity_type, ae.relevance
+          FROM article_entities ae
+          WHERE ae.article_id = ANY($1::int[])
+          ORDER BY ae.relevance DESC
+        `, [articleIds]);
+        const articleById = new Map(articles.map(a => [a.id, a]));
+        const entityMap = new Map();
+        for (const e of entityRows) {
+          const article = articleById.get(e.article_id);
+          if (!article) continue;
+          const key = (e.entity_text || '').toLowerCase().trim();
+          if (!key) continue;
+          const at = article.published_at;
+          if (!entityMap.has(key)) {
+            entityMap.set(key, {
+              name: e.entity_text,
+              type: e.entity_type,
+              first_appearance: at,
+              last_appearance:  at,
+              mentions: 1,
+            });
+          } else {
+            const ent = entityMap.get(key);
+            if (new Date(at) < new Date(ent.first_appearance)) ent.first_appearance = at;
+            if (new Date(at) > new Date(ent.last_appearance))  ent.last_appearance  = at;
+            ent.mentions += 1;
+          }
+        }
+        topEntities = [...entityMap.values()]
+          .sort((a, b) => b.mentions - a.mentions)
+          .slice(0, 12);
+        const fmt = (d) => new Date(d).toISOString().slice(0, 10);
+        entityRoster = topEntities.map(e =>
+          `${e.name} (${e.type}, ${e.mentions} mentions, ${fmt(e.first_appearance)} → ${fmt(e.last_appearance)})`
+        ).join('\n');
+      }
     }
 
     // Build deep context from actual article content
@@ -9481,13 +9554,44 @@ app.post("/api/cluster-node/summary", aiLimiter, async (req, res) => {
       ? `${kindLabel}: "${meta.title}"\nCategory: ${meta.primary_category || "General"}\nDescription: ${meta.description || ""}\nKeywords: ${(meta.keywords || []).slice(0, 15).join(", ")}`
       : "";
 
+    // Timeline-only extra schema: time-indexed event walkthrough +
+    // per-entity arcs. Schema is appended to the actor analysis above
+    // so a single Claude call produces the full Lines panel payload.
+    const timelineSchemaExt = isTimeline
+      ? `,
+  "timeline": [
+    { "date": "YYYY-MM-DD", "title": "string", "what": "string" }
+  ],
+  "entity_arcs": [
+    {
+      "name": "string",
+      "type": "person|organization|location|event",
+      "first_appearance": "YYYY-MM-DD",
+      "last_appearance":  "YYYY-MM-DD",
+      "key_moments": [ { "date": "YYYY-MM-DD", "action": "string" } ]
+    }
+  ]`
+      : '';
+
+    const timelineRulesExt = isTimeline
+      ? `
+- timeline: 5–8 entries, chronological, each a meaningful turning point in the story (an event that materially advanced it). title ~60 chars; what ~250 chars. Skip filler. Date in YYYY-MM-DD verbatim from the article digest below.
+- entity_arcs: 4–6 entries. Pick the entities that drove the story most — not every name in the entity roster. type ∈ { person, organization, location, event }. first/last_appearance verbatim from the entity roster. key_moments: 1–3 dated actions per entity (~150 chars each); action text is what the entity DID, not what was said about them.
+- All dates must be drawn from the data below. Do not invent dates.
+- The timeline + entity_arcs reflect the same story as the actor analysis — keep them coherent. They are NOT alternatives; both go in every response.`
+      : '';
+
+    const timelineRosterBlock = isTimeline && entityRoster
+      ? `\n\nEntity roster (top ${topEntities.length} by mentions):\n${entityRoster}`
+      : '';
+
     const prompt = `You are an impartial global news analyst with web_search access. Return ONLY valid JSON. No markdown, no code fences, no commentary outside the JSON object.
 
 Schema:
 {
   "overview": "string",
   "primary_actors":   [ { "name": "United States", "context": "string" } ],
-  "secondary_actors": [ { "name": "Germany",        "context": "string" } ]
+  "secondary_actors": [ { "name": "Germany",        "context": "string" } ]${timelineSchemaExt}
 }
 
 Rules:
@@ -9512,9 +9616,9 @@ Rules:
     * "would be indirect through international standards / mining industry / global frameworks / broader networks"
     * "no operational role", "no documented participation", "no material stake"
   If after re-reading articles AND web-searching you genuinely cannot find a real connection, OMIT the actor from secondary_actors entirely. Do not produce vague filler.
-- Factual, neutral, specific. No speculation, no opinions, no bullets. Keep proper noun casing consistent in the "name" field.
+- Factual, neutral, specific. No speculation, no opinions, no bullets. Keep proper noun casing consistent in the "name" field.${timelineRulesExt}
 
-${entityContext}
+${entityContext}${timelineRosterBlock}
 
 Articles:
 ${articleContext}`;
@@ -9573,7 +9677,47 @@ ${articleContext}`;
       });
     }
 
-    return { blocks };
+    // Timeline-only extras: parse + clamp the time-indexed walkthrough
+    // and entity arcs Claude returned alongside the actor analysis.
+    // Both fields are returned as empty arrays for non-timeline modes
+    // so the frontend can read them unconditionally.
+    let timelineOut = [];
+    let entityArcsOut = [];
+    if (isTimeline) {
+      const VALID_TYPES = new Set(['person', 'organization', 'location', 'event']);
+      const clampDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : '';
+
+      timelineOut = Array.isArray(structured?.timeline)
+        ? structured.timeline.slice(0, 10).map(t => ({
+            date:  clampDate(String(t?.date || '')),
+            title: _stripClaudeCitations(String(t?.title || '')).slice(0, 120),
+            what:  _stripClaudeCitations(String(t?.what  || '')).slice(0, 320),
+          })).filter(t => t.date && t.what)
+        : [];
+
+      entityArcsOut = Array.isArray(structured?.entity_arcs)
+        ? structured.entity_arcs.slice(0, 8).map(e => ({
+            name:             String(e?.name || '').slice(0, 80),
+            type:             VALID_TYPES.has(e?.type) ? e.type : 'organization',
+            first_appearance: clampDate(String(e?.first_appearance || '')),
+            last_appearance:  clampDate(String(e?.last_appearance  || '')),
+            key_moments: Array.isArray(e?.key_moments)
+              ? e.key_moments.slice(0, 5).map(km => ({
+                  date:   clampDate(String(km?.date || '')),
+                  action: _stripClaudeCitations(String(km?.action || '')).slice(0, 200),
+                })).filter(km => km.date && km.action)
+              : [],
+          })).filter(e => e.name)
+        : [];
+    }
+
+    return {
+      blocks,
+      timeline:    timelineOut,
+      entity_arcs: entityArcsOut,
+      sampled_articles: articles.length,
+      total_articles:   articles.__totalCount || articles.length,
+    };
     });
 
     if (cached?._notFound) return res.status(404).json({ error: `No data found for this ${mode}` });
@@ -11832,9 +11976,24 @@ app.post("/api/explain", aiLimiter, async (req, res) => {
   if (!user?.id) return res.status(401).json({ error: "Authentication required" });
 
   const tier = user.tier || "free";
-  // Credit-based gate. Deducts CREDIT_COSTS.article_analysis = 8 credits
-  // atomically; 429 on empty pool.
-  const access = await credits.consumeCredits(user.id, tier, 'article_analysis', { isAdmin: !!user.is_admin }).catch(() => ({ allowed: false }));
+  const {
+    type, id, title, summary, keywords = [], description,
+    source_name, country_name, city_name, iso_code,
+  } = req.body || {};
+  if (!title) return res.status(400).json({ error: "title is required" });
+
+  // Timeline (a.k.a. "line") deep analysis is a richer prompt — Claude
+  // gets a stratified sample of up to ~30 articles + entity roster and
+  // returns a structured time-indexed walkthrough. Costs 15 credits
+  // vs the 8 charged for article/thread paths. Detected by type +
+  // numeric id presence; without the id we can't fetch the articles
+  // and fall back to the cheap thread-style explanation.
+  const _timelineId = parseInt(id, 10);
+  const isTimelineDeep = type === 'timeline' && Number.isFinite(_timelineId) && _timelineId > 0;
+  const creditFeature = isTimelineDeep ? 'timeline_analysis' : 'article_analysis';
+
+  // Credit-based gate. Charge per-feature cost atomically; 429 on empty pool.
+  const access = await credits.consumeCredits(user.id, tier, creditFeature, { isAdmin: !!user.is_admin }).catch(() => ({ allowed: false }));
   if (!access.allowed) {
     return res.status(429).json({
       error:        'Not enough credits for Analysis',
@@ -11846,12 +12005,6 @@ app.post("/api/explain", aiLimiter, async (req, res) => {
       resetNote:    'Weekly credits reset Monday 00:00 UTC. Add-on packs available.',
     });
   }
-
-  const {
-    type, title, summary, keywords = [], description,
-    source_name, country_name, city_name, iso_code,
-  } = req.body || {};
-  if (!title) return res.status(400).json({ error: "title is required" });
 
   try {
     if (type === "article") {
@@ -11912,6 +12065,200 @@ ${originLine}`;
       return res.json({ blocks, credits: _creditsBlock(access) });
     }
 
+    // ── Timeline-deep analysis ─────────────────────────────────────
+    // type='timeline' with an id → fetch the timeline's articles +
+    // entity roster, cross-sample to a manageable cap, and ask Claude
+    // for a structured response: overall arc, time-indexed event
+    // walkthrough, and per-entity arcs. Charged at 15 credits.
+    if (isTimelineDeep) {
+      const SAMPLE_CAP = 30;     // articles passed to Claude
+      const TOP_ENTITIES = 12;   // entity roster size in the prompt
+
+      // 1) Fetch all articles in the timeline, oldest first.
+      const { rows: allArticles } = await pool.query(`
+        SELECT a.id, a.title, a.summary, a.translated_summary,
+               a.published_at,
+               sta.parabolic_weight, sta.relevance_score, sta.is_anchor
+        FROM story_timeline_articles sta
+        JOIN news_articles a ON a.id = sta.article_id
+        WHERE sta.timeline_id = $1
+        ORDER BY a.published_at ASC
+      `, [_timelineId]);
+
+      if (!allArticles.length) {
+        // Refund the credits — nothing to analyze.
+        try { await credits.refundCredits(user.id, access.cost, 'timeline_analysis', { reason: 'no_articles' }); } catch (_) {}
+        return res.status(404).json({ error: "Timeline has no articles to analyze" });
+      }
+
+      // 2) Cross-sample across the full date spread. Divide into 10
+      //    time-buckets, pick the top-importance article(s) from each.
+      //    Preserves the full temporal arc instead of clustering on
+      //    the busiest moment(s).
+      let sampled;
+      if (allArticles.length <= SAMPLE_CAP) {
+        sampled = allArticles;
+      } else {
+        const buckets = 10;
+        const perBucket = Math.ceil(SAMPLE_CAP / buckets);
+        sampled = [];
+        for (let b = 0; b < buckets; b++) {
+          const start = Math.floor(b * allArticles.length / buckets);
+          const end   = Math.floor((b + 1) * allArticles.length / buckets);
+          const slice = allArticles.slice(start, end);
+          slice.sort((a, c) => (c.parabolic_weight || 0) - (a.parabolic_weight || 0));
+          sampled.push(...slice.slice(0, perBucket));
+        }
+        // Re-chronologise + trim to exact cap.
+        sampled.sort((a, b) => new Date(a.published_at) - new Date(b.published_at));
+        sampled = sampled.slice(0, SAMPLE_CAP);
+      }
+
+      // 3) Pull entities for sampled articles, then aggregate by name
+      //    to compute first/last appearance + mention count.
+      const articleIds = sampled.map(a => a.id);
+      const { rows: entityRows } = await pool.query(`
+        SELECT ae.article_id, ae.entity_text, ae.entity_type, ae.relevance
+        FROM article_entities ae
+        WHERE ae.article_id = ANY($1::int[])
+        ORDER BY ae.relevance DESC
+      `, [articleIds]);
+
+      const articleById = new Map(sampled.map(a => [a.id, a]));
+      const entityMap = new Map();
+      for (const e of entityRows) {
+        const article = articleById.get(e.article_id);
+        if (!article) continue;
+        const key = (e.entity_text || '').toLowerCase().trim();
+        if (!key) continue;
+        const at = article.published_at;
+        if (!entityMap.has(key)) {
+          entityMap.set(key, {
+            name: e.entity_text,
+            type: e.entity_type,
+            first_appearance: at,
+            last_appearance:  at,
+            mentions: 1,
+          });
+        } else {
+          const ent = entityMap.get(key);
+          if (new Date(at) < new Date(ent.first_appearance)) ent.first_appearance = at;
+          if (new Date(at) > new Date(ent.last_appearance))  ent.last_appearance  = at;
+          ent.mentions += 1;
+        }
+      }
+      const topEntities = [...entityMap.values()]
+        .sort((a, b) => b.mentions - a.mentions)
+        .slice(0, TOP_ENTITIES);
+
+      // 4) Build prompt with article digest + entity roster.
+      const fmtDate = (d) => new Date(d).toISOString().slice(0, 10);
+      const articleDigest = sampled.map((a) => {
+        const synopsis = (a.translated_summary || a.summary || '').slice(0, 220);
+        return `[${fmtDate(a.published_at)}] ${(a.title || '').slice(0, 200)}\n${synopsis}`;
+      }).join('\n\n');
+
+      const entityRoster = topEntities.map(e =>
+        `${e.name} (${e.type}, ${e.mentions} mentions, ${fmtDate(e.first_appearance)} → ${fmtDate(e.last_appearance)})`
+      ).join('\n');
+
+      const dateSpan = `${fmtDate(sampled[0].published_at)} → ${fmtDate(sampled[sampled.length - 1].published_at)}`;
+
+      const prompt = `You are a news analyst. Analyze a story timeline and return ONLY valid JSON. No markdown, no code fences, no prose outside the JSON object.
+
+Schema:
+{
+  "summary": "string",
+  "timeline": [
+    { "date": "YYYY-MM-DD", "title": "string", "what": "string" }
+  ],
+  "entities": [
+    {
+      "name": "string",
+      "type": "person|organization|location|event",
+      "first_appearance": "YYYY-MM-DD",
+      "last_appearance":  "YYYY-MM-DD",
+      "key_moments": [
+        { "date": "YYYY-MM-DD", "action": "string" }
+      ]
+    }
+  ]
+}
+
+Rules:
+- summary: ~400 chars. Overall arc — what's the story, why it matters, how it evolved.
+- timeline: 5-8 entries, chronological, each a meaningful turning point. title ~60 chars; what ~250 chars. Skip filler — only events that materially advanced the story. Date in YYYY-MM-DD verbatim from the article digest below.
+- entities: 4-6 entries. Pick the entities that drove the story most — not every name in the roster. Use first/last_appearance verbatim from the roster. key_moments: 1-3 dated actions per entity (~150 chars each). Action text is what the entity DID, not what was said about them.
+- Dates must be drawn from the data below. Do not invent dates.
+- Factual, specific, no hedging.
+
+Story timeline: "${title}"
+${description ? `Description: ${description}` : ''}
+Date span: ${dateSpan}
+Articles sampled: ${sampled.length} of ${allArticles.length} total
+Keywords: ${(keywords || []).slice(0, 12).join(', ')}
+
+Article digest (chronological, ${sampled.length} articles):
+${articleDigest}
+
+Entity roster (top ${topEntities.length} by mentions):
+${entityRoster}`;
+
+      const response = await Anthropic.messages.create({
+        model:      "claude-haiku-4-5",
+        max_tokens: 1800,
+        messages:   [{ role: "user", content: prompt }],
+      });
+
+      const rawText = (response?.content || [])
+        .map((part) => typeof part?.text === "string" ? part.text : "")
+        .join("")
+        .trim();
+      const structured = _flowCtxExtractJson(rawText) || {};
+
+      // Sanitize / clamp every field. Sliced lengths defend against
+      // model overrun; the optional-chain access defends against malformed
+      // JSON. Empty arrays are valid (frontend handles them).
+      const VALID_TYPES = new Set(['person', 'organization', 'location', 'event']);
+      const clampDate = (s) => /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : '';
+      const summaryText = _stripClaudeCitations(String(structured?.summary || '')).slice(0, 600);
+      const timelineOut = Array.isArray(structured?.timeline)
+        ? structured.timeline.slice(0, 10).map(t => ({
+            date:  clampDate(String(t?.date || '')),
+            title: _stripClaudeCitations(String(t?.title || '')).slice(0, 120),
+            what:  _stripClaudeCitations(String(t?.what  || '')).slice(0, 320),
+          })).filter(t => t.date && t.what)
+        : [];
+      const entitiesOut = Array.isArray(structured?.entities)
+        ? structured.entities.slice(0, 8).map(e => ({
+            name:             String(e?.name || '').slice(0, 80),
+            type:             VALID_TYPES.has(e?.type) ? e.type : 'organization',
+            first_appearance: clampDate(String(e?.first_appearance || '')),
+            last_appearance:  clampDate(String(e?.last_appearance  || '')),
+            key_moments: Array.isArray(e?.key_moments)
+              ? e.key_moments.slice(0, 5).map(km => ({
+                  date:   clampDate(String(km?.date || '')),
+                  action: _stripClaudeCitations(String(km?.action || '')).slice(0, 200),
+                })).filter(km => km.date && km.action)
+              : [],
+          })).filter(e => e.name)
+        : [];
+
+      return res.json({
+        summary:          summaryText,
+        // Legacy field — keep populated so the existing frontend code
+        // path (which renders { explanation }) still shows something
+        // until it's updated to read summary/timeline/entities.
+        explanation:      summaryText,
+        timeline:         timelineOut,
+        entities:         entitiesOut,
+        sampled_articles: sampled.length,
+        total_articles:   allArticles.length,
+        credits:          _creditsBlock(access),
+      });
+    }
+
+    // ── Thin thread / non-id-timeline fallback ─────────────────────
     const context = `Story thread: "${title}"\nDescription: ${description || summary || ""}\nKeywords: ${(keywords || []).slice(0, 10).join(", ")}`;
 
     const response = await Anthropic.messages.create({
