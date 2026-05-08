@@ -34,10 +34,31 @@ const pool = new Pool({
   application_name: APP_NAME,
 });
 
-// Kill runaway queries after 45 seconds so they release their connection instead
-// of blocking the pool for 90-120s during heavy fetch runs.
+// Per-connection statement_timeout. The 45s ceiling protects the web
+// server from runaway queries hogging connection slots during fetch
+// storms. But long-running cron processes (storyThreadBuilder,
+// keywordNormalizerCron, audit/dedup scripts, etc.) legitimately need
+// minutes for heavy joins or bulk updates against story_thread_articles
+// — capping their queries at 45s breaks them mid-pipeline.
+//
+// Branch on the entry script: server.js keeps 45s; everything else
+// (crons, workers, one-off scripts) gets 10 min by default. Either can
+// be overridden by setting DB_STATEMENT_TIMEOUT_MS in the environment
+// — useful for tightening (e.g. a known-fast cron) or loosening (a
+// data-migration script that needs to run for an hour).
+//
+// keywordNormalizer.js already grabs a dedicated client and overrides
+// to its own 90s ceiling for the heavy aggregation, so this default
+// only changes the floor underneath that — its tight self-imposed
+// timeout still wins for its specific query.
+const _scriptName = require('path').basename(process.argv[1] || '', '.js');
+const _isWebServer = _scriptName === 'server';
+const STATEMENT_TIMEOUT_MS = process.env.DB_STATEMENT_TIMEOUT_MS != null
+  ? parseInt(process.env.DB_STATEMENT_TIMEOUT_MS, 10)
+  : (_isWebServer ? 45_000 : 600_000);
+
 pool.on("connect", (client) => {
-  client.query("SET statement_timeout = 45000").catch(() => {});
+  client.query(`SET statement_timeout = ${STATEMENT_TIMEOUT_MS}`).catch(() => {});
 });
 
 pool.on('error', (err) => {
