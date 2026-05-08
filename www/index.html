@@ -5630,10 +5630,15 @@ button.arcCtxSegDot,
   right: 8px;
   z-index: 12;
   box-sizing: border-box;
-  width: 30px !important;
+  /* All five sizing axes pinned to 30 + !important so no cascade
+     (mobile button-min-height defaults, flex-stretch from a future
+     wrapper, etc.) can produce the rectangular-button bug. */
+  width: 30px  !important;
   height: 30px !important;
-  min-width: 30px; max-width: 30px;
-  min-height: 30px; max-height: 30px;
+  min-width: 30px  !important; max-width: 30px  !important;
+  min-height: 30px !important; max-height: 30px !important;
+  aspect-ratio: 1 / 1;
+  flex-shrink: 0;
   background: rgba(0,0,0,0.60);
   border: 1px solid rgba(255,255,255,0.15);
   border-radius: 50%;
@@ -14388,78 +14393,86 @@ window.fmtDate = function(d) {
     osc.stop(now + dur + 0.05);
   }
 
-  // Hollowed-out soft electric pulse — shared synth used by the three
-  // selection-feedback triggers below (thread / line / article). FM
-  // synthesis (sine modulator → sine carrier frequency) for the
-  // electric-with-vowel timbre, resonant bandpass for hollowness,
-  // 12ms soft attack + exponential decay so each tap feels gentle.
+  // Soft click — shared synth used by the three selection-feedback
+  // triggers below. Prior FM-resonant-bandpass design read as a "beep"
+  // because of the 180-260ms sustained pitched character. Rebuilt as a
+  // short noise transient (the click body) + a very brief sine pip for
+  // pitch identity. Each variant differs only in pip pitch + noise
+  // bandpass center, so card types stay distinguishable without ever
+  // sounding tonal/sustained.
   function triggerHollowPulse(opts) {
     if (!ctx || muted) return;
     opts = opts || {};
     const now = ctx.currentTime;
-    const carrier   = opts.carrier   || 720;
-    const mod       = opts.mod       || carrier * 1.25;
-    const modIndex  = opts.modIndex  || 80;
-    const filtFreq  = opts.filter    || carrier * 1.5;
-    const filtQ     = opts.q         || 4.5;
-    const dur       = opts.dur       || 0.20;
-    const vol       = (opts.vol == null) ? 0.11 : opts.vol;
+    const pip       = opts.pip       || 720;
+    const noiseFreq = opts.noiseFreq || pip * 1.3;
+    const dur       = opts.dur       || 0.075;
+    const vol       = (opts.vol == null) ? 0.075 : opts.vol;
 
-    const car = ctx.createOscillator();
-    car.type = 'sine';
-    car.frequency.value = carrier;
+    const sr = ctx.sampleRate;
+    const bufLen = Math.ceil(sr * (dur + 0.02));
+    const buf = ctx.createBuffer(1, bufLen, sr);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < bufLen; i++) data[i] = (Math.random() * 2 - 1) * 0.6;
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
 
-    const modulator = ctx.createOscillator();
-    modulator.type = 'sine';
-    modulator.frequency.value = mod;
+    const noiseFilt = ctx.createBiquadFilter();
+    noiseFilt.type = 'bandpass';
+    noiseFilt.frequency.value = noiseFreq;
+    noiseFilt.Q.value = 1.6;
 
-    const modGain = ctx.createGain();
-    modGain.gain.value = modIndex;
-    modulator.connect(modGain).connect(car.frequency);
+    const noiseGain = ctx.createGain();
+    noiseGain.gain.setValueAtTime(0.0001, now);
+    noiseGain.gain.exponentialRampToValueAtTime(vol, now + 0.002);
+    noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + dur);
 
-    const filt = ctx.createBiquadFilter();
-    filt.type = 'bandpass';
-    filt.frequency.value = filtFreq;
-    filt.Q.value = filtQ;
+    src.connect(noiseFilt).connect(noiseGain).connect(duckGain);
+    src.start(now);
+    src.stop(now + dur + 0.02);
 
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(0.0001, now);
-    g.gain.exponentialRampToValueAtTime(vol, now + 0.012);
-    g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.value = pip;
 
-    car.connect(filt).connect(g).connect(duckGain);
-    car.start(now);
-    modulator.start(now);
-    car.stop(now + dur + 0.05);
-    modulator.stop(now + dur + 0.05);
+    const pipDur = dur * 0.9;
+    const pipGain = ctx.createGain();
+    pipGain.gain.setValueAtTime(0.0001, now);
+    pipGain.gain.exponentialRampToValueAtTime(vol * 0.5, now + 0.003);
+    pipGain.gain.exponentialRampToValueAtTime(0.0001, now + pipDur);
 
-    pulseActivity(0.18);
+    osc.connect(pipGain).connect(duckGain);
+    osc.start(now);
+    osc.stop(now + pipDur + 0.02);
+
+    pulseActivity(0.12);
   }
 
-  // Three pitch-distinct siblings — same family, different identities.
+  // Three pitch-distinct siblings — same click body, different pip
+  // pitches + noise bandpass for card-type identity.
   function triggerThreadTap(opts) {
     triggerHollowPulse(Object.assign({
-      carrier: 540, mod: 475,  modIndex: 70,  filter: 720,  q: 4.0, dur: 0.22, vol: 0.11,
+      pip: 540, noiseFreq: 700,  dur: 0.075, vol: 0.075,
     }, opts || {}));
   }
   function triggerLineTap(opts) {
     triggerHollowPulse(Object.assign({
-      carrier: 720, mod: 920,  modIndex: 90,  filter: 1100, q: 5.0, dur: 0.26, vol: 0.10,
+      pip: 720, noiseFreq: 950,  dur: 0.085, vol: 0.070,
     }, opts || {}));
   }
   function triggerArticleTap(opts) {
     triggerHollowPulse(Object.assign({
-      carrier: 980, mod: 1140, modIndex: 110, filter: 1500, q: 5.5, dur: 0.18, vol: 0.10,
+      pip: 980, noiseFreq: 1300, dur: 0.065, vol: 0.065,
     }, opts || {}));
   }
 
-  // Magical buzzing twinkle — fired when an AI-context request begins
-  // (any URL matched by CLAUDE_TIMEOUT_PATTERNS). Soft + subtle: four
-  // sine voices in a high major-triad voicing with per-voice pitch-
-  // wobble LFOs at slightly different rates so partials beat against
-  // each other (the magical shimmer). Voices fan in 25ms apart for the
-  // chime feel; high-passed noise dust on top adds the "twinkle".
-  // 250ms internal debounce so retried/parallel requests don't stack.
+  // Muffled bell chime — fired when an AI-context request begins.
+  // Lowered from G6/B6/D7/G7 to G4/B4/D5/G5 (2 octaves) and routed
+  // through a shared 1500 Hz lowpass so the highs are tucked under
+  // the music. Noise dust moved from highpass>6kHz to bandpass at
+  // 900 Hz for warm flicker instead of bright sparkle. LFO wobble
+  // slightly slowed and shallower so the chime feels like a soft
+  // bell rather than a magical pip.
   function triggerAiTwinkle(opts) {
     if (!ctx || muted) return;
     const last = triggerAiTwinkle._lastFire || 0;
@@ -14471,7 +14484,16 @@ window.fmtDate = function(d) {
     const now = ctx.currentTime;
     const vol = (opts.vol == null) ? 0.06 : opts.vol;
 
-    const PITCHES = [1568.00, 1975.53, 2349.32, 3135.96];   // G6 B6 D7 G7
+    // Shared lowpass — every voice + noise feeds through this before
+    // duckGain. Cuts brightness above 1500 Hz so the chime sits warm
+    // and dampened underneath the music layers.
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 1500;
+    lp.Q.value = 0.7;
+    lp.connect(duckGain);
+
+    const PITCHES = [392.00, 493.88, 587.33, 783.99];   // G4 B4 D5 G5
     PITCHES.forEach((hz, i) => {
       const osc = ctx.createOscillator();
       osc.type = 'sine';
@@ -14479,9 +14501,9 @@ window.fmtDate = function(d) {
 
       const lfo = ctx.createOscillator();
       lfo.type = 'sine';
-      lfo.frequency.value = 5 + i * 1.3;
+      lfo.frequency.value = 3 + i * 0.8;
       const lfoGain = ctx.createGain();
-      lfoGain.gain.value = 4;
+      lfoGain.gain.value = 2;
       lfo.connect(lfoGain).connect(osc.frequency);
 
       const stagger = i * 0.025;
@@ -14493,7 +14515,7 @@ window.fmtDate = function(d) {
       g.gain.exponentialRampToValueAtTime(peak, now + stagger + 0.015);
       g.gain.exponentialRampToValueAtTime(0.0001, now + stagger + dur);
 
-      osc.connect(g).connect(duckGain);
+      osc.connect(g).connect(lp);
       osc.start(now + stagger);
       osc.stop(now + stagger + dur + 0.05);
       lfo.start(now + stagger);
@@ -14509,16 +14531,16 @@ window.fmtDate = function(d) {
     noise.buffer = buf;
 
     const noiseFilt = ctx.createBiquadFilter();
-    noiseFilt.type = 'highpass';
-    noiseFilt.frequency.value = 6000;
-    noiseFilt.Q.value = 0.5;
+    noiseFilt.type = 'bandpass';
+    noiseFilt.frequency.value = 900;
+    noiseFilt.Q.value = 1.2;
 
     const noiseGain = ctx.createGain();
     noiseGain.gain.setValueAtTime(0.0001, now);
-    noiseGain.gain.exponentialRampToValueAtTime(vol * 0.4, now + 0.01);
+    noiseGain.gain.exponentialRampToValueAtTime(vol * 0.25, now + 0.01);
     noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.4);
 
-    noise.connect(noiseFilt).connect(noiseGain).connect(duckGain);
+    noise.connect(noiseFilt).connect(noiseGain).connect(lp);
     noise.start(now);
     noise.stop(now + 0.45);
   }
@@ -14637,28 +14659,19 @@ window.fmtDate = function(d) {
     src.stop(now + dur + 0.05);
   }
 
-  // Page-transition whoosh — designed to bridge a setLayer swap. Where
-  // triggerWhoosh is short and tonal, this one is longer (0.95s) and
-  // routes BOTH dry and (when reverbIn is available) wet so its tail
-  // smears into the same reverb bus the music layers use. Result: the
-  // whoosh and the new layer share a tail, so the swap reads as one
-  // continuous gesture rather than "a sound effect plus a music
-  // change". Direction param ('up'|'down') flips the frequency sweep
-  // so jumping forward through pages and backward sound different.
-  // Default 'down' = stats→globe / globe→news (forward through the
-  // tab order); 'up' = globe→stats / news→globe (backward).
+  // Page-transition whoosh — bridges the setLayer swap. Always sweeps
+  // low→high — direction param retired because the dry-gain envelope
+  // peak (80ms) interacted with the bandpass sweep direction to produce
+  // bright-led-attack vs bass-led-attack feels at the same nominal vol.
+  // See root index.html for the full rationale.
   function triggerPageWhoosh(opts) {
     if (!ctx || muted) return;
     opts = opts || {};
     const now = ctx.currentTime;
     const dur = opts.dur || 0.95;
-    // Default 0.12 (was 0.22) — see root index.html for full rationale.
     const vol = (opts.vol == null) ? 0.12 : opts.vol;
-    const direction = opts.direction === 'up' ? 'up' : 'down';
-    const fLow = opts.fLow || 320;
+    const fLow  = opts.fLow  || 320;
     const fHigh = opts.fHigh || 4200;
-    const fStart = direction === 'down' ? fHigh : fLow;
-    const fEnd   = direction === 'down' ? fLow  : fHigh;
 
     const sr = ctx.sampleRate;
     const bufLen = Math.ceil(sr * (dur + 0.05));
@@ -14671,8 +14684,8 @@ window.fmtDate = function(d) {
     const filt = ctx.createBiquadFilter();
     filt.type = 'bandpass';
     filt.Q.value = 1.1;
-    filt.frequency.setValueAtTime(fStart, now);
-    filt.frequency.exponentialRampToValueAtTime(fEnd, now + dur);
+    filt.frequency.setValueAtTime(fLow, now);
+    filt.frequency.exponentialRampToValueAtTime(fHigh, now + dur);
 
     // Lowshelf removed — used to ramp +3dB at 800Hz over 70% of the
     // duration. That baked a direction-dependent asymmetry into the
@@ -14769,38 +14782,42 @@ window.fmtDate = function(d) {
   };
 })();
 
-/* ── Top-nav click sound ──────────────────────────────────────────────
-   Plays the procedural triggerNavClick tick whenever ANY direct child
-   .iconBtn inside #topLeftCluster (or the search button which lives in
-   #searchWrapper alongside it) is tapped. Uses a delegated capture
-   listener so it doesn't matter how each button binds its own handler
-   (some use addEventListener, some use inline onclick) — the tick fires
-   in the capture phase before any of those handlers run.
-   Re-entrancy guard: a single tap can produce both a `click` event AND
-   a synthesized one from `pointerup` paths; we collapse them within a
-   60ms window so a single user tap = one tick. Mute / engine-locked /
-   any other no-op cases are handled by triggerNavClick itself. */
+/* ── Nav-click sound wiring ──────────────────────────────────────────
+   Fires triggerNavClick on:
+     • Top-left icon cluster (.iconBtn)
+     • Search button
+     • News sub-tab pills (Lines/Threads/Feed in #nfViewToggle)
+     • Stats sub-tab pills (Words/Sources/Globe in #statsViewToggle)
+   Capture-phase listeners + a single shared 60ms re-entrancy guard so
+   one tap = one tick regardless of how each pill binds its handler. */
 (function _wireNavClickSound() {
   const ATTACH = () => {
-    const cluster = document.getElementById('topLeftCluster');
-    if (!cluster) return;
     let _lastClickTs = 0;
-    const handler = (ev) => {
-      const btn = ev.target?.closest?.('.iconBtn');
-      if (!btn) return;
-      // Only buttons that ARE inside the top cluster (or its sibling
-      // search wrapper, which renders alongside the cluster but lives
-      // in its own element).
-      if (!cluster.contains(btn) && !document.getElementById('searchWrapper')?.contains(btn)) return;
+    function fire() {
       const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
       if (now - _lastClickTs < 60) return;
       _lastClickTs = now;
       try { window.audioEngine?.triggerNavClick?.(); } catch (_) {}
+    }
+
+    const cluster       = document.getElementById('topLeftCluster');
+    const searchWrapper = document.getElementById('searchWrapper');
+    const iconHandler = (ev) => {
+      const btn = ev.target?.closest?.('.iconBtn');
+      if (!btn) return;
+      if (!cluster?.contains(btn) && !searchWrapper?.contains(btn)) return;
+      fire();
     };
-    // Capture phase so we fire even if the button's own handler calls
-    // stopPropagation on its bubble-phase listener.
-    cluster.addEventListener('click', handler, true);
-    document.getElementById('searchWrapper')?.addEventListener('click', handler, true);
+    cluster?.addEventListener('click',       iconHandler, true);
+    searchWrapper?.addEventListener('click', iconHandler, true);
+
+    document.getElementById('nfViewToggle')?.addEventListener('click', (ev) => {
+      if (ev.target?.closest?.('.nfViewPill')) fire();
+    }, true);
+
+    document.getElementById('statsViewToggle')?.addEventListener('click', (ev) => {
+      if (ev.target?.closest?.('.statsViewPill')) fire();
+    }, true);
   };
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', ATTACH, { once: true });
@@ -35674,12 +35691,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (pageChanged) {
           // Whoosh first so its leading edge has already dropped
           // ~80ms of attack into the bus by the time the layer
-          // swap kicks in just below.
-          try {
-            window.audioEngine.triggerPageWhoosh?.({
-              direction: idx > prevPage ? 'down' : 'up',
-            });
-          } catch (_) {}
+          // swap kicks in just below. No direction param — every
+          // page swap sweeps low→high for cross-nav consistency.
+          try { window.audioEngine.triggerPageWhoosh?.(); } catch (_) {}
         }
         const swapFade = pageChanged ? 0.35 : 1.0;
         window.audioEngine.setLayer('stats', idx === 0, swapFade);

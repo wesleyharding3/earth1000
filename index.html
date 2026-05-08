@@ -5102,10 +5102,18 @@ button.arcCtxSegDot,
   right: 8px;
   z-index: 12;
   box-sizing: border-box;
-  width: 30px !important;
+  /* All five sizing axes pinned to 30 + !important so no cascade
+     (mobile button-min-height defaults, flex-stretch from a future
+     wrapper, etc.) can produce the rectangular-button bug seen in
+     prior bundled builds. aspect-ratio: 1 is the belt-and-braces
+     fallback if any rule still wins and stretches one axis — it
+     forces the other to follow. */
+  width: 30px  !important;
   height: 30px !important;
-  min-width: 30px; max-width: 30px;
-  min-height: 30px; max-height: 30px;
+  min-width: 30px  !important; max-width: 30px  !important;
+  min-height: 30px !important; max-height: 30px !important;
+  aspect-ratio: 1 / 1;
+  flex-shrink: 0;
   background: rgba(0,0,0,0.60);
   border: 1px solid rgba(255,255,255,0.15);
   border-radius: 50%;
@@ -14050,95 +14058,98 @@ window.__arcCtxSegmented = (function() {
     osc.stop(now + dur + 0.05);
   }
 
-  // Hollowed-out soft electric pulse — shared synth used by the three
-  // selection-feedback triggers below (thread / line / article). Built
-  // on FM synthesis (sine modulator → sine carrier frequency) so the
-  // timbre lands somewhere between a struck rod and a synthesized vowel:
-  // the modulator adds inharmonic sidebands that read as "electric",
-  // while a high-Q resonant bandpass scoops everything outside a
-  // narrow band so the result feels hollow rather than full-bodied.
-  // Soft 12ms attack + exponential decay keeps each tap from sounding
-  // like a click. Tunable via opts so each surface gets its own pitch /
-  // length / brightness identity without duplicating synth code.
+  // Soft click — shared synth used by the three selection-feedback
+  // triggers below (thread / line / article). Prior version was an
+  // FM-modulated sine through a high-Q resonant bandpass — a hollow
+  // pulse in tone, but the resonant 180-260ms sustain read as a
+  // "beep" rather than a click. Rebuilt as a short noise transient
+  // (the click body, ~50-90ms) plus a very brief sine pip (~50ms,
+  // 0.5× amplitude) for pitch identity. Each variant differs only
+  // in the pip pitch + the noise bandpass center, so the three card
+  // types stay distinguishable without ever sounding tonal/sustained.
   function triggerHollowPulse(opts) {
     if (!ctx || muted) return;
     opts = opts || {};
     const now = ctx.currentTime;
-    const carrier   = opts.carrier   || 720;             // base pitch (Hz)
-    const mod       = opts.mod       || carrier * 1.25;  // modulator pitch
-    const modIndex  = opts.modIndex  || 80;              // FM depth
-    const filtFreq  = opts.filter    || carrier * 1.5;   // bandpass center
-    const filtQ     = opts.q         || 4.5;             // resonance
-    const dur       = opts.dur       || 0.20;
-    const vol       = (opts.vol == null) ? 0.11 : opts.vol;
+    const pip       = opts.pip       || 720;      // tonal accent freq
+    const noiseFreq = opts.noiseFreq || pip * 1.3; // noise bandpass center
+    const dur       = opts.dur       || 0.075;    // click body duration
+    const vol       = (opts.vol == null) ? 0.075 : opts.vol;
 
-    // FM voice
-    const car = ctx.createOscillator();
-    car.type = 'sine';
-    car.frequency.value = carrier;
+    // ── Noise body — the click transient ───────────────────────
+    const sr = ctx.sampleRate;
+    const bufLen = Math.ceil(sr * (dur + 0.02));
+    const buf = ctx.createBuffer(1, bufLen, sr);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < bufLen; i++) data[i] = (Math.random() * 2 - 1) * 0.6;
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
 
-    const modulator = ctx.createOscillator();
-    modulator.type = 'sine';
-    modulator.frequency.value = mod;
+    const noiseFilt = ctx.createBiquadFilter();
+    noiseFilt.type = 'bandpass';
+    noiseFilt.frequency.value = noiseFreq;
+    noiseFilt.Q.value = 1.6;                    // wide enough to read as click
 
-    const modGain = ctx.createGain();
-    modGain.gain.value = modIndex;
-    modulator.connect(modGain).connect(car.frequency);
+    const noiseGain = ctx.createGain();
+    noiseGain.gain.setValueAtTime(0.0001, now);
+    noiseGain.gain.exponentialRampToValueAtTime(vol, now + 0.002);
+    noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + dur);
 
-    // Resonant bandpass for the "hollow" character.
-    const filt = ctx.createBiquadFilter();
-    filt.type = 'bandpass';
-    filt.frequency.value = filtFreq;
-    filt.Q.value = filtQ;
+    src.connect(noiseFilt).connect(noiseGain).connect(duckGain);
+    src.start(now);
+    src.stop(now + dur + 0.02);
 
-    // Soft attack + exponential decay.
-    const g = ctx.createGain();
-    g.gain.setValueAtTime(0.0001, now);
-    g.gain.exponentialRampToValueAtTime(vol, now + 0.012);
-    g.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+    // ── Tonal pip — short pitch accent for card-type identity ──
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.value = pip;
 
-    car.connect(filt).connect(g).connect(duckGain);
-    car.start(now);
-    modulator.start(now);
-    car.stop(now + dur + 0.05);
-    modulator.stop(now + dur + 0.05);
+    const pipDur = dur * 0.9;
+    const pipGain = ctx.createGain();
+    pipGain.gain.setValueAtTime(0.0001, now);
+    pipGain.gain.exponentialRampToValueAtTime(vol * 0.5, now + 0.003);
+    pipGain.gain.exponentialRampToValueAtTime(0.0001, now + pipDur);
 
-    pulseActivity(0.18);
+    osc.connect(pipGain).connect(duckGain);
+    osc.start(now);
+    osc.stop(now + pipDur + 0.02);
+
+    pulseActivity(0.12);
   }
 
-  // Three pitch-distinct siblings — same hollow-electric character,
-  // different identities so a user can hear which surface they tapped:
-  //   thread  → lower / grounded   (story selected)
-  //   line    → mid   / elongated  (timeline selected — slightly longer dur)
-  //   article → higher / specific  (individual card opened — shortest)
+  // Three pitch-distinct siblings — same click character, different
+  // identities. Pip frequency picks the perceived "color" of each card
+  // type; the noise bandpass tracks ~1.3× the pip so the spectral
+  // peak matches.
+  //   thread  → lower / grounded
+  //   line    → mid
+  //   article → higher / shortest
   function triggerThreadTap(opts) {
     triggerHollowPulse(Object.assign({
-      carrier: 540, mod: 475, modIndex: 70,  filter: 720,  q: 4.0, dur: 0.22, vol: 0.11,
+      pip: 540, noiseFreq: 700,  dur: 0.075, vol: 0.075,
     }, opts || {}));
   }
   function triggerLineTap(opts) {
     triggerHollowPulse(Object.assign({
-      carrier: 720, mod: 920, modIndex: 90,  filter: 1100, q: 5.0, dur: 0.26, vol: 0.10,
+      pip: 720, noiseFreq: 950,  dur: 0.085, vol: 0.070,
     }, opts || {}));
   }
-  // triggerArticleTap was a low warm thump (120 → 50 Hz sine). Replaced
-  // with an article-flavored hollow pulse so threads / lines / articles
-  // share the same tactile family while staying pitch-distinct.
   function triggerArticleTap(opts) {
     triggerHollowPulse(Object.assign({
-      carrier: 980, mod: 1140, modIndex: 110, filter: 1500, q: 5.5, dur: 0.18, vol: 0.10,
+      pip: 980, noiseFreq: 1300, dur: 0.065, vol: 0.065,
     }, opts || {}));
   }
 
-  // Magical buzzing twinkle — fired when an AI-context request begins
-  // (any URL matched by CLAUDE_TIMEOUT_PATTERNS in the global fetch
-  // wrapper). Soft and subtle: four sine voices stacked in a major-triad
-  // voicing high in the register (G6 / B6 / D7 / G7), each with a slow
-  // detuning LFO so the partials beat against each other — that's the
-  // "buzzing" magical character. Voices fan in 25ms apart so the chime
-  // arrives like a sparkle rather than a chord-stab. A whisper of
-  // high-passed noise sits over the top for the "twinkle dust" texture.
-  // 250ms internal debounce so spam-clicks don't stack.
+  // Muffled bell chime — fired when an AI-context request begins (any
+  // URL matched by CLAUDE_TIMEOUT_PATTERNS). Prior version stacked four
+  // voices high in the register (G6/B6/D7/G7) over high-passed noise
+  // dust — read as bright/sparkly. Lowered 2 octaves to G4/B4/D5/G5
+  // and routed through a shared low-shelf lowpass so the highs are
+  // tucked under the music bed. Noise dust shifted from highpass>6kHz
+  // to bandpass at 900Hz for a warm/muffled flicker instead of bright
+  // sparkle. LFO wobble retained but slightly slower so the chime
+  // feels like a soft bell rather than a magical pip. 250ms internal
+  // debounce so spam-clicks/retries don't stack.
   function triggerAiTwinkle(opts) {
     if (!ctx || muted) return;
     const last = triggerAiTwinkle._lastFire || 0;
@@ -14150,43 +14161,55 @@ window.__arcCtxSegmented = (function() {
     const now = ctx.currentTime;
     const vol = (opts.vol == null) ? 0.06 : opts.vol;
 
-    // High major-triad voicing — G6, B6, D7, G7. Stacked octaves +
-    // major thirds give a chime feel without dissonance.
-    const PITCHES = [1568.00, 1975.53, 2349.32, 3135.96];
+    // Shared lowpass — every voice + the noise dust feed through this
+    // before duckGain. Cuts brightness above 1500 Hz so the chime sits
+    // dampened underneath the music layers rather than over them.
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.value = 1500;
+    lp.Q.value = 0.7;
+    lp.connect(duckGain);
+
+    // Lower major-triad voicing — G4, B4, D5, G5. Two octaves below
+    // the prior G6/B6/D7/G7 stack. Same chord intervals so the chord
+    // identity is preserved, just at a warmer register.
+    const PITCHES = [392.00, 493.88, 587.33, 783.99];
 
     PITCHES.forEach((hz, i) => {
       const osc = ctx.createOscillator();
       osc.type = 'sine';
       osc.frequency.value = hz;
 
-      // Per-voice pitch-wobble LFO — each voice oscillates at a
-      // slightly different rate so the wobbles beat against each
-      // other instead of moving in lockstep. That's the magical
-      // shimmer: phase incoherence between partials.
+      // Per-voice pitch-wobble LFO. Slightly slower rates than the
+      // prior bright version (3+i*0.8 vs 5+i*1.3) and shallower depth
+      // (±2 Hz vs ±4 Hz) so the wobble reads as warm vibrato rather
+      // than magical shimmer.
       const lfo = ctx.createOscillator();
       lfo.type = 'sine';
-      lfo.frequency.value = 5 + i * 1.3;
+      lfo.frequency.value = 3 + i * 0.8;
       const lfoGain = ctx.createGain();
-      lfoGain.gain.value = 4;                   // ±4 Hz pitch wobble
+      lfoGain.gain.value = 2;
       lfo.connect(lfoGain).connect(osc.frequency);
 
-      const stagger = i * 0.025;                // chime fan-in
-      const dur     = 0.70 + i * 0.12;          // higher voices ring slightly longer
-      const peak    = vol * (1.0 - i * 0.12);   // higher voices quieter
+      const stagger = i * 0.025;
+      const dur     = 0.70 + i * 0.12;
+      const peak    = vol * (1.0 - i * 0.12);
 
       const g = ctx.createGain();
       g.gain.setValueAtTime(0.0001, now + stagger);
       g.gain.exponentialRampToValueAtTime(peak, now + stagger + 0.015);
       g.gain.exponentialRampToValueAtTime(0.0001, now + stagger + dur);
 
-      osc.connect(g).connect(duckGain);
+      osc.connect(g).connect(lp);   // routed through shared lowpass
       osc.start(now + stagger);
       osc.stop(now + stagger + dur + 0.05);
       lfo.start(now + stagger);
       lfo.stop(now + stagger + dur + 0.05);
     });
 
-    // Twinkle dust — high-passed noise burst, very quiet, short.
+    // Dampened flicker — bandpass-filtered noise at low-mid (900 Hz)
+    // instead of the prior >6kHz "twinkle dust". Quieter too (vol*0.25
+    // vs 0.4). Reads as warm shimmer underneath the bell stack.
     const sr = ctx.sampleRate;
     const bufLen = Math.ceil(sr * 0.4);
     const buf = ctx.createBuffer(1, bufLen, sr);
@@ -14196,16 +14219,16 @@ window.__arcCtxSegmented = (function() {
     noise.buffer = buf;
 
     const noiseFilt = ctx.createBiquadFilter();
-    noiseFilt.type = 'highpass';
-    noiseFilt.frequency.value = 6000;
-    noiseFilt.Q.value = 0.5;
+    noiseFilt.type = 'bandpass';
+    noiseFilt.frequency.value = 900;
+    noiseFilt.Q.value = 1.2;
 
     const noiseGain = ctx.createGain();
     noiseGain.gain.setValueAtTime(0.0001, now);
-    noiseGain.gain.exponentialRampToValueAtTime(vol * 0.4, now + 0.01);
+    noiseGain.gain.exponentialRampToValueAtTime(vol * 0.25, now + 0.01);
     noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.4);
 
-    noise.connect(noiseFilt).connect(noiseGain).connect(duckGain);
+    noise.connect(noiseFilt).connect(noiseGain).connect(lp);
     noise.start(now);
     noise.stop(now + 0.45);
   }
@@ -14334,25 +14357,28 @@ window.__arcCtxSegmented = (function() {
   // smears into the same reverb bus the music layers use. Result: the
   // whoosh and the new layer share a tail, so the swap reads as one
   // continuous gesture rather than "a sound effect plus a music
-  // change". Direction param ('up'|'down') flips the frequency sweep
-  // so jumping forward through pages and backward sound different.
-  // Default 'down' = stats→globe / globe→news (forward through the
-  // tab order); 'up' = globe→stats / news→globe (backward).
+  // change". Always sweeps low→high — see direction note below.
   function triggerPageWhoosh(opts) {
     if (!ctx || muted) return;
     opts = opts || {};
     const now = ctx.currentTime;
     const dur = opts.dur || 0.95;
-    // Default 0.12 (was 0.22) — the prior level pushed too hard against
-    // music layers during tab switches and felt sound-effecty rather
-    // than ambient. Halving keeps the directional sweep clearly audible
-    // but lets the cross-fading layer changes lead the moment.
     const vol = (opts.vol == null) ? 0.12 : opts.vol;
-    const direction = opts.direction === 'up' ? 'up' : 'down';
-    const fLow = opts.fLow || 320;
+    // Direction parameter retired. The function used to flip the sweep
+    // (down=high→low for forward nav, up=low→high for backward nav)
+    // intending to give each tab change a directional pitch cue. But
+    // the dry-gain envelope peaks at 80ms and the bandpass takes 950ms
+    // to traverse the spectrum — so the "down" direction had its peak
+    // amplitude coincide with HIGH frequencies (bright-led attack)
+    // while "up" had its peak coincide with LOW frequencies (bass-led
+    // attack). Two unmistakably different sounds at the same nominal
+    // vol. Removing the lowshelf last pass equalised loudness but the
+    // envelope/sweep interaction still produced the perceptual gap.
+    // Always sweeping low→high gives every page swap the bass-attack-
+    // then-brighten character we want; directional cue loss is worth
+    // the consistency.
+    const fLow  = opts.fLow  || 320;
     const fHigh = opts.fHigh || 4200;
-    const fStart = direction === 'down' ? fHigh : fLow;
-    const fEnd   = direction === 'down' ? fLow  : fHigh;
 
     const sr = ctx.sampleRate;
     const bufLen = Math.ceil(sr * (dur + 0.05));
@@ -14365,18 +14391,8 @@ window.__arcCtxSegmented = (function() {
     const filt = ctx.createBiquadFilter();
     filt.type = 'bandpass';
     filt.Q.value = 1.1;
-    filt.frequency.setValueAtTime(fStart, now);
-    filt.frequency.exponentialRampToValueAtTime(fEnd, now + dur);
-
-    // Lowshelf removed. It used to ramp +3dB at 800Hz over the first 70%
-    // of the duration, which baked a direction-dependent asymmetry into
-    // the sound: 'down' sweeps (forward nav) ended in the bass region
-    // exactly as the boost reached its peak — the bass tail got
-    // ~1.4× linear gain, making forward navs sound noticeably louder
-    // and beefier than backward navs even at the same nominal vol.
-    // Without the tilt, both directions are pure bandpass-filtered
-    // noise sweeps with identical envelope, distinguished only by
-    // the pitch trajectory. Symmetric.
+    filt.frequency.setValueAtTime(fLow, now);
+    filt.frequency.exponentialRampToValueAtTime(fHigh, now + dur);
 
     const dryGain = ctx.createGain();
     dryGain.gain.setValueAtTime(0.0001, now);
@@ -14463,38 +14479,51 @@ window.__arcCtxSegmented = (function() {
   };
 })();
 
-/* ── Top-nav click sound ──────────────────────────────────────────────
-   Plays the procedural triggerNavClick tick whenever ANY direct child
-   .iconBtn inside #topLeftCluster (or the search button which lives in
-   #searchWrapper alongside it) is tapped. Uses a delegated capture
-   listener so it doesn't matter how each button binds its own handler
-   (some use addEventListener, some use inline onclick) — the tick fires
-   in the capture phase before any of those handlers run.
-   Re-entrancy guard: a single tap can produce both a `click` event AND
-   a synthesized one from `pointerup` paths; we collapse them within a
-   60ms window so a single user tap = one tick. Mute / engine-locked /
-   any other no-op cases are handled by triggerNavClick itself. */
+/* ── Nav-click sound wiring ──────────────────────────────────────────
+   Plays the procedural triggerNavClick tick whenever any of these are
+   tapped:
+     • Top-left icon cluster (#topLeftCluster .iconBtn)
+     • Search button (#searchWrapper .iconBtn)
+     • News sub-tab pills (#nfViewToggle  .nfViewPill — Lines/Threads/Feed)
+     • Stats sub-tab pills (#statsViewToggle .statsViewPill — Words/Sources/Globe)
+   Uses delegated CAPTURE-PHASE listeners so the tick fires regardless
+   of how each pill binds its own handler (some use addEventListener,
+   some use inline onclick) — capture phase runs before any handler
+   that calls stopPropagation in the bubble phase.
+   Single shared re-entrancy guard collapses click + synthesized-click
+   pairs (60ms window) so one user tap = one tick. Mute / engine-locked
+   no-op cases are handled by triggerNavClick itself. */
 (function _wireNavClickSound() {
   const ATTACH = () => {
-    const cluster = document.getElementById('topLeftCluster');
-    if (!cluster) return;
     let _lastClickTs = 0;
-    const handler = (ev) => {
-      const btn = ev.target?.closest?.('.iconBtn');
-      if (!btn) return;
-      // Only buttons that ARE inside the top cluster (or its sibling
-      // search wrapper, which renders alongside the cluster but lives
-      // in its own element).
-      if (!cluster.contains(btn) && !document.getElementById('searchWrapper')?.contains(btn)) return;
+    function fire() {
       const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
       if (now - _lastClickTs < 60) return;
       _lastClickTs = now;
       try { window.audioEngine?.triggerNavClick?.(); } catch (_) {}
+    }
+
+    // Top-left icon cluster + search wrapper (.iconBtn)
+    const cluster       = document.getElementById('topLeftCluster');
+    const searchWrapper = document.getElementById('searchWrapper');
+    const iconHandler = (ev) => {
+      const btn = ev.target?.closest?.('.iconBtn');
+      if (!btn) return;
+      if (!cluster?.contains(btn) && !searchWrapper?.contains(btn)) return;
+      fire();
     };
-    // Capture phase so we fire even if the button's own handler calls
-    // stopPropagation on its bubble-phase listener.
-    cluster.addEventListener('click', handler, true);
-    document.getElementById('searchWrapper')?.addEventListener('click', handler, true);
+    cluster?.addEventListener('click',       iconHandler, true);
+    searchWrapper?.addEventListener('click', iconHandler, true);
+
+    // News sub-tabs — Lines / Threads / Feed
+    document.getElementById('nfViewToggle')?.addEventListener('click', (ev) => {
+      if (ev.target?.closest?.('.nfViewPill')) fire();
+    }, true);
+
+    // Stats sub-tabs — Words / Sources / Globe
+    document.getElementById('statsViewToggle')?.addEventListener('click', (ev) => {
+      if (ev.target?.closest?.('.statsViewPill')) fire();
+    }, true);
   };
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', ATTACH, { once: true });
@@ -33045,11 +33074,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (window.audioEngine) {
         const pageChanged = (prevPage !== idx);
         if (pageChanged) {
-          try {
-            window.audioEngine.triggerPageWhoosh?.({
-              direction: idx > prevPage ? 'down' : 'up',
-            });
-          } catch (_) {}
+          // No direction param — page-whoosh always sweeps low→high
+          // for consistency across nav directions. See triggerPageWhoosh
+          // for the rationale (envelope/sweep interaction).
+          try { window.audioEngine.triggerPageWhoosh?.(); } catch (_) {}
         }
         const swapFade = pageChanged ? 0.35 : 1.0;
         window.audioEngine.setLayer('stats', idx === 0, swapFade);
