@@ -40157,6 +40157,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
         city_name: article.city_name || '',
         iso_code: article.iso_code || '',
       };
+      console.log('[adp-explain] →', `${API}/api/explain`,
+        'tokenLen=', window.__authToken?.length || 0,
+        'tier=', window.__userTier, 'admin=', window.__isAdmin);
       const res = await fetch(`${API}/api/explain`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -40166,6 +40169,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (abort.signal.aborted) return;
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
+        console.error('[adp-explain] HTTP', res.status, 'body=', JSON.stringify(data).slice(0, 200));
+        if (res.status === 401) {
+          _adpAnalysisShowMessage('arcCtxLock',
+            `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>` +
+            `<span>Session expired — sign in again.</span>`);
+          document.querySelector('#adpAnalysisBody .arcCtxLock')
+            ?.addEventListener('click', () => window.__openAuthModal?.());
+          return;
+        }
         if (res.status === 429 && data.limitReached) {
           const body = document.getElementById('adpAnalysisBody');
           if (body) {
@@ -41323,12 +41335,81 @@ const settingsToggle     = document.getElementById("settingsToggle");
   };
 
   // ── Fetch interceptor — auto-injects Bearer token for API calls ─
+  //
+  // Two extensions over a plain bearer-injector:
+  //
+  //   (1) STALE-TOKEN PROACTIVE REFRESH. Supabase access tokens expire
+  //       after 60 minutes. If the user has been idle on the page for
+  //       an hour, the next API call would carry an expired token and
+  //       the server would 401 — exactly the symptom reported on
+  //       cluster-node/summary, ai/flow-context, and the article-detail
+  //       AI endpoints. Before injecting the bearer, if it's been
+  //       longer than 45 min since the last refresh, call
+  //       sb.auth.getSession() (which silently refreshes via the
+  //       refresh token) and update window.__authToken with the new
+  //       access token. Single-flight so concurrent calls share one
+  //       refresh request.
+  //
+  //   (2) 401 REACTIVE REFRESH-AND-RETRY. If a request still 401s
+  //       (token revoked, clock drift, race), force one refresh + one
+  //       retry transparently. If the second attempt also 401s, the
+  //       caller gets the response and can show whatever auth UI it
+  //       wants. This rescues users whose 60-min boundary fell mid-
+  //       page-session, which the proactive refresh alone can miss
+  //       if the timer hadn't yet ticked over.
   (function() {
     const _orig = window.fetch.bind(window);
-    window.fetch = function(url, opts) {
+    const TOKEN_FRESH_MS = 45 * 60 * 1000; // 45 min — well inside the 60-min Supabase expiry
+    let _lastTokenRefresh = Date.now();    // assume current token is fresh on page load
+    let _refreshInflight = null;
+
+    function _isOurApi(url) {
+      return typeof url === 'string'
+        && (url.startsWith(API_BASE) || url.includes('earth-wjr6.onrender.com'));
+    }
+
+    async function _refreshAuthOnce() {
+      if (_refreshInflight) return _refreshInflight;
+      _refreshInflight = (async () => {
+        try {
+          const { data, error } = await sb.auth.getSession();
+          if (!error && data?.session?.access_token) {
+            window.__authToken = data.session.access_token;
+            _lastTokenRefresh = Date.now();
+          }
+        } catch (_) { /* ignore — best-effort refresh */ }
+        _refreshInflight = null;
+      })();
+      return _refreshInflight;
+    }
+
+    async function _maybeRefreshIfStale() {
+      if (!window.__authToken) return;
+      if (Date.now() - _lastTokenRefresh < TOKEN_FRESH_MS) return;
+      await _refreshAuthOnce();
+    }
+
+    window.fetch = async function(url, opts) {
       opts = opts ? { ...opts } : {};
-      if (typeof url === 'string' && (url.startsWith(API_BASE) || url.includes('earth-wjr6.onrender.com')) && window.__authToken) {
-        opts.headers = Object.assign({ 'Authorization': `Bearer ${window.__authToken}` }, opts.headers || {});
+      if (_isOurApi(url)) {
+        await _maybeRefreshIfStale();
+        if (window.__authToken) {
+          opts.headers = Object.assign(
+            { 'Authorization': `Bearer ${window.__authToken}` },
+            opts.headers || {}
+          );
+        }
+        // First attempt
+        const res = await _orig(url, opts);
+        if (res.status !== 401) return res;
+        // 401 — token may have just expired; force a refresh and retry once.
+        await _refreshAuthOnce();
+        if (!window.__authToken) return res; // no token to retry with
+        const retryOpts = { ...opts, headers: Object.assign(
+          { 'Authorization': `Bearer ${window.__authToken}` },
+          opts.headers || {}
+        )};
+        return _orig(url, retryOpts);
       }
       return _orig(url, opts);
     };
@@ -43603,6 +43684,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
         'Weighing the story arc, primary actors, and supporting players.'
       );
 
+      // Diagnostic — log what we're sending so a 401 can be traced
+      // back to either a missing/stale token or a server-side
+      // verification failure. Token length only (never the actual
+      // value) so this can stay enabled in production without leaking
+      // credentials.
+      console.log('[cluster-summary] →', `${BASE}/api/cluster-node/summary`,
+        'tokenLen=', window.__authToken?.length || 0,
+        'tier=', window.__userTier, 'admin=', window.__isAdmin);
       const res = await fetch(`${BASE}/api/cluster-node/summary`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -43610,6 +43699,22 @@ const settingsToggle     = document.getElementById("settingsToggle");
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
+        console.error('[cluster-summary] HTTP', res.status, 'body=', JSON.stringify(data).slice(0, 200));
+        if (res.status === 401) {
+          // Show a clearer auth-error UI rather than the generic
+          // "tap to retry" path so the user knows to sign back in.
+          const bodyEl2 = container.querySelector('#cdAnalysisBody');
+          if (bodyEl2) {
+            bodyEl2.className = 'arcCtxBody arcCtxStateSettled';
+            bodyEl2.innerHTML =
+              `<div class="arcCtxLock" style="cursor:pointer">` +
+              `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>` +
+              `<span>Session expired — sign in again to continue.</span></div>`;
+            bodyEl2.querySelector('.arcCtxLock')
+              ?.addEventListener('click', () => window.__openAuthModal?.());
+          }
+          return;
+        }
         if (res.status === 429 && data.limitReached) {
           if (bodyEl) {
             bodyEl.className = 'arcCtxBody arcCtxStateSettled';
@@ -46152,28 +46257,19 @@ body.ticker-active .gTickerLabel {
     }
     // Set briefingActive FIRST — closeBriefingLauncher checks this
     // synchronously to decide whether to restore the procedural music.
-    // The flag flip must happen before any subsequent code yields.
     window.briefingActive = true;
-    // Tear down procedural layers + duck + SUSPEND the AudioContext.
-    //
-    // Why all three: ducking alone keeps the context "running" with
-    // gains at -60dB. setLayer(name,false) alone removes the
-    // oscillators but leaves the context running. On iOS WKWebView,
-    // any AudioContext in 'running' state holds the audio session —
-    // even with zero oscillators, the narrator HTMLAudio that's about
-    // to play silently fails to claim the speaker. Suspending the
-    // context fully releases the session so the narrator can play.
-    //
-    // closeBriefing's resume path re-enables before re-layering.
+    // Tear down procedural layers + heavy duck. Was also calling
+    // ctx.suspend() — that turned out to leave the iOS audio session
+    // in a state where the narrator HTMLAudio couldn't claim it
+    // (Promise resolves but sa.paused stays true, captions stuck at
+    // first character). Removing the suspend; relying on duck-to-near-
+    // zero (-60dB) plus zero oscillators in the context to be quiet
+    // enough.
     try {
       window.audioEngine?.duck?.(0.001, 400);
       window.audioEngine?.setLayer?.('stats', false);
       window.audioEngine?.setLayer?.('globe', false);
       window.audioEngine?.setLayer?.('news', false);
-      // Suspend AFTER tearing down layers so existing oscillators have
-      // already started their fade — they'll finish on the resumed
-      // context. Suspend is a one-line iOS audio-session release.
-      window.audioEngine?.ctx?.suspend?.();
     } catch (_) {}
     document.body.classList.add('briefing-active');
     document.getElementById('bRecap').classList.remove('open');
@@ -46662,16 +46758,10 @@ body.ticker-active .gTickerLabel {
   function closeBriefing() {
     window.briefingActive = false;
     document.body.classList.remove('briefing-active');
-    // Procedural engine was suspended + layers torn down when the
-    // briefing opened. Resume context FIRST (so subsequent setLayer
-    // calls can build oscillators on a running context), then unduck,
-    // then re-layer.
+    // Procedural engine was ducked + layers torn down when the
+    // briefing opened. Restore: unduck + re-layer the page-appropriate
+    // layer based on currentPage.
     try {
-      // resume() returns a Promise on some browsers; fire-and-forget
-      // is fine — by the time setLayer fires the layer factory only
-      // calls ctx.createOscillator which is sync and works regardless
-      // of whether resume has fully landed.
-      window.audioEngine?.ctx?.resume?.().catch?.(() => {});
       window.audioEngine?.unduck?.(1500);
       const p = window.__currentPage;
       if (p === 0)      window.audioEngine?.setLayer?.('stats', true);
@@ -47691,23 +47781,53 @@ body.ticker-active .gTickerLabel {
         // Start background music on first segment, duck for narrator
         startBgMusic();
         bgMusicNarratorStart();
-        // sa.play() can reject on iOS with NotAllowedError when audio
-        // session timing is awkward — multiple AudioContexts initialising
-        // around the same moment (procedural engine + _bgMusicCtx + this
-        // briefing path) occasionally trip it. The previous handler just
-        // console.warn'd and gave up, so the entire narrator went silent
-        // for the segment. One retry after 200ms recovers the common
-        // case; on hard failure we still log loudly so the issue is
-        // visible in Render / Safari console rather than silent.
+        // Defence-in-depth playback: iOS WKWebView has a quirk where
+        // sa.play() returns a resolved Promise but sa.paused stays
+        // true — happens when there's audio-session contention
+        // (multiple AudioContexts, ducked but not torn-down music,
+        // gesture-window expiration). Symptom: voiceover never
+        // plays, captions stuck on the first character because
+        // currentTime never advances. We:
+        //   1. Call sa.play() and on rejection retry once after
+        //      200ms (gesture-window edge case).
+        //   2. After play() resolves, sample sa.paused 250ms later;
+        //      if still paused, call play() again. Up to 3 such
+        //      "paused-after-resolve" retries.
+        //   3. Log every state transition so a real failure is
+        //      diagnosable in Safari/Render console.
+        let pausedRetry = 0;
+        const PAUSED_RETRIES_MAX = 3;
+        sa.addEventListener('playing', () => {
+          console.log(`[briefing] seg ${curIdx} playing — currentTime=${sa.currentTime.toFixed(2)} duration=${sa.duration.toFixed(2)}`);
+        }, { once: true });
+        sa.addEventListener('stalled', () => {
+          console.warn(`[briefing] seg ${curIdx} stalled — paused=${sa.paused} readyState=${sa.readyState}`);
+        });
         const tryPlay = (attempt = 0) => {
-          sa.play().catch(e => {
-            if (attempt === 0 && segIdx === curIdx && playing) {
-              console.warn(`[briefing] play() rejected on attempt 1 (${e.message}) — retrying in 200ms`);
-              setTimeout(() => tryPlay(1), 200);
-              return;
-            }
-            console.error(`[briefing] play() failed for segment ${curIdx} after ${attempt + 1} attempt(s):`, e);
-          });
+          const p = sa.play();
+          if (p && typeof p.then === 'function') {
+            p.then(() => {
+              // play() resolved — but on iOS the audio may still be
+              // paused. Sample shortly and force-retry if so.
+              setTimeout(() => {
+                if (segIdx !== curIdx || !playing) return;
+                if (sa.paused && pausedRetry < PAUSED_RETRIES_MAX) {
+                  pausedRetry++;
+                  console.warn(`[briefing] seg ${curIdx} play() resolved but still paused — retry ${pausedRetry}/${PAUSED_RETRIES_MAX}`);
+                  tryPlay(attempt);
+                } else if (sa.paused) {
+                  console.error(`[briefing] seg ${curIdx} stuck paused after ${PAUSED_RETRIES_MAX} retries — readyState=${sa.readyState} error=${sa.error?.code}`);
+                }
+              }, 250);
+            }).catch(e => {
+              if (attempt === 0 && segIdx === curIdx && playing) {
+                console.warn(`[briefing] seg ${curIdx} play() rejected (${e.message}) — retrying in 200ms`);
+                setTimeout(() => tryPlay(1), 200);
+                return;
+              }
+              console.error(`[briefing] seg ${curIdx} play() failed after ${attempt + 1} attempt(s):`, e);
+            });
+          }
         };
         tryPlay();
 
@@ -49565,17 +49685,13 @@ body.ticker-active .gTickerLabel {
   // ── Briefing Launcher ─────────────────────────────────────────────────────
   async function openBriefingLauncher() {
     // FIRST: silence the procedural engine IMMEDIATELY on click —
-    // duck + tear down layers + SUSPEND the AudioContext. Suspending
-    // is the critical step on iOS WKWebView: a 'running' context with
-    // zero oscillators still holds the audio session and silently
-    // blocks any HTMLAudio (the narrator) from playing. Suspend
-    // releases the session so the narrator can claim it.
+    // duck + tear down layers. (Earlier rev added ctx.suspend() too;
+    // turned out to break narrator HTMLAudio on iOS, so reverted.)
     try {
       window.audioEngine?.duck?.(0.001, 400);
       window.audioEngine?.setLayer?.('stats', false);
       window.audioEngine?.setLayer?.('globe', false);
       window.audioEngine?.setLayer?.('news', false);
-      window.audioEngine?.ctx?.suspend?.();
     } catch (_) {}
     // Race fix for tier check: __checkTier reads window.__isAdmin /
     // window.__userTier, both populated async after sign-in. Wait for
@@ -49583,9 +49699,8 @@ body.ticker-active .gTickerLabel {
     // timeout in __markTierReady caps the worst-case wait.
     try { if (window.__tierReady) await window.__tierReady; } catch (_) {}
     if (!window.__checkTier?.('pro')) {
-      // User isn't allowed in — resume context + restore music.
+      // User isn't allowed in — restore music.
       try {
-        window.audioEngine?.ctx?.resume?.().catch?.(() => {});
         const p = window.__currentPage;
         window.audioEngine?.unduck?.(800);
         if (p === 0)      window.audioEngine?.setLayer?.('stats', true);
@@ -49695,7 +49810,6 @@ body.ticker-active .gTickerLabel {
     // anyway, so this restore is wasted but harmless.
     if (!window.briefingActive) {
       try {
-        window.audioEngine?.ctx?.resume?.().catch?.(() => {});
         window.audioEngine?.unduck?.(1200);
         const p = window.__currentPage;
         if (p === 0)      window.audioEngine?.setLayer?.('stats', true);
