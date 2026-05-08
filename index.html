@@ -39260,7 +39260,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
     if (!email || !pw) return showMsg('Please fill in all fields.', 'error');
     if (pw.length < 8) return showMsg('Password must be at least 8 characters.', 'error');
     suSubmit.disabled = true; suSubmit.textContent = 'Creating account…';
-    const { error } = await sb.auth.signUp({ email, password: pw });
+    // emailRedirectTo points the verification link at /auth/verify on
+    // earth00.com. The Universal Links handshake (apple-app-site-
+    // association at /.well-known/...) lets iOS open the Capacitor
+    // app directly from that URL when installed; otherwise the same
+    // link falls back to the web /auth/verify page. Either path lands
+    // a successful exchangeCodeForSession() and signs the user in.
+    const { error } = await sb.auth.signUp({
+      email, password: pw,
+      options: { emailRedirectTo: 'https://earth00.com/auth/verify' },
+    });
     suSubmit.disabled = false; suSubmit.textContent = 'Create Account';
     if (error) return showMsg(error.message, 'error');
     showMsg('Check your email to confirm your account!', 'success');
@@ -39305,8 +39314,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
   async function forgotPassword() {
     const email = siEmail.value.trim();
     if (!email) return showMsg('Enter your email address first.', 'error');
+    // Same Universal-Links target as signUp's emailRedirectTo. The
+    // /auth/verify page detects the password-recovery flow and routes
+    // to the password-reset prompt.
     const { error } = await sb.auth.resetPasswordForEmail(email, {
-      redirectTo: window.location.href
+      redirectTo: 'https://earth00.com/auth/verify',
     });
     if (error) return showMsg(error.message, 'error');
     showMsg('Password reset email sent!', 'success');
@@ -40039,6 +40051,78 @@ const settingsToggle     = document.getElementById("settingsToggle");
     console.log('[auth] onAuthStateChange:', _event, session ? 'HAS SESSION' : 'NO SESSION');
     await applySession(session, _event);
   });
+
+  // ── Universal Links / deep-link auth handoff ────────────────────
+  // Supabase emails (signup verification, password reset, magic
+  // links) redirect to https://earth00.com/auth/verify?... — the
+  // .well-known/apple-app-site-association handshake makes iOS open
+  // those links inside the Capacitor app instead of Safari. Two
+  // entry points feed this handler:
+  //   1. Capacitor's App.appUrlOpen — fired when iOS launches/foregrounds
+  //      the app from a Universal Link.
+  //   2. The page itself loading at /auth/verify with the auth token
+  //      in the URL (web fallback when the app isn't installed, or
+  //      when a Capacitor cold-launch hands the URL via initial location).
+  // Either entry calls _completeAuthFromUrl, which detects the auth
+  // params and asks Supabase to exchange them for a session.
+  async function _completeAuthFromUrl(url) {
+    if (!url) return;
+    let parsed;
+    try { parsed = new URL(url); }
+    catch (_) { return; }
+    if (!/\/auth\/(verify|callback)/i.test(parsed.pathname)) return;
+    // Supabase puts the auth payload either in the query (?code=…) for
+    // PKCE flows or in the hash (#access_token=…&type=…) for implicit /
+    // recovery flows. exchangeCodeForSession handles the first; the
+    // second is captured automatically by the SDK on detectSessionInUrl,
+    // but the WKWebView doesn't always trigger that listener for an
+    // appUrlOpen-delivered URL — call setSession explicitly.
+    try {
+      if (parsed.searchParams.get('code')) {
+        const { error } = await sb.auth.exchangeCodeForSession(url);
+        if (error) console.warn('[auth] exchangeCodeForSession error:', error.message);
+      } else if (parsed.hash && parsed.hash.includes('access_token=')) {
+        const params = new URLSearchParams(parsed.hash.replace(/^#/, ''));
+        const access_token  = params.get('access_token');
+        const refresh_token = params.get('refresh_token');
+        if (access_token && refresh_token) {
+          const { error } = await sb.auth.setSession({ access_token, refresh_token });
+          if (error) console.warn('[auth] setSession error:', error.message);
+        }
+      }
+    } catch (err) {
+      console.warn('[auth] verify handoff failed:', err?.message || err);
+    }
+  }
+
+  // Entry 1: Capacitor App.appUrlOpen — fires when iOS opens the
+  // installed app from a https://earth00.com/auth/* Universal Link.
+  // Wrapped in try/catch + plugin existence check so this is a no-op
+  // on web / older Capacitor builds without the App plugin.
+  try {
+    const _AppPlugin = window.Capacitor?.Plugins?.App;
+    if (_AppPlugin?.addListener) {
+      _AppPlugin.addListener('appUrlOpen', (event) => {
+        if (event && event.url) _completeAuthFromUrl(event.url).catch(() => {});
+      });
+      // Also resolve the URL the app was COLD-LAUNCHED with (not just
+      // foregrounded). getLaunchUrl is async and returns the original
+      // URL once per launch; safe to call unconditionally.
+      _AppPlugin.getLaunchUrl?.().then((res) => {
+        if (res?.url) _completeAuthFromUrl(res.url).catch(() => {});
+      }).catch(() => {});
+    }
+  } catch (_) {}
+
+  // Entry 2: web fallback. If the user clicks the verification link
+  // on a device WITHOUT the app installed (or in a desktop browser),
+  // they land on /auth/verify with the same auth params in the URL.
+  // The Supabase SDK auto-detects ?code=…/#access_token=… on init, but
+  // we still call _completeAuthFromUrl on first load as a redundant
+  // path that surfaces any error we can show to the user.
+  if (/\/auth\/(verify|callback)/i.test(window.location.pathname)) {
+    _completeAuthFromUrl(window.location.href).catch(() => {});
+  }
 
   (async function initAuth() {
     console.log('[auth] === initAuth START ===');
@@ -52375,6 +52459,26 @@ body.ticker-active .gTickerLabel {
                 min-width 0.4s cubic-bezier(0.32, 0.72, 0, 1),
                 max-width 0.4s cubic-bezier(0.32, 0.72, 0, 1);
   }
+  /* Auth modal — sign-in / sign-up text fields were getting hidden
+     behind the keyboard on iOS because #authCard is centered in the
+     flex viewport and the keyboard ate the bottom half. Pin the card
+     to flex-start (top of overlay) when an auth input is focused, then
+     clamp max-height to the available space above the keyboard so the
+     card scrolls internally if it would overflow. align-self overrides
+     the parent's align-items: center for just this child. */
+  body #authCard.kbd-open {
+    align-self: flex-start;
+    margin-top: 12px;
+    /* content-box (the default on #authCard) leaves max-height applying
+       only to the content area — the 34px vertical padding then extends
+       the card by ~70px past the cap and the submit button slips back
+       behind the keyboard. Switch to border-box so max-height bounds
+       the entire card. */
+    box-sizing: border-box;
+    max-height: calc(100vh - var(--kbd-shift, 0px) - 24px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
   body #semHeatPanel.kbd-open {
     /* Pin 8px above the keyboard, same as news flows. Natural max-height
        so the panel keeps its normal content shape — was max(220px, …)
@@ -52400,6 +52504,13 @@ body.ticker-active .gTickerLabel {
     // the field stayed behind the keyboard.
     { input: '#semHeatAskInput', panel: '#semHeatPanel' },
     { input: '#flowKeyword',     panel: '#flowControls'  },
+    // Auth modal — both sign-in and sign-up forms have email + password
+    // inputs. Without these the card stayed flex-centered and the lower
+    // input + submit button hid behind the keyboard on iOS.
+    { input: '#siEmail',         panel: '#authCard'      },
+    { input: '#siPassword',      panel: '#authCard'      },
+    { input: '#suEmail',         panel: '#authCard'      },
+    { input: '#suPassword',      panel: '#authCard'      },
   ];
   let activePanel = null;
   let activeInput = null;

@@ -42411,7 +42411,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
     if (!email || !pw) return showMsg('Please fill in all fields.', 'error');
     if (pw.length < 8) return showMsg('Password must be at least 8 characters.', 'error');
     suSubmit.disabled = true; suSubmit.textContent = 'Creating account…';
-    const { error } = await sb.auth.signUp({ email, password: pw });
+    // emailRedirectTo lands on /auth/verify which iOS Universal Links
+    // route into the Capacitor app; non-iOS / app-not-installed users
+    // hit the static fallback page that hands tokens back to the SPA.
+    const { error } = await sb.auth.signUp({
+      email, password: pw,
+      options: { emailRedirectTo: 'https://earth00.com/auth/verify' },
+    });
     suSubmit.disabled = false; suSubmit.textContent = 'Create Account';
     if (error) return showMsg(error.message, 'error');
     showMsg('Check your email to confirm your account!', 'success');
@@ -42469,8 +42475,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
   async function forgotPassword() {
     const email = siEmail.value.trim();
     if (!email) return showMsg('Enter your email address first.', 'error');
+    // Same Universal-Links target as signUp's emailRedirectTo.
     const { error } = await sb.auth.resetPasswordForEmail(email, {
-      redirectTo: window.location.href
+      redirectTo: 'https://earth00.com/auth/verify',
     });
     if (error) return showMsg(error.message, 'error');
     showMsg('Password reset email sent!', 'success');
@@ -43328,6 +43335,53 @@ const settingsToggle     = document.getElementById("settingsToggle");
     console.log('[auth] onAuthStateChange:', _event, session ? 'HAS SESSION' : 'NO SESSION');
     await applySession(session, _event);
   });
+
+  // ── Universal Links / deep-link auth handoff ────────────────────
+  // Supabase emails redirect to https://earth00.com/auth/verify?... —
+  // iOS Universal Links open this app instead of Safari (per the
+  // .well-known/apple-app-site-association handshake). Two entry
+  // points: Capacitor's appUrlOpen for foreground/background launches,
+  // and getLaunchUrl for cold launches. See root index.html for the
+  // longer rationale.
+  async function _completeAuthFromUrl(url) {
+    if (!url) return;
+    let parsed;
+    try { parsed = new URL(url); }
+    catch (_) { return; }
+    if (!/\/auth\/(verify|callback)/i.test(parsed.pathname)) return;
+    try {
+      if (parsed.searchParams.get('code')) {
+        const { error } = await sb.auth.exchangeCodeForSession(url);
+        if (error) console.warn('[auth] exchangeCodeForSession error:', error.message);
+      } else if (parsed.hash && parsed.hash.includes('access_token=')) {
+        const params = new URLSearchParams(parsed.hash.replace(/^#/, ''));
+        const access_token  = params.get('access_token');
+        const refresh_token = params.get('refresh_token');
+        if (access_token && refresh_token) {
+          const { error } = await sb.auth.setSession({ access_token, refresh_token });
+          if (error) console.warn('[auth] setSession error:', error.message);
+        }
+      }
+    } catch (err) {
+      console.warn('[auth] verify handoff failed:', err?.message || err);
+    }
+  }
+
+  try {
+    const _AppPlugin = window.Capacitor?.Plugins?.App;
+    if (_AppPlugin?.addListener) {
+      _AppPlugin.addListener('appUrlOpen', (event) => {
+        if (event && event.url) _completeAuthFromUrl(event.url).catch(() => {});
+      });
+      _AppPlugin.getLaunchUrl?.().then((res) => {
+        if (res?.url) _completeAuthFromUrl(res.url).catch(() => {});
+      }).catch(() => {});
+    }
+  } catch (_) {}
+
+  if (/\/auth\/(verify|callback)/i.test(window.location.pathname)) {
+    _completeAuthFromUrl(window.location.href).catch(() => {});
+  }
 
   (async function initAuth() {
     console.log('[auth] === initAuth START ===');
@@ -59052,6 +59106,19 @@ body.ticker-active .gTickerLabel {
                 min-width 0.4s cubic-bezier(0.32, 0.72, 0, 1),
                 max-width 0.4s cubic-bezier(0.32, 0.72, 0, 1);
   }
+  /* Auth modal — pin the card to flex-start when an auth input is
+     focused so the keyboard doesn't hide the lower fields. See root
+     index.html for the full rationale. */
+  body #authCard.kbd-open {
+    align-self: flex-start;
+    margin-top: 12px;
+    /* border-box so max-height bounds the entire card (#authCard is
+       content-box by default → padding extends past the cap). */
+    box-sizing: border-box;
+    max-height: calc(100vh - var(--kbd-shift, 0px) - 24px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
   body #semHeatPanel.kbd-open {
     /* Pin 8px above the keyboard, same as news flows. Natural max-height
        so the panel keeps its normal content shape — was max(220px, …)
@@ -59083,6 +59150,11 @@ body.ticker-active .gTickerLabel {
     // the field stayed behind the keyboard.
     { input: '#semHeatAskInput', panel: '#semHeatPanel' },
     { input: '#flowKeyword',     panel: '#flowControls'  },
+    // Auth modal inputs — sign-in + sign-up email/password fields.
+    { input: '#siEmail',         panel: '#authCard'      },
+    { input: '#siPassword',      panel: '#authCard'      },
+    { input: '#suEmail',         panel: '#authCard'      },
+    { input: '#suPassword',      panel: '#authCard'      },
   ];
 
   let activePanel = null;

@@ -208,6 +208,32 @@ const corsOptions = {
 app.use(cors(corsOptions));
 app.options(/.*/, cors(corsOptions));
 
+// Apple App Site Association — Universal Links handshake. iOS fetches
+// this URL when the Earth00 app is installed/updated to verify that
+// our app is allowed to handle https://earth00.com/auth/* deep links.
+// Apple is strict about: (a) the well-known path with NO file extension,
+// (b) the application/json content-type, (c) NO redirect (HTTP 200
+// straight from origin). The same JSON also lives at
+// .well-known/apple-app-site-association in the repo for the static
+// host that serves earth00.com — this server-side route is a fallback
+// in case path-rewriting or .well-known blocking gets in the way.
+app.get('/.well-known/apple-app-site-association', (req, res) => {
+  res.type('application/json').sendFile(
+    require('path').join(__dirname, '.well-known', 'apple-app-site-association')
+  );
+});
+
+// /auth/verify — landing page for Supabase email verification, password
+// reset, and magic link emails. iOS Universal Links open the Capacitor
+// app instead and skip this server route entirely. This handler covers
+// non-iOS clicks AND iOS clicks where the app isn't installed yet —
+// either way, we serve the static fallback page that re-routes the
+// browser to / (preserving the auth tokens in query / hash) so the
+// SPA's deep-link auth listener can complete the handoff.
+app.get(['/auth/verify', '/auth/callback'], (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'auth', 'verify.html'));
+});
+
 app.use(express.json());
 
 // ── Browser caching headers for read-heavy GET endpoints ──
