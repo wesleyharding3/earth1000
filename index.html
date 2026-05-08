@@ -12279,9 +12279,19 @@ window.fmtDate = function(d) {
     // Don't override if caller already set a signal
     if (init?.signal) return _origFetch.call(this, input, init);
     const url = typeof input === 'string' ? input : input?.url || '';
+    const isClaude = CLAUDE_TIMEOUT_PATTERNS.some(p => url.includes(p));
+    // Magical twinkle on every Claude-endpoint kickoff. Single point of
+    // integration covers keyword context / article explain / cluster
+    // summary / flow context / heatmap Q&A — adding a new AI endpoint
+    // to CLAUDE_TIMEOUT_PATTERNS automatically gives it the same audio
+    // feedback. Internal 250ms debounce in triggerAiTwinkle prevents
+    // stacking on retried/parallel requests.
+    if (isClaude) {
+      try { window.audioEngine?.triggerAiTwinkle?.(); } catch (_) {}
+    }
     const ms =
-      CLAUDE_TIMEOUT_PATTERNS.some(p => url.includes(p)) ? CLAUDE_TIMEOUT :
-      LONG_TIMEOUT_PATTERNS.some(p => url.includes(p))   ? LONG_TIMEOUT   :
+      isClaude ? CLAUDE_TIMEOUT :
+      LONG_TIMEOUT_PATTERNS.some(p => url.includes(p)) ? LONG_TIMEOUT :
       DEFAULT_TIMEOUT;
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), ms);
@@ -14120,6 +14130,86 @@ window.__arcCtxSegmented = (function() {
     }, opts || {}));
   }
 
+  // Magical buzzing twinkle — fired when an AI-context request begins
+  // (any URL matched by CLAUDE_TIMEOUT_PATTERNS in the global fetch
+  // wrapper). Soft and subtle: four sine voices stacked in a major-triad
+  // voicing high in the register (G6 / B6 / D7 / G7), each with a slow
+  // detuning LFO so the partials beat against each other — that's the
+  // "buzzing" magical character. Voices fan in 25ms apart so the chime
+  // arrives like a sparkle rather than a chord-stab. A whisper of
+  // high-passed noise sits over the top for the "twinkle dust" texture.
+  // 250ms internal debounce so spam-clicks don't stack.
+  function triggerAiTwinkle(opts) {
+    if (!ctx || muted) return;
+    const last = triggerAiTwinkle._lastFire || 0;
+    const nowMs = Date.now();
+    if (nowMs - last < 250) return;
+    triggerAiTwinkle._lastFire = nowMs;
+
+    opts = opts || {};
+    const now = ctx.currentTime;
+    const vol = (opts.vol == null) ? 0.06 : opts.vol;
+
+    // High major-triad voicing — G6, B6, D7, G7. Stacked octaves +
+    // major thirds give a chime feel without dissonance.
+    const PITCHES = [1568.00, 1975.53, 2349.32, 3135.96];
+
+    PITCHES.forEach((hz, i) => {
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.value = hz;
+
+      // Per-voice pitch-wobble LFO — each voice oscillates at a
+      // slightly different rate so the wobbles beat against each
+      // other instead of moving in lockstep. That's the magical
+      // shimmer: phase incoherence between partials.
+      const lfo = ctx.createOscillator();
+      lfo.type = 'sine';
+      lfo.frequency.value = 5 + i * 1.3;
+      const lfoGain = ctx.createGain();
+      lfoGain.gain.value = 4;                   // ±4 Hz pitch wobble
+      lfo.connect(lfoGain).connect(osc.frequency);
+
+      const stagger = i * 0.025;                // chime fan-in
+      const dur     = 0.70 + i * 0.12;          // higher voices ring slightly longer
+      const peak    = vol * (1.0 - i * 0.12);   // higher voices quieter
+
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, now + stagger);
+      g.gain.exponentialRampToValueAtTime(peak, now + stagger + 0.015);
+      g.gain.exponentialRampToValueAtTime(0.0001, now + stagger + dur);
+
+      osc.connect(g).connect(duckGain);
+      osc.start(now + stagger);
+      osc.stop(now + stagger + dur + 0.05);
+      lfo.start(now + stagger);
+      lfo.stop(now + stagger + dur + 0.05);
+    });
+
+    // Twinkle dust — high-passed noise burst, very quiet, short.
+    const sr = ctx.sampleRate;
+    const bufLen = Math.ceil(sr * 0.4);
+    const buf = ctx.createBuffer(1, bufLen, sr);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < bufLen; i++) data[i] = Math.random() * 2 - 1;
+    const noise = ctx.createBufferSource();
+    noise.buffer = buf;
+
+    const noiseFilt = ctx.createBiquadFilter();
+    noiseFilt.type = 'highpass';
+    noiseFilt.frequency.value = 6000;
+    noiseFilt.Q.value = 0.5;
+
+    const noiseGain = ctx.createGain();
+    noiseGain.gain.setValueAtTime(0.0001, now);
+    noiseGain.gain.exponentialRampToValueAtTime(vol * 0.4, now + 0.01);
+    noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.4);
+
+    noise.connect(noiseFilt).connect(noiseGain).connect(duckGain);
+    noise.start(now);
+    noise.stop(now + 0.45);
+  }
+
   // Nav-button click — pure transient, no pitched content. The prior
   // version layered a 1500→700Hz sine chirp under a noise burst to
   // give the click "body", but the chirp was the part that read as
@@ -14355,7 +14445,7 @@ window.__arcCtxSegmented = (function() {
 
   window.audioEngine = {
     unlock, setLayer, triggerStab, triggerWhoosh, triggerArticleTap,
-    triggerThreadTap, triggerLineTap,
+    triggerThreadTap, triggerLineTap, triggerAiTwinkle,
     triggerNavClick, triggerPageWhoosh,
     pulseActivity,
     duck, unduck, setMasterMute, isMuted, isUnlocked,
@@ -32008,7 +32098,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
             inner.addEventListener('click', function() {
               try {
                 const t = JSON.parse(this.dataset.thread);
-                openThreadInPanel(t);
+                // Route through window.openThreadInPanel (NOT the inner
+                // function in this scope) so the selection-feedback
+                // pulse fires. Pass __kind so timelines get the line
+                // pulse instead of the thread pulse — see loadTimelines
+                // tagging at the fetch call.
+                window.openThreadInPanel(t, { kind: t.__kind || 'thread' });
               } catch(e) { console.warn('Failed to open item:', e); }
             });
           }
