@@ -14395,6 +14395,62 @@ window.fmtDate = function(d) {
     pulseActivity(0.25);
   }
 
+  // Nav-button click — small, fast, percussive tick deliberately
+  // tuned to sit ABOVE triggerArticleTap's bass thump so the two
+  // never get confused. A short noise burst through a tight bandpass
+  // (~3.5kHz) gives the "tip of a pen on glass" character; layered
+  // with a sine blip (1500Hz → 700Hz over 35ms) for the body. Total
+  // duration ~80ms so rapid taps don't smear. Volume 0.10 — quieter
+  // than article taps because nav clicks are casual / frequent and
+  // shouldn't punch through whatever procedural pad is playing.
+  function triggerNavClick(opts) {
+    if (!ctx || muted) return;
+    opts = opts || {};
+    const now = ctx.currentTime;
+    const vol = (opts.vol == null) ? 0.10 : opts.vol;
+    const dur = 0.08;
+
+    // Sine body — quick downward chirp gives the click a "settled" tail
+    // instead of a sterile sine pip.
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(1500, now);
+    osc.frequency.exponentialRampToValueAtTime(700, now + 0.035);
+
+    const oscGain = ctx.createGain();
+    oscGain.gain.setValueAtTime(0.0001, now);
+    oscGain.gain.exponentialRampToValueAtTime(vol, now + 0.004);
+    oscGain.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+
+    osc.connect(oscGain).connect(duckGain);
+    osc.start(now);
+    osc.stop(now + dur + 0.02);
+
+    // Noise tick — lazy-build a short noise buffer once, reuse it.
+    if (!triggerNavClick._noiseBuf) {
+      const nb = ctx.createBuffer(1, Math.floor(ctx.sampleRate * 0.05), ctx.sampleRate);
+      const data = nb.getChannelData(0);
+      for (let i = 0; i < data.length; i++) data[i] = (Math.random() * 2 - 1) * 0.6;
+      triggerNavClick._noiseBuf = nb;
+    }
+    const noise = ctx.createBufferSource();
+    noise.buffer = triggerNavClick._noiseBuf;
+
+    const bp = ctx.createBiquadFilter();
+    bp.type = 'bandpass';
+    bp.frequency.value = 3500;
+    bp.Q.value = 6;
+
+    const noiseGain = ctx.createGain();
+    noiseGain.gain.setValueAtTime(0.0001, now);
+    noiseGain.gain.exponentialRampToValueAtTime(vol * 0.9, now + 0.002);
+    noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.05);
+
+    noise.connect(bp).connect(noiseGain).connect(duckGain);
+    noise.start(now);
+    noise.stop(now + 0.06);
+  }
+
   // ── Activity pulsing ────────────────────────────────────────────
   // User actions (scroll, click, navigate) briefly bloom the
   // generative field via its activityGate. Decays back to baseline
@@ -14471,6 +14527,75 @@ window.fmtDate = function(d) {
     src.stop(now + dur + 0.05);
   }
 
+  // Page-transition whoosh — designed to bridge a setLayer swap. Where
+  // triggerWhoosh is short and tonal, this one is longer (0.95s) and
+  // routes BOTH dry and (when reverbIn is available) wet so its tail
+  // smears into the same reverb bus the music layers use. Result: the
+  // whoosh and the new layer share a tail, so the swap reads as one
+  // continuous gesture rather than "a sound effect plus a music
+  // change". Direction param ('up'|'down') flips the frequency sweep
+  // so jumping forward through pages and backward sound different.
+  // Default 'down' = stats→globe / globe→news (forward through the
+  // tab order); 'up' = globe→stats / news→globe (backward).
+  function triggerPageWhoosh(opts) {
+    if (!ctx || muted) return;
+    opts = opts || {};
+    const now = ctx.currentTime;
+    const dur = opts.dur || 0.95;
+    const vol = (opts.vol == null) ? 0.22 : opts.vol;
+    const direction = opts.direction === 'up' ? 'up' : 'down';
+    const fLow = opts.fLow || 320;
+    const fHigh = opts.fHigh || 4200;
+    const fStart = direction === 'down' ? fHigh : fLow;
+    const fEnd   = direction === 'down' ? fLow  : fHigh;
+
+    const sr = ctx.sampleRate;
+    const bufLen = Math.ceil(sr * (dur + 0.05));
+    const buf = ctx.createBuffer(1, bufLen, sr);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < bufLen; i++) data[i] = Math.random() * 2 - 1;
+    const src = ctx.createBufferSource();
+    src.buffer = buf;
+
+    const filt = ctx.createBiquadFilter();
+    filt.type = 'bandpass';
+    filt.Q.value = 1.1;
+    filt.frequency.setValueAtTime(fStart, now);
+    filt.frequency.exponentialRampToValueAtTime(fEnd, now + dur);
+
+    // Slight downward tilt at the very end so the whoosh "settles"
+    // into the new layer instead of just clipping off at peak energy.
+    const tilt = ctx.createBiquadFilter();
+    tilt.type = 'lowshelf';
+    tilt.frequency.value = 800;
+    tilt.gain.setValueAtTime(0, now);
+    tilt.gain.linearRampToValueAtTime(3, now + dur * 0.7);
+
+    const dryGain = ctx.createGain();
+    dryGain.gain.setValueAtTime(0.0001, now);
+    // Slow attack (~80ms) so the whoosh feels intentional, not snappy.
+    // Long tail uses linear-then-exp so the noise mass sticks around
+    // long enough to mask the layer crossfade beneath it.
+    dryGain.gain.exponentialRampToValueAtTime(vol, now + 0.08);
+    dryGain.gain.linearRampToValueAtTime(vol * 0.55, now + dur * 0.45);
+    dryGain.gain.exponentialRampToValueAtTime(0.0001, now + dur);
+
+    src.connect(filt).connect(tilt).connect(dryGain).connect(duckGain);
+    if (reverbIn) {
+      // Wet send — convolves the whoosh into the same reverb the music
+      // layers use, so the transition tail blooms into the new layer's
+      // wash. wetVol kept low so the dry sweep still leads.
+      const wetGain = ctx.createGain();
+      wetGain.gain.setValueAtTime(0.0001, now);
+      wetGain.gain.exponentialRampToValueAtTime(vol * 0.45, now + 0.1);
+      wetGain.gain.linearRampToValueAtTime(vol * 0.30, now + dur * 0.6);
+      wetGain.gain.exponentialRampToValueAtTime(0.0001, now + dur + 0.4);
+      tilt.connect(wetGain).connect(reverbIn);
+    }
+    src.start(now);
+    src.stop(now + dur + 0.5);
+  }
+
   function duck(amount, durationMs) {
     if (!ctx || !duckGain) return;
     const now = ctx.currentTime;
@@ -14519,6 +14644,7 @@ window.fmtDate = function(d) {
 
   window.audioEngine = {
     unlock, setLayer, triggerStab, triggerWhoosh, triggerArticleTap,
+    triggerNavClick, triggerPageWhoosh,
     pulseActivity,
     duck, unduck, setMasterMute, isMuted, isUnlocked,
     get ctx() { return ctx; },
@@ -14533,6 +14659,46 @@ window.fmtDate = function(d) {
       };
     }
   };
+})();
+
+/* ── Top-nav click sound ──────────────────────────────────────────────
+   Plays the procedural triggerNavClick tick whenever ANY direct child
+   .iconBtn inside #topLeftCluster (or the search button which lives in
+   #searchWrapper alongside it) is tapped. Uses a delegated capture
+   listener so it doesn't matter how each button binds its own handler
+   (some use addEventListener, some use inline onclick) — the tick fires
+   in the capture phase before any of those handlers run.
+   Re-entrancy guard: a single tap can produce both a `click` event AND
+   a synthesized one from `pointerup` paths; we collapse them within a
+   60ms window so a single user tap = one tick. Mute / engine-locked /
+   any other no-op cases are handled by triggerNavClick itself. */
+(function _wireNavClickSound() {
+  const ATTACH = () => {
+    const cluster = document.getElementById('topLeftCluster');
+    if (!cluster) return;
+    let _lastClickTs = 0;
+    const handler = (ev) => {
+      const btn = ev.target?.closest?.('.iconBtn');
+      if (!btn) return;
+      // Only buttons that ARE inside the top cluster (or its sibling
+      // search wrapper, which renders alongside the cluster but lives
+      // in its own element).
+      if (!cluster.contains(btn) && !document.getElementById('searchWrapper')?.contains(btn)) return;
+      const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+      if (now - _lastClickTs < 60) return;
+      _lastClickTs = now;
+      try { window.audioEngine?.triggerNavClick?.(); } catch (_) {}
+    };
+    // Capture phase so we fire even if the button's own handler calls
+    // stopPropagation on its bubble-phase listener.
+    cluster.addEventListener('click', handler, true);
+    document.getElementById('searchWrapper')?.addEventListener('click', handler, true);
+  };
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', ATTACH, { once: true });
+  } else {
+    ATTACH();
+  }
 })();
 
 /* ── Offline / online detection ── */
@@ -35363,17 +35529,34 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }
       current = idx;
       window.__currentPage = idx;
-      // Page-aware audio layers — each page has its own factory, so
-      // navigating between Globe and Stats does a 1.6s density
-      // crossfade rather than reusing one layer for both. Stats =
-      // rich variant (sparkle/sync/delay), Globe = sparse, News =
-      // its own pad. setLayer is a no-op if the engine is locked, so
-      // calling unconditionally is safe; the audioEngine:unlocked
-      // listener re-syncs once the user touches.
+      // Page-aware audio layers — each page has its own factory:
+      //   Stats = rich variant (sparkle/sync/delay), Globe = sparse,
+      //   News  = dyad pad.
+      // Transition gesture: a procedural whoosh fires on the page
+      // change AND the layer swap is collapsed onto a short
+      // crossfade (0.35s) tucked under the whoosh's noise mass. The
+      // whoosh's wet tail bleeds into the same reverb bus the new
+      // layer uses, so the moment of swap reads as a single
+      // continuous transition rather than "old music fades out, new
+      // music fades in" with a perceptible gap. Direction follows
+      // tab order: forward (e.g. stats → globe → news) sweeps
+      // high→low; backward sweeps low→high.
       if (window.audioEngine) {
-        window.audioEngine.setLayer('stats', idx === 0);
-        window.audioEngine.setLayer('globe', idx === 1);
-        window.audioEngine.setLayer('news',  idx === 2);
+        const pageChanged = (prevPage !== idx);
+        if (pageChanged) {
+          // Whoosh first so its leading edge has already dropped
+          // ~80ms of attack into the bus by the time the layer
+          // swap kicks in just below.
+          try {
+            window.audioEngine.triggerPageWhoosh?.({
+              direction: idx > prevPage ? 'down' : 'up',
+            });
+          } catch (_) {}
+        }
+        const swapFade = pageChanged ? 0.35 : 1.0;
+        window.audioEngine.setLayer('stats', idx === 0, swapFade);
+        window.audioEngine.setLayer('globe', idx === 1, swapFade);
+        window.audioEngine.setLayer('news',  idx === 2, swapFade);
       }
       // Skip animation when jumping more than 1 page to avoid
       // sliding through heavy intermediate pages (e.g. Globe WebGL).
@@ -38310,7 +38493,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
      which left the leader lines drawing on top of the cards and the
      primary/secondary halos appearing to overlap the labels. */
   z-index: 5060;
-  background: rgba(6,10,20,0.82);
+  /* Glass treatment matches .bControlBtn (line ~45664) and the
+     briefing source-pie panel — radial sheen at top, linear body
+     gradient, inset white highlight + soft outer shadow, backdrop
+     blur+saturate so the globe bleeds through. Replaces the prior
+     flat rgba(6,10,20,0.82) tile which read as a solid plaque
+     pasted onto the globe rather than as part of the same crystal
+     family the rest of the app's overlay UI sits in. */
+  background:
+    radial-gradient(ellipse 120% 60% at 30% 0%, rgba(255,255,255,0.18) 0%, transparent 60%),
+    linear-gradient(180deg, rgba(255,255,255,0.10) 0%, rgba(7,12,22,0.45) 50%, rgba(7,12,22,0.55) 100%);
   border: 1px solid rgba(255,180,80,0.28);
   border-radius: 8px;
   padding: 5px 9px;
@@ -38333,9 +38525,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
      stays legible. */
   transform: translate(-50%, -100%) translateY(-32px);
   transition: opacity 0.35s ease;
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
-  box-shadow: 0 8px 24px rgba(0,0,0,0.45), 0 0 18px rgba(255,180,80,0.06);
+  backdrop-filter: blur(14px) saturate(1.2);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  box-shadow:
+    0 8px 24px rgba(0,0,0,0.45),
+    0 0 18px rgba(255,180,80,0.06),
+    inset 0 1px 1px 0 rgba(255,255,255,0.28),
+    inset 0 -1px 2px -1px rgba(0,0,0,0.15);
   text-shadow: 0 1px 3px rgba(0,0,0,0.6);
   max-width: 180px;
   overflow: hidden;
@@ -38354,11 +38550,29 @@ const settingsToggle     = document.getElementById("settingsToggle");
 /* Tiered eyebrow palette for thread / line flow arcs. Green border
    accent on primaries hugs the arc color; sky-blue on secondaries
    mirrors their arcs. Applied via fnl-tier-primary / fnl-tier-secondary
-   class set by showFlowNodeLabels when a tier classification is active. */
+   class set by showFlowNodeLabels when a tier classification is active.
+   Tier-specific outer glow is layered ON TOP of the base glass shadow
+   stack (mirrors .bControlBtn.primary's blue glow pattern) so the
+   primary/secondary distinction reads at a glance without breaking
+   the shared crystal aesthetic. */
 .flowNodeLabel.fnl-tier-primary .fnlType   { color: rgba(100,240,160,0.95); }
 .flowNodeLabel.fnl-tier-secondary .fnlType { color: rgba(120,200,250,0.95); }
-.flowNodeLabel.fnl-tier-primary   { border-color: rgba(80,220,140,0.4); }
-.flowNodeLabel.fnl-tier-secondary { border-color: rgba(100,180,240,0.34); }
+.flowNodeLabel.fnl-tier-primary {
+  border-color: rgba(80,220,140,0.45);
+  box-shadow:
+    0 8px 24px rgba(0,0,0,0.45),
+    0 0 16px 2px rgba(80,220,140,0.18),
+    inset 0 1px 1px 0 rgba(255,255,255,0.28),
+    inset 0 -1px 2px -1px rgba(0,0,0,0.15);
+}
+.flowNodeLabel.fnl-tier-secondary {
+  border-color: rgba(100,180,240,0.40);
+  box-shadow:
+    0 8px 24px rgba(0,0,0,0.45),
+    0 0 16px 2px rgba(100,180,240,0.16),
+    inset 0 1px 1px 0 rgba(255,255,255,0.28),
+    inset 0 -1px 2px -1px rgba(0,0,0,0.15);
+}
 /* Place name — matches .flowCtxTitle palette (12px, 600, tight leading). */
 .flowNodeLabel .fnlName {
   font-size: 12px;
@@ -44435,14 +44649,24 @@ const settingsToggle     = document.getElementById("settingsToggle");
   opacity: 0;
   transform: translateY(-8px);
   transition: opacity 0.45s ease, transform 0.45s cubic-bezier(0.32, 0.72, 0, 1);
-  /* Matches the article-roll card opacity (0.55) so the two side
-     panels read as a visual pair. Backdrop blur preserves legibility. */
-  background: rgba(6, 10, 20, 0.55);
-  border: 1px solid rgba(255, 255, 255, 0.10);
-  border-radius: 10px;
+  /* Glass treatment — matches the canonical .bControlBtn / .flowNodeLabel
+     pattern: radial sheen at the top-left, linear gradient body, inset
+     white highlight + soft outer shadow, backdrop blur+saturate. Replaces
+     the prior flat rgba(6,10,20,0.55) tile so the pie reads as part of
+     the same crystal family the control pill, the flow-arc labels, and
+     the briefing buttons all sit in. */
+  background:
+    radial-gradient(ellipse 120% 60% at 30% 0%, rgba(255,255,255,0.18) 0%, transparent 60%),
+    linear-gradient(180deg, rgba(255,255,255,0.10) 0%, rgba(7,12,22,0.45) 50%, rgba(7,12,22,0.55) 100%);
+  border: 1px solid rgba(255,255,255,0.18);
+  border-radius: 12px;
   padding: 8px 10px 10px;
-  backdrop-filter: blur(12px) saturate(1.2);
-  -webkit-backdrop-filter: blur(12px) saturate(1.2);
+  backdrop-filter: blur(14px) saturate(1.2);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  box-shadow:
+    0 8px 24px rgba(0,0,0,0.40),
+    inset 0 1px 1px 0 rgba(255,255,255,0.28),
+    inset 0 -1px 2px -1px rgba(0,0,0,0.15);
 }
 .bSegmentSourcePie.visible {
   opacity: 1;
@@ -44538,7 +44762,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
 /* ── Briefing-active mobile: claim the bottom screen real estate that
    the ticker + page-nav normally occupy. Pie + article roll dock at
    the bottom, controls slot under them at absolute bottom, and both
-   navbars hide so the globe gets the entire upper viewport. */
+   navbars hide so the globe gets the entire upper viewport.
+
+   Bottom-stack vertical math:
+     | controls bottom |  -6px below safe area
+     | controls height |  pill (~38px) + seek slider (~16px)
+                          + gap (6px) + breathing (~10px) ≈ 70-90px
+                          worst case with captions on ~110px
+     | gap             |  ~14px between controls top and panel bottom
+     | panel bottom    |  ≥ 110px above safe area (below)
+   The 110px panel-bottom offset gives clear separation even when the
+   controls grow vertically (seek slider + captions visible). Was 56px
+   which left the panels overlapping the controls when the seek row was
+   visible — exactly the user-reported "panels touching the controls". */
 @media (max-width: 720px) {
   body.briefing-active #globalTicker,
   body.briefing-active #pageNav,
@@ -44549,7 +44785,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
   body.briefing-active .bSegmentSourcePie,
   body.briefing-active .bSegmentArticleRoll {
     top: auto;
-    bottom: calc(env(safe-area-inset-bottom, 0px) + var(--app-bottom-inset, 0px) + 56px);
+    bottom: calc(env(safe-area-inset-bottom, 0px) + var(--app-bottom-inset, 0px) + 110px);
   }
   body.briefing-active .bSegmentSourcePie { transform: translateY(8px); }
   body.briefing-active .bSegmentArticleRoll { transform: translateY(8px); }
@@ -47311,13 +47547,42 @@ body.ticker-active .gTickerLabel {
           }
           return best ? (best.iso_code || best.key || '').toUpperCase() : null;
         };
+        // Country name normalization — collapses common variant suffixes
+        // ("United States" vs "United States of America", "Czech Republic"
+        // vs "Czechia"-but-not-quite, "The Bahamas" vs "Bahamas") so a
+        // briefing that says "United States" still resolves against the
+        // polygon layer whose canonical name is "United States of America".
+        // Mirrors __openCountryByName's normalize step (line ~23207).
+        // Without this, US-mentioning segments fell through `_findIso` to
+        // the lat/lon fallback, and any segment where the lat/lon was
+        // absent or imprecise left the US polygon unlit even though the
+        // narrator named it.
+        const _normName = (s) => String(s || '')
+          .toLowerCase()
+          .replace(/[\.,'’]/g, '')
+          .replace(/\s+of\s+america\b/g, '')
+          .replace(/\brepublic\s+of\b/g, '')
+          .replace(/\bthe\s+/g, '')
+          .replace(/\s+/g, ' ')
+          .trim();
         const _findIso = (name) => {
           if (!name) return null;
-          const n = name.trim().toLowerCase();
+          const n = String(name).trim().toLowerCase();
           // Polygon layer first — matches the keys repaint() checks.
-          const pc = polyC.find(g => (g.lowerName || (g.name || '').toLowerCase()) === n);
+          // Try exact lowercase match, then normalized (drops "of America"
+          // etc.) so common name variants resolve.
+          let pc = polyC.find(g => (g.lowerName || (g.name || '').toLowerCase()) === n);
+          if (!pc) {
+            const nn = _normName(name);
+            if (nn) pc = polyC.find(g => _normName(g.lowerName || g.name || '') === nn);
+          }
           if (pc) return (pc.key || pc.iso || '').toUpperCase();
-          const c = globeC.find(g => g.name && g.name.toLowerCase() === n);
+          // Globe centroid fallback (also try normalized form).
+          let c = globeC.find(g => g.name && g.name.toLowerCase() === n);
+          if (!c) {
+            const nn = _normName(name);
+            if (nn) c = globeC.find(g => _normName(g.name || '') === nn);
+          }
           return c ? (c.iso_code || c.key || '').toUpperCase() : null;
         };
         if (seg.primary_country) addIso(_findIso(seg.primary_country.name) || _nearestIso(seg.primary_country.lat, seg.primary_country.lon));

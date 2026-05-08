@@ -65,17 +65,31 @@ async function main() {
   for (const t of threads) {
     if (evaluated >= MAX_THREADS) break;
 
-    const articles = await loadArticleSample(t.id);
-    if (articles.length < SPLIT_THRESHOLD) {
-      // Article count from story_threads can lag if rows were detached;
-      // re-check the live count and skip if it's actually under threshold.
-      console.log(`   [${el()}] thread ${t.id} live count ${articles.length} < ${SPLIT_THRESHOLD}, skipping`);
+    // Live-count gate uses story_thread_articles JOIN news_articles —
+    // matches what loadArticleSample sees, but BEFORE the sampling cap
+    // is applied. Previously we called loadArticleSample first and
+    // checked its return length against SPLIT_THRESHOLD, but
+    // loadArticleSample stratifies down to SAMPLE_LIMIT (~150) so the
+    // post-sample count was always ~150-152 and the check
+    // "152 < 200, skipping" fired for EVERY oversized thread. Hence
+    // the user-reported bug: court-blocks-tariffs (1898 articles),
+    // mali-junta (340), trump-iran-deal (290), hantavirus (253) all
+    // got skipped with the same misleading "live count 151" message.
+    const liveCount = await getLiveArticleCount(t.id);
+    if (liveCount < SPLIT_THRESHOLD) {
+      console.log(`   [${el()}] thread ${t.id} live count ${liveCount} < ${SPLIT_THRESHOLD}, skipping`);
       await stampChecked(t.id);
+      // Drift repair: cached column is wrong if we're here.
+      await pool.query(
+        `UPDATE story_threads SET article_count = $2 WHERE id = $1`,
+        [t.id, liveCount]
+      );
       continue;
     }
 
+    const articles = await loadArticleSample(t.id);
     evaluated++;
-    process.stdout.write(`   [${el()}] Thread ${t.id} (${articles.length} arts) "${(t.title || '').slice(0, 60)}" → Claude... `);
+    process.stdout.write(`   [${el()}] Thread ${t.id} (live=${liveCount}, sampled=${articles.length}) "${(t.title || '').slice(0, 60)}" → Claude... `);
 
     let result;
     try {
@@ -139,20 +153,57 @@ async function loadThreads() {
   // been split-checked OR has accumulated new articles since the last
   // check. Active + cooling only — dormant threads are frozen and
   // not worth a Claude call.
+  //
+  // CRITICAL: filter on the LIVE count from story_thread_articles, not
+  // the cached `story_threads.article_count` column. The cached column
+  // drifts in both directions:
+  //   - over-counts: storyThreadBuilder.js increments via `+=
+  //     def.article_ids.length` while INSERTs use ON CONFLICT DO NOTHING,
+  //     so duplicates inflate the counter without adding rows.
+  //   - under-counts: audit/repair passes detach articles but their
+  //     decrement paths can race with attaches.
+  // Today's run loaded 4 threads where stored count >= 200 but live
+  // count was 151–152 (over-count case). The user reported real threads
+  // with > 200 articles ("mali junta", "trump pressures iran", etc.)
+  // that never appeared as candidates — those are the under-count case
+  // and were silently excluded by the cached-column filter.
   const { rows } = await pool.query(`
-    SELECT id, title, description, keywords, primary_category,
-           article_count, primary_nations, secondary_nations
-      FROM story_threads
-     WHERE status IN ('active','cooling')
-       AND article_count >= $1
+    SELECT t.id, t.title, t.description, t.keywords, t.primary_category,
+           cnt.live_count AS article_count,
+           t.primary_nations, t.secondary_nations
+      FROM story_threads t
+      JOIN (
+        SELECT thread_id, COUNT(*)::int AS live_count
+          FROM story_thread_articles
+         GROUP BY thread_id
+      ) cnt ON cnt.thread_id = t.id
+     WHERE t.status IN ('active','cooling')
+       AND cnt.live_count >= $1
        AND (
-         last_split_check_at IS NULL
-         OR last_updated_at > last_split_check_at
+         t.last_split_check_at IS NULL
+         OR t.last_updated_at > t.last_split_check_at
        )
-     ORDER BY article_count DESC
+     ORDER BY cnt.live_count DESC
      LIMIT $2
   `, [SPLIT_THRESHOLD, MAX_THREADS]);
   return rows;
+}
+
+// Live count of attached articles WITH a matching news_articles row —
+// the JOIN matches what loadArticleSample sees so the gate stays in
+// agreement with what we'll actually feed Claude. Counting against
+// story_thread_articles alone would let orphan attachments inflate the
+// number; counting against the cached story_threads.article_count
+// drifts (it can over- or under-count).
+async function getLiveArticleCount(threadId) {
+  const { rows } = await pool.query(
+    `SELECT COUNT(*)::int AS c
+       FROM story_thread_articles sta
+       JOIN news_articles a ON a.id = sta.article_id
+      WHERE sta.thread_id = $1`,
+    [threadId]
+  );
+  return rows[0]?.c || 0;
 }
 
 // Stratified sample so Claude sees the thread's full arc, not just

@@ -295,6 +295,8 @@ async function run() {
     umbrellaArticlesAttached:      0,
     umbrellaLinesRefreshed:        0,
     umbrellaCoolingRestored:       0,
+    threadLivenessBumped:          0,
+    threadLivenessReactivated:     0,
     eventExtractionRuns:           0,
     eventsEmitted:                 0,
     claudeCallsPromote:            0,
@@ -333,6 +335,22 @@ async function run() {
   if (!SKIP_EVENTS) {
     await runEventExtractionPhase(metrics, elapsed);
   }
+
+  // Thread liveness propagation — runs BEFORE cooldown so timelines
+  // inherit any "my child thread is alive" signal that the umbrella
+  // phase couldn't capture (timeouts on big lines, connection-exhausted
+  // errors, articles below umbrella threshold). Without this step, a
+  // timeline whose child threads are getting fresh articles daily but
+  // whose umbrella phase happens to time out drifts to cooling after
+  // 7 days and dormant after 67 — exactly the user-reported "my Line
+  // shows dormant despite the underlying threads being active." Honors
+  // the product invariant ("the line records the series of events"):
+  // if any event (thread update) is happening, the line is alive.
+  console.log(`\n   [${elapsed()}] Thread liveness propagation...`);
+  const propagated = await runThreadLivenessPropagation();
+  console.log(`   bumped=${propagated.bumped} reactivated=${propagated.reactivated}`);
+  metrics.threadLivenessBumped      = propagated.bumped;
+  metrics.threadLivenessReactivated = propagated.reactivated;
 
   console.log(`\n   [${elapsed()}] Cooldown pass...`);
   const cooled = await runCooldownPhase();
@@ -380,6 +398,8 @@ async function run() {
   console.log(`  umbrella_articles_added : ${metrics.umbrellaArticlesAttached}`);
   console.log(`  umbrella_lines_refresh  : ${metrics.umbrellaLinesRefreshed}`);
   console.log(`  umbrella_cool_restored  : ${metrics.umbrellaCoolingRestored}`);
+  console.log(`  thread_liveness_bumped  : ${metrics.threadLivenessBumped}`);
+  console.log(`  thread_liveness_reactiv : ${metrics.threadLivenessReactivated}`);
   console.log(`  timelines_cooled        : ${cooled.cooled}`);
   console.log(`  timelines_dormant       : ${cooled.dormant}`);
   console.log(`  event_extractions_run   : ${metrics.eventExtractionRuns}`);
@@ -1348,6 +1368,68 @@ async function reactivateDormantFromThread(thread, lineId, shouldRelink) {
   } finally {
     tx.release();
   }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  PHASE C.5 : THREAD LIVENESS PROPAGATION
+//
+//  Bumps timeline.last_updated_at to MAX(its own, max(linked threads'
+//  last_updated_at)) so a timeline reflects its child threads' freshness
+//  even when the umbrella phase couldn't reach it (timeouts, connection
+//  exhaustion, no articles cleared umbrella threshold). Also pulls
+//  cooling/dormant timelines back to active when their threads have
+//  been alive within the last COOLING_AFTER_DAYS window — a thread
+//  with last_updated within 7 days = the line should be active.
+//
+//  Idempotent: only writes when the new max thread timestamp is
+//  strictly greater than the timeline's current last_updated_at, so
+//  steady-state runs do nothing.
+// ═════════════════════════════════════════════════════════════════════════════
+async function runThreadLivenessPropagation() {
+  // Pull the freshest linked-thread last_updated_at per timeline, but
+  // ONLY bump rows where it would actually move the needle. The
+  // RETURNING clause hands us the affected rows so we can also flip
+  // status when the new freshness puts the line back inside the active
+  // window. Manual lines are excluded — their freshness is curator-driven.
+  const { rows: bumped } = await pool.query(`
+    WITH thread_max AS (
+      SELECT timeline_id, MAX(last_updated_at) AS max_thread_updated
+        FROM story_threads
+       WHERE timeline_id IS NOT NULL
+       GROUP BY timeline_id
+    )
+    UPDATE story_timelines tl
+       SET last_updated_at = tm.max_thread_updated
+      FROM thread_max tm
+     WHERE tl.id = tm.timeline_id
+       AND COALESCE(tl.is_manual, FALSE) = FALSE
+       AND tm.max_thread_updated > tl.last_updated_at
+   RETURNING tl.id, tl.status, tl.last_updated_at
+  `);
+
+  // Reactivate cooling/dormant lines whose freshly-bumped timestamp
+  // puts them back inside the active window. We use the same threshold
+  // as the cooldown phase (active means last_updated_at within
+  // COOLING_AFTER_DAYS) so the two passes never disagree about what
+  // "active" means.
+  let reactivated = 0;
+  if (bumped.length) {
+    const reactivatableIds = bumped
+      .filter(r => r.status === 'cooling' || r.status === 'dormant')
+      .map(r => r.id);
+    if (reactivatableIds.length) {
+      const { rowCount } = await pool.query(`
+        UPDATE story_timelines
+           SET status             = 'active',
+               last_reawakened_at = NOW()
+         WHERE id = ANY($1::int[])
+           AND last_updated_at > NOW() - ($2 * INTERVAL '1 day')
+      `, [reactivatableIds, COOLING_AFTER_DAYS]);
+      reactivated = rowCount || 0;
+    }
+  }
+
+  return { bumped: bumped.length, reactivated };
 }
 
 // ═════════════════════════════════════════════════════════════════════════════

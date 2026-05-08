@@ -990,7 +990,16 @@ app.get("/api/video-embed", (req, res) => {
   const videoId = (req.query.v || '').replace(/[^a-zA-Z0-9_-]/g, '');
   if (!videoId) return res.status(400).send('Missing video ID');
   const autoplay = req.query.autoplay !== '0' ? '1' : '0';
-  const mute = req.query.mute === '1' ? '1' : '0';
+  // mute defaults to '1' (muted) so iOS allows autoplay. The client
+  // immediately follows up with a postMessage('unMute') after user
+  // activation propagates from the "Start Briefing" tap. Defaulting
+  // to unmuted here was the recent regression that left briefing
+  // videos default-paused on Capacitor: iOS WebView blocks unmuted
+  // autoplay (no matter the user-gesture chain) so the iframe loaded
+  // and just sat at frame 0. The unMute postMessage was useless
+  // because the proxy script below only relayed inner→parent — see
+  // the fix in the script body for parent→inner relay.
+  const mute = req.query.mute === '0' ? '0' : '1';
   const enablejsapi = req.query.jsapi === '1' ? '1' : '0';
   const cc = req.query.cc === '1' ? '1' : '0';
   // start/end (seconds) clip the video. Featured-media segments use these
@@ -1028,11 +1037,30 @@ referrerpolicy="origin"
 allow="accelerometer;autoplay;clipboard-write;encrypted-media;gyroscope;picture-in-picture;web-share"
 allowfullscreen></iframe>
 <script>
-// Relay YT IFrame API messages (including errors) to parent so Capacitor can catch them
-window.addEventListener('message',function(e){
-  try{window.parent.postMessage(e.data,'*')}catch(_){}
-});
-// Also relay via onError callback
+// Bidirectional message relay between the app's parent window and the
+// inner YouTube player. Without parent→inner relay the briefing's
+// unMute / setVolume / seekTo / playVideo / pauseVideo postMessages
+// hit THIS proxy's contentWindow and die there — the player below
+// never sees them, so the video stayed muted (or paused) regardless
+// of what the briefing player tried to do.
+//
+// Direction is inferred from event.source: messages from window.parent
+// flow down to the YT iframe; messages from the YT iframe flow up to
+// the parent. Origin is '*' on both sides because we don't know the
+// exact parent origin (Capacitor scheme varies: capacitor://localhost,
+// http://localhost, file://) and the YT iframe origin we DO know.
+(function(){
+  var yt = document.getElementById('ytplayer');
+  window.addEventListener('message', function(e){
+    if (e.source === window.parent && yt && yt.contentWindow) {
+      // Parent → inner (commands).
+      try { yt.contentWindow.postMessage(e.data, '*'); } catch(_){}
+    } else if (yt && e.source === yt.contentWindow) {
+      // Inner → parent (events / errors).
+      try { window.parent.postMessage(e.data, '*'); } catch(_){}
+    }
+  });
+})();
 function onYouTubeIframeAPIReady(){}
 </script></body></html>`);
 });
