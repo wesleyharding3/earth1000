@@ -41980,6 +41980,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
   async function loadUserTier(userId, { force = false } = {}) {
     if (!force && (_tierInFlight || _tierLoadedFor === userId)) return;
     _tierInFlight = true;
+    // Snapshot the prior tier so we can fire a pricing-modal refresh ONLY
+    // when it actually changes. The modal's "Subscribe with Apple" /
+    // "Manage" / "Switch to Free" buttons are derived from __userTier;
+    // keeping them in lock-step here means any post-purchase / post-
+    // restore tier flip is reflected in the modal's CTA state without
+    // depending on the refreshSubscriptionState → __updatePricingState
+    // chain (which has a race with the modal's _initPayPalButtons that
+    // can leave the Apple button stuck visible).
+    const _priorTier = window.__userTier;
     try {
       try {
         const res = await fetch(`${API_BASE}/api/payments/subscription-status`);
@@ -41998,6 +42007,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
         _tierLoadedFor = userId;
         _saveTierCache(userId, window.__isAdmin, window.__userTier);
         window.__markTierReady?.();
+        if (window.__userTier !== _priorTier) {
+          try { window.__updatePricingState?.(); } catch (_) {}
+        }
         return;
       } catch (err) {
         // AbortError = the global 20s fetch timeout fired — Supabase
@@ -42026,6 +42038,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
       window.__userTier = tier?.name ?? 'free';
       _tierLoadedFor = userId;
       window.__markTierReady?.();
+      if (window.__userTier !== _priorTier) {
+        try { window.__updatePricingState?.(); } catch (_) {}
+      }
     } finally {
       _tierInFlight = false;
     }

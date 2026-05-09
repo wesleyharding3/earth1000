@@ -39006,6 +39006,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
   async function loadUserTier(userId, { force = false } = {}) {
     if (!force && (_tierInFlight || _tierLoadedFor === userId)) return;
     _tierInFlight = true;
+    // Snapshot prior tier so we can fire __updatePricingState only on
+    // actual flips. Without this, a post-purchase tier change races
+    // with the modal's _initPayPalButtons (which renders the Apple
+    // "Subscribe with Apple" button) and the button stays visible
+    // even after the user has Pro.
+    const _priorTier = window.__userTier;
     try {
       try {
         const res = await fetch(`${API_BASE}/api/payments/subscription-status`);
@@ -39024,6 +39030,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
         _tierLoadedFor = userId;
         _saveTierCache(userId, window.__isAdmin, window.__userTier);
         window.__markTierReady?.();
+        if (window.__userTier !== _priorTier) {
+          try { window.__updatePricingState?.(); } catch (_) {}
+        }
         return;
       } catch (err) {
         if (err?.name !== 'AbortError') {
@@ -39047,6 +39056,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
       window.__userTier = tier?.name ?? 'free';
       _tierLoadedFor = userId;
       window.__markTierReady?.();
+      if (window.__userTier !== _priorTier) {
+        try { window.__updatePricingState?.(); } catch (_) {}
+      }
     } finally {
       _tierInFlight = false;
     }
