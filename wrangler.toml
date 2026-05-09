@@ -1,0 +1,18 @@
+#:schema node_modules/wrangler/config-schema.json
+# Cloudflare Worker config for the YouTube RSS proxy.
+# Without this file, wrangler auto-detects the repo as a "Pages with
+# assets" project and tries to upload the entire repo (including
+# node_modules' 119 MiB workerd binary) as static assets — which fails
+# the 25 MiB-per-asset limit. The explicit `main` here scopes the
+# deploy to one file, no assets attached.
+
+name = "yt-rss-proxy"
+main = "cloudflare-yt-rss-proxy.js"
+compatibility_date = "2026-05-09"
+
+# No [assets] block — this Worker doesn't serve static files, just
+# proxies HTTP requests. Including [assets] flips wrangler into the
+# Pages-style upload path that broke the previous deploy.
+
+[observability]
+enabled = true

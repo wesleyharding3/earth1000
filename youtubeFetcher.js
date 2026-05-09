@@ -44,6 +44,21 @@ const parser = new Parser({
   }
 });
 
+// Cloudflare Worker proxy support. When YOUTUBE_RSS_PROXY env var is
+// set, rewrite the YouTube RSS URL through it. CF's edge IPs aren't in
+// YouTube's bot penalty box that Render's IP range sits in, so the
+// proxy lifts the failure rate from ~85% back to ~5-15%. The Worker
+// itself is open-source (yt-rss-proxy.js in the repo) and adds 5-min
+// edge caching for free.
+const RSS_PROXY_BASE = (process.env.YOUTUBE_RSS_PROXY || '').replace(/\/+$/, '');
+function _rewriteToProxy(rssUrl) {
+  if (!RSS_PROXY_BASE) return rssUrl;
+  // Only rewrite YouTube feed URLs — leave anything else alone.
+  const m = String(rssUrl || '').match(/^https?:\/\/www\.youtube\.com\/feeds\/videos\.xml\?(.+)$/i);
+  if (!m) return rssUrl;
+  return `${RSS_PROXY_BASE}/?${m[1]}`;
+}
+
 // Single-retry wrapper. YouTube's RSS edge servers occasionally flap
 // 200 → 404 → 200 across consecutive requests; a brief retry catches
 // the majority of those. 5xx is also worth retrying (transient by
@@ -51,8 +66,9 @@ const parser = new Parser({
 // since they won't change in 1 second. Returns the parsed feed or
 // throws the LAST error.
 async function fetchFeedWithRetry(rssUrl) {
+  const url = _rewriteToProxy(rssUrl);
   try {
-    return await parser.parseURL(rssUrl);
+    return await parser.parseURL(url);
   } catch (err) {
     const msg = String(err?.message || '');
     const m = msg.match(/status code[: ]+(\d{3})/i);
@@ -60,7 +76,7 @@ async function fetchFeedWithRetry(rssUrl) {
     const retryable = status === 404 || status === 500 || status === 502 || status === 503 || status === 504;
     if (!retryable) throw err;
     await new Promise(r => setTimeout(r, 1000));
-    return await parser.parseURL(rssUrl);
+    return await parser.parseURL(url);
   }
 }
 

@@ -7937,7 +7937,7 @@ app.get("/api/articles/by-ids", async (req, res) => {
       const { rows } = await pool.query(`
         SELECT
           a.id, a.title, a.translated_title, a.summary, a.translated_summary,
-          a.published_at, a.url, a.video_id, a.media_type,
+          a.published_at, a.url, a.article_url, a.video_id, a.media_type,
           COALESCE(a.image_url, img_a.public_url) AS image_url,
           img_a.public_url AS catalog_image_url,
           COALESCE(ns.name, ys.name) AS source_name,
@@ -7992,7 +7992,7 @@ app.get("/api/articles/by-thread", async (req, res) => {
       const { rows: r } = await runner.query(`
         SELECT
           a.id, a.title, a.translated_title, a.summary, a.translated_summary,
-          a.published_at, a.url, a.video_id, a.media_type,
+          a.published_at, a.url, a.article_url, a.video_id, a.media_type,
           COALESCE(a.image_url, img_a.public_url) AS image_url,
           img_a.public_url AS catalog_image_url,
           COALESCE(ns.name, ys.name) AS source_name,
@@ -10584,7 +10584,7 @@ app.get("/api/articles/recent", async (req, res) => {
         )
         SELECT
           a.id, a.title, a.translated_title, a.summary,
-          a.published_at, a.url,
+          a.published_at, a.url, a.article_url,
           COALESCE(a.image_url, img_a.public_url) AS image_url,
           COALESCE(ns.name, ys.name) AS source_name,
           ns.source_summary,
