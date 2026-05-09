@@ -59979,19 +59979,24 @@ body.ticker-active .gTickerLabel {
     play();
   };
 
-  // Public reset helper — wipes the seen flags and reloads so the
-  // next maybeStart() runs the full first-visit chain again
-  // (welcome overlay → 16s intro → "Take the full tour?" prompt).
-  // Wired to the "Replay Welcome" button in the account dropdown and
-  // exposed on `window` so iOS Capacitor builds can hit it from Safari
-  // Web Inspector when DevTools are otherwise unreachable.
+  // Public reset helper — wipes the seen flags so future cold-starts
+  // re-show the chain, then mounts the welcome overlay IN PLACE on
+  // the current page (no reload). Reload would dump the user on the
+  // globe for ~3.5s while maybeStart's START_DELAY ticked down, and
+  // the heavy globe WebGL re-init can briefly freeze the WKWebView
+  // during that window — in-place mount lands them on the intro
+  // immediately.
   window.__earthResetIntro = function () {
     try {
       localStorage.removeItem(STORAGE_KEY);            // __earthIntroSeen
       localStorage.removeItem('earth00:tutorialSeen'); // tour reel flag
     } catch (_) {}
     try { document.getElementById('accountDropdown')?.classList.remove('open'); } catch (_) {}
-    setTimeout(() => { try { location.reload(); } catch (_) {} }, 240);
+    // Tear down any in-flight intro session (timers, audio, glow,
+    // overlay DOM) — cleanup() is idempotent.
+    try { cleanup(); } catch (_) {}
+    try { document.getElementById('earthWelcome')?.remove(); } catch (_) {}
+    setTimeout(() => { try { showWelcome(); } catch (_) {} }, 240);
   };
 
   if (document.readyState === 'loading') {
