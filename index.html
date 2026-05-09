@@ -38794,6 +38794,51 @@ const settingsToggle     = document.getElementById("settingsToggle");
     2: { id: 2, name: 'pro', display_name: 'Pro' },
     3: { id: 3, name: 'enterprise', display_name: 'Enterprise' },
   };
+  // RevenueCat entitlement IDs — anything in these arrays counts as a
+  // grant for the corresponding tier when read from customerInfo. The
+  // list deliberately covers the most common naming variants so a small
+  // RevenueCat-dashboard rename doesn't silently break optimistic-tier.
+  const RC_PRO_ENTITLEMENTS        = ['pro', 'Pro', 'earth00_pro'];
+  const RC_ENTERPRISE_ENTITLEMENTS = ['enterprise', 'Enterprise', 'earth00_enterprise'];
+
+  // Optimistic tier promotion from a RevenueCat customerInfo payload.
+  // Called immediately after a successful purchase or restorePurchases
+  // response — Apple has confirmed the user owns the entitlement, so
+  // the UI can flip to Pro / Enterprise BEFORE our /revenuecat/webhook
+  // → DB chain has propagated. _pollUntilTier() runs in parallel as
+  // the authoritative reconciliation.
+  // Only ever upgrades — a missing entitlement on a transient fetch
+  // glitch won't silently demote a paying user. If the user already
+  // has a higher rank than the inferred tier, no-op.
+  function _applyOptimisticTier(customerInfo) {
+    if (!customerInfo || typeof customerInfo !== 'object') return;
+    const active = customerInfo.entitlements?.active || {};
+    const activeKeys = Object.keys(active).map(k => k.toLowerCase());
+    const hasEnterprise = RC_ENTERPRISE_ENTITLEMENTS.some(e => activeKeys.includes(e.toLowerCase()));
+    const hasPro        = RC_PRO_ENTITLEMENTS.some(e => activeKeys.includes(e.toLowerCase()));
+    let inferredTier = null;
+    if (hasEnterprise)   inferredTier = 'enterprise';
+    else if (hasPro)     inferredTier = 'pro';
+    if (!inferredTier) return;
+    const currentRank = TIER_ORDER.indexOf(window.__userTier || 'free');
+    const newRank     = TIER_ORDER.indexOf(inferredTier);
+    if (newRank <= currentRank) return;
+    window.__userTier = inferredTier;
+    const tierEl = document.getElementById('acctDpTier');
+    if (tierEl) {
+      tierEl.textContent = inferredTier === 'pro' ? 'Pro' : 'Enterprise';
+      tierEl.className   = `acctDpTier ${inferredTier}`;
+    }
+    try {
+      const u = currentUser || window.__currentUser;
+      _saveTierCache(u?.id, window.__isAdmin, inferredTier);
+    } catch (_) {}
+    window.__markTierReady?.();
+    if (typeof window.__updatePricingState === 'function') {
+      window.__updatePricingState();
+    }
+  }
+  window.__applyOptimisticTier = _applyOptimisticTier;
 
   function sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
@@ -39177,6 +39222,34 @@ const settingsToggle     = document.getElementById("settingsToggle");
     }
   }
   window.__refreshSubscriptionState = refreshSubscriptionState;
+
+  // Post-purchase tier reconciliation. Apple's StoreKit returns "purchase
+  // complete" before RevenueCat's webhook lands at /revenuecat/webhook
+  // and our DB sees the new subscription row. A single refresh 1.5 s
+  // later usually misses the update — the user sees "free" stuck on
+  // the pricing modal until the next manual refresh. This poller hits
+  // /api/payments/subscription-status repeatedly with backoff until the
+  // tier matches `expectedTier` or attempts run out (~14 s total).
+  // Returns true if the tier flipped during polling, false otherwise.
+  async function _pollUntilTier(expectedTier, opts = {}) {
+    if (!expectedTier) return false;
+    const attempts  = opts.attempts  || [800, 1200, 1800, 2500, 3500, 4500];
+    const before    = window.__userTier;
+    for (let i = 0; i < attempts.length; i++) {
+      await new Promise(r => setTimeout(r, attempts[i]));
+      try { await refreshSubscriptionState({ silent: true }); }
+      catch (_) {}
+      if (window.__userTier === expectedTier) return true;
+    }
+    // Webhook didn't propagate within ~14 s. The optimistic UI update
+    // already shows the user the right tier; the next natural refresh
+    // (next page load / next __tierReady consumer) will reconcile.
+    if (window.__userTier !== expectedTier) {
+      console.warn('[subs] poll exhausted — tier still', window.__userTier, '(expected', expectedTier + ', was', before + ')');
+    }
+    return false;
+  }
+  window.__pollUntilTier = _pollUntilTier;
 
   function clearAuthUI() {
     window.__authToken = null;
@@ -40610,17 +40683,47 @@ const settingsToggle     = document.getElementById("settingsToggle");
     const ppPro    = document.getElementById('pricingPaypalPro');
     const ppEnt    = document.getElementById('pricingPaypalEnterprise');
 
+    // Reset .current on all three cards before re-applying — only the
+    // user's actual tier should hold the highlight.
     [cardFree, cardPro, cardEnt].forEach(c => c?.classList.remove('current'));
-    ctaFree.textContent = 'Current plan';
+
+    // Free button — two modes. When the user is genuinely on free, it
+    // wears the disabled "Current plan" badge. When the user has a
+    // paid tier active, it becomes a "Switch to Free" downgrade affordance
+    // routed through Apple's Subscriptions sheet (iOS) or PayPal autopay
+    // (web) — same handler the paid tier's Manage button uses, so we
+    // don't fight Apple/PayPal's owned subscription UI.
+    if (ctaFree) {
+      if (tier === 'free') {
+        ctaFree.textContent = 'Current plan';
+        ctaFree.classList.add('current-plan');
+        ctaFree.classList.remove('active');
+        ctaFree.onclick = null;
+      } else {
+        ctaFree.textContent = 'Switch to Free';
+        ctaFree.classList.remove('current-plan');
+        ctaFree.classList.add('active');
+        ctaFree.onclick = () => window.__cancelPayPal?.();
+      }
+    }
 
     if (tier === 'pro') {
       cardPro?.classList.add('current');
       if (ctaPro)  { ctaPro.style.display  = 'block'; }
       if (ppPro)   { ppPro.style.display   = 'none';  }
+      // Enterprise stays a real upgrade path from Pro — keep the
+      // Enterprise CTA visible.
+      if (ctaEnt)  { ctaEnt.style.display  = 'none'; }
+      if (ppEnt)   { ppEnt.style.display   = '';     }
     } else if (tier === 'enterprise') {
       cardEnt?.classList.add('current');
       if (ctaEnt)  { ctaEnt.style.display  = 'block'; }
       if (ppEnt)   { ppEnt.style.display   = 'none';  }
+      // Pro is a downgrade from Enterprise — Apple/PayPal handle that
+      // through the manage-subscription UI, so hide the purchase
+      // button to avoid double-charging on a separate Pro sub.
+      if (ctaPro)  { ctaPro.style.display  = 'none'; }
+      if (ppPro)   { ppPro.style.display   = 'none'; }
     } else {
       cardFree?.classList.add('current');
       if (ctaPro)  { ctaPro.style.display  = 'none'; }
@@ -40719,10 +40822,23 @@ const settingsToggle     = document.getElementById("settingsToggle");
           window.__showToast?.('Subscription product not available on this device.');
           return;
         }
-        await Purchases.purchaseStoreProduct({ product });
-        // Apple sheet completed. RevenueCat will hit /revenuecat/webhook
-        // momentarily; give it a beat then refresh the tier from our DB.
-        setTimeout(() => window.__refreshSubscriptionState?.({ showToast: true }), 1500);
+        const purchaseResult = await Purchases.purchaseStoreProduct({ product });
+        // Apple sheet succeeded. Two-step reconcile:
+        //   (1) Optimistic UI — read entitlements directly from
+        //       RevenueCat's customerInfo (returned synchronously by
+        //       the SDK). Source-of-truth is what Apple actually
+        //       granted, not what our DB knows yet. Only upgrades —
+        //       a missing entitlement on a transient fetch glitch
+        //       won't downgrade.
+        //   (2) Authoritative — poll /api/payments/subscription-status
+        //       with backoff for ~14s until the RevenueCat webhook
+        //       lands at our server and the row in `subscriptions`
+        //       updates. The prior single-refresh-after-1500ms missed
+        //       the typical 2–5s webhook latency and left the UI
+        //       stuck on "free".
+        try { _applyOptimisticTier(purchaseResult?.customerInfo); } catch (_) {}
+        window.__pollUntilTier?.(tier).catch(() => {});
+        window.__showToast?.(`Welcome to ${tier === 'pro' ? 'Pro' : 'Enterprise'} ✨`);
       } catch (err) {
         if (err?.userCancelled || err?.code === '1' || err?.code === 1) return;
         console.error('[rc] purchase failed:', err);
