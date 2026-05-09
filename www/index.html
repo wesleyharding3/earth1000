@@ -12388,25 +12388,47 @@ button.arcCtxSegDot,
 
 /* Full-fill variant — used by the flow-context AI panel where the badge
    IS the panel surface, not a small CTA inside it. Cancels the parent's
-   padding, stretches the badge edge-to-edge, drops the corner radius to
-   match the body, scales the title up, and lets a gold wireframe-globe
-   SVG sit behind the title (mirrors the welcome overlay's aesthetic). */
+   padding, stretches the badge edge-to-edge, rounds the corners, scales
+   the title up, and lets a gold wireframe-globe SVG sit behind the
+   title (mirrors the welcome overlay's aesthetic).
+
+   GPU NOTES — earlier versions paired feGaussianBlur on every wireframe
+   ellipse with rotate + breathe animations, on top of the badge's own
+   breath + shimmer animations. iOS WebView re-blurs each filtered node
+   per frame; with ~16 ellipses + multiple loops that locks up the GPU.
+   This variant drops the SVG filter, the rotation, the breath, the
+   mask-image, and the badge's breath/shimmer animations. The wireframe
+   stays static; the strokes are thickened + brightened to make up for
+   the missing glow filter. */
 .arcCtxBody.arcCtxBodyGateFull {
   padding: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  border-radius: 16px;
 }
 .aiAnalysisCtaBadge--full {
   flex: 1 1 auto;
   width: 100%;
   margin: 0;
-  border-radius: 0;
+  border-radius: 16px;
   padding: 24px;
   font-size: 14px;
   letter-spacing: 0.18em;
   gap: 12px;
+  /* Lighter base so the wireframe globe reads cleanly through it. The
+     parent already provides the dark backing — we don't need to pile
+     another opaque gradient on top of the globe. */
+  background: linear-gradient(180deg, rgba(22,18,8,0.30), rgba(16,14,6,0.20));
+  /* Kill the breath animation (transform + box-shadow tween) on the
+     full variant. Static gold border + box-shadow still reads as
+     "interactive surface" without the per-frame paint. */
+  animation: none;
 }
+/* Drop the diagonal shimmer pass on the full variant — it's the single
+   most expensive layer (220% gradient, repainted at 4.5s). The static
+   gold border + globe is enough visual life. */
+.aiAnalysisCtaBadge--full::before { display: none; }
 .aiAnalysisCtaBadge--full .aiAnalysisCtaBadgeGlobe {
   position: absolute;
   inset: 0;
@@ -12416,37 +12438,31 @@ button.arcCtxSegDot,
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  /* Soft radial mask so the globe blends into the gradient edges
-     instead of showing hard SVG bounds against the badge frame. */
-  -webkit-mask-image: radial-gradient(ellipse at center, #000 32%, rgba(0,0,0,0.55) 78%, transparent 100%);
-          mask-image: radial-gradient(ellipse at center, #000 32%, rgba(0,0,0,0.55) 78%, transparent 100%);
-  animation: aiAnalysisCtaGlobeBreathe 9s ease-in-out infinite;
+  /* Static. No breathe / rock animation, no mask-image. Both were
+     forcing per-frame compositing on iOS. */
+  opacity: 0.85;
 }
 .aiAnalysisCtaBadge--full .aiAnalysisCtaBadgeGlobe svg {
   width: 130%;
   height: 130%;
   display: block;
   overflow: visible;
-  animation: aiAnalysisCtaGlobeRock 32s ease-in-out infinite;
-  transform-origin: 50% 50%;
 }
-@keyframes aiAnalysisCtaGlobeRock {
-  0%, 100% { transform: rotate(-8deg); }
-  50%      { transform: rotate(4deg); }
+/* Override the welcome's filter:url(#ewGlobeGlow) on every wireframe
+   ellipse INSIDE THE BADGE only. The welcome page keeps its glow
+   (rendered once on mount, no animation). Replace the lost glow with
+   a touch more stroke-width and saturation so the wireframe reads
+   without the blur pass. */
+.aiAnalysisCtaBadge--full .aiAnalysisCtaBadgeGlobe .ewGlobeLine {
+  filter: none;
+  stroke: rgba(255,200,90,0.65);
+  stroke-width: 0.85;
 }
-@keyframes aiAnalysisCtaGlobeBreathe {
-  0%, 100% { opacity: 0.62; }
-  50%      { opacity: 0.92; }
+.aiAnalysisCtaBadge--full .aiAnalysisCtaBadgeGlobe .ewGlobeLineFaint {
+  filter: none;
+  stroke: rgba(255,195,80,0.40);
+  stroke-width: 0.65;
 }
-@media (prefers-reduced-motion: reduce) {
-  .aiAnalysisCtaBadge--full .aiAnalysisCtaBadgeGlobe,
-  .aiAnalysisCtaBadge--full .aiAnalysisCtaBadgeGlobe svg { animation: none; }
-}
-/* Existing ::before shimmer needs to ride on top of the globe; the base
-   rule sets z-index 0, but the globe is also at z-index 0 and would
-   render UNDER the shimmer due to DOM order. Bump the shimmer's z so
-   the gold wipe still passes across the wireframe. */
-.aiAnalysisCtaBadge--full::before { z-index: 1; }
 /* Local dot styling so the badge doesn't depend on .aiAnalysisCta
    inheritance. Same blink / spin / static states as the small pill. */
 .aiAnalysisCtaBadge .aiAnalysisDot {
@@ -26958,31 +26974,27 @@ const settingsToggle     = document.getElementById("settingsToggle");
                 ` data-hold-tip="A curated synthesis of these flows — what's driving them, who's shaping the narrative, and what to watch next."` +
                 ` onclick="window.__arcAiContextStartFromGate?.(this)">` +
           `<span class="aiAnalysisCtaBadgeGlobe" aria-hidden="true">` +
+            // Wireframe ellipse ladder — no <defs> filter, no <g filter>.
+            // CSS scopes filter:none + thicker strokes for this badge so
+            // we save iOS the per-frame Gaussian blur pass that was
+            // melting the GPU in earlier builds.
             `<svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid slice">` +
-              `<defs>` +
-                `<filter id="aiCtaGlobeGlow_${safeScope}" x="-50%" y="-50%" width="200%" height="200%">` +
-                  `<feGaussianBlur stdDeviation="0.9" result="b"/>` +
-                  `<feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>` +
-                `</filter>` +
-              `</defs>` +
-              `<g filter="url(#aiCtaGlobeGlow_${safeScope})">` +
-                `<ellipse class="ewGlobeLineFaint" cx="100" cy="22"  rx="32" ry="3"/>`  +
-                `<ellipse class="ewGlobeLineFaint" cx="100" cy="42"  rx="62" ry="6"/>`  +
-                `<ellipse class="ewGlobeLine"      cx="100" cy="62"  rx="82" ry="9"/>`  +
-                `<ellipse class="ewGlobeLine"      cx="100" cy="82"  rx="94" ry="12"/>` +
-                `<ellipse class="ewGlobeLine"      cx="100" cy="100" rx="98" ry="14"/>` +
-                `<ellipse class="ewGlobeLine"      cx="100" cy="118" rx="94" ry="12"/>` +
-                `<ellipse class="ewGlobeLine"      cx="100" cy="138" rx="82" ry="9"/>`  +
-                `<ellipse class="ewGlobeLineFaint" cx="100" cy="158" rx="62" ry="6"/>`  +
-                `<ellipse class="ewGlobeLineFaint" cx="100" cy="178" rx="32" ry="3"/>`  +
-                `<ellipse class="ewGlobeLineFaint" cx="100" cy="100" rx="8"  ry="98"/>` +
-                `<ellipse class="ewGlobeLine"      cx="100" cy="100" rx="26" ry="98"/>` +
-                `<ellipse class="ewGlobeLineFaint" cx="100" cy="100" rx="44" ry="98"/>` +
-                `<ellipse class="ewGlobeLine"      cx="100" cy="100" rx="62" ry="98"/>` +
-                `<ellipse class="ewGlobeLineFaint" cx="100" cy="100" rx="78" ry="98"/>` +
-                `<ellipse class="ewGlobeLine"      cx="100" cy="100" rx="90" ry="98"/>` +
-                `<ellipse class="ewGlobeLineFaint" cx="100" cy="100" rx="98" ry="98"/>` +
-              `</g>` +
+              `<ellipse class="ewGlobeLineFaint" cx="100" cy="22"  rx="32" ry="3"/>`  +
+              `<ellipse class="ewGlobeLineFaint" cx="100" cy="42"  rx="62" ry="6"/>`  +
+              `<ellipse class="ewGlobeLine"      cx="100" cy="62"  rx="82" ry="9"/>`  +
+              `<ellipse class="ewGlobeLine"      cx="100" cy="82"  rx="94" ry="12"/>` +
+              `<ellipse class="ewGlobeLine"      cx="100" cy="100" rx="98" ry="14"/>` +
+              `<ellipse class="ewGlobeLine"      cx="100" cy="118" rx="94" ry="12"/>` +
+              `<ellipse class="ewGlobeLine"      cx="100" cy="138" rx="82" ry="9"/>`  +
+              `<ellipse class="ewGlobeLineFaint" cx="100" cy="158" rx="62" ry="6"/>`  +
+              `<ellipse class="ewGlobeLineFaint" cx="100" cy="178" rx="32" ry="3"/>`  +
+              `<ellipse class="ewGlobeLineFaint" cx="100" cy="100" rx="8"  ry="98"/>` +
+              `<ellipse class="ewGlobeLine"      cx="100" cy="100" rx="26" ry="98"/>` +
+              `<ellipse class="ewGlobeLineFaint" cx="100" cy="100" rx="44" ry="98"/>` +
+              `<ellipse class="ewGlobeLine"      cx="100" cy="100" rx="62" ry="98"/>` +
+              `<ellipse class="ewGlobeLineFaint" cx="100" cy="100" rx="78" ry="98"/>` +
+              `<ellipse class="ewGlobeLine"      cx="100" cy="100" rx="90" ry="98"/>` +
+              `<ellipse class="ewGlobeLineFaint" cx="100" cy="100" rx="98" ry="98"/>` +
             `</svg>` +
           `</span>` +
           `<span class="aiAnalysisDot"></span>` +
