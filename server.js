@@ -8059,8 +8059,9 @@ app.get("/api/timelines/latest", async (req, res) => {
           AND (t.article_count >= 2 OR COALESCE(t.is_manual, FALSE) = TRUE)
         ORDER BY
           -- Status first: active → cooling → dormant. Importance second.
-          -- (Lines bucket independently from threads — threads still order
-          -- active → dormant → cooling, by older request.)
+          -- Same ordering as /api/threads/latest — cooling is "still
+          -- freshening" so it reads better than dormant in the user's
+          -- "what's happening now" mental model.
           CASE t.status WHEN 'active' THEN 0 WHEN 'cooling' THEN 1 WHEN 'dormant' THEN 2 ELSE 3 END,
           t.importance DESC NULLS LAST,
           CASE WHEN t.primary_category IN ('politics','military','diplomacy','economy','conflict') THEN 0
@@ -9949,6 +9950,78 @@ function _flowCtxBuildStructuredBlocks(eventSummary, primaryContexts, secondaryC
   return blocks;
 }
 
+// Flow-scope counterpart of _flowCtxNormalizeCountryContexts. Walks the
+// edges we ASKED Claude to analyze (canonical order, top-20, deduped by
+// unordered pair) and pairs each with whatever entry Claude returned for
+// that pair — matching either direction. Anything Claude omitted gets a
+// sentinel placeholder so the block list still has a 1:1 row per edge.
+function _flowCtxNormalizeEdgeContexts(expectedEdges, isoNameMap, rawEdges, isActiveEdgeFn) {
+  if (!Array.isArray(expectedEdges) || !expectedEdges.length) return [];
+  const list = Array.isArray(rawEdges) ? rawEdges : [];
+  const matches = (entry, edge) => {
+    const a = _flowCtxNormalizeIso(entry?.src_iso || entry?.src);
+    const b = _flowCtxNormalizeIso(entry?.dst_iso || entry?.dst);
+    if (!a || !b) return false;
+    return (a === edge.src_iso && b === edge.dst_iso) ||
+           (a === edge.dst_iso && b === edge.src_iso);
+  };
+  return expectedEdges.map((edge) => {
+    const found = list.find((e) => matches(e, edge));
+    const srcCountry = isoNameMap.get(edge.src_iso) || found?.src_country || edge.src_iso;
+    const dstCountry = isoNameMap.get(edge.dst_iso) || found?.dst_country || edge.dst_iso;
+    const text = String(found?.relationship || '').trim();
+    return {
+      src_iso: edge.src_iso,
+      dst_iso: edge.dst_iso,
+      src_country: srcCountry,
+      dst_country: dstCountry,
+      count:       edge.count,
+      relationship: text,
+      isActive:    typeof isActiveEdgeFn === 'function' ? isActiveEdgeFn(edge) : false,
+    };
+  });
+}
+
+function _flowCtxBuildEdgeBlocks(eventSummary, edgeContexts) {
+  const blocks = [];
+  const summary = _stripClaudeCitations(String(eventSummary || ''));
+  if (summary) {
+    blocks.push({
+      kind: 'summary',
+      badge: 'Network',
+      title: 'How these arcs connect',
+      text: summary,
+    });
+  }
+
+  for (const ctx of edgeContexts || []) {
+    const txt = _stripClaudeCitations(String(ctx?.relationship || ''));
+    if (!txt) continue;
+    blocks.push({
+      kind: 'edge',
+      badge: ctx.isActive ? 'Selected route' : 'Route',
+      title: `${ctx.src_country} ↔ ${ctx.dst_country}`,
+      text: txt,
+      // Carried through to the client so it can highlight the matching
+      // arc on the globe when this block becomes the active segment.
+      src_iso: ctx.src_iso,
+      dst_iso: ctx.dst_iso,
+      active:  !!ctx.isActive,
+    });
+  }
+
+  if (!blocks.length) {
+    blocks.push({
+      kind: 'summary',
+      badge: 'Network',
+      title: 'How these arcs connect',
+      text: 'No edge context available for this view right now.',
+    });
+  }
+
+  return blocks;
+}
+
 app.post("/api/ai/flow-context", aiLimiter, requireTier("pro"), async (req, res) => {
   const {
     scope,
@@ -9960,6 +10033,7 @@ app.post("/api/ai/flow-context", aiLimiter, requireTier("pro"), async (req, res)
     theme,
     article_ids,
     visible_entities,
+    visible_arcs,
     active_arc,
   } = req.body || {};
 
@@ -10072,10 +10146,27 @@ app.post("/api/ai/flow-context", aiLimiter, requireTier("pro"), async (req, res)
     const visibleIsos = Array.isArray(visible_entities)
       ? visible_entities.filter(Boolean).map(_flowCtxNormalizeIso)
       : [];
+
+    // Edges: client sends the visible arc list as {src_iso, dst_iso, count}.
+    // Already deduped + capped at 20 client-side; server just normalizes
+    // ISOs and drops malformed entries. The active arc (if any) is included
+    // by the client in the array AND surfaced separately so the prompt can
+    // give it slightly more depth without restructuring the response shape.
+    const rawEdges = Array.isArray(visible_arcs) ? visible_arcs : [];
+    const normalizedEdges = rawEdges
+      .map((e) => ({
+        src_iso: _flowCtxNormalizeIso(e?.src_iso),
+        dst_iso: _flowCtxNormalizeIso(e?.dst_iso),
+        count:   Math.max(1, parseInt(e?.count, 10) || 1),
+      }))
+      .filter((e) => e.src_iso && e.dst_iso && e.src_iso !== e.dst_iso)
+      .slice(0, 20);
+
     const scopedIsos = [
       ...primaryIsos,
       ...secondaryIsos,
       ...visibleIsos,
+      ...normalizedEdges.flatMap((e) => [e.src_iso, e.dst_iso]),
       _flowCtxNormalizeIso(active_arc?.src_iso),
       _flowCtxNormalizeIso(active_arc?.dst_iso),
     ].filter(Boolean);
@@ -10126,7 +10217,36 @@ app.post("/api/ai/flow-context", aiLimiter, requireTier("pro"), async (req, res)
             : `Focus on the currently selected slice of the ${kindLabel}.`)
       : `Focus on the overall ${kindLabel}.`;
 
-    const prompt = `You are an impartial geopolitical analyst with web_search access. Return ONLY valid JSON. No markdown, no code fences, no commentary outside the JSON object.
+    // Identify the active edge in the normalized list (if any) so the
+    // prompt can request slightly more depth on it. Direction is matched
+    // either way — client dedupes by unordered pair, so the canonical
+    // direction in normalizedEdges may not be the user's clicked direction.
+    const activeSrcIso = _flowCtxNormalizeIso(active_arc?.src_iso);
+    const activeDstIso = _flowCtxNormalizeIso(active_arc?.dst_iso);
+    const _isActiveEdge = (e) => {
+      if (!activeSrcIso || !activeDstIso) return false;
+      return (e.src_iso === activeSrcIso && e.dst_iso === activeDstIso) ||
+             (e.src_iso === activeDstIso && e.dst_iso === activeSrcIso);
+    };
+
+    // Build the per-edge listing for the flow-scope prompt. Direction is
+    // shown but framed lightly ("predominant flow"); the prompt asks the
+    // model to weave bidirectional context where it matters and not to
+    // over-anchor on the arrow.
+    const edgesText = normalizedEdges.length
+      ? normalizedEdges.map((e, i) => {
+          const src = isoNameMap.get(e.src_iso) || e.src_iso;
+          const dst = isoNameMap.get(e.dst_iso) || e.dst_iso;
+          const tag = _isActiveEdge(e) ? ' [ACTIVE — give this entry slightly more depth]' : '';
+          return `${i + 1}. ${src} (${e.src_iso}) ↔ ${dst} (${e.dst_iso}) — predominant flow ${e.src_iso}→${e.dst_iso}, ${e.count} arc${e.count !== 1 ? 's' : ''} in coverage${tag}`;
+        }).join('\n')
+      : '(no edges supplied)';
+
+    // Two prompts — entities scope keeps the per-country breakdown, flow
+    // scope returns per-edge relationships. Entities-tab callers already
+    // got country contexts, so flow-tab returning the same shape was
+    // double-charging the user for redundant content.
+    const entitiesPrompt = `You are an impartial geopolitical analyst with web_search access. Return ONLY valid JSON. No markdown, no code fences, no commentary outside the JSON object.
 
 Schema:
 {
@@ -10177,6 +10297,55 @@ Current segment: ${segment?.title ? `${segment.title}${segment?.date ? ` (${segm
 Constituent articles:
 ${articleContext || "(no article context available)"}`;
 
+    const flowPrompt = `You are an impartial geopolitical analyst with web_search access. Return ONLY valid JSON. No markdown, no code fences, no commentary outside the JSON object.
+
+Schema:
+{
+  "event_summary": "string (~250 chars — what's happening, framed so the per-edge entries below make sense)",
+  "edge_relationships": [
+    {
+      "src_iso": "US",
+      "dst_iso": "MX",
+      "src_country": "United States",
+      "dst_country": "Mexico",
+      "relationship": "string (~200 chars; ~350 for the entry tagged ACTIVE)"
+    }
+  ]
+}
+
+What this is: each edge below corresponds to a flow arc the reader is currently looking at on a 3D globe. The reader has ALREADY seen per-country roles in the Entities tab — do not relist them. Your job here is to explain the SPECIFIC relationship between each pair in the context of THIS story: what is moving (or said, or demanded) between them, and why that link matters to the event.
+
+Rules:
+- Output exactly one entry per edge in the order listed. Use the exact iso codes given.
+- Each \`relationship\` should answer: in this story, what is the concrete connection between these two countries? Be specific to the event — name the mechanism (e.g. arms shipments, refugee flows, joint statement, narrative alignment, energy contract, sanctions, military pact, supply-chain dependency, named bilateral, diaspora response).
+- Direction MATTERS but should be lightly considered: note which way the predominant flow points if it's relevant ("US→MX migration enforcement," "MX→US labor and remittances"), but the relationship itself is bidirectional in spirit. Don't over-anchor on the arrow.
+- The entry tagged [ACTIVE] is the route the user has clicked into. Give it ~350 characters with a touch more specificity (named treaty, named company, dated announcement). All others ~200 characters.
+- event_summary should NOT recap country roles. Frame it around the network you're about to describe — what dynamic is the arc-set illustrating? (~250 chars)
+- web_search is allowed (up to 4 queries) when the articles don't supply a concrete tie. Searches you should consider:
+    * "<src country> <dst country> <topic-keyword>"
+    * "<src country> <dst country> bilateral 2025|2026"
+    * "<named individual or company from the articles> <country>"
+- FORBIDDEN — these phrases are non-answers and waste the user's time. Do NOT produce any of:
+    * "no direct connection", "no documented relationship", "no material tie"
+    * "tangential", "peripheral", "indirect through global frameworks"
+    * "would be indirect through international standards / industry / broader networks"
+  If after re-reading articles AND web-searching you genuinely cannot find a real link, identify the SPECIFIC article passage that caused both countries to surface together (e.g. "Both quoted in Article #4's G7 statement on the mining sector").
+- Keep the prose factual, neutral, and specific. No speculation, no opinions, no bullets, no lists, no markdown.
+
+Story title: ${themeLine}
+Story type: ${kindLabel}
+Scope focus: ${focusLine}
+Selected route: ${active_arc?.src_iso && active_arc?.dst_iso ? `${isoNameMap.get(activeSrcIso) || active_arc.src_iso} ↔ ${isoNameMap.get(activeDstIso) || active_arc.dst_iso}` : "None"}
+Current segment: ${segment?.title ? `${segment.title}${segment?.date ? ` (${segment.date})` : ""}` : "None"}
+
+Edges to analyze (${normalizedEdges.length}):
+${edgesText}
+
+Constituent articles:
+${articleContext || "(no article context available)"}`;
+
+    const prompt = scope === 'flow' ? flowPrompt : entitiesPrompt;
+
     // Open the SSE stream.
     res.writeHead(200, {
       "Content-Type": "text/event-stream",
@@ -10189,6 +10358,20 @@ ${articleContext || "(no article context available)"}`;
 
     let streamClosed = false;
     req.on("close", () => { streamClosed = true; });
+
+    // iOS WKWebView heartbeat. NSURLSession's timeoutIntervalForRequest
+    // (default 60s) fires when no bytes arrive within the window — and
+    // Anthropic with web_search frequently sits silent for 30-90s while
+    // it runs searches. Without this heartbeat, the iOS XHR aborts
+    // mid-call and the user sees "Tap to retry" even though the server
+    // is still working. Desktop browsers don't enforce that no-data
+    // timeout so the bug is invisible there. Comment frames (`: ...`)
+    // are silently dropped by SSE parsers, so the client doesn't need
+    // to know about them.
+    const _fcHeartbeat = setInterval(() => {
+      if (streamClosed) { clearInterval(_fcHeartbeat); return; }
+      try { res.write(': keepalive\n\n'); } catch (_) { clearInterval(_fcHeartbeat); }
+    }, 5000);
 
     // Bumped max_tokens 1400 → 6000 because Anthropic's web_search server
     // tool injects search results inline into the response context. Each
@@ -10214,26 +10397,44 @@ ${articleContext || "(no article context available)"}`;
       .trim();
     const structured = _flowCtxExtractJson(rawText) || {};
     const eventSummary = String(structured?.event_summary || rawText || "").trim();
-    const normalizedPrimaryContexts = _flowCtxNormalizeCountryContexts(
-      primaryCountries,
-      structured?.primary_country_contexts
-    );
-    const normalizedSecondaryContexts = _flowCtxNormalizeCountryContexts(
-      secondaryCountries,
-      structured?.secondary_country_contexts
-    );
-    const blocks = _flowCtxBuildStructuredBlocks(
-      eventSummary,
-      normalizedPrimaryContexts,
-      normalizedSecondaryContexts
-    );
+    let blocks;
+    if (scope === 'flow') {
+      // Flow scope: parse edge_relationships, normalize against the
+      // edges WE asked about (not whatever Claude returned), and build
+      // edge blocks. Falls through to the country-shape only if Claude
+      // returned ONLY country contexts (defensive — should not happen
+      // with the new prompt).
+      const normalizedEdgeContexts = _flowCtxNormalizeEdgeContexts(
+        normalizedEdges,
+        isoNameMap,
+        structured?.edge_relationships,
+        _isActiveEdge
+      );
+      blocks = _flowCtxBuildEdgeBlocks(eventSummary, normalizedEdgeContexts);
+    } else {
+      const normalizedPrimaryContexts = _flowCtxNormalizeCountryContexts(
+        primaryCountries,
+        structured?.primary_country_contexts
+      );
+      const normalizedSecondaryContexts = _flowCtxNormalizeCountryContexts(
+        secondaryCountries,
+        structured?.secondary_country_contexts
+      );
+      blocks = _flowCtxBuildStructuredBlocks(
+        eventSummary,
+        normalizedPrimaryContexts,
+        normalizedSecondaryContexts
+      );
+    }
 
+    clearInterval(_fcHeartbeat);
     if (!streamClosed) {
       sendEvent({ type: "structured", blocks, credits: _creditsBlock(_fcAccess) });
       sendDone();
       res.end();
     }
   } catch (err) {
+    clearInterval(_fcHeartbeat);
     console.error("[ai/flow-context]", err.message);
     if (!res.headersSent) {
       return res.status(500).json({ error: "AI context generation failed" });

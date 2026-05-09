@@ -3032,6 +3032,12 @@ body.flow-maximized #flowArcList {
 .arcCtxBlock--summary { --arcCtxAccent: rgba(255,188,96,0.95); }
 .arcCtxBlock--primary { --arcCtxAccent: rgba(88,255,180,0.90); }
 .arcCtxBlock--secondary { --arcCtxAccent: rgba(186,150,255,0.90); }
+/* Edge variant — flow-scope per-route relationship blocks. Cool teal/cyan
+   so it reads as a sibling of primary (green) without colliding. The
+   selected-route variant uses the same gold as the welcome globe, since
+   that's the arc the user clicked into. */
+.arcCtxBlock--edge { --arcCtxAccent: rgba(120,210,235,0.92); }
+.arcCtxBlock--edge[data-active-edge="1"] { --arcCtxAccent: rgba(255,200,100,1); }
 .arcCtxBlockHead {
   position: relative;
   z-index: 1;
@@ -11471,6 +11477,68 @@ button.arcCtxSegDot,
 .aiAnalysisCtaBadge:active { transform: translateY(0); }
 .aiAnalysisCtaBadge:disabled { cursor: default; transform: none; }
 .aiAnalysisCtaBadge > * { position: relative; z-index: 2; }
+
+/* Full-fill variant — used by the flow-context AI panel where the badge
+   IS the panel surface, not a small CTA inside it. Cancels the parent's
+   padding, stretches the badge edge-to-edge, drops the corner radius to
+   match the body, scales the title up, and lets a gold wireframe-globe
+   SVG sit behind the title (mirrors the welcome overlay's aesthetic). */
+.arcCtxBody.arcCtxBodyGateFull {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.aiAnalysisCtaBadge--full {
+  flex: 1 1 auto;
+  width: 100%;
+  margin: 0;
+  border-radius: 0;
+  padding: 24px;
+  font-size: 14px;
+  letter-spacing: 0.18em;
+  gap: 12px;
+}
+.aiAnalysisCtaBadge--full .aiAnalysisCtaBadgeGlobe {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  /* Soft radial mask so the globe blends into the gradient edges
+     instead of showing hard SVG bounds against the badge frame. */
+  -webkit-mask-image: radial-gradient(ellipse at center, #000 32%, rgba(0,0,0,0.55) 78%, transparent 100%);
+          mask-image: radial-gradient(ellipse at center, #000 32%, rgba(0,0,0,0.55) 78%, transparent 100%);
+  animation: aiAnalysisCtaGlobeBreathe 9s ease-in-out infinite;
+}
+.aiAnalysisCtaBadge--full .aiAnalysisCtaBadgeGlobe svg {
+  width: 130%;
+  height: 130%;
+  display: block;
+  overflow: visible;
+  animation: aiAnalysisCtaGlobeRock 32s ease-in-out infinite;
+  transform-origin: 50% 50%;
+}
+@keyframes aiAnalysisCtaGlobeRock {
+  0%, 100% { transform: rotate(-8deg); }
+  50%      { transform: rotate(4deg); }
+}
+@keyframes aiAnalysisCtaGlobeBreathe {
+  0%, 100% { opacity: 0.62; }
+  50%      { opacity: 0.92; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .aiAnalysisCtaBadge--full .aiAnalysisCtaBadgeGlobe,
+  .aiAnalysisCtaBadge--full .aiAnalysisCtaBadgeGlobe svg { animation: none; }
+}
+/* Existing ::before shimmer needs to ride on top of the globe; the base
+   rule sets z-index 0, but the globe is also at z-index 0 and would
+   render UNDER the shimmer due to DOM order. Bump the shimmer's z so
+   the gold wipe still passes across the wireframe. */
+.aiAnalysisCtaBadge--full::before { z-index: 1; }
 /* Local dot styling so the badge doesn't depend on .aiAnalysisCta
    inheritance. Same blink / spin / static states as the small pill. */
 .aiAnalysisCtaBadge .aiAnalysisDot {
@@ -24900,7 +24968,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
     function _arcCtxApplyBodyState(state) {
       const body = document.getElementById('arcCtxBody');
       if (!body) return null;
-      body.classList.remove('arcCtxStateLoading', 'arcCtxStateTyping', 'arcCtxStateSettled');
+      // arcCtxBodyGateFull is the full-bleed gate variant. It's only set
+      // by _arcCtxShowGate; clearing it here means the very next state
+      // transition (loading shell, typing, error) restores normal
+      // padded layout. Without this, hitting the badge → loading shell
+      // → settled would leave the body in edge-to-edge mode with the
+      // shimmer/globe still rendering behind blocks.
+      body.classList.remove('arcCtxStateLoading', 'arcCtxStateTyping', 'arcCtxStateSettled', 'arcCtxBodyGateFull');
       if (state) body.classList.add(state);
       return body;
     }
@@ -24968,13 +25042,34 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const anyTyping = blocks.some((block) => block.status !== 'done');
       _arcCtxApplyBodyState(anyTyping ? 'arcCtxStateTyping' : 'arcCtxStateSettled');
       body.innerHTML = blocks.map((block, index) => {
-        const kindClass = block.kind === 'primary' || block.kind === 'secondary' ? block.kind : 'summary';
-        const badge = _esc(block.badge || (kindClass === 'summary' ? 'Story' : kindClass === 'primary' ? 'Primary country' : 'Secondary country'));
-        const title = _esc(block.title || (kindClass === 'summary' ? 'Event summary' : 'Country context'));
+        // 'edge' is the flow-scope variant — paired-country header + per-
+        // edge relationship prose. 'primary'/'secondary' are the entities-
+        // scope per-country blocks. Default 'summary' covers the lead-in
+        // event_summary block on either scope.
+        const validKind = ['primary','secondary','edge','summary'].includes(block.kind) ? block.kind : 'summary';
+        const kindClass = validKind;
+        const badge = _esc(block.badge || (
+          kindClass === 'summary' ? 'Story' :
+          kindClass === 'primary' ? 'Primary country' :
+          kindClass === 'secondary' ? 'Secondary country' :
+          kindClass === 'edge' ? (block.active ? 'Selected route' : 'Route') :
+          'Story'
+        ));
+        const title = _esc(block.title || (
+          kindClass === 'summary' ? 'Event summary' :
+          kindClass === 'edge' ? 'Route relationship' :
+          'Country context'
+        ));
         const text = _esc(block.typedText || '');
         const statusClass = block.status === 'done' ? 'is-done' : 'is-typing';
+        // Edge blocks carry the iso pair as data attributes so the arc-
+        // emphasis MutationObserver (wired below) can find the matching
+        // arc on the globe and brighten it when the block is active.
+        const edgeAttrs = kindClass === 'edge'
+          ? ` data-src-iso="${_esc(block.src_iso || '')}" data-dst-iso="${_esc(block.dst_iso || '')}"${block.active ? ' data-active-edge="1"' : ''}`
+          : '';
         return (
-          `<section class="arcCtxBlock arcCtxBlock--${kindClass} ${statusClass}">` +
+          `<section class="arcCtxBlock arcCtxBlock--${kindClass} ${statusClass}"${edgeAttrs}>` +
             `<div class="arcCtxBlockHead">` +
               `<span class="arcCtxSignalBadge">${badge}</span>` +
             `</div>` +
@@ -24988,6 +25083,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
       if (window.__arcCtxSegmented) {
         window.__arcCtxSegmented.setManualMode(body, true);
         window.__arcCtxSegmented.apply(body);
+      }
+      // Attach the arc-emphasis observer if any edge blocks rendered.
+      // Detach otherwise — entities-scope renders shouldn't drag the
+      // observer along (no data-src-iso to read, nothing to highlight).
+      if (body.querySelector('.arcCtxBlock--edge')) {
+        _arcCtxAttachEmphasisObserver();
+      } else {
+        _arcCtxDetachEmphasisObserver();
       }
     }
 
@@ -25012,6 +25115,73 @@ const settingsToggle     = document.getElementById("settingsToggle");
       });
     }
 
+    // Arc-emphasis bridge for flow-scope edge blocks. When the user
+    // advances through edge blocks (the segmented system flips
+    // .arcCtxBlock--active onto one block at a time), we brighten the
+    // matching arc on the globe so the prose and the visualization stay
+    // in lockstep. See www/index.html for the full design comment.
+    let _arcCtxEmphasisRestore = null;
+    let _arcCtxObserver = null;
+    function _arcCtxFindArcByIsoPair(srcIso, dstIso) {
+      if (!srcIso || !dstIso) return null;
+      const a = String(srcIso).toUpperCase();
+      const b = String(dstIso).toUpperCase();
+      return (arcObjects || []).find(arc => {
+        const s = arc?.flow?.src?.iso?.toUpperCase();
+        const d = arc?.flow?.dst?.iso?.toUpperCase();
+        if (!s || !d) return false;
+        return (s === a && d === b) || (s === b && d === a);
+      }) || null;
+    }
+    function _arcCtxClearEmphasis() {
+      const r = _arcCtxEmphasisRestore;
+      _arcCtxEmphasisRestore = null;
+      if (!r || !r.arc?.tubeMat?.uniforms) return;
+      try {
+        if (typeof r.prevOpacity === 'number')        r.arc.tubeMat.uniforms.uOpacity.value = r.prevOpacity;
+        if (typeof r.prevPulseIntensity === 'number') r.arc.tubeMat.uniforms.uPulseIntensity.value = r.prevPulseIntensity;
+      } catch (_) {}
+    }
+    function _arcCtxEmphasizeEdgeBlock(blockEl) {
+      _arcCtxClearEmphasis();
+      if (!blockEl) return;
+      const src = blockEl.getAttribute('data-src-iso');
+      const dst = blockEl.getAttribute('data-dst-iso');
+      if (!src || !dst) return;
+      const arc = _arcCtxFindArcByIsoPair(src, dst);
+      if (!arc?.tubeMat?.uniforms) return;
+      const u = arc.tubeMat.uniforms;
+      _arcCtxEmphasisRestore = {
+        arc,
+        prevOpacity:        u.uOpacity?.value,
+        prevPulseIntensity: u.uPulseIntensity?.value,
+      };
+      try {
+        if (u.uOpacity)        u.uOpacity.value = Math.max(u.uOpacity.value || 0, 1.0);
+        if (u.uPulseIntensity) u.uPulseIntensity.value = Math.max(u.uPulseIntensity.value || 0, 1.6);
+      } catch (_) {}
+    }
+    function _arcCtxAttachEmphasisObserver() {
+      if (_arcCtxObserver) return;
+      const body = document.getElementById('arcCtxBody');
+      if (!body) return;
+      _arcCtxObserver = new MutationObserver(() => {
+        const activeEdge = body.querySelector('.arcCtxBlock--edge.arcCtxBlock--active');
+        _arcCtxEmphasizeEdgeBlock(activeEdge);
+      });
+      _arcCtxObserver.observe(body, { subtree: true, attributes: true, attributeFilter: ['class'] });
+      const seed = body.querySelector('.arcCtxBlock--edge.arcCtxBlock--active');
+      if (seed) _arcCtxEmphasizeEdgeBlock(seed);
+    }
+    function _arcCtxDetachEmphasisObserver() {
+      if (_arcCtxObserver) { try { _arcCtxObserver.disconnect(); } catch (_) {} }
+      _arcCtxObserver = null;
+      _arcCtxClearEmphasis();
+    }
+    window.__arcCtxOnScopeOrClose = function() {
+      _arcCtxDetachEmphasisObserver();
+    };
+
     // Click-gate badge for the flow-context Deep Analysis. Mirror of
     // the article-detail and cluster-detail gates — same big-badge
     // styling and behavior. Replaces the prior auto-stream-on-tab-open
@@ -25020,11 +25190,45 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const body = _arcCtxApplyBodyState('arcCtxStateSettled');
       if (!body) return;
       const safeScope = String(scope || _arcCtxScope || '').replace(/[^a-z0-9_:-]/gi, '');
+      // Body now flips to the full-bleed gate variant: the badge fills
+      // the entire .arcCtxBody surface, with a wireframe-globe SVG behind
+      // the centered title (matches #earthWelcomeGlobe). The SVG ellipse
+      // ladder is identical to the welcome overlay's so the two surfaces
+      // read as a sibling pair.
+      body.classList.add('arcCtxBodyGateFull');
       body.innerHTML =
-        `<button class="aiAnalysisCtaBadge" data-scope="${safeScope}"` +
+        `<button class="aiAnalysisCtaBadge aiAnalysisCtaBadge--full" data-scope="${safeScope}"` +
                 ` data-hold-tip-title="Deep Read"` +
                 ` data-hold-tip="A curated synthesis of these flows — what's driving them, who's shaping the narrative, and what to watch next."` +
                 ` onclick="window.__arcAiContextStartFromGate?.(this)">` +
+          `<span class="aiAnalysisCtaBadgeGlobe" aria-hidden="true">` +
+            `<svg viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid slice">` +
+              `<defs>` +
+                `<filter id="aiCtaGlobeGlow_${safeScope}" x="-50%" y="-50%" width="200%" height="200%">` +
+                  `<feGaussianBlur stdDeviation="0.9" result="b"/>` +
+                  `<feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>` +
+                `</filter>` +
+              `</defs>` +
+              `<g filter="url(#aiCtaGlobeGlow_${safeScope})">` +
+                `<ellipse class="ewGlobeLineFaint" cx="100" cy="22"  rx="32" ry="3"/>`  +
+                `<ellipse class="ewGlobeLineFaint" cx="100" cy="42"  rx="62" ry="6"/>`  +
+                `<ellipse class="ewGlobeLine"      cx="100" cy="62"  rx="82" ry="9"/>`  +
+                `<ellipse class="ewGlobeLine"      cx="100" cy="82"  rx="94" ry="12"/>` +
+                `<ellipse class="ewGlobeLine"      cx="100" cy="100" rx="98" ry="14"/>` +
+                `<ellipse class="ewGlobeLine"      cx="100" cy="118" rx="94" ry="12"/>` +
+                `<ellipse class="ewGlobeLine"      cx="100" cy="138" rx="82" ry="9"/>`  +
+                `<ellipse class="ewGlobeLineFaint" cx="100" cy="158" rx="62" ry="6"/>`  +
+                `<ellipse class="ewGlobeLineFaint" cx="100" cy="178" rx="32" ry="3"/>`  +
+                `<ellipse class="ewGlobeLineFaint" cx="100" cy="100" rx="8"  ry="98"/>` +
+                `<ellipse class="ewGlobeLine"      cx="100" cy="100" rx="26" ry="98"/>` +
+                `<ellipse class="ewGlobeLineFaint" cx="100" cy="100" rx="44" ry="98"/>` +
+                `<ellipse class="ewGlobeLine"      cx="100" cy="100" rx="62" ry="98"/>` +
+                `<ellipse class="ewGlobeLineFaint" cx="100" cy="100" rx="78" ry="98"/>` +
+                `<ellipse class="ewGlobeLine"      cx="100" cy="100" rx="90" ry="98"/>` +
+                `<ellipse class="ewGlobeLineFaint" cx="100" cy="100" rx="98" ry="98"/>` +
+              `</g>` +
+            `</svg>` +
+          `</span>` +
           `<span class="aiAnalysisDot"></span>` +
           `<span>✦ Generate Deep Analysis</span>` +
         `</button>`;
@@ -25177,6 +25381,46 @@ const settingsToggle     = document.getElementById("settingsToggle");
               .flatMap(a => [a.flow.src?.iso, a.flow.dst?.iso])
               .filter(Boolean)
           )),
+          // Flow-scope only — but cheap to always send. Visible arcs deduped
+          // by unordered pair (so US→MX and MX→US collapse into a single
+          // edge, with the higher-count direction as canonical), sorted by
+          // total count desc, capped at 20. The active arc is force-included
+          // if it would otherwise have been dropped — server-side prompt
+          // tags it for ~350-char depth instead of the default 200.
+          visible_arcs: (() => {
+            const visibleFlows = (arcObjects || [])
+              .filter(a => a?.flow && (a.tubeMat?.uniforms?.uOpacity?.value || 0) > 0.02);
+            const byPair = new Map();
+            const pairKey = (a, b) => [String(a||'').toUpperCase(), String(b||'').toUpperCase()].sort().join('|');
+            for (const a of visibleFlows) {
+              const src = a.flow?.src?.iso;
+              const dst = a.flow?.dst?.iso;
+              if (!src || !dst || src === dst) continue;
+              const k = pairKey(src, dst);
+              const c = Number(a.flow?.count) || 1;
+              const prev = byPair.get(k);
+              if (!prev) {
+                byPair.set(k, { src_iso: src, dst_iso: dst, count: c });
+              } else {
+                if (c > prev.count) {
+                  prev.src_iso = src; prev.dst_iso = dst;
+                }
+                prev.count = (prev.count || 0) + c;
+              }
+            }
+            let edges = Array.from(byPair.values()).sort((x, y) => (y.count || 0) - (x.count || 0));
+            if (scope === 'flow' && _selectedArcUid != null) {
+              const arc = (arcObjects || []).find(a => a._uid === _selectedArcUid);
+              const f = arc?.flow;
+              if (f?.src?.iso && f?.dst?.iso) {
+                const k = pairKey(f.src.iso, f.dst.iso);
+                if (!byPair.has(k)) {
+                  edges.unshift({ src_iso: f.src.iso, dst_iso: f.dst.iso, count: Number(f.count) || 1 });
+                }
+              }
+            }
+            return edges.slice(0, 20);
+          })(),
           active_arc: scope === 'flow' && _selectedArcUid != null ? (() => {
             const arc = (arcObjects || []).find(a => a._uid === _selectedArcUid);
             const f = arc?.flow;
@@ -32032,11 +32276,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // quiet for 3 days but hasn't had its row updated yet.
       //
       // Sort priority (matches /api/threads/latest ORDER BY):
-      //   1. status — active → dormant → cooling
+      //   1. status — active → cooling → dormant
       //   2. importance DESC
       //   3. category tier
       //   4. recency
-      const STATUS_RANK = { active: 0, dormant: 1, cooling: 2 };
+      const STATUS_RANK = { active: 0, cooling: 1, dormant: 2 };
       function applyRecencyStatus(data) {
         const now = Date.now();
         const H48     = 48 * 60 * 60 * 1000;
@@ -33531,6 +33775,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
       el.classList.remove("visible", "view-info", "view-arcs", "view-ctx");
       window.__flowCtxDrillDown = false;
     }
+    // Drop any arc-emphasis the AI panel was holding so a closed panel
+    // doesn't leave one tube glowing.
+    try { window.__arcCtxOnScopeOrClose?.(); } catch (_) {}
   }
   window.showFlowCtxCard = showFlowCtxCard;
   window.hideFlowCtxCard = hideFlowCtxCard;
