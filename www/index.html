@@ -393,14 +393,26 @@
       height: 14px;
       border-radius: 50%;
       flex-shrink: 0;
+      position: relative;
       background: #ffc346;
       box-shadow:
-        0 0 0 1px rgba(255, 195, 70, 0.34),
-        0 0 10px rgba(255, 195, 70, 0.7),
-        0 0 18px rgba(255, 195, 70, 0.3);
-      animation: panelLiveDotBreathe 2.6s ease-in-out infinite;
+        0 0 0 1px rgba(255, 195, 70, 0.4),
+        0 0 12px rgba(255, 195, 70, 0.85),
+        0 0 24px rgba(255, 195, 70, 0.45);
+      animation: panelLiveDotBreathe 1.9s ease-in-out infinite;
       transform-origin: center;
       will-change: transform, box-shadow, opacity;
+    }
+    /* Radar-style ripple ring emitted from the dot every 1.9s. */
+    .panelLiveDot::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border-radius: 50%;
+      border: 1.5px solid rgba(255, 195, 70, 0.7);
+      animation: panelLiveDotRipple 1.9s cubic-bezier(0.22, 0.72, 0.4, 1) infinite;
+      pointer-events: none;
+      will-change: transform, opacity;
     }
 
     .panelHeader:active .panelLiveDot,
@@ -417,22 +429,29 @@
     }
 
     @keyframes panelLiveDotBreathe {
+      /* Wider scale + glow envelope so the pulse reads at a glance.
+         ~30% scale delta + brighter outer glow swing. */
       0%, 100% {
-        transform: scale(0.94);
-        opacity: 0.92;
+        transform: scale(0.88);
+        opacity: 0.88;
         box-shadow:
-          0 0 0 1px rgba(255, 195, 70, 0.30),
-          0 0 8px rgba(255, 195, 70, 0.62),
-          0 0 16px rgba(255, 195, 70, 0.24);
+          0 0 0 1px rgba(255, 195, 70, 0.32),
+          0 0 8px rgba(255, 195, 70, 0.65),
+          0 0 18px rgba(255, 195, 70, 0.25);
       }
       50% {
-        transform: scale(1.08);
+        transform: scale(1.18);
         opacity: 1;
         box-shadow:
-          0 0 0 1px rgba(255, 195, 70, 0.4),
-          0 0 14px rgba(255, 195, 70, 0.86),
-          0 0 26px rgba(255, 195, 70, 0.42);
+          0 0 0 1.5px rgba(255, 195, 70, 0.5),
+          0 0 18px rgba(255, 195, 70, 1),
+          0 0 34px rgba(255, 195, 70, 0.55);
       }
+    }
+    @keyframes panelLiveDotRipple {
+      0%   { transform: scale(1);   opacity: 0.9; border-width: 1.5px; }
+      80%  {                         opacity: 0;   border-width: 0.5px; }
+      100% { transform: scale(2.4); opacity: 0;   border-width: 0.5px; }
     }
 
     @keyframes panelLiveDotTouch {
@@ -28111,7 +28130,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
     function renderList(items, listEl, q) {
       _kwActiveIdx = -1;
       if (!items.length) {
-        listEl.innerHTML = '<div class="kwAutoNone">No matches — try a different term</div>';
+        // Suggestion miss ≠ "no articles." The autocomplete only indexes
+        // top-trending keywords from the last 30 days; rare terms like
+        // "hantavirus" or "polymyositis" won't appear here even though
+        // /api/flows will still find articles tagged with them. Make it
+        // explicit so users don't read "No matches" and give up.
+        listEl.innerHTML = '<div class="kwAutoNone">Not trending — press Load to search anyway</div>';
         listEl.classList.add('visible');
         return;
       }
@@ -28266,6 +28290,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
     document.getElementById("flowStats").innerHTML = `<span style="opacity:0.4">Loading…</span>`;
     const _loadBtn = document.getElementById("flowLoadBtn");
     if (_loadBtn) _loadBtn.innerHTML = '<span class="loadDots loadDots--green"><span class="loadDot"></span><span class="loadDot"></span><span class="loadDot"></span></span>';
+    // Force-dismiss the suggestions dropdown so a stale "Not trending"
+    // message can't linger underneath the spinner. Without this, rare
+    // keywords like "hantavirus" leave the user staring at "no match"
+    // copy for the 5-30s the live query takes to come back warm.
+    document.getElementById('flowKwAutoList')?.classList.remove('visible');
 
     // Ensure countries are loaded for view-aware remapping
     await loadCountries();

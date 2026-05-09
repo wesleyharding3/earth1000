@@ -13,12 +13,17 @@
  *
  * Keyword source (rolling, in order of preference):
  *   1. PREWARM_KEYWORDS env var — manual override, ops/debug only
- *   2. /api/keywords/rising?limit=N — the live, momentum-ranked list
- *      (default N=40, override via PREWARM_RISING_LIMIT). Resolved on
- *      every cron tick so newly-spiking keywords get warmed within a
- *      cycle and ones that have cooled off automatically drop out.
- *   3. DEFAULT_KEYWORDS — hand-curated fallback used only when the
- *      rising endpoint is unreachable (transient keywordCron failure).
+ *   2. /api/keywords/trending + /api/keywords/rising, merged + deduped.
+ *      Trending covers sustained-volume keywords (trump, ukraine, china)
+ *      that users hit constantly; rising covers surge keywords (e.g.
+ *      "ted turner", "hantavirus-stricken ship") that aren't in the
+ *      baseline yet. Both lists are fetched in parallel each tick so
+ *      newly-spiking keywords get warmed within an hour AND the high-
+ *      traffic baseline never goes cold during quiet periods.
+ *      Caps via PREWARM_TRENDING_LIMIT (default 25) and
+ *      PREWARM_RISING_LIMIT (default 25); merged total is the union.
+ *   3. DEFAULT_KEYWORDS — hand-curated fallback used only when both
+ *      keyword endpoints are unreachable (transient keywordCron failure).
  *
  * For "trump" + 7 days the cold latency is ~3–5s on flows and ~1s on
  * heatmap. With this cron running every 60 minutes and both endpoint
@@ -33,8 +38,10 @@
  * Env vars:
  *   API_URL                 base URL of the API (default: http://localhost:3000)
  *   PREWARM_KEYWORDS        comma-separated keyword list (manual override)
- *   PREWARM_RISING_LIMIT    how many rising keywords to warm (default: 40)
+ *   PREWARM_TRENDING_LIMIT  how many trending keywords to warm (default: 15)
+ *   PREWARM_RISING_LIMIT    how many rising keywords to warm (default: 25)
  *   PREWARM_TIMEOUT_MS      per-request timeout (default: 95000)
+ *   PREWARM_PAUSE_MS        pause between keyword batches (default: 250)
  *
  * Run:  node prewarmKeywordCacheCron.js
  *
@@ -87,24 +94,54 @@ const DEFAULT_KEYWORDS = [
   'oil', 'opec',
 ];
 
-// Top-N rising keywords to warm. The cron used to read a 30-entry
-// curated list (DEFAULT_KEYWORDS above) which went stale fast — newly-
-// spiking stories ("hormuz", "rubio vatican") had cold caches because
-// they weren't on the list, while keywords that had cooled off
-// ("interest rates" in a quiet week) wasted cron cycles. Now we read
-// from the rising endpoint each run, so warming naturally tracks
-// what users are most likely to search for.
-const RISING_LIMIT = parseInt(process.env.PREWARM_RISING_LIMIT || '40', 10);
+// Per-list caps. Earlier versions warmed only rising (max 40), which
+// missed sustained high-traffic keywords ("trump", "ukraine", "china")
+// because they weren't gaining momentum — they were already at top.
+// We now blend both sources: trending for the steady baseline and
+// rising for surge events, deduped at merge time.
+// Trending defaults trimmed to 15: sustained-volume keywords like "trump"
+// or "ukraine" are the slowest queries on the API (cold buffer + ~150K
+// articles in the join) and reliably hit the server's prewarm SQL caps
+// (90s heatmap / 60s flows). The top-15 capture nearly all sustained
+// search traffic; the long tail can warm organically. Lift to 25+ via
+// PREWARM_TRENDING_LIMIT only if pool monitoring shows headroom.
+const TRENDING_LIMIT = parseInt(process.env.PREWARM_TRENDING_LIMIT || '15', 10);
+const RISING_LIMIT   = parseInt(process.env.PREWARM_RISING_LIMIT   || '25', 10);
+
+// Pause between keywords (ms). Lets pg pool drain between bursts so the
+// cron doesn't compete with user-facing traffic for connections. 250ms ×
+// ~50 keywords adds ~12s to total runtime — negligible vs the per-keyword
+// 5–30s query times.
+const INTER_KEYWORD_PAUSE_MS = parseInt(process.env.PREWARM_PAUSE_MS || '250', 10);
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+async function fetchKeywordList(path, label) {
+  try {
+    const r = await fetchWithTimeout(`${API_URL}${path}`);
+    if (!r.ok) {
+      console.warn(`${TAG} ${label} HTTP ${r.status}`);
+      return [];
+    }
+    const data = await r.json();
+    const arr = Array.isArray(data) ? data : (data?.keywords || []);
+    return arr
+      .map(item => item && typeof item.keyword === 'string' ? item.keyword.trim().toLowerCase() : null)
+      .filter(Boolean);
+  } catch (err) {
+    console.warn(`${TAG} ${label} fetch failed: ${err.message}`);
+    return [];
+  }
+}
 
 // Resolve the keyword list once per run. Order of preference:
 //   1. PREWARM_KEYWORDS env var (manual override — handy for ops or
 //      reproducing a specific failure scenario)
-//   2. Top-N rising keywords from /api/keywords/rising — the live,
-//      rolling source. New high-momentum keywords appear here as soon
-//      as keywordCron.js's next refresh writes them; old ones drop
-//      out automatically when their momentum decays.
-//   3. DEFAULT_KEYWORDS — hand-curated fallback, used only when
-//      rising is unreachable / empty so a transient outage doesn't
+//   2. Trending + rising, merged. Trending leads (sustained baseline
+//      that organic traffic depends on); rising follows (newly-spiking
+//      stories that don't have organic hits yet). Both fetched in
+//      parallel; deduped by lowercased keyword.
+//   3. DEFAULT_KEYWORDS — hand-curated fallback, used only when BOTH
+//      endpoints fail / return empty so a transient outage doesn't
 //      leave the entire cache cold.
 async function pickKeywordsToWarm() {
   if (process.env.PREWARM_KEYWORDS) {
@@ -112,25 +149,29 @@ async function pickKeywordsToWarm() {
     console.log(`${TAG} using PREWARM_KEYWORDS env override (${list.length} keywords)`);
     return list;
   }
-  try {
-    const r = await fetchWithTimeout(`${API_URL}/api/keywords/rising?limit=${RISING_LIMIT}`);
-    if (r.ok) {
-      const data = await r.json();
-      const arr = Array.isArray(data) ? data : (data?.keywords || []);
-      const list = arr
-        .map(item => item && typeof item.keyword === 'string' ? item.keyword.trim().toLowerCase() : null)
-        .filter(Boolean);
-      if (list.length) {
-        console.log(`${TAG} discovered ${list.length} rising keywords from /api/keywords/rising`);
-        return list;
-      }
-      console.warn(`${TAG} /api/keywords/rising returned empty — falling back to DEFAULTS`);
-    } else {
-      console.warn(`${TAG} /api/keywords/rising HTTP ${r.status} — falling back to DEFAULTS`);
-    }
-  } catch (err) {
-    console.warn(`${TAG} /api/keywords/rising fetch failed: ${err.message} — falling back to DEFAULTS`);
+
+  const [trendingList, risingList] = await Promise.all([
+    fetchKeywordList(`/api/keywords/trending?days=7&limit=${TRENDING_LIMIT}`, '/api/keywords/trending'),
+    fetchKeywordList(`/api/keywords/rising?limit=${RISING_LIMIT}`,             '/api/keywords/rising'),
+  ]);
+
+  // Merge with dedup. Trending first so steady-volume keywords ride the
+  // earlier cron slots — if the cron is killed mid-run we'd rather have
+  // warmed "trump" than "tchouaméni".
+  const seen = new Set();
+  const merged = [];
+  for (const k of [...trendingList, ...risingList]) {
+    if (seen.has(k)) continue;
+    seen.add(k);
+    merged.push(k);
   }
+
+  if (merged.length) {
+    console.log(`${TAG} discovered ${merged.length} keywords (trending=${trendingList.length}, rising=${risingList.length}, dedup_overlap=${trendingList.length + risingList.length - merged.length})`);
+    return merged;
+  }
+
+  console.warn(`${TAG} both keyword endpoints returned empty — falling back to DEFAULTS`);
   return DEFAULT_KEYWORDS;
 }
 
@@ -180,20 +221,37 @@ async function warmFlows(keyword) {
 }
 
 async function warmOne(keyword) {
-  // Run heatmap + flows in parallel — they hit different routes.
-  const [hm, fl] = await Promise.allSettled([warmHeatmap(keyword), warmFlows(keyword)]);
+  // Sequential heatmap → flows. Earlier versions ran both in parallel,
+  // which doubled the cron's peak pg-pool footprint to 2 connections per
+  // keyword. For sustained-volume keywords like "trump" each query can
+  // run 30-60s, so two parallel ones can compete with each other AND
+  // with user traffic on the same pool. Sequential keeps the cron at 1
+  // connection in flight — the cron runs longer but never spikes load.
+  let hmRes, flRes;
+  try {
+    const ms = await warmHeatmap(keyword);
+    hmRes = { ok: true, ms };
+  } catch (e) {
+    hmRes = { ok: false, err: e?.message || String(e) };
+  }
+  try {
+    const ms = await warmFlows(keyword);
+    flRes = { ok: true, ms };
+  } catch (e) {
+    flRes = { ok: false, err: e?.message || String(e) };
+  }
   return {
     keyword,
-    heatmap: hm.status === 'fulfilled' ? `${hm.value}ms` : `ERR ${hm.reason?.message || hm.reason}`,
-    flows:   fl.status === 'fulfilled' ? `${fl.value}ms` : `ERR ${fl.reason?.message || fl.reason}`,
+    heatmap: hmRes.ok ? `${hmRes.ms}ms` : `ERR ${hmRes.err}`,
+    flows:   flRes.ok ? `${flRes.ms}ms` : `ERR ${flRes.err}`,
     // Track sub-requests independently so exit-code logic doesn't mark a
     // keyword as a total failure just because ONE of two sub-requests
     // failed (e.g., a hot keyword's flow query times out at the server's
     // 10s SQL cap but its heatmap completes fine — we still warmed
     // something useful, no need to fail the whole cron).
-    hmOk:    hm.status === 'fulfilled',
-    flOk:    fl.status === 'fulfilled',
-    ok:      hm.status === 'fulfilled' && fl.status === 'fulfilled',
+    hmOk:    hmRes.ok,
+    flOk:    flRes.ok,
+    ok:      hmRes.ok && flRes.ok,
   };
 }
 
@@ -214,6 +272,12 @@ async function main() {
     const batch = KEYWORDS.slice(i, i + CONCURRENCY);
     const out = await Promise.all(batch.map(warmOne));
     results.push(...out);
+    // Brief pause between keyword batches so the API's pg pool can
+    // drain. Skipped after the final batch (no point pausing if there's
+    // no follow-on work).
+    if (INTER_KEYWORD_PAUSE_MS > 0 && i + CONCURRENCY < KEYWORDS.length) {
+      await sleep(INTER_KEYWORD_PAUSE_MS);
+    }
   }
 
   const okCount   = results.filter(r => r.ok).length;
