@@ -47026,8 +47026,30 @@ body.ticker-active .gTickerLabel {
   let _panelsBySeg  = {};      // { segment_index: [panel rows] } — fetched on briefing open
 
   // ── Background Music Engine ──────────────────────────────────────────
-  // Context-aware ducking: music swells between narrator segments,
-  // fades when narrator speaks or a YouTube video plays.
+  // Phase-based briefing music.
+  //
+  // Track: Morse Room Signal — single static file used for every briefing
+  // (the per-episode `/api/briefing/music/:id` URL is no longer used).
+  //
+  // Lifecycle, per the briefing-music spec:
+  //   A. Briefing opens — fade out app procedural music + start track at
+  //      full volume. Narrator does NOT begin until 4s in.
+  //   B. Segment-0 (intro) narrator starts at t=4s — track ducks to
+  //      BG_VOL_LOW so it sits under the voice.
+  //   C. Transition into segment 1 (first story) — track fades to zero
+  //      and pauses. Stories play with no music underneath.
+  //   D. Story-to-story gaps — track briefly fades in (swell) then fades
+  //      back out as the next narrator begins. Existing
+  //      bgMusicNarratorStart/End hooks already implement this — we keep
+  //      them for stories 1+.
+  //   E. Recap visible — resume + loop track at low ambient volume until
+  //      the user closes the briefing.
+  //
+  // Constraints from the spec: never cut off (always fade), never play
+  // OVER narrator (BG_VOL_LOW is duck-under, not muted-during-speech).
+  const BRIEFING_MUSIC_URL = './audio/briefing/morse-room-signal.mp3';
+  // 4-second lead-in: track plays alone before segment-0 narrator fires.
+  const BRIEFING_MUSIC_LEAD_MS = 4000;
   let _bgMusic      = null;    // Audio element for background music
   let _bgMusicCtx   = null;    // AudioContext for gain control
   let _bgMusicGain  = null;    // GainNode for smooth volume ducking
@@ -47035,19 +47057,22 @@ body.ticker-active .gTickerLabel {
   const BG_VOL_FULL = 0.35;   // volume during gaps (between segments)
   const BG_VOL_LOW  = 0.08;   // volume when narrator is speaking
   const BG_VOL_MUTE = 0.0;    // volume when YouTube video is playing
+  const BG_VOL_RECAP = 0.18;  // ambient volume during the recap loop
   const BG_FADE_IN  = 1.2;    // seconds to fade up
   const BG_FADE_OUT = 0.6;    // seconds to duck down
+  const BG_FADE_PAUSE = 1.4;  // seconds to fully fade before pausing
   let _bgMusicLoaded = false;
+  let _bgMusicSegmentPaused = false;  // true while story segments play
 
-  function initBgMusic(episodeId) {
-    if (!episodeId) return;
+  function initBgMusic() {
     // Clean up previous instance
     destroyBgMusic();
-    _bgMusic = new Audio(`${API}/api/briefing/music/${episodeId}`);
+    _bgMusic = new Audio(BRIEFING_MUSIC_URL);
     _bgMusic.preload = 'auto';
     _bgMusic.loop = true;
     _bgMusic.volume = 1; // volume controlled via GainNode
     _bgMusicLoaded = false;
+    _bgMusicSegmentPaused = false;
 
     _bgMusic.addEventListener('canplaythrough', () => {
       if (_bgMusicLoaded) return;
@@ -47130,6 +47155,50 @@ body.ticker-active .gTickerLabel {
   function bgMusicVideoEnd()      {
     duckBgMusic(BG_VOL_LOW, BG_FADE_IN);
     if (window.audioEngine) window.audioEngine.duck(0.4, BG_FADE_IN * 1000);
+  }
+
+  // Phase C — first story begins. Fade music to silence, then pause.
+  // Keeps the track ready to resume on the next gap (story-to-story
+  // swell) or at the recap. The pause must follow the fade complete,
+  // hence the setTimeout matching BG_FADE_PAUSE.
+  function bgMusicFadeOutAndPause() {
+    if (!_bgMusic) return;
+    _bgMusicSegmentPaused = true;
+    duckBgMusic(BG_VOL_MUTE, BG_FADE_PAUSE);
+    addBTimer(setTimeout(() => {
+      if (!_bgMusic) return;
+      try { _bgMusic.pause(); } catch (_) {}
+    }, BG_FADE_PAUSE * 1000 + 50));
+  }
+
+  // Phase D — story-to-story gap. Resume from paused state, briefly
+  // swell to BG_VOL_FULL. The matching duck-back-down to BG_VOL_LOW
+  // happens via bgMusicNarratorStart when the next narrator audio
+  // becomes ready (existing flow at the segment-ready handler).
+  function bgMusicResumeForGap() {
+    if (!_bgMusic) return;
+    if (_bgMusicSegmentPaused) {
+      try {
+        if (_bgMusicCtx && _bgMusicCtx.state === 'suspended') _bgMusicCtx.resume();
+        _bgMusic.play().catch(() => {});
+      } catch (_) {}
+      _bgMusicSegmentPaused = false;
+    }
+    duckBgMusic(BG_VOL_FULL, BG_FADE_IN);
+  }
+
+  // Phase E — recap visible. Resume from paused, fade in to ambient
+  // recap volume, ensure looping. Closes via destroyBgMusic when the
+  // briefing closes (closeBriefing calls destroyBgMusic).
+  function bgMusicResumeForRecap() {
+    if (!_bgMusic) return;
+    try {
+      if (_bgMusicCtx && _bgMusicCtx.state === 'suspended') _bgMusicCtx.resume();
+      _bgMusic.loop = true;
+      _bgMusic.play().catch(() => {});
+    } catch (_) {}
+    _bgMusicSegmentPaused = false;
+    duckBgMusic(BG_VOL_RECAP, BG_FADE_IN * 1.5);
   }
   // ── End Background Music Engine ──────────────────────────────────────
 
@@ -47290,10 +47359,10 @@ body.ticker-active .gTickerLabel {
     updatePlayBtn();
     updateSpeedBtn();
     startSeekLoop();
-    // Init background music if episode has it
-    if (episode.has_music) {
-      initBgMusic(episode.id);
-    }
+    // Init background music — Morse Room Signal plays for every briefing
+    // (no per-episode gate). Loaded eagerly so it's ready by the time
+    // the 4-second lead-in expires.
+    initBgMusic();
     // Prefetch articles for every story segment so the mobile article
     // roll renders the moment goToSegment fires instead of waiting on
     // a per-segment /api/articles/by-ids round-trip. Cache stores the
@@ -47311,7 +47380,17 @@ body.ticker-active .gTickerLabel {
         .then(list => { _articleRollCache.set(key, Array.isArray(list) ? list : []); })
         .catch(() => {});
     }
-    goToSegment(0);
+    // Phase A — start the music NOW at full volume, then schedule the
+    // narrator (segment 0) to begin BRIEFING_MUSIC_LEAD_MS later. The
+    // music plays alone during this window. Wrapped in addBTimer so a
+    // close-during-lead-in cancels it. startBgMusic is a no-op if init
+    // hasn't completed yet — bgMusicNarratorStart at segment-ready
+    // is the duck-down trigger, fine to leave that wired through.
+    startBgMusic();
+    addBTimer(setTimeout(() => {
+      if (!window.briefingActive) return; // user closed during lead-in
+      goToSegment(0);
+    }, BRIEFING_MUSIC_LEAD_MS));
   }
 
   // ── Close ────────────────────────────────────────────────────────────────
@@ -47852,7 +47931,27 @@ body.ticker-active .gTickerLabel {
     if (window._globeResetZoom) window._globeResetZoom();
     if (audio) { try { audio.onended = null; audio.pause(); } catch (_) {} audio = null; }
     if (audioNext) { try { audioNext.pause(); } catch (_) {} audioNext = null; }
-    destroyBgMusic();
+    // Graceful fade-out before destroy. The recap leaves the track
+    // looping at BG_VOL_RECAP — slamming destroyBgMusic without a fade
+    // produces an audible click/cut that violates the spec's "never
+    // cut off" constraint. Fade to silence over BG_FADE_PAUSE seconds,
+    // THEN tear down. addBTimer is gone by this point (clearBTimers
+    // already ran above) so use a plain setTimeout.
+    if (_bgMusic) {
+      duckBgMusic(BG_VOL_MUTE, BG_FADE_PAUSE);
+      const _toClose = _bgMusic;
+      const _ctxToClose = _bgMusicCtx;
+      _bgMusic = null; _bgMusicCtx = null; _bgMusicGain = null; _bgMusicSrc = null;
+      _bgMusicLoaded = false; _bgMusicSegmentPaused = false;
+      setTimeout(() => {
+        try { _toClose.pause(); _toClose.src = ''; } catch (_) {}
+        if (_ctxToClose && _ctxToClose.state !== 'closed') {
+          try { _ctxToClose.close(); } catch (_) {}
+        }
+      }, BG_FADE_PAUSE * 1000 + 50);
+    } else {
+      destroyBgMusic();
+    }
     segIdx = 0;
     document.getElementById('briefingOverlay').classList.remove('open');
     document.getElementById('bRecap').classList.remove('open');
@@ -48847,8 +48946,33 @@ body.ticker-active .gTickerLabel {
     if (audioNext) { try { audioNext.pause(); }                        catch (_) {} }
     // Stop story-detail panel audio if open
     if (window._detailAudio) { try { window._detailAudio.pause(); } catch (_) {} }
-    // Swell background music during segment transition gap
-    bgMusicNarratorEnd();
+
+    // Music phase routing per the briefing-music spec:
+    //   - Phase C: transition INTO the first story (or any story
+    //     directly following the intro) → fade out and pause music.
+    //     Stories play with no music underneath.
+    //   - Phase D: story-to-story transition → existing swell
+    //     (bgMusicNarratorEnd → bgMusicNarratorStart at segment-ready).
+    //     This is the "fade in / fade out during the brief
+    //     transitions between segments" the spec asks for.
+    //   - Other transitions (outro / summary / keywords / video) →
+    //     keep the existing swell behavior; recap takes over at the
+    //     end via showRecap.
+    const _prevSeg = (segIdx >= 0 && episode.segments[segIdx]) || null;
+    const _prevWasIntro = _prevSeg?.type === 'intro';
+    const _enteringStory = seg?.type === 'story';
+    if (_enteringStory && (_prevWasIntro || _bgMusicSegmentPaused)) {
+      // First story (or any story coming out of paused state) — pause
+      // the music after fade. _bgMusicSegmentPaused stays true until
+      // the next gap or recap explicitly resumes.
+      bgMusicFadeOutAndPause();
+    } else if (_enteringStory) {
+      // Story-to-story gap — resume from pause if needed and swell.
+      bgMusicResumeForGap();
+    } else {
+      // Non-story transitions (outro etc.) — existing swell.
+      bgMusicNarratorEnd();
+    }
 
     // ── Per-segment audio ──────────────────────────────────────────────────
     // Hide hover card from previous segment immediately
@@ -50362,11 +50486,11 @@ body.ticker-active .gTickerLabel {
     // True end-of-briefing — clear labels here (clearArcMeshes leaves
     // labels alone now, see its comment for why).
     if (window.clearBriefingFlowArcLabels) window.clearBriefingFlowArcLabels();
-    // Fade out background music at end of briefing
-    if (_bgMusic) {
-      duckBgMusic(0.001, 2.0);
-      setTimeout(() => { if (_bgMusic) { try { _bgMusic.pause(); } catch (_) {} } }, 2500);
-    }
+    // Phase E — recap visible. Resume music (paused since first story)
+    // and fade in to BG_VOL_RECAP at low ambient volume, looped.
+    // Stays playing until the user closes the briefing, at which
+    // point destroyBgMusic in closeBriefing tears it down with a fade.
+    bgMusicResumeForRecap();
     if (window.clearBriefingPulses) window.clearBriefingPulses();
 
     const grid = document.getElementById('bRecapGrid');

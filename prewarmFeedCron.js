@@ -35,7 +35,13 @@
 require('dotenv').config({ override: true });
 
 const API_URL     = (process.env.API_URL || 'http://localhost:3000').replace(/\/$/, '');
-const TIMEOUT_MS  = parseInt(process.env.PREWARM_TIMEOUT_MS  || '95000', 10);
+// 130s — must outlive the server's prewarm SQL ceiling (120s on
+// /api/news/country/:id and /:id/global). Earlier 95s default capped
+// the cron BELOW the server's 90s SQL limit + buffer; bumped in
+// lockstep with the server's 90s→120s bump so a long-running cold-
+// buffer query for IL/UA/IN/BR/MX gets to actually finish instead of
+// being killed mid-flight by the cron's fetch timeout.
+const TIMEOUT_MS  = parseInt(process.env.PREWARM_TIMEOUT_MS  || '130000', 10);
 const CONCURRENCY = Math.max(1, parseInt(process.env.PREWARM_CONCURRENCY || '1', 10));
 const COUNTRY_LIMIT = Math.max(0, parseInt(process.env.PREWARM_COUNTRY_LIMIT || '100', 10));
 const CITY_LIMIT    = Math.max(0, parseInt(process.env.PREWARM_CITY_LIMIT    || '50', 10));
@@ -113,20 +119,39 @@ async function fetchAllTags() {
 }
 
 async function warm(label, url) {
-  const t0 = Date.now();
-  try {
-    const r = await fetchWithTimeout(url);
-    const ms = Date.now() - t0;
-    // Cancel body stream — the server's ttlCached() populates the cache
-    // INSIDE the callback before res.json() runs, so by the time we get
-    // headers the cache is warm. Reading the body just buffers MBs of
-    // JSON we don't need (US global feed alone OOMs Render's 512MB cap).
-    try { await r.body?.cancel?.(); } catch {}
-    if (!r.ok) return { label, ms, err: `HTTP ${r.status}` };
-    return { label, ms };
-  } catch (e) {
-    return { label, ms: Date.now() - t0, err: e.message };
+  // Single retry on 5xx. The first attempt — even when it times out at
+  // the SQL ceiling — pulls the relevant article_locations / news_articles
+  // pages into Postgres' buffer cache. The second attempt typically
+  // completes in 30-50% of the first attempt's time because those pages
+  // are already in RAM. Without this, top-mention countries that need
+  // ~120s on a stone-cold buffer never recover within a single cron
+  // run. Network failures (no status) and 4xx (auth, malformed) skip
+  // retry — they won't change in 3 seconds.
+  const _attempt = async () => {
+    const t0 = Date.now();
+    try {
+      const r = await fetchWithTimeout(url);
+      const ms = Date.now() - t0;
+      // Cancel body stream — the server's ttlCached() populates the cache
+      // INSIDE the callback before res.json() runs, so by the time we get
+      // headers the cache is warm. Reading the body just buffers MBs of
+      // JSON we don't need (US global feed alone OOMs Render's 512MB cap).
+      try { await r.body?.cancel?.(); } catch {}
+      return { ms, err: r.ok ? null : `HTTP ${r.status}`, status: r.status };
+    } catch (e) {
+      return { ms: Date.now() - t0, err: e.message, status: null };
+    }
+  };
+
+  let r = await _attempt();
+  if (r.err && r.status >= 500 && r.status < 600) {
+    await new Promise(rs => setTimeout(rs, 3000));
+    const r2 = await _attempt();
+    if (!r2.err) return { label, ms: r.ms + 3000 + r2.ms, retried: true };
+    return { label, ms: r.ms + 3000 + r2.ms, err: r2.err, retried: true };
   }
+  if (r.err) return { label, ms: r.ms, err: r.err };
+  return { label, ms: r.ms };
 }
 
 async function main() {

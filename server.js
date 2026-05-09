@@ -1517,7 +1517,14 @@ app.get("/api/news/city/:cityId/global", async (req, res) => {
     const tagOuter    = tagId ? `sub.score DESC NULLS LAST, sub.published_at DESC NULLS LAST`
                               : `sub.published_at DESC NULLS LAST`;
 
-    const runner = isPrewarm ? await _withStatementTimeout(90_000) : pool;
+    // 90s → 120s on prewarm. Top-mention countries (US, GB, RU, CN, IR,
+    // IL, UA, IN, DE, BR) cross-join article_locations × news_articles
+    // over ~M rows on cold buffer and frequently land between 90-100s,
+    // tripping the previous 90s ceiling and 500ing the cron — exactly
+    // why prewarm-feed runs were showing 70-90s ERR HTTP 500 lines for
+    // the heaviest countries. Cron fetch timeout bumped to 130s in
+    // lockstep so the cron doesn't kill an in-flight query.
+    const runner = isPrewarm ? await _withStatementTimeout(120_000) : pool;
     try {
     const { rows } = await runner.query(`
       SELECT sub.*
@@ -1659,7 +1666,14 @@ app.get("/api/news/country/:countryId/global", async (req, res) => {
     const tagOuter    = tagId ? `sub.score DESC NULLS LAST, sub.published_at DESC NULLS LAST`
                               : `sub.published_at DESC NULLS LAST`;
 
-    const runner = isPrewarm ? await _withStatementTimeout(90_000) : pool;
+    // 90s → 120s on prewarm. Top-mention countries (US, GB, RU, CN, IR,
+    // IL, UA, IN, DE, BR) cross-join article_locations × news_articles
+    // over ~M rows on cold buffer and frequently land between 90-100s,
+    // tripping the previous 90s ceiling and 500ing the cron — exactly
+    // why prewarm-feed runs were showing 70-90s ERR HTTP 500 lines for
+    // the heaviest countries. Cron fetch timeout bumped to 130s in
+    // lockstep so the cron doesn't kill an in-flight query.
+    const runner = isPrewarm ? await _withStatementTimeout(120_000) : pool;
     try {
     const { rows } = await runner.query(`
       SELECT sub.*
