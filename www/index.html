@@ -20934,6 +20934,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (window.__semHeatActive) { hideHoverCard(); return; }
         // During briefing the player manages its own hover card — don't interfere
         if (window.briefingActive) return;
+        // Suppress hover labels while either full-screen overlay is up.
+        // Both have higher z-index than the hover card now, so this is
+        // defense-in-depth — keeps the label code from even firing during
+        // the loader fade and the welcome card's lifetime, when the user
+        // hasn't engaged with the globe yet anyway.
+        if (document.getElementById('earthWelcome')) { hideHoverCard(); return; }
+        const _ldr = document.getElementById('siteLoader');
+        if (_ldr && !_ldr.classList.contains('el-fade')) { hideHoverCard(); return; }
         // Never show hover labels on touch/coarse-pointer devices, or briefly after any touch
         if (window.matchMedia('(pointer: coarse)').matches) { hideHoverCard(); return; }
         if (Date.now() - lastTouchTime < 800) { hideHoverCard(); return; }
@@ -59756,7 +59764,12 @@ body.ticker-active .gTickerLabel {
      italic gold "e" mark borrowed from the loader, title + subtitle +
      Begin/Skip buttons. Fades out before the 16s intro starts. */
   #earthWelcome {
-    position: fixed; inset: 0; z-index: 5300;
+    /* z-index 100001: above #siteLoader (100000) AND above #hoverCard
+       (99999). The previous 5300 left the welcome overlay BELOW any
+       country-polygon hover label, so on desktop the cursor would leak
+       a country tooltip through the welcome card while the user was
+       still on Begin. 100001 keeps it above both. */
+    position: fixed; inset: 0; z-index: 100001;
     display: flex; flex-direction: column;
     align-items: center; justify-content: center;
     background: radial-gradient(ellipse at center,

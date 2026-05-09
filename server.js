@@ -2901,14 +2901,17 @@ app.get("/api/flows", heavyLimiter, async (req, res) => {
 
     // Prewarm flag: when prewarmCountryFlowsCron / prewarmThreadFlowsCron
     // hits this endpoint, it sets ?prewarm=1 to ask for a longer SQL
-    // timeout (60s vs the user-facing 30s). Top-mention countries like
-    // US/RU/CN can take 40–55s on cold buffer to aggregate their full
-    // article_locations join set; the prewarm runs at 4 AM with no user
-    // waiting, so we can afford to spend longer there. Real users still
-    // get the aggressive 30s cap so an unfortunate cold-cache hit
-    // doesn't make them stare at a spinner indefinitely.
+    // timeout. Top-mention countries (US/RU/CN/IL/UA/IN/BR/MX/ID/KR) can
+    // take 50-80s on cold buffer to aggregate their full article_locations
+    // join set; the prewarm runs in the background with no user waiting,
+    // so we can afford to spend longer there. The previous 60s cap was
+    // chopping off ~7 of the heaviest countries every run with HTTP 500
+    // — bumped to 120s to give them headroom (cron's matching fetch
+    // timeout was bumped to 130s in lockstep). Real users still get the
+    // aggressive 30s cap so an unfortunate cold-cache hit doesn't make
+    // them stare at a spinner indefinitely.
     const _isPrewarm = req.query.prewarm === '1';
-    const _flowStatementTimeoutMs = _isPrewarm ? 60_000 : 30_000;
+    const _flowStatementTimeoutMs = _isPrewarm ? 120_000 : 30_000;
     const maxLimit = mode === "aggregate" ? 2500 : 2500;
     const limit = Math.min(parseInt(req.query.limit) || 800, maxLimit);
     const normalize = req.query.normalize !== "false"; // default true

@@ -38,9 +38,17 @@
 require('dotenv').config({ override: true });
 
 const API_URL     = (process.env.API_URL || 'http://localhost:3000').replace(/\/$/, '');
-const TIMEOUT_MS  = parseInt(process.env.PREWARM_TIMEOUT_MS  || '95000', 10);
+// 130s — must be > server's prewarm SQL ceiling (120s) so the cron's
+// fetch doesn't kill an in-flight query that could still complete.
+// Earlier 95s default capped requests below the server's 60s SQL limit
+// + buffer; bumped in lockstep with /api/flows prewarm timeout 60s→120s
+// to stop the heaviest countries (IL/UA/IN/BR/MX/ID/KR) from 500'ing.
+const TIMEOUT_MS  = parseInt(process.env.PREWARM_TIMEOUT_MS  || '130000', 10);
 const CONCURRENCY = Math.max(1, parseInt(process.env.PREWARM_CONCURRENCY || '1', 10));
-const TOP_N       = Math.max(1, parseInt(process.env.PREWARM_COUNTRY_LIMIT || '100', 10));
+// 117 = 100 + 17 high-value gap-fill ISOs (PS/KP/ML/BY/AZ/SG/CD,
+// Balkans, MD/GE/AM, CY). Without this bump, slice() would cut the new
+// entries off the end of DEFAULT_TOP_ISOS and they'd never get warmed.
+const TOP_N       = Math.max(1, parseInt(process.env.PREWARM_COUNTRY_LIMIT || '117', 10));
 
 const TAG = '[prewarm-countries]';
 
@@ -74,6 +82,20 @@ const DEFAULT_TOP_ISOS = [
   'AO','MZ',
   // Americas + Caribbean
   'CL','EC','BO','GT','HN','CR','PA','DO','JM','CU','HT',
+
+  // 101-117 — high-value gap fills surfaced by the article-volume audit.
+  // These were generating 1K-11K mentions per 30d outside the warmed set,
+  // forcing cold-miss user requests. Grouped by reason for inclusion:
+  //
+  //   active geopolitical hot zones (high mention count, ongoing events)
+  'PS','KP','ML','BY','AZ','SG','CD',
+  //   Balkans cluster (collectively ~50K pubs/30d)
+  'BA','SI','MK','AL','XK','ME',
+  //   former USSR / Caucasus (sparse but newsworthy — Caucasus tensions,
+  //   Moldova-Russia relations, Belarus border)
+  'MD','GE','AM',
+  //   high-volume publisher missing from the EU set
+  'CY',
 ];
 
 function fetchWithTimeout(url) {
@@ -143,25 +165,48 @@ async function warmFlow(direction, country, mode) {
     from_date:   isoDate(weekAgo),
     to_date:     isoDate(today),
     [direction === 'about' ? 'about_country' : 'from_country']: String(country.id),
-    // Tell the server we're a prewarm — it bumps SQL timeout 30s → 60s.
-    // Top-mention countries' about-direction queries can take 40–55s on
-    // cold buffer; user-facing requests stay capped at 30s.
+    // Tell the server we're a prewarm — it bumps SQL timeout 30s → 120s
+    // for the heaviest country queries. Real users stay at 30s.
     prewarm:     '1',
   });
   const url = `${API_URL}/api/flows?${params.toString()}`;
-  const t0 = Date.now();
-  let res;
-  try {
-    res = await fetchWithTimeout(url);
-  } catch (e) {
-    return { direction, mode: mode.name, country, ms: Date.now() - t0, err: e.message };
+  // Single retry on HTTP 500. The first attempt warms Postgres' buffer
+  // cache for the relevant article_locations pages even when it times
+  // out at the SQL ceiling; the second attempt typically completes in
+  // 30-50% of the original time because those pages are already in RAM.
+  // Without this, top-mention countries that legitimately need >120s
+  // on a stone-cold buffer never recover within a single run.
+  const _attempt = async () => {
+    const t0 = Date.now();
+    let res;
+    try {
+      res = await fetchWithTimeout(url);
+    } catch (e) {
+      return { ms: Date.now() - t0, err: e.message, status: null };
+    }
+    const ms = Date.now() - t0;
+    // Cancel body — server cache is populated before res.json() runs,
+    // so we don't need to download the (large) flow payload.
+    try { await res.body?.cancel?.(); } catch {}
+    return { ms, err: res.ok ? null : `HTTP ${res.status}`, status: res.status };
+  };
+
+  let r = await _attempt();
+  // Retry only on 5xx (server-side timeout / pool / transient). Network
+  // failures (no status) and 4xx (auth, malformed) won't change on a
+  // retry, so skip retry there to save cron budget.
+  if (r.err && r.status >= 500 && r.status < 600) {
+    await new Promise(rs => setTimeout(rs, 3000));
+    const r2 = await _attempt();
+    if (!r2.err) {
+      // Second attempt succeeded — report combined timing.
+      return { direction, mode: mode.name, country, ms: r.ms + 3000 + r2.ms, retried: true };
+    }
+    // Both failed — surface the second error as canonical.
+    return { direction, mode: mode.name, country, ms: r.ms + 3000 + r2.ms, err: r2.err, retried: true };
   }
-  const ms = Date.now() - t0;
-  // Cancel body — server cache is populated before res.json() runs,
-  // so we don't need to download the (large) flow payload.
-  try { await res.body?.cancel?.(); } catch {}
-  if (!res.ok) return { direction, mode: mode.name, country, ms, err: `HTTP ${res.status}` };
-  return { direction, mode: mode.name, country, ms };
+  if (r.err) return { direction, mode: mode.name, country, ms: r.ms, err: r.err };
+  return { direction, mode: mode.name, country, ms: r.ms };
 }
 
 async function processOne(country) {
