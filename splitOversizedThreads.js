@@ -97,8 +97,36 @@ async function main() {
     try {
       result = await askClaude(t, articles);
     } catch (err) {
-      console.log(`✗ ERROR: ${err.message}`);
-      continue; // do not stamp — retry next run
+      // One retry on parse failures specifically. Haiku occasionally
+      // returns malformed JSON on the first call; the second call with
+      // identical prompt usually succeeds. Other errors (rate limit,
+      // network) bubble out without retry — they'll naturally surface
+      // on the next cron tick.
+      const isParseFail = /invalid JSON shape/i.test(err?.message || '');
+      if (isParseFail) {
+        try {
+          process.stdout.write('retry... ');
+          result = await askClaude(t, articles);
+        } catch (err2) {
+          console.log(`✗ ERROR: ${err2.message} (after retry)`);
+          continue;
+        }
+      } else {
+        console.log(`✗ ERROR: ${err.message}`);
+        continue; // do not stamp — retry next run
+      }
+    }
+
+    // Filter out catch-all clusters that ignored the prompt rule. Even
+    // with the explicit "no leftovers" rule, Haiku occasionally ships a
+    // generic "Other Stories" / "Miscellaneous" cluster that's just a
+    // grab bag of stragglers — splitting those out spawns junk threads.
+    // We fold any such cluster's article_ids back into the largest
+    // (primary) cluster, keeping those articles in the original thread.
+    // If the entire set degenerates to just the catch-alls, the thread
+    // gets the "single story" verdict and no split fires.
+    if (Array.isArray(result.clusters) && result.clusters.length > 1) {
+      result.clusters = _foldCatchAllClusters(result.clusters);
     }
 
     const validClusters = (result.clusters || []).filter(c => Array.isArray(c.article_ids) && c.article_ids.length >= MIN_CLUSTER_SIZE);
@@ -311,6 +339,7 @@ Rules:
 - Articles in the same cluster MUST share specific actors/events — not just a common topic word. "Israel-Lebanon ceasefire" and "Russia-Ukraine ceasefire" are DIFFERENT clusters even though both involve a ceasefire.
 - An article id appears in EXACTLY one cluster. The union of all article_ids must equal every article ID I gave you.
 - Title each cluster from the articles, NOT from the thread's stored title.
+- NO catch-all clusters. If you cannot give a cluster a SPECIFIC title naming the actors and event, do NOT create that cluster — assign those articles to the most-related existing cluster. The following titles (and similar) are FORBIDDEN: "Other Stories", "Other Regional and International Stories", "Miscellaneous", "Various Topics", "Mixed Coverage", "Additional Articles", "Assorted News", "General Coverage", "Leftover Items". Every cluster MUST have a coherent specific narrative.
 
 ${threadBlock}
 
@@ -342,6 +371,44 @@ function parseJson(text) {
     try { return JSON.parse(m[0]); } catch (_) {}
   }
   return null;
+}
+
+// Catch-all titles. We fold any cluster whose title matches these
+// patterns back into the largest legitimate cluster (so its articles
+// stay in the original thread) instead of spawning a junk thread.
+//
+// Two patterns:
+//   1. Title STARTS WITH a catchall word (Other / Various / Misc / etc.)
+//      → "Other Regional Stories", "Misc Coverage", "Various Topics".
+//   2. Title CONTAINS the combo "{leftover-ish word} + {generic noun}"
+//      → "Articles on Various Subjects", "Stories from Other Regions".
+const CATCH_ALL_LEAD_RX  = /^\s*(other|various|miscellaneous|misc\.?|mixed|general|additional|assorted|leftover|remaining|unrelated|uncategorized)\b/i;
+const CATCH_ALL_COMBO_RX = /\b(other|various|miscellaneous|misc|mixed|assorted|leftover|remaining|unrelated)\s+(news|stories|coverage|topics|reports|articles|items|events|subjects)\b/i;
+function _isCatchAllTitle(title) {
+  const s = String(title || '').trim();
+  if (!s) return true; // empty title is the worst kind of catch-all
+  return CATCH_ALL_LEAD_RX.test(s) || CATCH_ALL_COMBO_RX.test(s);
+}
+function _foldCatchAllClusters(clusters) {
+  if (!Array.isArray(clusters) || clusters.length < 2) return clusters;
+  // Largest cluster is the "anchor" — its articles stay on the original
+  // thread, and any catch-all secondary's articles get folded into it.
+  const sorted = [...clusters].sort((a, b) => (b.article_ids?.length || 0) - (a.article_ids?.length || 0));
+  const anchor = sorted[0];
+  const kept = [anchor];
+  for (let i = 1; i < sorted.length; i++) {
+    const c = sorted[i];
+    if (_isCatchAllTitle(c.title)) {
+      const folded = (c.article_ids || []).filter(Boolean);
+      if (folded.length) {
+        anchor.article_ids = Array.from(new Set([...(anchor.article_ids || []), ...folded]));
+      }
+      console.log(`     [filter] dropped catch-all cluster "${(c.title || '').slice(0, 60)}" (${folded.length} articles → primary)`);
+    } else {
+      kept.push(c);
+    }
+  }
+  return kept;
 }
 
 // ─── Apply ───────────────────────────────────────────────────────────────────

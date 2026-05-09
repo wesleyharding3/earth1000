@@ -99,20 +99,29 @@ function extractDescription(item) {
 // a way that won't recover on retry) or TRANSIENT (timeouts, 5xx, rate limits,
 // transient DNS hiccups — probably fine tomorrow).
 //
-// Permanent triggers are worth short-circuiting because otherwise the 5-strike
-// counter below would take up to 5 cron runs to deactivate a dead channel,
-// burning fetch attempts + log noise in the meantime.
+// HISTORY: an earlier version classified 404, 403, 401, DNS-fail, and "invalid
+// feed" as PERMANENT, which insta-deactivated sources on first hit. A single
+// upstream YouTube/Google hiccup that returned 404s or 5xx en masse killed
+// 2,500+ otherwise-healthy sources in one cron run. From the wreckage:
+// "Status code 404" was the cause for 1,965 sources (most of which had been
+// fetching successfully a week earlier — clearly transient). The classifier
+// is now strict only on 410 GONE and explicit textual terminations from
+// YouTube. Everything else falls through to the 5-strike counter, which
+// gives 5 cron runs to recover before deactivation.
 function classifyYouTubeError(err) {
   const msg = String(err?.message || '').toLowerCase();
   // rss-parser surfaces HTTP status as "Status code <N>" in the message.
   const statusMatch = msg.match(/status code[: ]+(\d{3})/i);
   const status = statusMatch ? parseInt(statusMatch[1], 10) : null;
-  if (status === 404 || status === 410) return 'PERMANENT';      // channel deleted / gone
-  if (status === 403) return 'PERMANENT';                         // channel blocked / terminated
-  if (status === 401) return 'PERMANENT';                         // requires auth — will never work
-  if (/channel\s*(not\s*found|does\s*not\s*exist|unavailable|terminated|deleted)/i.test(msg)) return 'PERMANENT';
-  if (/enotfound|dns lookup failed/i.test(msg)) return 'PERMANENT'; // host resolution permanently broken
-  if (/invalid (rss|xml|feed)/i.test(msg)) return 'PERMANENT';     // malformed feed shape
+  // 410 GONE is the only HTTP code that genuinely means "this resource is
+  // permanently unavailable." Everything else (404/403/401/5xx, DNS, RSS
+  // parse errors) falls through to the 5-strike counter — too many of
+  // those fire transiently from YouTube's edge servers, regional bot
+  // detection, and rate-limit responses to be insta-killers.
+  if (status === 410) return 'PERMANENT';
+  // Explicit textual "channel terminated/deleted/not found" signals from
+  // YouTube's RSS endpoint stay PERMANENT. Those are unambiguous.
+  if (/channel\s*(terminated|deleted|does\s*not\s*exist)/i.test(msg)) return 'PERMANENT';
   return 'TRANSIENT';
 }
 
@@ -133,12 +142,16 @@ async function logError(source, err, type = "YOUTUBE_FETCH_ERROR") {
     // human-readable note so we can audit later. Transient errors fall
     // through to the 5-strike counter as before.
     if (kind === 'PERMANENT') {
+      // Stamp last_checked_at too so the rotation (sorted by
+      // last_checked_at ASC NULLS FIRST) doesn't keep picking the same
+      // bad source first on every run.
       await pool.query(
         `UPDATE youtube_sources
-           SET last_error    = $1,
-               last_failed_at= NOW(),
-               failure_count = failure_count + 1,
-               is_active     = false
+           SET last_error      = $1,
+               last_failed_at  = NOW(),
+               last_checked_at = NOW(),
+               failure_count   = failure_count + 1,
+               is_active       = false
          WHERE id = $2`,
         [`[AUTO-DEACTIVATED: ${type}] ${err.message?.substring(0, 960) || ''}`.substring(0, 1000), source.id]
       );
@@ -146,12 +159,17 @@ async function logError(source, err, type = "YOUTUBE_FETCH_ERROR") {
       return;
     }
 
+    // Same rotation-trap fix on the transient path. Without stamping
+    // last_checked_at, an erroring source stays at the front of the
+    // ORDER BY queue and re-fires every cron run, denying healthy
+    // sources their turn.
     await pool.query(
       `UPDATE youtube_sources
-         SET last_error    = $1,
-             last_failed_at= NOW(),
-             failure_count = failure_count + 1,
-             is_active     = CASE WHEN failure_count + 1 >= 5 THEN false ELSE is_active END
+         SET last_error      = $1,
+             last_failed_at  = NOW(),
+             last_checked_at = NOW(),
+             failure_count   = failure_count + 1,
+             is_active       = CASE WHEN failure_count + 1 >= 5 THEN false ELSE is_active END
        WHERE id = $2`,
       [err.message?.substring(0, 1000), source.id]
     );
@@ -318,16 +336,25 @@ async function fetchYouTube() {
     stopwordCache = {};
   }
 
-  // Get active YouTube sources
+  // Get active YouTube sources. Capped at MAX_PER_RUN so a fleet of
+  // ~2,500 active sources (post-recovery) doesn't turn a single cron
+  // tick into a 4-hour run that times out and traps the rotation.
+  // ORDER BY last_checked_at picks the staletest sources first, so
+  // every source gets fetched roughly every (MAX_PER_RUN / total)
+  // runs. With MAX_PER_RUN=250 and 2,500 sources, that's ~10 cron
+  // runs (~10h on hourly cron) for a full sweep — acceptable since
+  // YouTube channels rarely publish more than a few times per day.
+  const MAX_PER_RUN = parseInt(process.env.YOUTUBE_FETCH_MAX_PER_RUN || '250', 10);
   const { rows: sources } = await pool.query(`
-    SELECT 
+    SELECT
       ys.id, ys.name, ys.channel_id, ys.channel_handle,
       ys.site_url, ys.rss_url, ys.city_id, ys.country_id,
       ys.language
     FROM youtube_sources ys
     WHERE ys.is_active = true
     ORDER BY ys.last_checked_at ASC NULLS FIRST
-  `);
+    LIMIT $1
+  `, [MAX_PER_RUN]);
 
   console.log(`📺 Found ${sources.length} active YouTube sources`);
 
