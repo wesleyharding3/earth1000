@@ -18,6 +18,7 @@
  * Usage:
  *   node splitOversizedThreads.js                       # dry-run, all eligible threads
  *   node splitOversizedThreads.js --apply               # apply: actually split
+ *   node splitOversizedThreads.js --force               # ignore freshness gate — re-check every >=threshold thread
  *   node splitOversizedThreads.js --thread=8735         # specific thread (bypass gate)
  *   node splitOversizedThreads.js --threshold=200       # min article_count (default 200)
  *   node splitOversizedThreads.js --max-threads=20      # cap (default 20)
@@ -38,6 +39,7 @@ const ARGV = new Map(process.argv.slice(2).map(a => {
   return [k, rest.length ? rest.join('=') : true];
 }));
 const APPLY         = !!ARGV.get('apply');
+const FORCE         = !!ARGV.get('force');
 const MODEL         = ARGV.get('model') || 'claude-haiku-4-5';
 const SPLIT_THRESHOLD = parseInt(ARGV.get('threshold') || '200', 10);
 const MAX_THREADS   = parseInt(ARGV.get('max-threads') || '20', 10);
@@ -52,7 +54,7 @@ async function main() {
   const el = () => `+${((Date.now() - t0) / 1000).toFixed(1)}s`;
 
   console.log(`\n✂️  Thread Split Detection — ${new Date().toISOString()}`);
-  console.log(`   mode: ${APPLY ? 'APPLY (writes)' : 'DRY RUN'} | model: ${MODEL} | threshold=${SPLIT_THRESHOLD} | max=${MAX_THREADS} | min_cluster=${MIN_CLUSTER_SIZE}${THREAD_FILTER ? ` | ids=${THREAD_FILTER.join(',')}` : ''}\n`);
+  console.log(`   mode: ${APPLY ? 'APPLY (writes)' : 'DRY RUN'}${FORCE ? ' | FORCE (gate bypassed)' : ''} | model: ${MODEL} | threshold=${SPLIT_THRESHOLD} | max=${MAX_THREADS} | min_cluster=${MIN_CLUSTER_SIZE}${THREAD_FILTER ? ` | ids=${THREAD_FILTER.join(',')}` : ''}\n`);
 
   const threads = await loadThreads();
   console.log(`   [${el()}] Loaded ${threads.length} candidate thread(s)`);
@@ -149,10 +151,19 @@ async function loadThreads() {
     );
     return rows;
   }
-  // Gate: thread has crossed the size threshold AND either has never
-  // been split-checked OR has accumulated new articles since the last
-  // check. Active + cooling only — dormant threads are frozen and
-  // not worth a Claude call.
+  // Gate: thread has crossed the size threshold AND either (a) has never
+  // been split-checked, (b) has accumulated new articles since the last
+  // check, or (c) the last check is older than the periodic re-check
+  // window. Active + cooling only — dormant threads are frozen and not
+  // worth a Claude call.
+  //
+  // The periodic re-check (clause c, RECHECK_INTERVAL) is the catch-all:
+  // a thread can grow from 200 → 800 articles without a single split
+  // ever firing because the FIRST check (at 200) returned "single story"
+  // and clause (b) only re-triggers on individual article adds bumping
+  // last_updated_at. Subtle subject drift across hundreds of new articles
+  // can flip a former single-story into a splittable one — but only the
+  // periodic sweep will surface it.
   //
   // CRITICAL: filter on the LIVE count from story_thread_articles, not
   // the cached `story_threads.article_count` column. The cached column
@@ -162,11 +173,23 @@ async function loadThreads() {
   //     so duplicates inflate the counter without adding rows.
   //   - under-counts: audit/repair passes detach articles but their
   //     decrement paths can race with attaches.
-  // Today's run loaded 4 threads where stored count >= 200 but live
-  // count was 151–152 (over-count case). The user reported real threads
-  // with > 200 articles ("mali junta", "trump pressures iran", etc.)
-  // that never appeared as candidates — those are the under-count case
-  // and were silently excluded by the cached-column filter.
+  // An earlier run loaded 4 threads where stored count >= 200 but live
+  // count was 151–152 (over-count case). The under-count case silently
+  // excluded real >200-article threads from candidacy — the live JOIN
+  // fixes both.
+  const RECHECK_INTERVAL = '3 days';
+  // --force drops the freshness clause entirely: every active/cooling
+  // thread at >= threshold becomes a candidate this run, including ones
+  // checked an hour ago. Use for one-off audits / catching up after a
+  // prompt change. Still honors MAX_THREADS so you don't accidentally
+  // burn 500 Claude calls in a single shot.
+  const freshnessClause = FORCE
+    ? ''
+    : `AND (
+         t.last_split_check_at IS NULL
+         OR t.last_updated_at > t.last_split_check_at
+         OR t.last_split_check_at < NOW() - INTERVAL '${RECHECK_INTERVAL}'
+       )`;
   const { rows } = await pool.query(`
     SELECT t.id, t.title, t.description, t.keywords, t.primary_category,
            cnt.live_count AS article_count,
@@ -179,10 +202,7 @@ async function loadThreads() {
       ) cnt ON cnt.thread_id = t.id
      WHERE t.status IN ('active','cooling')
        AND cnt.live_count >= $1
-       AND (
-         t.last_split_check_at IS NULL
-         OR t.last_updated_at > t.last_split_check_at
-       )
+       ${freshnessClause}
      ORDER BY cnt.live_count DESC
      LIMIT $2
   `, [SPLIT_THRESHOLD, MAX_THREADS]);
