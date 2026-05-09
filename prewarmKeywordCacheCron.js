@@ -115,6 +115,30 @@ const RISING_LIMIT   = parseInt(process.env.PREWARM_RISING_LIMIT   || '25', 10);
 const INTER_KEYWORD_PAUSE_MS = parseInt(process.env.PREWARM_PAUSE_MS || '250', 10);
 const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
+// Defensive shape filter — drops keywords that are clearly not worth
+// warming (or are outright bugs in the upstream extraction pipeline).
+// The trending/rising endpoints filter via the stopwords table on the
+// DB side, but bad-shape values like the literal string "null" can
+// still slip through if the keyword extractor wrote a stringified JS
+// null into keyword_daily_stats. This second pass keeps a rogue row
+// from burning ~108s of cron + Claude budget on each run.
+//
+// Rules:
+//   - reject "null", "undefined" (literal strings, case-insensitive)
+//   - reject < 2 chars after trim (single chars are noise)
+//   - reject pure-punctuation / pure-whitespace
+//   - everything else passes; real stopword filtering belongs in the
+//     stopwords DB table, not here.
+const _BAD_SHAPE_RX = /^(null|undefined|nan|none|n\/a|na)$/i;
+function _isWarmableKeyword(s) {
+  if (!s) return false;
+  const trimmed = String(s).trim();
+  if (trimmed.length < 2) return false;
+  if (_BAD_SHAPE_RX.test(trimmed)) return false;
+  if (!/[a-z0-9]/i.test(trimmed)) return false; // no letters/digits at all
+  return true;
+}
+
 async function fetchKeywordList(path, label) {
   try {
     const r = await fetchWithTimeout(`${API_URL}${path}`);
@@ -124,9 +148,15 @@ async function fetchKeywordList(path, label) {
     }
     const data = await r.json();
     const arr = Array.isArray(data) ? data : (data?.keywords || []);
-    return arr
+    const before = arr.length;
+    const list = arr
       .map(item => item && typeof item.keyword === 'string' ? item.keyword.trim().toLowerCase() : null)
-      .filter(Boolean);
+      .filter(Boolean)
+      .filter(_isWarmableKeyword);
+    if (list.length < before) {
+      console.log(`${TAG} ${label}: dropped ${before - list.length} bad-shape keyword(s)`);
+    }
+    return list;
   } catch (err) {
     console.warn(`${TAG} ${label} fetch failed: ${err.message}`);
     return [];

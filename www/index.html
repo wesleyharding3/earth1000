@@ -3059,6 +3059,11 @@ body.flow-maximized #flowArcList {
   background: radial-gradient(120% 90% at 100% 0%, var(--arcCtxAccent), transparent 52%);
   opacity: 0.12;
   pointer-events: none;
+  /* Smooth the pulse-stop on typing→done. Pseudo-elements don't inherit
+     the parent's transition rule, so without this the opacity snapped
+     from mid-animation peak (~0.24) straight to 0.08, producing a
+     brief "blink" the moment a block finished typing. */
+  transition: opacity 0.4s ease;
 }
 .arcCtxBlock::after {
   content: '';
@@ -3094,6 +3099,12 @@ body.flow-maximized #flowArcList {
   border-color: rgba(255,255,255,0.08);
   background: rgba(255,255,255,0.04);
   box-shadow: inset 0 0 0 1px rgba(255,255,255,0.015);
+  /* Smooth the badge-pulse stop on typing→done. Without this, when the
+     arcCtxBadgePulse animation is removed (class flip), the transform
+     and box-shadow snapped instantly from mid-animation pose back to
+     the resting state — read as a small blink alongside the block's
+     own settle. */
+  transition: transform 0.32s ease, box-shadow 0.32s ease;
 }
 .arcCtxLiveTag {
   position: relative;
@@ -36856,18 +36867,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // 8. Show node labels (default checked for card triggers)
       window.__flowShowLabelsForCardTrigger?.(flows);
 
-      // 8b. Force-highlight ALL country polygons touched by these flows
-      //     upfront — don't rely solely on tickArcs frame-by-frame collection.
+      // Force-highlight ALL country polygons touched by these flows.
+      // Helper handles UK→GB, upper+lower forms, and place-name fallback
+      // for non-ISO polygons (Kosovo, Western Sahara, etc.). Always call,
+      // even with empty set, to clear stale highlights from a prior view.
       {
-        const _allISOs = new Set();
-        flows.forEach(f => {
-          if (f.src?.iso) _allISOs.add(f.src.iso.toUpperCase());
-          if (f.dst?.iso) _allISOs.add(f.dst.iso.toUpperCase());
-        });
-        // Also include the article's own country (single-country stories)
-        const _artIso = _ctxArticle?.iso_code || articleObj?.iso_code;
-        if (_artIso) _allISOs.add(String(_artIso).toUpperCase());
-        if (_allISOs.size) window.__flowHighlightCountries?.(_allISOs);
+        const isos = window.__flowComputeHighlightISOs?.(
+          flows,
+          _ctxArticle?.iso_code,
+          articleObj?.iso_code,
+        ) || new Set();
+        window.__flowHighlightCountries?.(isos);
       }
 
       // 9. Show back button
@@ -37298,18 +37308,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // Show node labels (default checked for card triggers)
       window.__flowShowLabelsForCardTrigger?.(flows);
 
-      // Force-highlight ALL country polygons touched by these flows upfront
-      const _threadMacroISOs = new Set();
-      {
-        flows.forEach(f => {
-          if (f.src?.iso) _threadMacroISOs.add(f.src.iso.toUpperCase());
-          if (f.dst?.iso) _threadMacroISOs.add(f.dst.iso.toUpperCase());
-        });
-        // Include the thread's own country for single-country stories
-        const _thrIso = _ctxThread?.iso_code || _ctxThread?.country_code || data.thread?.iso_code;
-        if (_thrIso) _threadMacroISOs.add(String(_thrIso).toUpperCase());
-        if (_threadMacroISOs.size) window.__flowHighlightCountries?.(_threadMacroISOs);
-      }
+      // Force-highlight ALL country polygons touched by these flows.
+      // Helper handles UK→GB, upper+lower forms, and place-name fallback
+      // for non-ISO polygons. Always call, even with empty set, to clear
+      // stale highlights from a prior thread/line view.
+      const _threadMacroISOs = window.__flowComputeHighlightISOs?.(
+        flows,
+        _ctxThread?.iso_code,
+        _ctxThread?.country_code,
+        data.thread?.iso_code,
+      ) || new Set();
+      window.__flowHighlightCountries?.(_threadMacroISOs);
 
       // Snapshot thread macro state for the article micro-view (eye) to
       // zoom out back to without re-fetching. Captured AFTER flows have
@@ -38101,16 +38110,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
       });
       window.__flowShowLabelsForCardTrigger?.(flows);
 
-      // Force-highlight ALL country polygons for this segment upfront
+      // Force-highlight ALL country polygons for this segment.
+      // Helper handles UK→GB, upper+lower forms, and place-name fallback
+      // for non-ISO polygons. Always call, even with empty set, to clear
+      // stale highlights from a prior segment.
       {
-        const _allISOs = new Set();
-        flows.forEach(f => {
-          if (f.src?.iso) _allISOs.add(f.src.iso.toUpperCase());
-          if (f.dst?.iso) _allISOs.add(f.dst.iso.toUpperCase());
-        });
-        // Also include the segment's sourceIso for single-country events
-        if (seg._sourceIso) _allISOs.add(seg._sourceIso.toUpperCase());
-        if (_allISOs.size) window.__flowHighlightCountries?.(_allISOs);
+        const isos = window.__flowComputeHighlightISOs?.(
+          flows,
+          seg._sourceIso,
+        ) || new Set();
+        window.__flowHighlightCountries?.(isos);
       }
 
       const statsEl = document.getElementById('flowMinStats');
@@ -38451,16 +38460,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       window.__flowShowLabelsForCardTrigger?.(flows);
 
-      // Force-highlight ALL country polygons touched by these flows upfront
+      // Force-highlight ALL country polygons touched by these flows.
+      // Helper handles UK→GB, upper+lower forms, and place-name fallback
+      // for non-ISO polygons. Always call, even with empty set, to clear
+      // stale highlights from a prior view.
       {
-        const _allISOs = new Set();
-        flows.forEach(f => {
-          if (f.src?.iso) _allISOs.add(f.src.iso.toUpperCase());
-          if (f.dst?.iso) _allISOs.add(f.dst.iso.toUpperCase());
-        });
-        const _tlIso = _ctxTimeline?.iso_code || _ctxTimeline?.country_code || data.timeline?.iso_code;
-        if (_tlIso) _allISOs.add(String(_tlIso).toUpperCase());
-        if (_allISOs.size) window.__flowHighlightCountries?.(_allISOs);
+        const isos = window.__flowComputeHighlightISOs?.(
+          flows,
+          _ctxTimeline?.iso_code,
+          _ctxTimeline?.country_code,
+          data.timeline?.iso_code,
+        ) || new Set();
+        window.__flowHighlightCountries?.(isos);
       }
 
       const statsEl = document.getElementById("flowMinStats");
@@ -56600,6 +56611,57 @@ body.ticker-active .gTickerLabel {
   window.__flowClearHighlights = function() {
     flowHighlightKeys.clear();
     repaint();
+  };
+
+  // Shared helper used by every flow surface (threads / lines / article
+  // flows / live-arcs / news-flows) to compute the polygon-highlight set
+  // robustly. Three things this does that the per-callsite code wasn't:
+  //
+  //   1. Adds BOTH uppercase (standard ISO-2) and lowercase forms. The
+  //      polygon layer's c.key is uppercase ISO-2 for the 177 countries
+  //      with a real ISO, but the LOWERCASED NAME for polygons whose
+  //      GeoJSON has no/-99 ISO (Kosovo, Western Sahara, Somaliland).
+  //      Repaint checks `flowHighlightKeys.has(c.key)` — so an
+  //      uppercase-only set silently misses those polygons.
+  //   2. UK → GB normalization. ISO-3166 lists GB as the official code
+  //      but plenty of upstream feeds use UK. Polygon layer keys on GB.
+  //   3. Falls back to the country's `place` (name) when iso is null/
+  //      empty — picks up the lowercased-name polygon key for the
+  //      no-ISO cases above.
+  //
+  // Caller pattern:
+  //   const isos = window.__flowComputeHighlightISOs(flows, ctx?.iso_code, ctx?.country_code);
+  //   window.__flowHighlightCountries(isos);  // ALWAYS call, even if empty —
+  //                                            // empty set clears stale highlights.
+  window.__flowComputeHighlightISOs = function(flows, ...fallbacks) {
+    const out = new Set();
+    const addRaw = (raw) => {
+      if (!raw) return;
+      const s = String(raw).trim();
+      if (!s) return;
+      if (/^[A-Za-z]{2}$/.test(s)) {
+        let up = s.toUpperCase();
+        if (up === 'UK') up = 'GB';     // ISO normalization
+        out.add(up);
+        out.add(up.toLowerCase());
+      } else {
+        // Country name fallback — polygon layer keys non-ISO countries
+        // by lowercased name (e.g. "kosovo", "western sahara").
+        out.add(s.toLowerCase());
+      }
+    };
+    if (Array.isArray(flows)) {
+      for (const f of flows) {
+        if (!f) continue;
+        addRaw(f.src?.iso);
+        addRaw(f.dst?.iso);
+        // place names ride along to catch the no-ISO polygon-key case
+        if (!f.src?.iso && f.src?.place) addRaw(f.src.place);
+        if (!f.dst?.iso && f.dst?.place) addRaw(f.dst.place);
+      }
+    }
+    for (const fb of fallbacks) addRaw(fb);
+    return out;
   };
 
   // Expose for console / other modules

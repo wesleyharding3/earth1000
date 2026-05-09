@@ -33,7 +33,13 @@
  *
  * Env vars:
  *   API_URL                    base URL of the API (default: http://localhost:3000)
- *   PREWARM_THREAD_LIMIT       override top-N threads (default: 50)
+ *   PREWARM_THREAD_LIMIT       override top-N threads (default: 150).
+ *                              Bumped 50→150 because the actual active+cooling
+ *                              global thread fleet is ~148; default of 50
+ *                              left ~100 threads cold and users hitting them
+ *                              via search/history paid the full cold cost on
+ *                              every request. Runtime impact: ~60s → ~3min,
+ *                              still well inside the 4h cron window.
  *   PREWARM_TIMEOUT_MS         per-request timeout (default: 95000)
  *   PREWARM_CONCURRENCY        parallel threads (default: 1)
  *
@@ -49,7 +55,7 @@ require('dotenv').config({ override: true });
 const API_URL      = (process.env.API_URL || 'http://localhost:3000').replace(/\/$/, '');
 const TIMEOUT_MS   = parseInt(process.env.PREWARM_TIMEOUT_MS  || '95000', 10);
 const CONCURRENCY  = Math.max(1, parseInt(process.env.PREWARM_CONCURRENCY || '1', 10));
-const THREAD_LIMIT = Math.max(1, parseInt(process.env.PREWARM_THREAD_LIMIT || '50', 10));
+const THREAD_LIMIT = Math.max(1, parseInt(process.env.PREWARM_THREAD_LIMIT || '150', 10));
 
 const TAG = '[prewarm-threads]';
 
