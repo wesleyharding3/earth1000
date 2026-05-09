@@ -25558,7 +25558,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const key = _arcCtxKey(scope);
       _arcCtxCurrentKey = key;
       const card = document.getElementById('flowCtxCard');
-      const blocks = _arcCtxCache.get(key);
+      let blocks = _arcCtxCache.get(key);
+      // Stale-cache bust for flow scope: any cached primary/secondary
+      // blocks under a 'flow' key came from a pre-edge-rewrite server
+      // run. The new server only emits 'edge' or 'summary' for flow
+      // scope, so primary/secondary entries are guaranteed stale.
+      // Drop them so the next render re-fetches with the new prompt.
+      if (scope === 'flow' && Array.isArray(blocks) && blocks.length
+          && blocks.some(b => b?.kind === 'primary' || b?.kind === 'secondary')) {
+        _arcCtxCache.delete(key);
+        blocks = null;
+      }
       if ((!blocks || !blocks.length) && card?.classList.contains('view-ctx')) {
         _arcCtxStream(scope);
         return;
@@ -25573,11 +25583,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
     function _arcCtxUpdateFlowTabState() {
       const flowTab = document.querySelector('#arcContextPanel .arcCtxTab[data-scope="flow"]');
       if (!flowTab) return;
-      const hasFlow = _arcCtxSession?.mode === 'timeline'
-        ? !!_arcCtxSegment
-        : _selectedArcUid != null;
-      flowTab.toggleAttribute('disabled', !hasFlow);
-      if (!hasFlow && _arcCtxScope === 'flow') _arcCtxSwitchScope('entities');
+      // Flow tab is always enabled on the flow-arcs panel — the per-edge
+      // relationship analysis works on the visible arc set as a whole;
+      // active_arc is just an optional emphasis hint, not a precondition.
+      flowTab.removeAttribute('disabled');
     }
 
     function _arcCtxUpdateButtonVisibility() {
@@ -25635,7 +25644,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
     window.__arcAiSetSession = function(session) {
       _arcCtxSession = session || null;
       _arcCtxSegment = null;
-      _arcCtxScope = 'entities';
+      // Flow-arcs panel defaults to FLOW scope: the whole point of this
+      // surface is the network of arcs, so the per-edge relationship
+      // analysis is the primary view. Entities tab stays available for
+      // the per-country breakdown when the user wants it.
+      _arcCtxScope = 'flow';
       _arcCtxCurrentKey = null;
       _arcCtxUpdateButtonVisibility();
       // Stamp entity + coverage stats onto #flowCtxCard so the share
@@ -25964,7 +25977,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
         (title ? `<div class="arcBarTitle">${esc(title)}</div>` : '') +
         (time ? `<div class="arcBarTime">${time}</div>` : '');
 
-      div.addEventListener('click', () => selectArc(uid));
+      // Arc selection is disabled globally — see selectArc() comment.
+      // Row stays informational only; no click handler attached.
       return div;
     }
 
@@ -26192,26 +26206,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
     }
 
     // ── Select / Deselect ──
-    function selectArc(uid) {
-      _selectedArcUid = uid;
-      _arcPanelDirty = true;
-      try { window.__arcAiOnSelectArc?.(); } catch (_) {}
-
-      // Pause every flow animation (time-series, wall-clock modes, and
-      // timeline auto-advance) so the user can focus on the article.
-      // pauseFlowAnimation also syncs the flow play/pause buttons to ▶.
-      if (typeof window.pauseFlowAnimation === 'function') {
-        window.pauseFlowAnimation();
-      } else if (flowPlaying && flowMode !== 'aggregate') {
-        flowPlaying = false;
-        document.getElementById('flowPlayBtn').textContent = '▶ Play';
-      }
-
-      // Note: selecting an arc no longer auto-isolates other arcs on the
-      // globe or auto-opens the article panel. The expanded card surfaces
-      // explicit controls — an eye icon that toggles isolation, and a
-      // page icon that opens the article panel with "Back to Flow".
-      syncPanel();
+    function selectArc(_uid) {
+      // Arc selection is disabled globally (news flows + live arcs +
+      // thread/line flow-arcs). The 3D-globe click handler is already
+      // commented out at handleFlowArcClick; the arc-list row click
+      // handler is no longer attached. This function stays defined as a
+      // no-op so any indirect callers (or future code) don't crash —
+      // _selectedArcUid stays null and the AI flow scope works on the
+      // whole visible arc set instead of a singled-out edge.
     }
 
     function deselectArc() {

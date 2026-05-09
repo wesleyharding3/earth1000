@@ -18,9 +18,19 @@ const { loadStopwords, extractKeywords, saveKeywords } = require("./keywordExtra
    Cron: Every 2-4 hours (videos publish less frequently than news)
 ========================================= */
 
+// Use a current real-browser UA. Earlier "Earth00Bot/1.0" flagged
+// every request to YouTube's edge as automated traffic, which (combined
+// with hitting 250 endpoints back-to-back from a single Render IP)
+// triggered per-IP throttling that surfaced as 404/500 floods. A
+// realistic UA + slower cadence + retry-on-blip dramatically improves
+// the hit rate without exposing us to YouTube's anti-scraping logic.
+const REAL_BROWSER_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36';
+
 const parser = new Parser({
   headers: {
-    "User-Agent": "Mozilla/5.0 (compatible; Earth00Bot/1.0)"
+    'User-Agent':      REAL_BROWSER_UA,
+    'Accept':          'application/atom+xml,application/xml,text/xml;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.9',
   },
   customFields: {
     item: [
@@ -33,6 +43,26 @@ const parser = new Parser({
     ]
   }
 });
+
+// Single-retry wrapper. YouTube's RSS edge servers occasionally flap
+// 200 → 404 → 200 across consecutive requests; a brief retry catches
+// the majority of those. 5xx is also worth retrying (transient by
+// definition). Other errors (DNS, channel-terminated text) skip retry
+// since they won't change in 1 second. Returns the parsed feed or
+// throws the LAST error.
+async function fetchFeedWithRetry(rssUrl) {
+  try {
+    return await parser.parseURL(rssUrl);
+  } catch (err) {
+    const msg = String(err?.message || '');
+    const m = msg.match(/status code[: ]+(\d{3})/i);
+    const status = m ? parseInt(m[1], 10) : null;
+    const retryable = status === 404 || status === 500 || status === 502 || status === 503 || status === 504;
+    if (!retryable) throw err;
+    await new Promise(r => setTimeout(r, 1000));
+    return await parser.parseURL(rssUrl);
+  }
+}
 
 const INITIAL_YOUTUBE_BASE_PRIORITY = 1.15;
 
@@ -191,7 +221,7 @@ async function fetchChannel(source, stopwordCache) {
 
   let feed;
   try {
-    feed = await parser.parseURL(source.rss_url);
+    feed = await fetchFeedWithRetry(source.rss_url);
   } catch (err) {
     await logError(source, err, "RSS_PARSE_ERROR");
     return { inserted: 0, skipped: 0, error: err.message };
@@ -369,8 +399,12 @@ async function fetchYouTube() {
       totalSkipped += result.skipped;
       if (result.error) errors++;
       
-      // Small delay between channels to be polite
-      await new Promise(r => setTimeout(r, 500));
+      // Inter-channel delay. Bumped 500ms → 1500ms after Render's IP got
+      // throttled by YouTube's RSS edge (250 hits at 0.5s = 500ms+ burst
+      // pace looked like scraping). 1500ms = ~0.67 req/sec, well below
+      // YouTube's per-IP rate limit. With LIMIT 250 the run still
+      // finishes in ~6-8 minutes including parse time.
+      await new Promise(r => setTimeout(r, 1500));
     } catch (err) {
       console.error(`[YT:${source.channel_handle || source.channel_id}] Unexpected error:`, err.message);
       errors++;
