@@ -191,12 +191,19 @@ const EVENT_LOOKBACK_DAYS        = 21;  // day-clusters older than this are stab
 const EVENT_MAX_DAYS_PER_RUN     = 40;  // cap Claude spend per run
 
 // ─── Cooldown ────────────────────────────────────────────────────────────────
-// Per-request: active → cooling after 1 week of no updates, cooling →
-// dormant after another 2 months (60 days). The dormant threshold is
-// measured from last_updated_at (not from the cooling transition), so
-// dormant kicks in at 7+60 = 67 days since the last update.
-const COOLING_AFTER_DAYS = 7;
-const DORMANT_AFTER_DAYS = 67;
+// Lines represent multi-month narrative arcs — they should cool slowly.
+// Earlier values (7d → cooling, 67d → dormant) flipped major active
+// arcs (Gaza war, Ukraine-Russia, Sudan civil war) to cooling/dormant
+// even while clear coverage continued, because a single bad week of
+// umbrella-phase saturation skipped the line and the cooldown phase
+// pounced. Bumped to 21d / 180d so:
+//   • A line needs 3 weeks of total silence before it cools
+//   • Cooling needs another 5+ months before flipping to dormant
+//   • Combined with the new core-phrase ILIKE branch in the umbrella
+//     (catches title-mentions that the structured-keyword path missed),
+//     real ongoing arcs stay active virtually forever.
+const COOLING_AFTER_DAYS = 21;
+const DORMANT_AFTER_DAYS = 180;
 
 // ─── Article Umbrella phase ──────────────────────────────────────────────────
 // Beyond thread promotions, recent articles matching a Line's umbrella
@@ -219,7 +226,23 @@ const UMBRELLA_ATTACH_CAP_PER_LINE    = 50;   // max new articles attached per L
 //   (b) 2 nations                      = 5.0
 //   (c) ≥4 keywords                    = 4.0
 //   (d) any combination w/ entity hits  (entity weight is 2.5 each)
-const UMBRELLA_ATTACH_THRESHOLD       = 4.0;
+// 4.0 → 2.5: lowered alongside the new core-phrase ILIKE branch.
+// At 4.0, an article like "Israel strikes Gaza" with 1 nation match (5.0
+// when the article's source country is IL) PLUS the new phrase bonus
+// would land easily, but follow-up coverage that mentions a story only
+// in passing (1 nation + 1 keyword = 3.5) was being rejected even
+// though it's clearly about the line. 2.5 lets that through but still
+// blocks pure-noise (single nation match alone scores 5.0 → kept;
+// single keyword scores 1.0 → rejected). Combined with the phrase
+// bonus + the 21d cooling threshold, lines stay alive for any story
+// with even sparse ongoing coverage.
+const UMBRELLA_ATTACH_THRESHOLD       = 2.5;
+// Score bonus when an article's title contains one of the line's
+// core_phrases. Most lines' core_phrases are distinctive proper nouns
+// ("Gaza", "Ukraine", "Sudan") so a title-substring match is strong
+// signal. 2.0 means a single phrase-hit + a single keyword (1.0) clears
+// the new 2.5 floor; phrase alone (no other signal) still falls short.
+const UMBRELLA_PHRASE_BONUS           = 2.0;
 // Dormant Lines now ALSO participate. Previously dormant was thread-only
 // for reawakening, but the bar (REAWAKEN_THRESHOLD=9.0) was so strict
 // almost nothing could come back. Letting umbrella articles also touch
@@ -269,6 +292,85 @@ const TITLE_STOPWORDS = new Set([
   'new','old','first','last','top','all','some','any',
   'news','report','update','coverage','story','analysis',
 ]);
+
+// Generic nouns that appear in titles but have zero discriminative
+// value as core_phrases. These get filtered after stopword removal so
+// "Sudan Civil War" doesn't reduce to ["civil", "war"] — we want
+// ["sudan"]. Keep this list tight; over-filtering gives empty phrase
+// arrays which fall through to "use the keyword extractor's tags."
+const CORE_PHRASE_GENERICS = new Set([
+  'war','crisis','conflict','attack','attacks','strike','strikes',
+  'government','president','prime','minister','political','politics',
+  'economy','economic','business','market','markets','financial','finance',
+  'world','global','international','national','regional','foreign','domestic',
+  'breaking','update','news','report','coverage','story','analysis',
+  'civil','military','police','security','intelligence','officials',
+  'announcement','statement','meeting','summit','talks','deal','agreement',
+  'death','deaths','killed','kills','injured','wounded','victims',
+  'leader','leaders','official','officials','spokesman','spokeswoman',
+  'today','tomorrow','yesterday','week','month','year','day','days',
+  'former','recent','current','latest','ongoing','rising',
+]);
+
+// Derive 1-3 distinctive core phrases from a Line's title. These feed
+// the article-umbrella's third SQL branch — a title ILIKE '%<phrase>%'
+// match that catches followup coverage missed by the structured
+// keyword/entity extractor. Heuristic:
+//   1. Tokenize the original title (preserving case for proper-noun detection)
+//   2. Prefer Capitalized tokens (proper nouns: "Gaza", "Ukraine", "Hamas")
+//   3. Drop stopwords and CORE_PHRASE_GENERICS
+//   4. Drop tokens shorter than 4 chars (catches "US" — too generic for
+//      ILIKE; would match "USA TODAY" headlines etc.) UNLESS they're
+//      clearly an entity (3-char with caps, e.g. "EU", "UN")
+//   5. Take the first 3 distinct survivors
+// Falls back to lowercase distinctive tokens if nothing capitalized
+// survived (handles all-lowercase / all-caps titles).
+function deriveCorePhrasesFromTitle(rawTitle) {
+  if (!rawTitle || typeof rawTitle !== 'string') return [];
+  const cleaned = rawTitle
+    .replace(/[‘’“”]/g, "'")  // smart quotes
+    .replace(/[—–]/g, ' ')                        // em/en dashes → space
+    .replace(/[^\p{L}\p{N}\s'-]+/gu, ' ');        // strip punctuation, keep apostrophe + hyphen
+  const tokens = cleaned.split(/\s+/).filter(Boolean);
+
+  const isAllCapsTitle = tokens.length > 0
+    && tokens.every(t => t === t.toUpperCase());
+  // If the title is ALL CAPS or all-lowercase, we can't trust the case
+  // signal — fall back to length + non-stopword heuristic.
+  const useCaseSignal = !isAllCapsTitle
+    && tokens.some(t => t[0] === t[0].toUpperCase() && t.length > 1)
+    && tokens.some(t => t[0] === t[0].toLowerCase());
+
+  const out = [];
+  const seen = new Set();
+  const accept = (raw) => {
+    const lc = raw.toLowerCase();
+    if (seen.has(lc)) return;
+    if (TITLE_STOPWORDS.has(lc)) return;
+    if (CORE_PHRASE_GENERICS.has(lc)) return;
+    // 4-char minimum unless it's an obvious entity acronym (all caps, ≥2)
+    const isAcronym = raw.length >= 2 && raw === raw.toUpperCase() && /^[A-Z]+$/.test(raw);
+    if (raw.length < 4 && !isAcronym) return;
+    seen.add(lc);
+    out.push(lc);
+  };
+
+  if (useCaseSignal) {
+    // First pass: prefer Capitalized tokens (proper nouns)
+    for (const t of tokens) {
+      if (out.length >= 3) break;
+      if (t[0] === t[0].toUpperCase()) accept(t);
+    }
+  }
+  // Second pass: any non-generic survivor regardless of case
+  if (out.length < 1) {
+    for (const t of tokens) {
+      if (out.length >= 3) break;
+      accept(t);
+    }
+  }
+  return out;
+}
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
@@ -917,12 +1019,13 @@ async function createTimelineFromThread(thread, metrics = null) {
     // already checked overlap against existing timelines above; this is
     // a belt-and-braces safeguard against two threads producing the
     // same slug at the exact same time.
+    const corePhrases = deriveCorePhrasesFromTitle(lineTitle);
     const { rows } = await tx.query(`
       INSERT INTO story_timelines
         (title, description, scope, status, importance, primary_category,
-         geographic_scope, keywords, primary_nations, article_count,
-         first_seen_at, last_updated_at)
-      VALUES ($1, $2, $3, 'active', $4, $5, $6, $7, $8, 0, NOW(), NOW())
+         geographic_scope, keywords, primary_nations, core_phrases,
+         article_count, first_seen_at, last_updated_at)
+      VALUES ($1, $2, $3, 'active', $4, $5, $6, $7, $8, $9, 0, NOW(), NOW())
       ON CONFLICT (scope) DO UPDATE SET
         last_updated_at = NOW()
       RETURNING id
@@ -935,6 +1038,7 @@ async function createTimelineFromThread(thread, metrics = null) {
       thread.geographic_scope || 'global',
       thread.keywords || [],
       thread.primary_nations || [],
+      corePhrases,
     ]);
     const timelineId = rows[0].id;
 
@@ -1543,7 +1647,8 @@ async function runArticleUmbrellaPhase(metrics, elapsed) {
   // processed first when DB throttling kicks in.
   const { rows: lines } = await pool.query(`
     SELECT id, title, status, importance, keywords, primary_nations,
-           primary_category, geographic_scope, first_seen_at, last_updated_at
+           primary_category, geographic_scope, first_seen_at, last_updated_at,
+           core_phrases
     FROM story_timelines
     WHERE status IN ('active', 'cooling', 'dormant')
     ORDER BY CASE status WHEN 'active' THEN 0 WHEN 'cooling' THEN 1 ELSE 2 END,
@@ -1624,25 +1729,35 @@ async function runArticleUmbrellaPhase(metrics, elapsed) {
       const nations  = Array.from(feat.nations);                  // ISO uppercase
       const keywords = Array.from(feat.keywords);                 // normalized
 
-      // Skip Lines with no signal at all — nothing to match against.
-      if (!nations.length && !keywords.length) continue;
+      // Core phrases — distinctive proper nouns from the Line's title.
+      // Used by Branch C below for ILIKE title-substring matching.
+      const corePhrases = Array.isArray(tl.core_phrases) ? tl.core_phrases.filter(Boolean) : [];
 
-      // Pre-filter as a UNION of two independently-indexed branches so
+      // Skip Lines with no signal at all — nothing to match against.
+      if (!nations.length && !keywords.length && !corePhrases.length) continue;
+
+      // Pre-filter as a UNION of three independently-indexed branches so
       // Postgres can use the right index per branch instead of forcing a
       // seq scan on the 700k+ article pool:
       //   Branch A: articles whose country iso ∈ this Line's nations
       //             (uses idx_articles_country_published)
       //   Branch B: articles whose normalized keyword ∈ this Line's keywords
       //             (uses idx_ak_normalized, then joins to news_articles)
-      // Both branches already filter to the 7-day window and exclude
+      //   Branch C: articles whose title (or translated_title) contains
+      //             one of this Line's core_phrases. Catches followup
+      //             coverage that the structured keyword extraction
+      //             missed — without this, "Israel strikes Gaza" can
+      //             score below threshold even though the headline
+      //             literally names the line.
+      // All three branches filter to the 7-day window and exclude
       // articles already attached to this Line.
       //
       // iso_code is stored uppercase in the countries table so no cast.
-      // nations[] is guaranteed non-empty going into branch A because we
-      // skip the whole Line if nations+keywords are both empty above.
-      // Always emit both branches — empty arrays short-circuit via the
-      // cardinality() guard so Postgres never scans when that branch has
-      // no keys, but the $2/$3 type annotations stay valid either way.
+      // Empty arrays short-circuit via the cardinality() guard so
+      // Postgres never scans when that branch has no keys.
+      const phraseRegex = corePhrases.length
+        ? '(?i)\\m(' + corePhrases.map(p => p.replace(/[\\.+*?()|\[\]{}^$]/g, m => '\\' + m)).join('|') + ')\\M'
+        : null;
       const { rows: candidates } = await _umbClient.query(`
         SELECT DISTINCT ON (id) id, title, published_at, iso_code
         FROM (
@@ -1668,10 +1783,21 @@ async function runArticleUmbrellaPhase(metrics, elapsed) {
               SELECT 1 FROM story_timeline_articles sta
                WHERE sta.timeline_id = $1 AND sta.article_id = a.id
             )
+          UNION
+          SELECT a.id, a.title, a.published_at, co.iso_code
+          FROM news_articles a
+          LEFT JOIN countries co ON co.id = a.country_id
+          WHERE $5::text IS NOT NULL
+            AND a.published_at >= NOW() - INTERVAL '${UMBRELLA_LOOKBACK_DAYS} days'
+            AND (a.title ~* $5 OR COALESCE(a.translated_title, '') ~* $5)
+            AND NOT EXISTS (
+              SELECT 1 FROM story_timeline_articles sta
+               WHERE sta.timeline_id = $1 AND sta.article_id = a.id
+            )
         ) u
         ORDER BY id, published_at DESC
         LIMIT $4
-      `, [tl.id, nations, keywords, UMBRELLA_CANDIDATES_PER_LINE]);
+      `, [tl.id, nations, keywords, UMBRELLA_CANDIDATES_PER_LINE, phraseRegex]);
 
       if (!candidates.length) continue;
       metrics.umbrellaCandidatesScored += candidates.length;
@@ -1712,11 +1838,29 @@ async function runArticleUmbrellaPhase(metrics, elapsed) {
         const kwShared  = Math.min(KEYWORD_CAP, intersectCount(artKeywords,  feat.keywords));
         const ttkShared = intersectCount(artTitleTok, feat.titleTokens);
 
+        // Phrase-match bonus: if the article's title contains any of
+        // the Line's core_phrases (whole-word, case-insensitive), the
+        // article is clearly on-topic regardless of the structured
+        // overlap. Caps at one bonus per article — multiple phrase
+        // hits don't stack (would over-credit "Israel-Gaza" type
+        // headlines that mention both halves of the Line's name).
+        const titleLower = String(c.title || '').toLowerCase();
+        const phraseHit = corePhrases.some(p => {
+          if (!p) return false;
+          // \b doesn't work on unicode in JS without /u; build a
+          // regex that matches word boundaries at start/end of the
+          // phrase substring.
+          const rx = new RegExp(`(^|\\W)${p.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}(\\W|$)`, 'i');
+          return rx.test(titleLower);
+        });
+        const phraseBonus = phraseHit ? UMBRELLA_PHRASE_BONUS : 0;
+
         const score =
           entShared  * W_ENTITY_OVERLAP +
           natShared  * W_NATION_OVERLAP +
           kwShared   * W_KEYWORD_OVERLAP +
-          ttkShared  * W_TITLE_TOKEN;
+          ttkShared  * W_TITLE_TOKEN +
+          phraseBonus;
 
         if (score >= UMBRELLA_ATTACH_THRESHOLD) {
           scored.push({ articleId: Number(c.id), score });
