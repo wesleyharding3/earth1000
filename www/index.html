@@ -13959,127 +13959,57 @@ window.fmtDate = function(d) {
   }
 
   function makeNewsPad() {
-    // News-page staggered dyad pulse — same Stranger Things-adjacent
-    // technique as the stats arpeggio (LOW + HIGH partner half-step
-    // later, sawtooth through a resonant lowpass, reverb send) but
-    // tuned to sit BEHIND the field rather than in front of it:
-    //   • slower tempo (~109 BPM 8ths vs stats 125 BPM 16ths)
-    //   • longer sustain so notes overlap into a pad (vs staccato)
-    //   • C-pentatonic feel (brighter mood than stats' A-minor)
-    //   • lower cutoff + lower Q (warmer, no zing)
-    //   • significantly quieter peak gain
-    //   • lighter reverb send than stats
+    // News page: same exact dyad pulse as the globe layer (the user
+    // wanted the music itself unchanged) plus a sustained HIGH pedal
+    // voice in A-minor pentatonic — A5/C6/E6/G6 cycling through long
+    // 12-second swells. Pedal routes through the same filter + reverb
+    // send so it reads as a drowned high harmonic added on top of the
+    // reverb-soaked drone, not a foreground note.
     const out = ctx.createGain();
     out.gain.value = 0.0001;
-    // Wet master — gates the reverb send so cross-fades affect both
-    // dry and wet in lockstep. See setLayer for the fade automation.
     const wetGain = reverbIn ? ctx.createGain() : null;
     if (wetGain) {
       wetGain.gain.value = 0.0001;
       wetGain.connect(reverbIn);
     }
 
+    // ── Globe-arp pattern (verbatim from makeGlobeArp) ───────────
     const filter = ctx.createBiquadFilter();
     filter.type = 'lowpass';
-    filter.frequency.value = 900;
-    filter.Q.value = 3;
+    filter.frequency.value = 1400;
+    filter.Q.value = 8;
     const filtLfo = ctx.createOscillator();
-    filtLfo.frequency.value = 0.07;
+    filtLfo.frequency.value = 0.10;
     const filtLfoGain = ctx.createGain();
-    filtLfoGain.gain.value = 350;
+    filtLfoGain.gain.value = 700;
     filtLfo.connect(filtLfoGain).connect(filter.frequency);
 
-    // Wet/dry mix — drowned in reverb. Dry is barely a whisper (0.07);
-    // the wet send is hot (1.5) so the convolver tail IS the sound.
-    // Slightly less wet than stats so news doesn't compete with the
-    // bright text content visually/sonically.
     const dry = ctx.createGain();
-    dry.gain.value = 0.07;
+    dry.gain.value = 0.08;
     filter.connect(dry).connect(out);
-
     if (wetGain) {
       const wet = ctx.createGain();
-      wet.gain.value = 1.5;
+      wet.gain.value = 1.8;
       filter.connect(wet).connect(wetGain);
     }
 
-    // 6-step pattern, climbs C-pentatonic then descends. Mixed dyad
-    // intervals (5ths, 6ths, minor 3rds) so it feels different from
-    // stats' uniform-5ths pattern. HIGH in counterpoint to LOW.
-    const LOW  = [130.81, 164.81, 196.00, 220.00, 196.00, 164.81]; // C3 E3 G3 A3 G3 E3
-    const HIGH = [196.00, 261.63, 293.66, 329.63, 261.63, 220.00]; // G3 C4 D4 E4 C4 A3
-    // Sparkle voice — C-pentatonic high register, sine wave for a
-    // soft chime distinct from stats' triangle. Twice per 6-step
-    // loop (steps 0 and 3) so the news page feels lightly arpeggiated
-    // rather than purely pad-y.
-    const SPARKLE = [880.00, 1046.50, 783.99, 659.25]; // A5 C6 G5 E5
-    const STEP_SEC = 0.42;          // sped up from 0.55 — feels arp-y
+    const LOW  = [110.00, 130.81, 164.81, 196.00, 220.00, 196.00, 164.81, 130.81]; // A2 C3 E3 G3 A3 G3 E3 C3
+    const HIGH = [164.81, 196.00, 261.63, 293.66, 329.63, 293.66, 261.63, 196.00]; // E3 G3 C4 D4 E4 D4 C4 G3
+    const STEP_SEC  = 0.24;
     const HALF_STEP = STEP_SEC * 0.5;
-    let stepIdx = 0;
-    let nextAt = 0;
-    let running = false;
-    let timer = null;
+    let stepIdx = 0, nextAt = 0, running = false, timer = null;
 
     function fireNote(when, hz, isHigh) {
-      // Single sawtooth (no unison) — same iOS perf reasoning as
-      // stats: the wobble is inaudible once buried in reverb and
-      // halving oscillators eases the main thread.
       const osc = ctx.createOscillator();
       osc.type = 'sawtooth';
       osc.frequency.value = hz;
-
-      // Quieter than stats (peak ~0.04 vs 0.085); sustains shortened
-      // alongside the tempo bump so steps articulate as arpeggio
-      // rather than smearing into a pad.
-      const peak = isHigh ? 0.030 : 0.038;
+      const peak = isHigh ? 0.07 : 0.085;
       const g = ctx.createGain();
       g.gain.setValueAtTime(0.0001, when);
-      g.gain.exponentialRampToValueAtTime(peak, when + 0.04);
-      g.gain.exponentialRampToValueAtTime(0.0001, when + 0.55);
-
-      osc.connect(g);
-      g.connect(filter);
-      osc.start(when);
-      osc.stop(when + 0.60);
-    }
-
-    function fireSparkle(when, hz) {
-      // Sine wave high-register sparkle. Quieter than the stats
-      // triangle sparkle (0.025 vs 0.045) — news already has more
-      // notes per loop; the texture should be a glint, not a feature.
-      const osc = ctx.createOscillator();
-      osc.type = 'sine';
-      osc.frequency.value = hz;
-
-      const g = ctx.createGain();
-      g.gain.setValueAtTime(0.0001, when);
-      g.gain.exponentialRampToValueAtTime(0.025, when + 0.04);
-      g.gain.exponentialRampToValueAtTime(0.0001, when + 0.85);
-
-      osc.connect(g);
-      g.connect(filter);
-      osc.start(when);
-      osc.stop(when + 0.90);
-    }
-
-    // Sub-bass voice — single low sine fired once per 6-step loop,
-    // alternating C2 (65.41 Hz) and G2 (98.00 Hz) for slow tonal
-    // motion under the dyad. 0.30s slow attack + 2.4s decay so the
-    // bass sits under the pad rather than articulating with it.
-    // Routed through the same filter + reverb so it stays unified.
-    const BASS = [65.41, 98.00];
-    function fireBass(when, hz) {
-      const osc = ctx.createOscillator();
-      osc.type = 'sine';
-      osc.frequency.value = hz;
-      const g = ctx.createGain();
-      g.gain.setValueAtTime(0.0001, when);
-      g.gain.exponentialRampToValueAtTime(0.07, when + 0.30);
-      g.gain.exponentialRampToValueAtTime(0.0001, when + 2.4);
-      osc.connect(g);
-      g.connect(filter);
-      osc.start(when);
-      osc.stop(when + 2.5);
+      g.gain.exponentialRampToValueAtTime(peak, when + 0.008);
+      g.gain.exponentialRampToValueAtTime(0.0001, when + 0.28);
+      osc.connect(g); g.connect(filter);
+      osc.start(when); osc.stop(when + 0.32);
     }
 
     function tick() {
@@ -14089,20 +14019,43 @@ window.fmtDate = function(d) {
         const i = stepIdx % LOW.length;
         fireNote(nextAt,             LOW[i],  false);
         fireNote(nextAt + HALF_STEP, HIGH[i], true);
-        // Sparkle on the 1 and 4 of the 6-step loop (twice per loop).
-        const m = stepIdx % 6;
-        if (m === 0 || m === 3) {
-          fireSparkle(nextAt, SPARKLE[Math.floor(stepIdx / 3) % SPARKLE.length]);
-        }
-        // Sub-bass on step 0 of each loop. Alternates root / fifth
-        // every loop iteration for a slow tonal pulse.
-        if (m === 0) {
-          fireBass(nextAt, BASS[Math.floor(stepIdx / 6) % BASS.length]);
-        }
         stepIdx++;
         nextAt += STEP_SEC;
       }
       timer = setTimeout(tick, 80);
+    }
+
+    // ── News-only addition: HIGH pedal in A-minor pentatonic ─────
+    // Sine voice cycling through A5/C6/E6/G6, each held for ~12s
+    // with 4s fade in + 4s fade out, then advance to the next note.
+    // Routes through the same filter so it shares the wet send and
+    // sits inside the convolver tail rather than on top of the dyad.
+    const PEDAL_HIGH = [880.00, 1046.50, 1318.51, 1567.98]; // A5 C6 E6 G6
+    const PEDAL_HOLD_SEC  = 12;
+    const PEDAL_FADE_SEC  = 4;
+    const PEDAL_PEAK      = 0.018;
+    let pedalIdx = 0, pedalTimer = null, pedalActiveOsc = null;
+
+    function firePedal() {
+      if (!running) return;
+      const hz = PEDAL_HIGH[pedalIdx % PEDAL_HIGH.length];
+      pedalIdx++;
+      const now = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.value = hz;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, now);
+      g.gain.exponentialRampToValueAtTime(PEDAL_PEAK, now + PEDAL_FADE_SEC);
+      g.gain.setValueAtTime(PEDAL_PEAK, now + PEDAL_HOLD_SEC - PEDAL_FADE_SEC);
+      g.gain.exponentialRampToValueAtTime(0.0001, now + PEDAL_HOLD_SEC);
+      osc.connect(g); g.connect(filter);
+      osc.start(now);
+      osc.stop(now + PEDAL_HOLD_SEC + 0.5);
+      pedalActiveOsc = osc;
+      // Schedule next pedal note slightly before the current one fades
+      // out so the swell crossfades rather than producing silence gaps.
+      pedalTimer = setTimeout(firePedal, (PEDAL_HOLD_SEC - PEDAL_FADE_SEC) * 1000);
     }
 
     return {
@@ -14113,11 +14066,14 @@ window.fmtDate = function(d) {
         filtLfo.start(when);
         nextAt = Math.max(when, ctx.currentTime + 0.05);
         tick();
+        firePedal();
       },
       stop(_when) {
         running = false;
         if (timer) { clearTimeout(timer); timer = null; }
+        if (pedalTimer) { clearTimeout(pedalTimer); pedalTimer = null; }
         try { filtLfo.stop(_when); } catch(_) {}
+        if (pedalActiveOsc) { try { pedalActiveOsc.stop(_when); } catch(_) {} }
       }
     };
   }
@@ -14209,78 +14165,44 @@ window.fmtDate = function(d) {
     };
   }
 
-  // ── Stats arp: rich variant of the same Stranger-Things-adjacent
-  // dyad pulse. Layered on top of the Globe arp's pattern:
-  //   • STEP_SEC 0.16 (vs Globe's 0.24)  — the pulse drives, doesn't breathe
-  //   • SYNC dyad on the 75% offbeat   — two notes octave-up of HIGH
-  //                                       create the syncopated push
-  //   • SPARKLE voice (high register) — A-minor pentatonic, triangle,
-  //                                       sparse (every 4th step) — the
-  //                                       only place high notes are heard
-  //   • Feedback delay tap            — 0.24s delay, 0.45 feedback;
-  //                                       echoes route to reverbIn so the
-  //                                       whole stack stays buried in the
-  //                                       convolver tail
+  // ── Stats arp: same exact dyad pulse as the globe layer (the user
+  // wanted the music itself unchanged) plus a sustained LOW pedal
+  // voice in A-minor pentatonic — A1/C2/E2/G2 cycling through long
+  // 12-second swells. Pedal routes through the same filter + reverb
+  // send so it reads as a drowned bass harmonic added to the reverb-
+  // soaked drone, not a foreground note.
   function makeStatsArp() {
     const out = ctx.createGain();
     out.gain.value = 0.0001;
-    // Wet master — gates BOTH the direct wet send and the delay-tail
-    // reverb send so cross-fades affect every reverb-bound signal in
-    // lockstep. See setLayer for the in/out fade automation.
     const wetGain = reverbIn ? ctx.createGain() : null;
     if (wetGain) {
       wetGain.gain.value = 0.0001;
       wetGain.connect(reverbIn);
     }
 
-    // Q reduced 8 → 4 + LFO range 700 → 450 to stop the filter from
-    // singing aggressively. SYNC voices below were retired — the mix
-    // had too many simultaneous attacks per step and read as chaotic.
+    // ── Globe-arp pattern (verbatim from makeGlobeArp) ───────────
     const filter = ctx.createBiquadFilter();
     filter.type = 'lowpass';
     filter.frequency.value = 1400;
-    filter.Q.value = 4;
+    filter.Q.value = 8;
     const filtLfo = ctx.createOscillator();
     filtLfo.frequency.value = 0.10;
     const filtLfoGain = ctx.createGain();
-    filtLfoGain.gain.value = 450;
+    filtLfoGain.gain.value = 700;
     filtLfo.connect(filtLfoGain).connect(filter.frequency);
 
     const dry = ctx.createGain();
     dry.gain.value = 0.08;
     filter.connect(dry).connect(out);
-
-    // Delay tamed: send 0.55 → 0.30, feedback 0.45 → 0.28. Echoes
-    // still present but no longer stack 4-5 generations per step.
-    const delay = ctx.createDelay(2.0);
-    delay.delayTime.value = 0.24;
-    const feedback = ctx.createGain();
-    feedback.gain.value = 0.28;
-    delay.connect(feedback).connect(delay);
-    const delaySend = ctx.createGain();
-    delaySend.gain.value = 0.30;
-    filter.connect(delaySend).connect(delay);
-
     if (wetGain) {
       const wet = ctx.createGain();
       wet.gain.value = 1.8;
       filter.connect(wet).connect(wetGain);
-      // Delay echoes also routed through the wet master so they
-      // fade in/out with everything else.
-      const delayWet = ctx.createGain();
-      delayWet.gain.value = 1.2;
-      delay.connect(delayWet).connect(wetGain);
     }
 
-    // SYNC voices retired — they fired simultaneously at the offbeat,
-    // stacking 4 sawtooth attacks per step on top of LOW + HIGH. Pattern
-    // is now LOW (on step) + HIGH (half-step) + occasional SPARKLE.
     const LOW  = [110.00, 130.81, 164.81, 196.00, 220.00, 196.00, 164.81, 130.81]; // A2 C3 E3 G3 A3 G3 E3 C3
     const HIGH = [164.81, 196.00, 261.63, 293.66, 329.63, 293.66, 261.63, 196.00]; // E3 G3 C4 D4 E4 D4 C4 G3
-    const SPARKLE = [659.25, 880.00, 783.99, 587.33]; // E5 A5 G5 D5
-    // Tempo eased 0.16 → 0.20 so the dyad reads as an arpeggio rather
-    // than a flurry. Notes per second drops ~25 → ~10.
-    const STEP_SEC = 0.20;
+    const STEP_SEC  = 0.24;
     const HALF_STEP = STEP_SEC * 0.5;
     let stepIdx = 0, nextAt = 0, running = false, timer = null;
 
@@ -14292,35 +14214,9 @@ window.fmtDate = function(d) {
       const g = ctx.createGain();
       g.gain.setValueAtTime(0.0001, when);
       g.gain.exponentialRampToValueAtTime(peak, when + 0.008);
-      g.gain.exponentialRampToValueAtTime(0.0001, when + 0.22);
+      g.gain.exponentialRampToValueAtTime(0.0001, when + 0.28);
       osc.connect(g); g.connect(filter);
-      osc.start(when); osc.stop(when + 0.26);
-    }
-
-    function fireSync(when, hz) {
-      // Quieter (0.045 peak) and shorter (0.18s) than the main dyad
-      // — these are accent notes pushing the rhythm, not focal events.
-      const osc = ctx.createOscillator();
-      osc.type = 'sawtooth';
-      osc.frequency.value = hz;
-      const g = ctx.createGain();
-      g.gain.setValueAtTime(0.0001, when);
-      g.gain.exponentialRampToValueAtTime(0.045, when + 0.006);
-      g.gain.exponentialRampToValueAtTime(0.0001, when + 0.16);
-      osc.connect(g); g.connect(filter);
-      osc.start(when); osc.stop(when + 0.20);
-    }
-
-    function fireSparkle(when, hz) {
-      const osc = ctx.createOscillator();
-      osc.type = 'triangle';
-      osc.frequency.value = hz;
-      const g = ctx.createGain();
-      g.gain.setValueAtTime(0.0001, when);
-      g.gain.exponentialRampToValueAtTime(0.045, when + 0.02);
-      g.gain.exponentialRampToValueAtTime(0.0001, when + 0.65);
-      osc.connect(g); g.connect(filter);
-      osc.start(when); osc.stop(when + 0.70);
+      osc.start(when); osc.stop(when + 0.32);
     }
 
     function tick() {
@@ -14330,14 +14226,42 @@ window.fmtDate = function(d) {
         const i = stepIdx % LOW.length;
         fireNote(nextAt,             LOW[i],  false);
         fireNote(nextAt + HALF_STEP, HIGH[i], true);
-        // SYNC voices removed — see filter/delay block above.
-        if (stepIdx % 4 === 0) {
-          fireSparkle(nextAt + HALF_STEP, SPARKLE[(stepIdx / 4) % SPARKLE.length]);
-        }
         stepIdx++;
         nextAt += STEP_SEC;
       }
       timer = setTimeout(tick, 80);
+    }
+
+    // ── Stats-only addition: LOW pedal in A-minor pentatonic ────
+    // Sub-bass voice cycling through A1/C2/E2/G2, each held for ~12s
+    // with 4s fade in + 4s fade out, then advance to the next note.
+    // Sawtooth at very low amplitude — the dry path is barely audible,
+    // but the wet send (1.8x) places it firmly in the reverb tail so
+    // the page reads as having a drowned bass swell under the dyad.
+    const PEDAL_LOW = [55.00, 65.41, 82.41, 98.00]; // A1 C2 E2 G2
+    const PEDAL_HOLD_SEC  = 12;
+    const PEDAL_FADE_SEC  = 4;
+    const PEDAL_PEAK      = 0.022;
+    let pedalIdx = 0, pedalTimer = null, pedalActiveOsc = null;
+
+    function firePedal() {
+      if (!running) return;
+      const hz = PEDAL_LOW[pedalIdx % PEDAL_LOW.length];
+      pedalIdx++;
+      const now = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      osc.type = 'sawtooth';
+      osc.frequency.value = hz;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, now);
+      g.gain.exponentialRampToValueAtTime(PEDAL_PEAK, now + PEDAL_FADE_SEC);
+      g.gain.setValueAtTime(PEDAL_PEAK, now + PEDAL_HOLD_SEC - PEDAL_FADE_SEC);
+      g.gain.exponentialRampToValueAtTime(0.0001, now + PEDAL_HOLD_SEC);
+      osc.connect(g); g.connect(filter);
+      osc.start(now);
+      osc.stop(now + PEDAL_HOLD_SEC + 0.5);
+      pedalActiveOsc = osc;
+      pedalTimer = setTimeout(firePedal, (PEDAL_HOLD_SEC - PEDAL_FADE_SEC) * 1000);
     }
 
     return {
@@ -14348,11 +14272,14 @@ window.fmtDate = function(d) {
         filtLfo.start(when);
         nextAt = Math.max(when, ctx.currentTime + 0.05);
         tick();
+        firePedal();
       },
       stop(_when) {
         running = false;
         if (timer) { clearTimeout(timer); timer = null; }
+        if (pedalTimer) { clearTimeout(pedalTimer); pedalTimer = null; }
         try { filtLfo.stop(_when); } catch(_) {}
+        if (pedalActiveOsc) { try { pedalActiveOsc.stop(_when); } catch(_) {} }
       }
     };
   }
@@ -14643,18 +14570,14 @@ window.fmtDate = function(d) {
     pulseActivity(0.12);
   }
 
-  // Three pitch-distinct siblings — same click body, different pip
-  // pitches + noise bandpass for card-type identity.
-  function triggerThreadTap(opts) {
-    triggerHollowPulse(Object.assign({
-      pip: 540, noiseFreq: 700,  dur: 0.075, vol: 0.075,
-    }, opts || {}));
-  }
-  function triggerLineTap(opts) {
-    triggerHollowPulse(Object.assign({
-      pip: 720, noiseFreq: 950,  dur: 0.085, vol: 0.070,
-    }, opts || {}));
-  }
+  // Three pitch-distinct siblings — articleTap keeps its hollow-pulse
+  // body, but threadTap and lineTap now route to the same crisp
+  // bandpass-noise click as the top nav buttons. The user wanted feed
+  // card clicks to sound like the nav clicks (consistent UI feedback)
+  // — pitched-pip variants felt like pip notifications rather than
+  // affirmative button taps.
+  function triggerThreadTap(opts) { triggerNavClick(opts); }
+  function triggerLineTap(opts)   { triggerNavClick(opts); }
   function triggerArticleTap(opts) {
     triggerHollowPulse(Object.assign({
       pip: 980, noiseFreq: 1300, dur: 0.065, vol: 0.065,
@@ -14864,7 +14787,10 @@ window.fmtDate = function(d) {
     opts = opts || {};
     const now = ctx.currentTime;
     const dur = opts.dur || 0.95;
-    const vol = (opts.vol == null) ? 0.12 : opts.vol;
+    // Halved from 0.12 — the swept-noise transient was overpowering
+    // the layer crossfade it was meant to bridge. 0.06 keeps the
+    // textural cue audible without dominating the moment.
+    const vol = (opts.vol == null) ? 0.06 : opts.vol;
     const fLow  = opts.fLow  || 320;
     const fHigh = opts.fHigh || 4200;
 
