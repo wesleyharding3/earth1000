@@ -559,6 +559,56 @@ setInterval(() => {
   }
 }, 120_000).unref?.();
 
+// ── Cache eviction (used by warmer crons) ──────────────────────────────────
+// Warmer crons pre-fetch endpoints to populate the cache. But ttlCached
+// returns the existing value when fresh — so a warmer that runs while the
+// cache is still warm is a no-op and never refreshes from DB. After a
+// builder cron updates rows in Postgres, the warmer's HTTP requests would
+// keep returning stale cached values until the original TTL expired (up to
+// 22h on some endpoints).
+//
+// This endpoint lets a warmer explicitly evict a set of cache keys (by
+// exact match or prefix) before its warming pass. The next request for any
+// evicted key cache-misses, the producer runs against fresh DB state, and
+// the warmer's GET requests repopulate the cache.
+//
+// Auth: shared secret in CACHE_EVICT_SECRET env var, sent as
+// `x-cache-secret` header. If the env var isn't set, the endpoint refuses
+// all calls (fail-closed) — operator must explicitly opt in by setting it
+// in the API service AND each cron service.
+function _evictCacheKeys({ keys = [], prefixes = [] }) {
+  let n = 0;
+  // Exact keys
+  for (const k of keys) {
+    if (_ttlCache.delete(k)) n++;
+    _ttlInflight.delete(k);
+  }
+  // Prefix matches
+  if (prefixes.length) {
+    for (const k of [..._ttlCache.keys()]) {
+      if (prefixes.some(p => k.startsWith(p))) {
+        _ttlCache.delete(k);
+        _ttlInflight.delete(k);
+        n++;
+      }
+    }
+  }
+  return n;
+}
+
+app.post('/internal/cache/evict', express.json({ limit: '64kb' }), (req, res) => {
+  const secret = process.env.CACHE_EVICT_SECRET;
+  if (!secret) return res.status(503).json({ error: 'CACHE_EVICT_SECRET not configured' });
+  const provided = req.get('x-cache-secret') || '';
+  if (provided !== secret) return res.status(403).json({ error: 'forbidden' });
+  const keys     = Array.isArray(req.body?.keys)     ? req.body.keys.slice(0, 200)     : [];
+  const prefixes = Array.isArray(req.body?.prefixes) ? req.body.prefixes.slice(0, 50)  : [];
+  if (!keys.length && !prefixes.length) return res.status(400).json({ error: 'keys or prefixes required' });
+  const evicted = _evictCacheKeys({ keys, prefixes });
+  res.set('Cache-Control', 'no-store');
+  res.json({ evicted, before: _ttlCache.size + evicted, after: _ttlCache.size });
+});
+
 // ── Country-name regex, built once at boot ─────────────────────────────────
 //
 // `/api/threads/latest` previously did a JOIN against the full countries

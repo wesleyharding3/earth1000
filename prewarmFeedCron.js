@@ -33,6 +33,7 @@
  */
 
 require('dotenv').config({ override: true });
+const { forceRefreshCaches } = require('./prewarmCommon');
 
 const API_URL     = (process.env.API_URL || 'http://localhost:3000').replace(/\/$/, '');
 // 130s — must outlive the server's prewarm SQL ceiling (120s on
@@ -179,6 +180,20 @@ async function warm(label, url) {
 async function main() {
   const t0 = Date.now();
   console.log(`${TAG} start ${new Date().toISOString()} api=${API_URL} countries=${COUNTRY_LIMIT} cities=${CITY_LIMIT} concurrency=${CONCURRENCY} timeout=${TIMEOUT_MS}ms`);
+
+  // Force-evict the feed caches (city + country + global feeds, news
+  // search, cities/countries/tags lookup tables) so the warmer's GETs
+  // below cache-miss and repopulate from current DB state.
+  await forceRefreshCaches({
+    apiUrl: API_URL,
+    prefixes: [
+      'cities:', 'countries:', 'tags:',
+      'news/search:',
+      'country-feed:', 'country-feed-global:',
+      'city-feed:',    'city-feed-global:',
+    ],
+    tag: TAG,
+  });
 
   // Phase 0 — top-of-app feeds (no IDs needed)
   console.log(`${TAG} phase 0: warming top-of-app feeds…`);

@@ -50,6 +50,7 @@
  */
 
 require('dotenv').config({ override: true });
+const { forceRefreshCaches } = require('./prewarmCommon');
 
 const API_URL     = (process.env.API_URL || 'http://localhost:3000').replace(/\/$/, '');
 // 60s — cold-buffer flows queries on a hot keyword can take 8–10s, plus
@@ -292,6 +293,16 @@ async function main() {
   // list); now it's dynamic so warming follows real momentum.
   const KEYWORDS = await pickKeywordsToWarm();
   console.log(`${TAG} start ${new Date().toISOString()} api=${API_URL} keywords=${KEYWORDS.length} concurrency=${CONCURRENCY} timeout=${TIMEOUT_MS}ms`);
+
+  // Force-evict the heatmap + flow caches so the warmer's GETs below
+  // cache-miss and repopulate from current DB state. This cron runs
+  // hourly, so without eviction we'd just touch the existing 65m-TTL
+  // entries without ever refreshing them.
+  await forceRefreshCaches({
+    apiUrl: API_URL,
+    prefixes: ['heatmap:', 'flows:'],
+    tag: TAG,
+  });
 
   console.log(`${TAG} keywords: warming ${KEYWORDS.length} keyword × (heatmap, flows)…`);
   // Process keywords in small batches. Default concurrency is 1 — see

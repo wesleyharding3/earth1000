@@ -36,6 +36,7 @@
  */
 
 require('dotenv').config({ override: true });
+const { forceRefreshCaches } = require('./prewarmCommon');
 
 const API_URL     = (process.env.API_URL || 'http://localhost:3000').replace(/\/$/, '');
 // 130s — must be > server's prewarm SQL ceiling (120s) so the cron's
@@ -239,6 +240,17 @@ async function processOne(country) {
 async function main() {
   const t0 = Date.now();
   console.log(`${TAG} start ${new Date().toISOString()} api=${API_URL} top=${TOP_N} concurrency=${CONCURRENCY} timeout=${TIMEOUT_MS}ms`);
+
+  // Force-evict the /api/flows aggregate cache (key prefix `flows:`)
+  // so the warmer's GETs below cache-miss and repopulate from current
+  // DB state. The country-only aggregate variant has a 13h TTL —
+  // without eviction the warmer is a no-op for half a day after a
+  // builder pushes new data.
+  await forceRefreshCaches({
+    apiUrl: API_URL,
+    prefixes: ['flows:'],
+    tag: TAG,
+  });
 
   let isoMap;
   try {

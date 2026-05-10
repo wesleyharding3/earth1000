@@ -51,6 +51,7 @@
  */
 
 require('dotenv').config({ override: true });
+const { forceRefreshCaches } = require('./prewarmCommon');
 
 const API_URL      = (process.env.API_URL || 'http://localhost:3000').replace(/\/$/, '');
 const TIMEOUT_MS   = parseInt(process.env.PREWARM_TIMEOUT_MS  || '95000', 10);
@@ -199,6 +200,15 @@ async function warmCoreFeeds() {
 async function main() {
   const t0 = Date.now();
   console.log(`${TAG} start ${new Date().toISOString()} api=${API_URL} threads=${THREAD_LIMIT} concurrency=${CONCURRENCY} timeout=${TIMEOUT_MS}ms`);
+
+  // Force-evict the thread + thread-flow caches so the warmer's GETs
+  // below cache-miss and repopulate from current DB state. See
+  // prewarmCommon.js for the full rationale.
+  await forceRefreshCaches({
+    apiUrl: API_URL,
+    prefixes: ['threads/', 'flows/thread:'],
+    tag: TAG,
+  });
 
   // Phase 0 — core feeds (threads/latest, sources-stats)
   const coreResults = await warmCoreFeeds();

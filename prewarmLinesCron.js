@@ -34,6 +34,7 @@
  */
 
 require('dotenv').config({ override: true });
+const { forceRefreshCaches } = require('./prewarmCommon');
 
 const API_URL        = (process.env.API_URL || 'http://localhost:3000').replace(/\/$/, '');
 const TIMEOUT_MS     = parseInt(process.env.PREWARM_TIMEOUT_MS || '95000', 10);
@@ -111,6 +112,16 @@ async function processLine(t) {
 async function main() {
   const t0 = Date.now();
   console.log(`${TAG} start ${new Date().toISOString()} api=${API_URL} timelines=${TIMELINE_LIMIT} concurrency=${CONCURRENCY} timeout=${TIMEOUT_MS}ms`);
+
+  // Force-evict the timeline + flow cache entries so the warmer's GET
+  // requests below cache-miss and repopulate from current DB state.
+  // Without this, the warmer is a no-op when the cache is still fresh
+  // — it returns the existing (possibly pre-builder) values.
+  await forceRefreshCaches({
+    apiUrl: API_URL,
+    prefixes: ['timelines/', 'flows/timeline:'],
+    tag: TAG,
+  });
 
   // Phase 0 — /api/timelines/latest (the list)
   console.log(`${TAG} phase 0: warming /api/timelines/latest…`);
