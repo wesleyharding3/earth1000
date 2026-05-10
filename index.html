@@ -43161,7 +43161,10 @@ body.ticker-active .gTickerLabel {
   // into the next segment without a long perceived silence. See
   // www/index.html for the full rationale.
   // See www/index.html for full rationale on these tunings.
-  const SEGMENT_BUFFER_MS = 750;
+  // Bumped 750 → 3000 for the user's "3s music swell between segments"
+  // spec. See www/index.html for the full rationale (audio.ended also
+  // resumes paused music so the swell is audible during story gaps).
+  const SEGMENT_BUFFER_MS = 3000;
   const FOCAL_PRE_PAUSE_MS  = 350;
   const FOCAL_POST_PAUSE_MS = 500;
 
@@ -43185,6 +43188,9 @@ body.ticker-active .gTickerLabel {
   // → narrator ducks → first story = pause → recap = loop). The
   // standalone-lead-in phase was removed — see openBriefing for why.
   const BRIEFING_MUSIC_URL = './audio/briefing/morse-room-signal.mp3';
+  // 4s music-alone window with the intro overlay visible — see
+  // www/index.html for full rationale.
+  const BRIEFING_INTRO_LEAD_MS = 4000;
   let _bgMusic      = null;
   let _bgMusicCtx   = null;
   let _bgMusicGain  = null;
@@ -43452,11 +43458,22 @@ body.ticker-active .gTickerLabel {
     startSeekLoop();
     // Morse Room Signal plays for every briefing — no per-episode gate.
     initBgMusic();
-    // Music starts now; segment 0 renders + narrator follows immediately.
-    // The earlier 4s standalone-lead delayed goToSegment(0), which left
-    // the screen blank (no thumbnail / no panel) — see www/index.html.
+    // 4s music-alone lead with the intro overlay visible. Mirrors
+    // www/index.html — see that file for the full rationale (the
+    // earlier blanket delay caused "videos aren't playing"; this
+    // version paints the intro chrome immediately so the user sees
+    // the briefing branding while the music plays alone).
     startBgMusic();
-    goToSegment(0);
+    const _firstSeg = episode?.segments?.[0];
+    if (_firstSeg?.type === 'intro') {
+      showIntroOverlay();
+      addBTimer(setTimeout(() => {
+        if (!window.briefingActive) return;
+        goToSegment(0);
+      }, BRIEFING_INTRO_LEAD_MS));
+    } else {
+      goToSegment(0);
+    }
   }
 
   // ── Close ────────────────────────────────────────────────────────────────
@@ -44646,15 +44663,13 @@ body.ticker-active .gTickerLabel {
 
     // Music phase routing per the briefing-music spec — see www/index.html
     // for the full phase table.
-    const _prevSeg = (segIdx >= 0 && episode.segments[segIdx]) || null;
-    const _prevWasIntro = _prevSeg?.type === 'intro';
+    // See www/index.html for the full lifecycle rationale.
     const _enteringStory = seg?.type === 'story';
-    if (_enteringStory && (_prevWasIntro || _bgMusicSegmentPaused)) {
+    if (_enteringStory) {
       bgMusicFadeOutAndPause();
-    } else if (_enteringStory) {
-      bgMusicResumeForGap();
     } else {
-      bgMusicNarratorEnd();
+      if (_bgMusicSegmentPaused) bgMusicResumeForGap();
+      else bgMusicNarratorEnd();
     }
 
     // ── Per-segment audio ──────────────────────────────────────────────────
@@ -44736,7 +44751,11 @@ body.ticker-active .gTickerLabel {
       // regular segments use SEGMENT_BUFFER_MS for a breathing room gap.
       sa.addEventListener('ended', () => {
         if (segIdx !== curIdx || !playing) return;
-        bgMusicNarratorEnd();
+        // Resume paused music for an audible 3s swell during story
+        // gaps; ramp gain only when track is already playing-but-ducked.
+        // See www/index.html for full rationale.
+        if (_bgMusicSegmentPaused) bgMusicResumeForGap();
+        else bgMusicNarratorEnd();
         clearTimeout(segTimer);
         let pauseMs = seg.video_id
           ? (VIDEO_PAUSE_SECS * 1000) / playbackRate

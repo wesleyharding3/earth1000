@@ -46997,12 +46997,14 @@ body.ticker-active .gTickerLabel {
   // of her speech. 200ms gives a natural breath without breaking
   // continuity. Keep VIDEO_PAUSE_SECS at 18s — that's the focal-
   // video playback budget, not a transition pause.
-  // Pause between non-video segments (ms). Bumped from 200 → 750 because
-  // the narrator's transition line ("Meanwhile, in Tokyo …") was getting
-  // perceptually clipped by the next segment's audio kicking in too fast.
-  // 750ms gives the closing word time to settle plus a half-beat of
-  // breathing room before the next thread starts.
-  const SEGMENT_BUFFER_MS = 750;
+  // Pause between non-video segments (ms). 3000ms is a deliberate
+  // music-swell window — the user wants the briefing track to come
+  // back to full volume for ~3s between every story before the next
+  // narrator starts, giving a clear audible "beat" between threads.
+  // For story-to-story gaps the audio.ended handler also resumes the
+  // paused track so the swell is actually audible (without the resume
+  // the gain ramp is silent — track is paused during stories).
+  const SEGMENT_BUFFER_MS = 3000;
   // Pause before/after a featured-media takeover so the narrator's last
   // word of "before-voice" rings out, the media plays cleanly, and her
   // first word of "after-voice" doesn't bump against the shrink-back.
@@ -47048,6 +47050,11 @@ body.ticker-active .gTickerLabel {
   // Constraints from the spec: never cut off (always fade), never play
   // OVER narrator (BG_VOL_LOW is duck-under, not muted-during-speech).
   const BRIEFING_MUSIC_URL = './audio/briefing/morse-room-signal.mp3';
+  // Music plays alone with the intro overlay visible for this many ms
+  // before goToSegment(0) fires and the narrator joins. Only applied
+  // when segment 0 is type:'intro' (so non-intro first segments don't
+  // see a blank delay).
+  const BRIEFING_INTRO_LEAD_MS = 4000;
   let _bgMusic      = null;    // Audio element for background music
   let _bgMusicCtx   = null;    // AudioContext for gain control
   let _bgMusicGain  = null;    // GainNode for smooth volume ducking
@@ -47378,16 +47385,25 @@ body.ticker-active .gTickerLabel {
         .then(list => { _articleRollCache.set(key, Array.isArray(list) ? list : []); })
         .catch(() => {});
     }
-    // Music starts now; narrator follows as soon as segment 0's audio
-    // metadata is ready (handled inside goToSegment's onReady).
-    // Earlier this scheduled goToSegment(0) on a 4s setTimeout so the
-    // track could play alone — the side effect was a 4-second blank
-    // window with no thumbnail / no article panel / no narrator. The
-    // user reported it as "videos aren't playing." Restoring immediate
-    // segment render; bgMusicNarratorStart still ducks the music when
-    // the narrator audio actually fires.
+    // Music starts now. If segment 0 is an intro, show its overlay
+    // immediately and defer goToSegment(0) by 4 seconds — the user
+    // wants the briefing chrome (logo + date) visible while the Morse
+    // Room Signal track plays alone before narration starts. Earlier
+    // this deferred the entire goToSegment which left the screen
+    // blank ("videos aren't playing"); showing the intro overlay
+    // separately keeps something on screen during the lead-in.
+    // Non-intro first segments render immediately as before.
     startBgMusic();
-    goToSegment(0);
+    const _firstSeg = episode?.segments?.[0];
+    if (_firstSeg?.type === 'intro') {
+      showIntroOverlay();
+      addBTimer(setTimeout(() => {
+        if (!window.briefingActive) return; // user closed during lead-in
+        goToSegment(0);
+      }, BRIEFING_INTRO_LEAD_MS));
+    } else {
+      goToSegment(0);
+    }
   }
 
   // ── Close ────────────────────────────────────────────────────────────────
@@ -48955,20 +48971,20 @@ body.ticker-active .gTickerLabel {
     //   - Other transitions (outro / summary / keywords / video) →
     //     keep the existing swell behavior; recap takes over at the
     //     end via showRecap.
-    const _prevSeg = (segIdx >= 0 && episode.segments[segIdx]) || null;
-    const _prevWasIntro = _prevSeg?.type === 'intro';
     const _enteringStory = seg?.type === 'story';
-    if (_enteringStory && (_prevWasIntro || _bgMusicSegmentPaused)) {
-      // First story (or any story coming out of paused state) — pause
-      // the music after fade. _bgMusicSegmentPaused stays true until
-      // the next gap or recap explicitly resumes.
+    if (_enteringStory) {
+      // Story segments play silent — fade out and pause the music.
+      // Idempotent if the track is already paused (no-op gain ramp +
+      // re-set the paused flag).
       bgMusicFadeOutAndPause();
-    } else if (_enteringStory) {
-      // Story-to-story gap — resume from pause if needed and swell.
-      bgMusicResumeForGap();
     } else {
-      // Non-story transitions (outro etc.) — existing swell.
-      bgMusicNarratorEnd();
+      // Non-story segment (intro / outro / keywords / summary) — music
+      // plays underneath the narrator. If the track is currently paused
+      // (entering a non-story after a story), resume it; otherwise just
+      // ramp gain back up. onReady's bgMusicNarratorStart ducks it back
+      // down for the narrator a moment later.
+      if (_bgMusicSegmentPaused) bgMusicResumeForGap();
+      else bgMusicNarratorEnd();
     }
 
     // ── Per-segment audio ──────────────────────────────────────────────────
@@ -49103,7 +49119,12 @@ body.ticker-active .gTickerLabel {
       // regular segments use SEGMENT_BUFFER_MS for a breathing room gap.
       sa.addEventListener('ended', () => {
         if (segIdx !== curIdx || !playing) return;
-        bgMusicNarratorEnd(); // swell music during gap
+        // Swell music during the gap. If music is paused (story segment
+        // was playing silent), resume + ramp to FULL so the 3s gap has
+        // audible music. Otherwise just ramp gain — track is already
+        // playing-but-ducked under the narrator we just finished.
+        if (_bgMusicSegmentPaused) bgMusicResumeForGap();
+        else bgMusicNarratorEnd();
         clearTimeout(segTimer);
         let pauseMs = seg.video_id
           ? (VIDEO_PAUSE_SECS * 1000) / playbackRate
