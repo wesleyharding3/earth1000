@@ -49108,9 +49108,25 @@ body.ticker-active .gTickerLabel {
         if (segIdx !== curIdx || !playing) return;
         bgMusicNarratorEnd(); // swell music during gap
         clearTimeout(segTimer);
-        const pauseMs = seg.video_id
+        let pauseMs = seg.video_id
           ? (VIDEO_PAUSE_SECS * 1000) / playbackRate
           : SEGMENT_BUFFER_MS / playbackRate;
+        // Passive-overlay defer: if a focal overlay is still showing
+        // when the narrator finishes (twitter_post is the dominant
+        // case — narrator talks through the overlay, after-piece can
+        // be shorter than the 15s overlay duration), wait until the
+        // overlay's scheduled end before advancing. Without this the
+        // segment-advance fires ~750ms after audio-end and kills the
+        // overlay early — user perceives "narrator interrupted by
+        // segment ending prematurely while the post is still up".
+        if (_focalActive && _focalScheduledEndMs > 0) {
+          const nowMs = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+          const focalRemaining = _focalScheduledEndMs - nowMs;
+          if (focalRemaining > 0) {
+            // Add SEGMENT_BUFFER_MS as a breath after the overlay closes.
+            pauseMs = Math.max(pauseMs, focalRemaining + (SEGMENT_BUFFER_MS / playbackRate));
+          }
+        }
         segTimer = setTimeout(() => {
           if (segIdx !== curIdx) return;
           goToSegment(curIdx + 1);
@@ -49785,6 +49801,15 @@ body.ticker-active .gTickerLabel {
   // → plays with sound at configured volume → media shrinks → narrator resumes.
   // Supports YouTube videos, Twitter posts, and Twitter videos.
   let _focalActive = false;
+  // Wall-clock ms (performance.now()) when the active focal overlay is
+  // scheduled to end — set by startFocalVideo, cleared by endFocalVideo.
+  // The audio-ended segment-advance reads this so a passive overlay
+  // (twitter_post) whose narrator finishes BEFORE the 15s overlay
+  // duration doesn't get killed early by the standard 750ms advance
+  // gap. Without this, the user sees the post for a beat then the
+  // next segment starts — feeling like the segment ended prematurely
+  // mid-flow even though the narrator audio finished cleanly.
+  let _focalScheduledEndMs = 0;
   let _focalCaptionsWereOff = false; // track if we auto-enabled captions
   // Tracks whether the briefing has an active heatmap overlay so
   // segment-end cleanup (clearArcMeshes) can tear it down. Without
@@ -49945,6 +49970,10 @@ body.ticker-active .gTickerLabel {
 
     _focalActive = true;
     const duration = (endSec - startSec) * 1000;
+    // Stamp the scheduled end-time so audio.ended can detect when it
+    // fired DURING an active passive-overlay and defer the segment-
+    // advance accordingly. Cleared in endFocalVideo.
+    _focalScheduledEndMs = (typeof performance !== 'undefined' ? performance.now() : Date.now()) + duration;
 
     // twitter_post is a passive overlay (see the trigger block in
     // goToSegment). The narrator continues speaking through the entire
@@ -50055,6 +50084,7 @@ body.ticker-active .gTickerLabel {
   function endFocalVideo() {
     if (!_focalActive) return;
     _focalActive = false;
+    _focalScheduledEndMs = 0;
 
     const card = document.getElementById('bVideoCard');
     const scrim = document.getElementById('bFocalScrim');
@@ -50072,10 +50102,21 @@ body.ticker-active .gTickerLabel {
       // sometimes glitching narrator audio. pauseVideo() halts
       // playback fully; mute + setVolume stay in case the user
       // resumes manually so they don't get blasted at full volume.
+      //
+      // Belt-and-suspenders: AFTER the card-shrink animation, blank
+      // the iframe src to about:blank. The YouTube iframe API can
+      // drop pauseVideo silently if the player hasn't reached READY
+      // state yet (timing race that surfaced on desktop). Blanking
+      // the src force-tears-down the embed regardless of postMessage
+      // state. Safe — startFocalVideo reassigns iframe.src for the
+      // next focal video.
       if (iframe) {
         _postYTCommand(iframe, 'pauseVideo');
         _postYTCommand(iframe, 'mute');
         _postYTCommand(iframe, 'setVolume', [0]);
+        addBTimer(setTimeout(() => {
+          try { iframe.src = 'about:blank'; } catch (_) {}
+        }, 700));
       }
       // Restore captions state if we auto-enabled them
       if (_focalCaptionsWereOff) {

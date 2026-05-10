@@ -43180,6 +43180,11 @@ body.ticker-active .gTickerLabel {
   let _panelsBySeg  = {};      // { segment_index: [panel rows] } — fetched on briefing open
 
   // ── Background Music Engine ──────────────────────────────────────────
+  // Phase-based briefing music — see www/index.html for the full design
+  // comment. Mirrors the new "Morse Room Signal" lifecycle (briefing
+  // open → 4s lead → narrator ducks → first story = pause → recap = loop).
+  const BRIEFING_MUSIC_URL = './audio/briefing/morse-room-signal.mp3';
+  const BRIEFING_MUSIC_LEAD_MS = 4000;
   let _bgMusic      = null;
   let _bgMusicCtx   = null;
   let _bgMusicGain  = null;
@@ -43187,18 +43192,21 @@ body.ticker-active .gTickerLabel {
   const BG_VOL_FULL = 0.35;
   const BG_VOL_LOW  = 0.08;
   const BG_VOL_MUTE = 0.0;
+  const BG_VOL_RECAP = 0.18;  // ambient volume during the recap loop
   const BG_FADE_IN  = 1.2;
   const BG_FADE_OUT = 0.6;
+  const BG_FADE_PAUSE = 1.4;  // seconds to fully fade before pausing
   let _bgMusicLoaded = false;
+  let _bgMusicSegmentPaused = false;
 
-  function initBgMusic(episodeId) {
-    if (!episodeId) return;
+  function initBgMusic() {
     destroyBgMusic();
-    _bgMusic = new Audio(`${API}/api/briefing/music/${episodeId}`);
+    _bgMusic = new Audio(BRIEFING_MUSIC_URL);
     _bgMusic.preload = 'auto';
     _bgMusic.loop = true;
     _bgMusic.volume = 1;
     _bgMusicLoaded = false;
+    _bgMusicSegmentPaused = false;
     _bgMusic.addEventListener('canplaythrough', () => {
       if (_bgMusicLoaded) return;
       _bgMusicLoaded = true;
@@ -43252,6 +43260,42 @@ body.ticker-active .gTickerLabel {
   function bgMusicVideoEnd()      {
     duckBgMusic(BG_VOL_LOW, BG_FADE_IN);
     if (window.audioEngine) window.audioEngine.duck(0.4, BG_FADE_IN * 1000);
+  }
+
+  // Phase C — first story begins. Fade music to silence, then pause.
+  function bgMusicFadeOutAndPause() {
+    if (!_bgMusic) return;
+    _bgMusicSegmentPaused = true;
+    duckBgMusic(BG_VOL_MUTE, BG_FADE_PAUSE);
+    addBTimer(setTimeout(() => {
+      if (!_bgMusic) return;
+      try { _bgMusic.pause(); } catch (_) {}
+    }, BG_FADE_PAUSE * 1000 + 50));
+  }
+
+  // Phase D — story-to-story gap. Resume from paused, briefly swell.
+  function bgMusicResumeForGap() {
+    if (!_bgMusic) return;
+    if (_bgMusicSegmentPaused) {
+      try {
+        if (_bgMusicCtx && _bgMusicCtx.state === 'suspended') _bgMusicCtx.resume();
+        _bgMusic.play().catch(() => {});
+      } catch (_) {}
+      _bgMusicSegmentPaused = false;
+    }
+    duckBgMusic(BG_VOL_FULL, BG_FADE_IN);
+  }
+
+  // Phase E — recap visible. Resume + loop at ambient volume.
+  function bgMusicResumeForRecap() {
+    if (!_bgMusic) return;
+    try {
+      if (_bgMusicCtx && _bgMusicCtx.state === 'suspended') _bgMusicCtx.resume();
+      _bgMusic.loop = true;
+      _bgMusic.play().catch(() => {});
+    } catch (_) {}
+    _bgMusicSegmentPaused = false;
+    duckBgMusic(BG_VOL_RECAP, BG_FADE_IN * 1.5);
   }
   // ── End Background Music Engine ──────────────────────────────────────
 
@@ -43406,8 +43450,17 @@ body.ticker-active .gTickerLabel {
     updatePlayBtn();
     updateSpeedBtn();
     startSeekLoop();
-    if (episode.has_music) initBgMusic(episode.id);
-    goToSegment(0);
+    // Morse Room Signal plays for every briefing — no per-episode gate.
+    initBgMusic();
+    // Phase A — start music NOW at full volume, then schedule the
+    // narrator (segment 0) to begin BRIEFING_MUSIC_LEAD_MS later. Music
+    // plays alone during this window. addBTimer makes a close-during-
+    // lead-in cancel the pending goToSegment.
+    startBgMusic();
+    addBTimer(setTimeout(() => {
+      if (!window.briefingActive) return;
+      goToSegment(0);
+    }, BRIEFING_MUSIC_LEAD_MS));
   }
 
   // ── Close ────────────────────────────────────────────────────────────────
@@ -43768,7 +43821,24 @@ body.ticker-active .gTickerLabel {
     if (window._globeResetZoom) window._globeResetZoom();
     if (audio) { try { audio.onended = null; audio.pause(); } catch (_) {} audio = null; }
     if (audioNext) { try { audioNext.pause(); } catch (_) {} audioNext = null; }
-    destroyBgMusic();
+    // Graceful fade-out before destroy. Recap leaves the track looping —
+    // hard-destroying produces an audible click/cut that violates the
+    // "never cut off" constraint.
+    if (_bgMusic) {
+      duckBgMusic(BG_VOL_MUTE, BG_FADE_PAUSE);
+      const _toClose = _bgMusic;
+      const _ctxToClose = _bgMusicCtx;
+      _bgMusic = null; _bgMusicCtx = null; _bgMusicGain = null; _bgMusicSrc = null;
+      _bgMusicLoaded = false; _bgMusicSegmentPaused = false;
+      setTimeout(() => {
+        try { _toClose.pause(); _toClose.src = ''; } catch (_) {}
+        if (_ctxToClose && _ctxToClose.state !== 'closed') {
+          try { _ctxToClose.close(); } catch (_) {}
+        }
+      }, BG_FADE_PAUSE * 1000 + 50);
+    } else {
+      destroyBgMusic();
+    }
     segIdx = 0;
     document.getElementById('briefingOverlay').classList.remove('open');
     document.getElementById('bRecap').classList.remove('open');
@@ -44577,7 +44647,19 @@ body.ticker-active .gTickerLabel {
     if (audioNext) { try { audioNext.pause(); }                        catch (_) {} }
     // Stop story-detail panel audio if open
     if (window._detailAudio) { try { window._detailAudio.pause(); } catch (_) {} }
-    bgMusicNarratorEnd();
+
+    // Music phase routing per the briefing-music spec — see www/index.html
+    // for the full phase table.
+    const _prevSeg = (segIdx >= 0 && episode.segments[segIdx]) || null;
+    const _prevWasIntro = _prevSeg?.type === 'intro';
+    const _enteringStory = seg?.type === 'story';
+    if (_enteringStory && (_prevWasIntro || _bgMusicSegmentPaused)) {
+      bgMusicFadeOutAndPause();
+    } else if (_enteringStory) {
+      bgMusicResumeForGap();
+    } else {
+      bgMusicNarratorEnd();
+    }
 
     // ── Per-segment audio ──────────────────────────────────────────────────
     // Hide hover card from previous segment immediately
@@ -44660,9 +44742,19 @@ body.ticker-active .gTickerLabel {
         if (segIdx !== curIdx || !playing) return;
         bgMusicNarratorEnd();
         clearTimeout(segTimer);
-        const pauseMs = seg.video_id
+        let pauseMs = seg.video_id
           ? (VIDEO_PAUSE_SECS * 1000) / playbackRate
           : SEGMENT_BUFFER_MS / playbackRate;
+        // Passive-overlay defer (twitter_post): if a focal overlay is
+        // still showing when narrator finishes, wait until it's done
+        // before advancing. See www/index.html for full rationale.
+        if (_focalActive && _focalScheduledEndMs > 0) {
+          const nowMs = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+          const focalRemaining = _focalScheduledEndMs - nowMs;
+          if (focalRemaining > 0) {
+            pauseMs = Math.max(pauseMs, focalRemaining + (SEGMENT_BUFFER_MS / playbackRate));
+          }
+        }
         segTimer = setTimeout(() => {
           if (segIdx !== curIdx) return;
           goToSegment(curIdx + 1);
@@ -45183,6 +45275,11 @@ body.ticker-active .gTickerLabel {
 
   // ── Focal / Featured Media Controller ──────────────────────────────────
   let _focalActive = false;
+  // Wall-clock ms when the active focal overlay is scheduled to end.
+  // Read by the audio-ended segment-advance to defer the advance
+  // when a passive overlay (twitter_post) is still showing — see
+  // www/index.html for the full rationale.
+  let _focalScheduledEndMs = 0;
   let _focalCaptionsWereOff = false;
   // Tracks whether the briefing has an active heatmap overlay so
   // segment-end cleanup (clearArcMeshes) can tear it down. See
@@ -45303,6 +45400,8 @@ body.ticker-active .gTickerLabel {
 
     _focalActive = true;
     const duration = (endSec - startSec) * 1000;
+    // See www/index.html for rationale on _focalScheduledEndMs.
+    _focalScheduledEndMs = (typeof performance !== 'undefined' ? performance.now() : Date.now()) + duration;
 
     // twitter_post is a passive overlay — see www/index.html for full
     // rationale. Skip the audio.pause() + bg-music duck here so the
@@ -45369,6 +45468,7 @@ body.ticker-active .gTickerLabel {
   function endFocalVideo() {
     if (!_focalActive) return;
     _focalActive = false;
+    _focalScheduledEndMs = 0;
 
     const card = document.getElementById('bVideoCard');
     const scrim = document.getElementById('bFocalScrim');
@@ -45377,13 +45477,21 @@ body.ticker-active .gTickerLabel {
 
     if (mediaType === 'youtube') {
       const iframe = document.getElementById('bVideoIframe');
-      // Pause the video on segment end — see www/index.html for full
-      // rationale. Was mute-only which left the iframe ticking after
-      // the focal card retreated.
+      // Pause + mute via postMessage. On desktop the YouTube iframe
+      // API can drop pauseVideo silently if the player hasn't reached
+      // READY state yet (timing race) — the user reported the video's
+      // audio bleeding into the next segment specifically on desktop.
+      // Belt-and-suspenders: AFTER the card-shrink animation we also
+      // blank the iframe src to about:blank, which force-tears-down
+      // the embed regardless of postMessage state. Safe — startFocalVideo
+      // re-assigns iframe.src for any subsequent focal video.
       if (iframe) {
         _postYTCommand(iframe, 'pauseVideo');
         _postYTCommand(iframe, 'mute');
         _postYTCommand(iframe, 'setVolume', [0]);
+        addBTimer(setTimeout(() => {
+          try { iframe.src = 'about:blank'; } catch (_) {}
+        }, 700));
       }
       if (_focalCaptionsWereOff) {
         const capEl = document.getElementById('bCaptionOverlay');
@@ -45705,10 +45813,9 @@ body.ticker-active .gTickerLabel {
     updatePlayBtn();
     clearTimeout(segTimer);
     clearBTimers();
-    if (_bgMusic) {
-      duckBgMusic(0.001, 2.0);
-      setTimeout(() => { if (_bgMusic) { try { _bgMusic.pause(); } catch (_) {} } }, 2500);
-    }
+    // Phase E — recap visible. Resume music + fade in to BG_VOL_RECAP,
+    // looping. Replaces the prior fade-out + pause behavior.
+    bgMusicResumeForRecap();
     clearArcMeshes();
     // True end-of-briefing boundary — clear labels here.
     if (window.clearBriefingFlowArcLabels) window.clearBriefingFlowArcLabels();

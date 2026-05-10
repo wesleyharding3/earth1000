@@ -2361,7 +2361,17 @@
           if (_enrichFv.heatmap_question)        clone.heatmap_question = _enrichFv.heatmap_question;
           if (_enrichFv.heatmap_mode)            clone.heatmap_mode     = _enrichFv.heatmap_mode;
           if (_enrichFv.twitter_url)             clone.twitter_url      = _enrichFv.twitter_url;
-          if (_enrichFv.narrator_transition)     clone.narrator_transition_hint = _enrichFv.narrator_transition_hint || clone.narrator_transition_hint;
+          // narrator_transition (full override, used verbatim by the
+          // briefing player) and narrator_transition_hint (guidance for
+          // Claude when override is blank) are INDEPENDENT fields — see
+          // the two-input UI at lines ~1654 and ~1659. The previous
+          // version collapsed both into a single line that only assigned
+          // the HINT, gated on the OVERRIDE being truthy. Result:
+          // anything typed into the "full override" box silently
+          // reverted to the original on save. Both fields now sync
+          // independently.
+          if (_enrichFv.narrator_transition)      clone.narrator_transition      = _enrichFv.narrator_transition;
+          if (_enrichFv.narrator_transition_hint) clone.narrator_transition_hint = _enrichFv.narrator_transition_hint;
         }
         const voEl = document.querySelector(`textarea[data-seg="${idx}"][data-field="voiceover"]`);
         if (voEl) clone.voiceover = voEl.value;
