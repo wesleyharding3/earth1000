@@ -286,13 +286,13 @@ If an article doesn't fit the inclusion criteria above, OMIT it entirely. Do not
 - Check existing threads first — strongly prefer extending them over creating duplicates
 - Detect semantic connections SQL keyword matching would miss (e.g. "tariffs" + "trade war" + "WTO dispute" = same story)
 - A thread should have a sharp, specific title naming the actors/place/event — never a generic category label like "Sports and Entertainment Coverage" or "Higher Education Trends"
-- Importance 1-10: 10 = major global event (war, summit, regime change), 7 = significant regional development, 4 = minor but legitimate geopolitical signal, anything below 4 should probably not exist as a thread
+- Importance 1-10: 10 = major global event (war, summit, regime change), 7 = significant regional development, 4 = minor but legitimate geopolitical signal, 3 = local or single-event story that still has clear geopolitical relevance (border incident, regional protest, mid-sized economic announcement). Anything below 3 should probably not exist as a thread.
 
 Return ONLY a valid JSON array, no explanation. Empty array [] is acceptable and often correct:
 [
   {
     "existing_thread_id": null,
-    "title": "specific thread title naming actors/place/event (max 8 words)",
+    "title": "REQUIRED, non-empty. Specific thread title naming actors/place/event (max 8 words). NEVER null/empty/whitespace. Required for BOTH new threads (existing_thread_id=null) AND extends — write a title in every entry.",
     "description": "Two sentences describing the ongoing story and its geopolitical significance.",
     "article_ids": [array of article ids that belong to this thread],
     "anchor_article_id": id of the most representative article,
@@ -936,13 +936,13 @@ If an article doesn't fit the inclusion criteria above, OMIT it entirely. Do not
 - Check existing threads first — strongly prefer extending them over creating duplicates
 - Detect semantic connections SQL keyword matching would miss (e.g. "tariffs" + "trade war" + "WTO dispute" = same story)
 - A thread should have a sharp, specific title naming the actors/place/event — never a generic category label like "Sports and Entertainment Coverage" or "Higher Education Trends"
-- Importance 1-10: 10 = major global event (war, summit, regime change), 7 = significant regional development, 4 = minor but legitimate geopolitical signal, anything below 4 should probably not exist as a thread
+- Importance 1-10: 10 = major global event (war, summit, regime change), 7 = significant regional development, 4 = minor but legitimate geopolitical signal, 3 = local or single-event story that still has clear geopolitical relevance (border incident, regional protest, mid-sized economic announcement). Anything below 3 should probably not exist as a thread.
 
 Return ONLY a valid JSON array, no explanation. Empty array [] is acceptable and often correct:
 [
   {
     "existing_thread_id": null,
-    "title": "specific thread title naming actors/place/event (max 8 words)",
+    "title": "REQUIRED, non-empty. Specific thread title naming actors/place/event (max 8 words). NEVER null/empty/whitespace. Required for BOTH new threads (existing_thread_id=null) AND extends — write a title in every entry.",
     "description": "Two sentences describing the ongoing story and its geopolitical significance.",
     "article_ids": [array of article ids that belong to this thread],
     "anchor_article_id": id of the most representative article,
@@ -2217,7 +2217,7 @@ async function getUnthreadedArticles(hours) {
     FROM ranked
     WHERE source_rank <= 5
     ORDER BY published_at DESC
-    LIMIT 5000
+    LIMIT 10000
   `);
 
   if (!candidates.length) return [];

@@ -1702,11 +1702,15 @@ async function runArticleUmbrellaPhase(metrics, elapsed) {
   // keyword umbrellas span thousands of articles in the 7-day window.
   // Once umbrella fails, last_updated_at never bumps and the cooldown
   // pass falsely flips the Line to cooling. Background cron, no user
-  // waiting, so 5 min is fine here. Same pattern as keywordCron.js:101.
+  // waiting, so 10 min is fine — bumped from 300s after the 2026-05-10
+  // run timed out on Ukraine-Russia and Iran-US-Israel umbrellas
+  // whose keyword count + nation count put the Branch B keyword join
+  // alone over 5 minutes on cold buffer cache. Two largest known war
+  // umbrellas now have headroom.
   let _umbClient = null;
   try {
     _umbClient = await pool.connect();
-    await _umbClient.query('SET statement_timeout = 300000');
+    await _umbClient.query('SET statement_timeout = 600000');
   } catch (acqErr) {
     if (_umbClient) { try { _umbClient.release(); } catch (_) {} _umbClient = null; }
     console.warn(`   ⚠ umbrella phase: could not acquire dedicated client (${acqErr.message}) — skipping`);
@@ -1722,6 +1726,18 @@ async function runArticleUmbrellaPhase(metrics, elapsed) {
                    `DB cluster is full; remaining ${lines.length - lines.indexOf(tl)} Line(s) skipped this run.`);
       break;
     }
+    // Single retry on transient connection-exhaustion. Other crons or the
+    // web server can momentarily fill max_connections; sleeping 3s gives
+    // the cluster a chance to drain a slot. Only retried ONCE per line —
+    // if the second attempt also fails, the existing _consecutiveConnErrs
+    // bookkeeping kicks in and the bail threshold protects the rest of
+    // the run. Statement timeouts are not retried (deterministic at this
+    // size of umbrella; the 600s ceiling already gives them headroom).
+    let _attemptCount = 0;
+    let _retried = false;
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      _attemptCount++;
     try {
       const feat = featureMap.get(tl.id);
       if (!feat) continue;
@@ -1930,7 +1946,19 @@ async function runArticleUmbrellaPhase(metrics, elapsed) {
           (wasCooling ? ' [cooling→active]' : wasDormant ? ' [dormant→active]' : '')
         );
       }
+      // Success — exit the retry loop and move to the next line.
+      break;
     } catch (err) {
+      // Try the line ONE MORE TIME if this was the first attempt and
+      // the failure was specifically connection-exhaustion. Other
+      // failure modes (statement timeout, hung query, FK violation)
+      // are not retried — they're deterministic at this run's load.
+      if (_isConnectionExhausted(err) && !_retried) {
+        _retried = true;
+        console.warn(`   ↻ Line ${tl.id} hit conn-exhausted; retrying in 3s…`);
+        await sleep(3000);
+        continue; // re-enter while loop for second attempt
+      }
       console.warn(`   ⚠ umbrella failed for Line ${tl.id} "${(tl.title||'').slice(0,40)}": ${err.message}`);
       if (_isConnectionExhausted(err)) {
         _consecutiveConnErrs += 1;
@@ -1942,7 +1970,9 @@ async function runArticleUmbrellaPhase(metrics, elapsed) {
         // against the bail threshold (the connection itself is fine).
         _consecutiveConnErrs = 0;
       }
+      break;
     }
+    } // end while (retry loop)
   }
   } finally {
     try { _umbClient.release(); } catch (_) {}
