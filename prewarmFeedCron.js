@@ -76,9 +76,31 @@ function fetchWithTimeout(url) {
 }
 
 async function fetchJSON(url) {
-  const res = await fetchWithTimeout(url);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
+  // Single retry on 5xx + a 3s backoff. Mirrors the warm() helper —
+  // cold-start DB connections to /api/countries and /api/tags can
+  // exceed the 45s statement_timeout on the first hit (no in-process
+  // ttlCache, pool just warmed). The first attempt loads the rows
+  // into Postgres' buffer cache; the retry typically completes fast.
+  // Without this, a single 500 on /api/countries fataled the cron.
+  const _attempt = async () => {
+    const res = await fetchWithTimeout(url);
+    if (!res.ok) {
+      const err = new Error(`HTTP ${res.status}`);
+      err.status = res.status;
+      throw err;
+    }
+    return res.json();
+  };
+  try {
+    return await _attempt();
+  } catch (err) {
+    if (err.status >= 500 && err.status < 600) {
+      console.warn(`${TAG} fetchJSON ${url} returned ${err.status}; retrying in 3s…`);
+      await new Promise(r => setTimeout(r, 3000));
+      return await _attempt();
+    }
+    throw err;
+  }
 }
 
 async function resolveIsoMap() {

@@ -20,8 +20,35 @@ if (!process.env.DATABASE_URL) {
 //   globeStatsCron.js      → 'earth-cron-globestats'
 // Falls back to the node script's basename so unset processes still surface
 // usefully (e.g. "earth-_inspect_pg_activity").
-const _appNameFallback = `earth-${(require('path').basename(process.argv[1] || 'unknown', '.js')) || 'node'}`;
+const _scriptName = require('path').basename(process.argv[1] || '', '.js');
+const _isWebServer = _scriptName === 'server';
+
+const _appNameFallback = `earth-${_scriptName || 'node'}`;
 const APP_NAME = process.env.DB_APPLICATION_NAME || _appNameFallback;
+
+// Default pool max, branched the same way as statement_timeout below:
+// the web server is the only entry-point that fans out to many concurrent
+// requests and genuinely needs a wide pool. Crons / workers process work
+// serially (or with low concurrency), use 1-2 connections at peak, and
+// idle slots in their pool stay open up to idleTimeoutMillis (30s) — so
+// a 16-minute cron run with the old default of 60 was holding up to 60
+// reservations against Postgres' max_connections ceiling for nothing.
+//
+// Production crash mode: web (≤60) + 3 concurrent crons (≤60 each) > 100
+// max_connections → Postgres rejects new acquires with
+//   "remaining connection slots are reserved for roles with the SUPERUSER
+//    attribute"
+// — observed mid-run on storyThreadBuilder when other crons happened to
+// be ramping at the same time. Per-cron caps prevent this even when the
+// schedule overlaps.
+//
+// DB_POOL_MAX env var still wins so any single cron can opt into more
+// (or less) without code change.
+const _DEFAULT_POOL_MAX = (function() {
+  if (_isWebServer) return 60;
+  return 6;
+})();
+const POOL_MAX = parseInt(process.env.DB_POOL_MAX || String(_DEFAULT_POOL_MAX), 10);
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
@@ -30,7 +57,7 @@ const pool = new Pool({
   },
   connectionTimeoutMillis: 10000,
   idleTimeoutMillis: 30000,
-  max: parseInt(process.env.DB_POOL_MAX || "60", 10),
+  max: POOL_MAX,
   application_name: APP_NAME,
 });
 
@@ -51,8 +78,8 @@ const pool = new Pool({
 // to its own 90s ceiling for the heavy aggregation, so this default
 // only changes the floor underneath that — its tight self-imposed
 // timeout still wins for its specific query.
-const _scriptName = require('path').basename(process.argv[1] || '', '.js');
-const _isWebServer = _scriptName === 'server';
+// _scriptName + _isWebServer hoisted to the top of the file so the
+// pool-max branch above can use them too.
 const STATEMENT_TIMEOUT_MS = process.env.DB_STATEMENT_TIMEOUT_MS != null
   ? parseInt(process.env.DB_STATEMENT_TIMEOUT_MS, 10)
   : (_isWebServer ? 45_000 : 600_000);

@@ -13959,123 +13959,13 @@ window.fmtDate = function(d) {
   }
 
   function makeNewsPad() {
-    // News page: same exact dyad pulse as the globe layer (the user
-    // wanted the music itself unchanged) plus a sustained HIGH pedal
-    // voice in A-minor pentatonic — A5/C6/E6/G6 cycling through long
-    // 12-second swells. Pedal routes through the same filter + reverb
-    // send so it reads as a drowned high harmonic added on top of the
-    // reverb-soaked drone, not a foreground note.
-    const out = ctx.createGain();
-    out.gain.value = 0.0001;
-    const wetGain = reverbIn ? ctx.createGain() : null;
-    if (wetGain) {
-      wetGain.gain.value = 0.0001;
-      wetGain.connect(reverbIn);
-    }
-
-    // ── Globe-arp pattern (verbatim from makeGlobeArp) ───────────
-    const filter = ctx.createBiquadFilter();
-    filter.type = 'lowpass';
-    filter.frequency.value = 1400;
-    filter.Q.value = 8;
-    const filtLfo = ctx.createOscillator();
-    filtLfo.frequency.value = 0.10;
-    const filtLfoGain = ctx.createGain();
-    filtLfoGain.gain.value = 700;
-    filtLfo.connect(filtLfoGain).connect(filter.frequency);
-
-    const dry = ctx.createGain();
-    dry.gain.value = 0.08;
-    filter.connect(dry).connect(out);
-    if (wetGain) {
-      const wet = ctx.createGain();
-      wet.gain.value = 1.8;
-      filter.connect(wet).connect(wetGain);
-    }
-
-    const LOW  = [110.00, 130.81, 164.81, 196.00, 220.00, 196.00, 164.81, 130.81]; // A2 C3 E3 G3 A3 G3 E3 C3
-    const HIGH = [164.81, 196.00, 261.63, 293.66, 329.63, 293.66, 261.63, 196.00]; // E3 G3 C4 D4 E4 D4 C4 G3
-    const STEP_SEC  = 0.24;
-    const HALF_STEP = STEP_SEC * 0.5;
-    let stepIdx = 0, nextAt = 0, running = false, timer = null;
-
-    function fireNote(when, hz, isHigh) {
-      const osc = ctx.createOscillator();
-      osc.type = 'sawtooth';
-      osc.frequency.value = hz;
-      const peak = isHigh ? 0.07 : 0.085;
-      const g = ctx.createGain();
-      g.gain.setValueAtTime(0.0001, when);
-      g.gain.exponentialRampToValueAtTime(peak, when + 0.008);
-      g.gain.exponentialRampToValueAtTime(0.0001, when + 0.28);
-      osc.connect(g); g.connect(filter);
-      osc.start(when); osc.stop(when + 0.32);
-    }
-
-    function tick() {
-      if (!running) return;
-      const horizon = ctx.currentTime + 0.20;
-      while (nextAt < horizon) {
-        const i = stepIdx % LOW.length;
-        fireNote(nextAt,             LOW[i],  false);
-        fireNote(nextAt + HALF_STEP, HIGH[i], true);
-        stepIdx++;
-        nextAt += STEP_SEC;
-      }
-      timer = setTimeout(tick, 80);
-    }
-
-    // ── News-only addition: HIGH pedal in A-minor pentatonic ─────
-    // Sine voice cycling through A5/C6/E6/G6, each held for ~12s
-    // with 4s fade in + 4s fade out, then advance to the next note.
-    // Routes through the same filter so it shares the wet send and
-    // sits inside the convolver tail rather than on top of the dyad.
-    const PEDAL_HIGH = [880.00, 1046.50, 1318.51, 1567.98]; // A5 C6 E6 G6
-    const PEDAL_HOLD_SEC  = 12;
-    const PEDAL_FADE_SEC  = 4;
-    const PEDAL_PEAK      = 0.018;
-    let pedalIdx = 0, pedalTimer = null, pedalActiveOsc = null;
-
-    function firePedal() {
-      if (!running) return;
-      const hz = PEDAL_HIGH[pedalIdx % PEDAL_HIGH.length];
-      pedalIdx++;
-      const now = ctx.currentTime;
-      const osc = ctx.createOscillator();
-      osc.type = 'sine';
-      osc.frequency.value = hz;
-      const g = ctx.createGain();
-      g.gain.setValueAtTime(0.0001, now);
-      g.gain.exponentialRampToValueAtTime(PEDAL_PEAK, now + PEDAL_FADE_SEC);
-      g.gain.setValueAtTime(PEDAL_PEAK, now + PEDAL_HOLD_SEC - PEDAL_FADE_SEC);
-      g.gain.exponentialRampToValueAtTime(0.0001, now + PEDAL_HOLD_SEC);
-      osc.connect(g); g.connect(filter);
-      osc.start(now);
-      osc.stop(now + PEDAL_HOLD_SEC + 0.5);
-      pedalActiveOsc = osc;
-      // Schedule next pedal note slightly before the current one fades
-      // out so the swell crossfades rather than producing silence gaps.
-      pedalTimer = setTimeout(firePedal, (PEDAL_HOLD_SEC - PEDAL_FADE_SEC) * 1000);
-    }
-
-    return {
-      gain: out,
-      wetGain,
-      start(when) {
-        running = true;
-        filtLfo.start(when);
-        nextAt = Math.max(when, ctx.currentTime + 0.05);
-        tick();
-        firePedal();
-      },
-      stop(_when) {
-        running = false;
-        if (timer) { clearTimeout(timer); timer = null; }
-        if (pedalTimer) { clearTimeout(pedalTimer); pedalTimer = null; }
-        try { filtLfo.stop(_when); } catch(_) {}
-        if (pedalActiveOsc) { try { pedalActiveOsc.stop(_when); } catch(_) {} }
-      }
-    };
+    // News page: identical to the globe arp. The previous build added
+    // a HIGH pedal voice (A5–G6) on top — the user asked to remove it
+    // and keep the news layer exactly as the globe is. Delegating to
+    // makeGlobeArp() keeps a single source of truth for the dyad
+    // pattern; each setLayer('news', true) call still gets its own
+    // independent layer instance via the factory.
+    return makeGlobeArp();
   }
 
   // ── Globe arp: sparse cousin of stats. Same A-minor dyad palette
