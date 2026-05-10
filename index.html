@@ -43181,10 +43181,10 @@ body.ticker-active .gTickerLabel {
 
   // ── Background Music Engine ──────────────────────────────────────────
   // Phase-based briefing music — see www/index.html for the full design
-  // comment. Mirrors the new "Morse Room Signal" lifecycle (briefing
-  // open → 4s lead → narrator ducks → first story = pause → recap = loop).
+  // comment. Mirrors the "Morse Room Signal" lifecycle (briefing open
+  // → narrator ducks → first story = pause → recap = loop). The
+  // standalone-lead-in phase was removed — see openBriefing for why.
   const BRIEFING_MUSIC_URL = './audio/briefing/morse-room-signal.mp3';
-  const BRIEFING_MUSIC_LEAD_MS = 4000;
   let _bgMusic      = null;
   let _bgMusicCtx   = null;
   let _bgMusicGain  = null;
@@ -43452,15 +43452,11 @@ body.ticker-active .gTickerLabel {
     startSeekLoop();
     // Morse Room Signal plays for every briefing — no per-episode gate.
     initBgMusic();
-    // Phase A — start music NOW at full volume, then schedule the
-    // narrator (segment 0) to begin BRIEFING_MUSIC_LEAD_MS later. Music
-    // plays alone during this window. addBTimer makes a close-during-
-    // lead-in cancel the pending goToSegment.
+    // Music starts now; segment 0 renders + narrator follows immediately.
+    // The earlier 4s standalone-lead delayed goToSegment(0), which left
+    // the screen blank (no thumbnail / no panel) — see www/index.html.
     startBgMusic();
-    addBTimer(setTimeout(() => {
-      if (!window.briefingActive) return;
-      goToSegment(0);
-    }, BRIEFING_MUSIC_LEAD_MS));
+    goToSegment(0);
   }
 
   // ── Close ────────────────────────────────────────────────────────────────

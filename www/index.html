@@ -47048,8 +47048,6 @@ body.ticker-active .gTickerLabel {
   // Constraints from the spec: never cut off (always fade), never play
   // OVER narrator (BG_VOL_LOW is duck-under, not muted-during-speech).
   const BRIEFING_MUSIC_URL = './audio/briefing/morse-room-signal.mp3';
-  // 4-second lead-in: track plays alone before segment-0 narrator fires.
-  const BRIEFING_MUSIC_LEAD_MS = 4000;
   let _bgMusic      = null;    // Audio element for background music
   let _bgMusicCtx   = null;    // AudioContext for gain control
   let _bgMusicGain  = null;    // GainNode for smooth volume ducking
@@ -47380,17 +47378,16 @@ body.ticker-active .gTickerLabel {
         .then(list => { _articleRollCache.set(key, Array.isArray(list) ? list : []); })
         .catch(() => {});
     }
-    // Phase A — start the music NOW at full volume, then schedule the
-    // narrator (segment 0) to begin BRIEFING_MUSIC_LEAD_MS later. The
-    // music plays alone during this window. Wrapped in addBTimer so a
-    // close-during-lead-in cancels it. startBgMusic is a no-op if init
-    // hasn't completed yet — bgMusicNarratorStart at segment-ready
-    // is the duck-down trigger, fine to leave that wired through.
+    // Music starts now; narrator follows as soon as segment 0's audio
+    // metadata is ready (handled inside goToSegment's onReady).
+    // Earlier this scheduled goToSegment(0) on a 4s setTimeout so the
+    // track could play alone — the side effect was a 4-second blank
+    // window with no thumbnail / no article panel / no narrator. The
+    // user reported it as "videos aren't playing." Restoring immediate
+    // segment render; bgMusicNarratorStart still ducks the music when
+    // the narrator audio actually fires.
     startBgMusic();
-    addBTimer(setTimeout(() => {
-      if (!window.briefingActive) return; // user closed during lead-in
-      goToSegment(0);
-    }, BRIEFING_MUSIC_LEAD_MS));
+    goToSegment(0);
   }
 
   // ── Close ────────────────────────────────────────────────────────────────
