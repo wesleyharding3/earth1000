@@ -53238,11 +53238,58 @@ body.ticker-active .gTickerLabel {
       });
 
       setToast('Clip ready');
-      const file = new File([blob], `${filenameBase}.${ext}`, { type: blob.type });
 
-      // Try native share with files first (iOS, Android, Edge). Some
-      // browsers report navigator.share but reject files; canShare
-      // probes that path safely.
+      // ── Path A (iOS Capacitor): @capacitor/filesystem writes the blob
+      // to the app sandbox, then @capacitor/share opens the native iOS
+      // share sheet with a real file URL. iOS recognizes a video file URL
+      // and shows "Save Video" / "Save to Photos" alongside the usual
+      // Messages/AirDrop options. The Web Share API in WKWebView silently
+      // failed for files in 8.x; the <a download> fallback was a true
+      // no-op (toast lied, file never written). This native path is the
+      // only way to actually save to Photos in the iOS app.
+      const isCap = !!(window.Capacitor && window.Capacitor.isNativePlatform &&
+                       window.Capacitor.isNativePlatform());
+      if (isCap) {
+        try {
+          const Plugins    = window.Capacitor.Plugins || {};
+          const Filesystem = Plugins.Filesystem;
+          const Share      = Plugins.Share;
+          if (Filesystem && Share) {
+            // Convert Blob → base64 in chunks. String.fromCharCode(...spread)
+            // overflows the JS call stack for files >100KB; chunk to 32KB.
+            const buf = await blob.arrayBuffer();
+            const bytes = new Uint8Array(buf);
+            const chunkSize = 0x8000;
+            let bin = '';
+            for (let i = 0; i < bytes.length; i += chunkSize) {
+              bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+            }
+            const base64 = btoa(bin);
+            const writeRes = await Filesystem.writeFile({
+              path: `${filenameBase}.${ext}`,
+              data: base64,
+              directory: 'CACHE',
+              recursive: true,
+            });
+            await Share.share({
+              title:       shareTitle,
+              text:        shareText,
+              url:         writeRes.uri,
+              dialogTitle: 'Save or share clip',
+            });
+            hideToast();
+            return;
+          }
+          console.warn('[shareGlobeClip] Capacitor Filesystem or Share plugin missing — falling back to Web Share');
+        } catch (err) {
+          if (err && /cancel|abort/i.test(err.message || err.name || '')) { hideToast(); return; }
+          console.warn('[shareGlobeClip] Capacitor save/share failed:', err.message);
+          // fall through to Web Share
+        }
+      }
+
+      // ── Path B (Web): navigator.share with files (modern browsers)
+      const file = new File([blob], `${filenameBase}.${ext}`, { type: blob.type });
       const canShareFiles = typeof navigator !== 'undefined' &&
         typeof navigator.share === 'function' &&
         typeof navigator.canShare === 'function' &&
@@ -53259,7 +53306,7 @@ body.ticker-active .gTickerLabel {
         }
       }
 
-      // Fallback: trigger a direct download
+      // ── Path C (desktop fallback): browser download
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
       a.download = `${filenameBase}.${ext}`;
