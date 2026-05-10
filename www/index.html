@@ -13577,19 +13577,19 @@ window.fmtDate = function(d) {
   // Default TTLs by endpoint pattern (ms). See index.html for full
   // rationale — each TTL aligned to the producing cron's cadence.
   const TTL_MAP = [
-    ['/api/threads/latest',     6_300_000],  // 1h45m — thread builder every 2h
-    ['/api/timelines/latest',  79_200_000],  // 22h   — timeline builder daily
-    ['/api/news/search',        3_300_000],  // 55m   — article fetcher hourly
-    ['/api/articles/recent',    3_300_000],  // 55m   — article fetcher hourly
-    ['/api/flows',              3_300_000],  // 55m   — server bumps to 22h for country-only
+    ['/api/threads/latest',     7_200_000],  // 2h    — thread builder every 2h
+    ['/api/timelines/latest',  86_400_000],  // 24h   — timeline builder daily
+    ['/api/news/search',        3_600_000],  // 1h    — article fetcher hourly
+    ['/api/articles/recent',    3_600_000],  // 1h    — article fetcher hourly
+    ['/api/flows',              3_600_000],  // 1h    — server bumps to 22h for country-only
     ['/api/countries/all',     86_400_000],  // 24h   — static
     ['/api/cities/all',        86_400_000],  // 24h   — static
-    ['/api/news/sources-stats',39_600_000],  // 11h   — source stats 2x/day
-    ['/api/threads/by-country', 6_300_000],  // 1h45m — thread builder every 2h
-    ['/api/sentiment/country',  3_300_000],  // 55m   — article-derived
+    ['/api/news/sources-stats',43_200_000],  // 12h   — source stats 2x/day
+    ['/api/threads/by-country', 7_200_000],  // 2h    — thread builder every 2h
+    ['/api/sentiment/country',  3_600_000],  // 1h    — article-derived
     ['/api/articles/by-ids',   86_400_000],  // 24h   — immutable
     ['/api/heatmap/',           1_500_000],  // 25m   — heatmap cron every 30m
-    ['/api/leader-tweets',      3_300_000],  // 55m   — fetcher cycle
+    ['/api/leader-tweets',      3_600_000],  // 1h    — fetcher cycle
   ];
 
   function getTtl(url) {
