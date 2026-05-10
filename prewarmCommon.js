@@ -20,7 +20,7 @@
  *   doesn't break the entire run; it just doesn't refresh.
  */
 
-async function forceRefreshCaches({ apiUrl, prefixes = [], keys = [], tag = '[prewarm]', timeoutMs = 8000 }) {
+async function forceRefreshCaches({ apiUrl, prefixes = [], keys = [], tag = '[prewarm]', timeoutMs = 30000 }) {
   if (!apiUrl) {
     console.warn(`${tag} forceRefreshCaches: no apiUrl, skipping eviction`);
     return { evicted: 0, skipped: true, reason: 'no-apiUrl' };

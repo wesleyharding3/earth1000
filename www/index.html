@@ -2340,6 +2340,8 @@ body.ticker-active #flowControls {
 
 /* Hide playback controls in aggregate mode */
 #flowControls.aggregate-mode .flowPlaybackRow { display: none; }
+/* Animated-clip share hidden in aggregate mode — see index.html. */
+#flowControls.aggregate-mode .flowShareClipBtn { display: none; }
 #flowControls.aggregate-mode .flowPanelRow:has(#flowSpeed) { display: none; }
 #flowControls.aggregate-mode .flowAggStats { display: block; }
 
@@ -16410,6 +16412,13 @@ window.__arcCtxSegmented = (function() {
          via __shareSnapshot. The image is the actual view + Earth00
          brand chrome; no link URL since news-flows views don't have
          a stable shareable URL beyond the live state. -->
+    <!-- Animated-clip share for flow time-series. Hidden in aggregate
+         mode via CSS. See index.html for full rationale. -->
+    <button class="flowShareBtn flowShareClipBtn" id="flowShareClipBtn" title="Share clip (animated)" onclick="window.__shareFlowsClip?.()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
+      </svg>
+    </button>
     <button class="flowShareBtn" id="flowShareBtn" title="Share these flows" onclick="window.__shareNewsFlowsSnapshot?.()">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
@@ -17160,6 +17169,32 @@ window.__arcCtxSegmented = (function() {
 
     function applyYaw(rad)  { globeYaw += rad; }
     function applyTilt(rad) { globePitch = Math.max(-MAX_PITCH, Math.min(MAX_PITCH, globePitch + rad)); }
+
+    // Programmatically drive a 360° yaw spin over `durationMs`. Used by
+    // the share-clip recorder. Lands back at startYaw exactly so the
+    // user's view doesn't drift across recordings. Kills drag inertia
+    // so the spin reads as a clean cinematic loop. See index.html for
+    // full rationale.
+    window.__spinGlobeFor = function(durationMs) {
+      return new Promise((resolve) => {
+        const startYaw = globeYaw;
+        yawVelocity = 0;
+        tiltVelocity = 0;
+        const t0 = performance.now();
+        function step(now) {
+          const t = Math.min(1, (now - t0) / durationMs);
+          globeYaw = startYaw + t * Math.PI * 2;
+          if (t >= 1) {
+            globeYaw = startYaw;
+            resolve();
+            return;
+          }
+          requestAnimationFrame(step);
+        }
+        requestAnimationFrame(step);
+      });
+    };
+
     function rebuildGlobeQuat() {
       const qYaw = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), globeYaw);
       const qPitch = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), globePitch);
@@ -26390,6 +26425,39 @@ const settingsToggle     = document.getElementById("settingsToggle");
         window.__flowClearHighlights?.();
       }
     }
+  };
+
+  /* ── Programmatic single-pass flow playback for share-clip recorder ──
+     See index.html for the full design rationale. */
+  window.__flowsHasSeries = function() {
+    return flowData.length > 0 && flowMode !== 'aggregate';
+  };
+  window.__playFlowsTimeseries = function(durationMs) {
+    return new Promise((resolve) => {
+      if (!window.__flowsHasSeries()) { resolve(); return; }
+      const _origSeqDelay = seqDelay;
+      const _origSpeed    = flowSpeed;
+      clearArcs();
+      const MAX_RATE_PER_SEC = 25;
+      const minSeqDelay = 1 / MAX_RATE_PER_SEC;
+      const fireWindow = (durationMs / 1000) * 0.8;
+      const computedDelay = fireWindow / Math.max(1, flowData.length);
+      seqDelay = Math.max(minSeqDelay, computedDelay);
+      flowSpeed = 1.0;
+      seqIndex = 0;
+      seqTimer = 0;
+      flowProgress = 0;
+      flowPlaying = true;
+      const playBtn = document.getElementById('flowPlayBtn');
+      if (playBtn) playBtn.textContent = '❚❚';
+      setTimeout(() => {
+        flowPlaying = false;
+        if (playBtn) playBtn.textContent = '▶ Play';
+        seqDelay = _origSeqDelay;
+        flowSpeed = _origSpeed;
+        resolve();
+      }, durationMs);
+    });
   };
 
   /* ═══════════════════════════════════════════════════════════════
@@ -53688,6 +53756,72 @@ body.ticker-active .gTickerLabel {
     if (state.playTimer) { clearTimeout(state.playTimer); state.playTimer = null; }
   }
 
+  // Single-pass programmatic playback for the share-clip recorder.
+  // See index.html for full design rationale.
+  window.__heatmapHasTimeseries = function() {
+    return !!(state.series && state.series.buckets && state.series.buckets.length >= 2);
+  };
+  window.__playHeatmapTimeseries = function(durationMs) {
+    return new Promise((resolve) => {
+      if (!window.__heatmapHasTimeseries()) { resolve(); return; }
+      if (state.playing) stopPlayback();
+      const buckets = state.series.buckets;
+      const N = buckets.length;
+      _ensurePlayBufs();
+      _playCurrentIdx = 0;
+      _updatePlaybackLabel(0);
+      _paintBucketInto(_playPrevBuf, 0);
+      _paintBucketInto(_playNextBuf, Math.min(1, N - 1));
+      const W = heatCanvas.width, H = heatCanvas.height;
+      const t0 = performance.now();
+      const perBucketMs = durationMs / (N - 1);
+      function tick(now) {
+        const elapsed = now - t0;
+        if (elapsed >= durationMs) {
+          _updatePlaybackLabel(N - 1);
+          _paintBucketInto(_playNextBuf, N - 1);
+          heatCtx.save();
+          heatCtx.setTransform(1, 0, 0, 1, 0, 0);
+          heatCtx.globalCompositeOperation = 'source-over';
+          heatCtx.clearRect(0, 0, W, H);
+          heatCtx.drawImage(_playNextBuf, 0, 0);
+          heatCtx.restore();
+          heatTexture.needsUpdate = true;
+          setHeatVisible(true);
+          resolve();
+          return;
+        }
+        const totalT = elapsed / perBucketMs;
+        const fromIdx = Math.floor(totalT);
+        const t = totalT - fromIdx;
+        const nextIdx = Math.min(fromIdx + 1, N - 1);
+        if (fromIdx !== _playCurrentIdx) {
+          _playCurrentIdx = fromIdx;
+          _updatePlaybackLabel(fromIdx);
+          _paintBucketInto(_playPrevBuf, fromIdx);
+          _paintBucketInto(_playNextBuf, nextIdx);
+        }
+        const eased = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+        heatCtx.save();
+        heatCtx.setTransform(1, 0, 0, 1, 0, 0);
+        heatCtx.globalCompositeOperation = 'source-over';
+        heatCtx.clearRect(0, 0, W, H);
+        heatCtx.globalAlpha = 1 - eased;
+        heatCtx.drawImage(_playPrevBuf, 0, 0);
+        heatCtx.globalCompositeOperation = 'lighter';
+        heatCtx.globalAlpha = eased;
+        heatCtx.drawImage(_playNextBuf, 0, 0);
+        heatCtx.globalCompositeOperation = 'source-over';
+        heatCtx.globalAlpha = 1;
+        heatCtx.restore();
+        heatTexture.needsUpdate = true;
+        setHeatVisible(true);
+        requestAnimationFrame(tick);
+      }
+      requestAnimationFrame(tick);
+    });
+  };
+
   playBtn.addEventListener('click', () => {
     if (state.playing) stopPlayback(); else startPlayback();
   });
@@ -58338,6 +58472,71 @@ body.ticker-active .gTickerLabel {
   function _attachHeatmapShareBtn() {
     const closeBtn = document.querySelector('#semHeatPanel .semHeatClose');
     if (!closeBtn || closeBtn.parentElement.querySelector('.shareBtn')) return;
+
+    // Animated-clip share — see index.html for full rationale.
+    const clipBtn = document.createElement('button');
+    clipBtn.className = 'shareBtn shareBtnClip';
+    clipBtn.title = 'Share clip (animated)';
+    clipBtn.setAttribute('aria-label', 'Share clip');
+    clipBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>`;
+    clipBtn.style.marginRight = '6px';
+    const _clipSupported = typeof MediaRecorder !== 'undefined' &&
+      typeof window.__renderer?.domElement?.captureStream === 'function';
+    if (!_clipSupported) clipBtn.style.display = 'none';
+    clipBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const panel = document.getElementById('semHeatPanel');
+      const qaQuestion = panel?.dataset?.qaQuestion ||
+                         (document.getElementById('semHeatAskInput')?.value || '').trim();
+      const activeModePill = document.querySelector('#semHeatModeRow .semHeatPill.active');
+      const heatMode = activeModePill?.dataset?.mode || 'coverage';
+      const keyword = (document.getElementById('semHeatKw')?.value || '').trim();
+
+      // Animator selection — see index.html for full rationale.
+      const hasTs = typeof window.__heatmapHasTimeseries === 'function'
+                      ? window.__heatmapHasTimeseries()
+                      : false;
+      const projection = (window.__projection === 'map') ? 'map' : 'globe';
+      const isTsClip = hasTs;
+      let animator;
+      if (isTsClip && projection === 'globe') {
+        animator = (ms) => Promise.all([
+          window.__spinGlobeFor(ms),
+          window.__playHeatmapTimeseries(ms),
+        ]);
+      } else if (isTsClip) {
+        animator = (ms) => window.__playHeatmapTimeseries(ms);
+      } else {
+        animator = undefined;
+      }
+
+      let shareTitle, shareText;
+      if (qaQuestion) {
+        shareTitle = 'Earth00 · Map This';
+        shareText  = `${qaQuestion} — Map This view on Earth00`;
+      } else if (keyword) {
+        shareTitle = `Earth00 · ${keyword}`;
+        shareText  = `${keyword} — ${heatMode} heatmap on Earth00${isTsClip ? ' (time-series)' : ''}`;
+      } else {
+        shareTitle = 'Earth00 · Heatmap';
+        shareText  = `Global news ${heatMode} heatmap on Earth00${isTsClip ? ' (time-series)' : ''}`;
+      }
+      const filenameBits = ['earth00', heatMode];
+      if (keyword) filenameBits.push(keyword);
+      if (isTsClip) filenameBits.push('timeseries');
+      else          filenameBits.push('clip');
+      const filenameBase = filenameBits.join('-').toLowerCase().replace(/[^a-z0-9-]+/g, '-');
+
+      window.__shareGlobeClip?.({
+        durationMs: isTsClip ? 8000 : 6000,
+        shareTitle,
+        shareText,
+        filenameBase,
+        animator,
+      });
+    });
+    closeBtn.parentElement.insertBefore(clipBtn, closeBtn);
+
     const btn = document.createElement('button');
     btn.className = 'shareBtn';
     btn.title = 'Share';
@@ -58350,19 +58549,8 @@ body.ticker-active .gTickerLabel {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       const panel = document.getElementById('semHeatPanel');
-      const question = panel?.dataset?.qaQuestion || (document.getElementById('semHeatAskInput')?.value || '').trim();
-      const mode = panel?.dataset?.qaMode || 'percent';
-      if (!question) { showToast('Ask a question first'); return; }
-      // Build the OG-card URL too so iMessage / Twitter recipients get
-      // both the rendered snapshot AND a link card preview.
-      const qs = new URLSearchParams({ q: question });
-      if (mode && mode !== 'percent') qs.set('mode', mode);
       const projectionTag = (window.__projection === 'map') ? '2D MAP' : 'GLOBE';
-      // Normalize user-typed question to title case so the poster
-      // doesn't render "what is climate change" — gets "What Is
-      // Climate Change" instead. The original question is preserved
-      // for the share-sheet text and the canonical URL.
-      const titleQuestion = window.__snapTitleCase?.(question) || question;
+
       // Read the live heatmap legend from the DOM so the snapshot's
       // gradient strip reflects whatever palette the user is currently
       // looking at (coverage, sentiment, percent, rank, binary, etc.).
@@ -58382,14 +58570,75 @@ body.ticker-active .gTickerLabel {
           return { colors, leftLabel: left, rightLabel: right };
         } catch (_) { return null; }
       };
+
+      // ── Path 1: Map This (AI Q&A) — existing behavior ─────────────
+      const qaQuestion = panel?.dataset?.qaQuestion ||
+                         (document.getElementById('semHeatAskInput')?.value || '').trim();
+      if (qaQuestion) {
+        const mode = panel?.dataset?.qaMode || 'percent';
+        const qs = new URLSearchParams({ q: qaQuestion });
+        if (mode && mode !== 'percent') qs.set('mode', mode);
+        // Normalize user-typed question to title case so the poster
+        // doesn't render "what is climate change" — gets "What Is
+        // Climate Change" instead. The original question is preserved
+        // for the share-sheet text and the canonical URL.
+        const titleQuestion = window.__snapTitleCase?.(qaQuestion) || qaQuestion;
+        window.__shareSnapshot({
+          title:      titleQuestion,
+          subtitle:   `MAP THIS · ${String(mode).toUpperCase()} · ${projectionTag}`,
+          badge:      'HEATMAP',
+          url:        `${SHARE_HOST}/share/heatmap?${qs}`,
+          shareTitle: 'Earth00 · Map This',
+          shareText:  `${qaQuestion} — Map This view on Earth00`,
+          legend:     _readLegend(),
+        });
+        return;
+      }
+
+      // ── Path 2 & 3: Coverage / Sentiment heatmap ──────────────────
+      // No AI question → user is in coverage/sentiment view. Read mode
+      // pill + active control tab + keyword + days from live UI.
+      const activeModePill = document.querySelector('#semHeatModeRow .semHeatPill.active');
+      const heatMode  = activeModePill?.dataset?.mode || 'coverage';
+      const activeCtl = document.querySelector('#semHeatCtlTabs .semHeatCtlTab.active')?.dataset?.ctl || 'keyword';
+      let keyword = '';
+      let days    = '7';
+      let bucket  = '';
+      if (activeCtl === 'keyword') {
+        keyword = (document.getElementById('semHeatKw')?.value || '').trim();
+        days    = document.getElementById('semHeatKwDays')?.value || '7';
+      } else if (activeCtl === 'timeseries') {
+        keyword = (document.getElementById('semHeatKw')?.value || '').trim();
+        days    = document.getElementById('semHeatTsRange')?.value  || '7';
+        bucket  = document.getElementById('semHeatTsBucket')?.value || 'day';
+      }
+      const qs = new URLSearchParams();
+      qs.set('mode', heatMode);
+      if (keyword) qs.set('keyword', keyword);
+      qs.set('days', days);
+      if (bucket) qs.set('bucket', bucket);
+
+      const heatModeLabel = heatMode.charAt(0).toUpperCase() + heatMode.slice(1);
+      const daysLabel = (days === '1') ? '1 day' : `${days} days`;
+      const title     = keyword
+        ? (window.__snapTitleCase?.(keyword) || keyword)
+        : `Total ${heatModeLabel}`;
+      const shareText = keyword
+        ? `${keyword} — ${heatModeLabel.toLowerCase()} heatmap (last ${daysLabel}) on Earth00`
+        : `Global news ${heatModeLabel.toLowerCase()} heatmap (last ${daysLabel}) on Earth00`;
+      const subtitleBits = [heatModeLabel.toUpperCase()];
+      if (keyword) subtitleBits.push('KEYWORD');
+      subtitleBits.push(`${days}D`);
+      subtitleBits.push(projectionTag);
+
       window.__shareSnapshot({
-        title:    titleQuestion,
-        subtitle: `MAP THIS · ${String(mode).toUpperCase()} · ${projectionTag}`,
-        badge:    'HEATMAP',
-        url:      `${SHARE_HOST}/share/heatmap?${qs}`,
-        shareTitle: 'Earth00 · Map This',
-        shareText:  `${question} — Map This view on Earth00`,
-        legend:   _readLegend(),
+        title:      title,
+        subtitle:   subtitleBits.join(' · '),
+        badge:      'HEATMAP',
+        url:        `${SHARE_HOST}/share/heatmap?${qs}`,
+        shareTitle: keyword ? `Earth00 · ${title}` : 'Earth00 · Heatmap',
+        shareText:  shareText,
+        legend:     _readLegend(),
       });
     });
     closeBtn.parentElement.insertBefore(btn, closeBtn);
@@ -59352,6 +59601,129 @@ body.ticker-active .gTickerLabel {
   // Expose the title-case helper so callers (e.g. heatmap share) can
   // normalize user-typed questions before passing them in as a title.
   window.__snapTitleCase = _snapTitleCase;
+
+  // ─── Animated-clip recorder ──────────────────────────────────
+  // MediaRecorder + canvas.captureStream pipeline for sharing a 6s
+  // cinematic spin of the globe (with whatever heatmap/flows/article
+  // markers the user has on screen). See index.html for full design
+  // rationale.
+  function _pickClipMimeType() {
+    if (typeof MediaRecorder === 'undefined') return null;
+    const candidates = [
+      'video/mp4;codecs=avc1.42E01E',
+      'video/mp4;codecs=avc1',
+      'video/mp4',
+      'video/webm;codecs=vp9',
+      'video/webm;codecs=vp8',
+      'video/webm',
+    ];
+    for (const t of candidates) {
+      try { if (MediaRecorder.isTypeSupported(t)) return t; } catch (_) {}
+    }
+    return null;
+  }
+
+  async function _recordCanvasClip({ canvas, animator, durationMs }) {
+    const mimeType = _pickClipMimeType();
+    if (!mimeType) throw new Error('MediaRecorder not supported in this browser');
+    if (typeof canvas.captureStream !== 'function') throw new Error('captureStream not supported on this canvas');
+    const stream = canvas.captureStream(60);
+    const chunks = [];
+    const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 6_000_000 });
+    recorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunks.push(e.data); };
+    const stopped = new Promise((resolve) => { recorder.onstop = resolve; });
+    recorder.start(250);
+    try {
+      await animator(durationMs);
+    } finally {
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      try { recorder.stop(); } catch (_) {}
+      try { stream.getTracks().forEach(t => t.stop()); } catch (_) {}
+    }
+    await stopped;
+    const blob = new Blob(chunks, { type: mimeType });
+    const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
+    return { blob, mimeType, ext };
+  }
+
+  window.__shareGlobeClip = async function(opts = {}) {
+    const {
+      durationMs = 6000,
+      shareTitle = 'Earth00',
+      shareText  = 'Captured on Earth00',
+      filenameBase = 'earth00-clip',
+      animator: animatorOverride,
+    } = opts;
+    const renderer = window.__renderer;
+    if (!renderer || !renderer.domElement) { console.warn('[shareGlobeClip] renderer not ready'); return; }
+    const animator = animatorOverride || window.__spinGlobeFor;
+    if (typeof animator !== 'function') {
+      console.warn('[shareGlobeClip] no animator available'); return;
+    }
+
+    const toast = document.getElementById('shareToast');
+    const setToast = (msg) => { if (toast) { toast.textContent = msg; toast.classList.add('open'); } };
+    const hideToast = () => { setTimeout(() => toast?.classList.remove('open'), 1500); };
+
+    setToast('Generating clip…');
+    try {
+      const { blob, ext } = await _recordCanvasClip({
+        canvas: renderer.domElement,
+        animator: (ms) => animator(ms),
+        durationMs,
+      });
+      setToast('Clip ready');
+      const file = new File([blob], `${filenameBase}.${ext}`, { type: blob.type });
+      const canShareFiles = typeof navigator !== 'undefined' &&
+        typeof navigator.share === 'function' &&
+        typeof navigator.canShare === 'function' &&
+        navigator.canShare({ files: [file] });
+      if (canShareFiles) {
+        try {
+          await navigator.share({ title: shareTitle, text: shareText, files: [file] });
+          hideToast();
+          return;
+        } catch (err) {
+          if (err && /cancel|abort/i.test(err.name || err.message || '')) { hideToast(); return; }
+          console.warn('[shareGlobeClip] navigator.share rejected:', err.message);
+        }
+      }
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `${filenameBase}.${ext}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+      setToast('Clip saved');
+    } catch (err) {
+      console.error('[shareGlobeClip] failed:', err);
+      setToast('Clip generation failed');
+    } finally {
+      hideToast();
+    }
+  };
+
+  // News-flows time-series clip — see index.html for full rationale.
+  window.__shareFlowsClip = async function(opts = {}) {
+    if (typeof window.__flowsHasSeries !== 'function' || !window.__flowsHasSeries()) {
+      console.warn('[shareFlowsClip] no flow data loaded'); return;
+    }
+    const projection = (window.__projection === 'map') ? 'map' : 'globe';
+    const animator = projection === 'globe'
+      ? (ms) => Promise.all([
+          window.__spinGlobeFor(ms),
+          window.__playFlowsTimeseries(ms),
+        ])
+      : (ms) => window.__playFlowsTimeseries(ms);
+    return window.__shareGlobeClip({
+      durationMs:   opts.durationMs   || 10000,
+      shareTitle:   opts.shareTitle   || 'Earth00 · News Flows',
+      shareText:    opts.shareText    || 'News flows replay on Earth00',
+      filenameBase: opts.filenameBase || 'earth00-flows-timeseries',
+      animator,
+    });
+  };
 
   // ─── Phase 3: Universal Links — deep link router ──────────────
   // When the OS hands the app a URL like https://earth00.com/share/thread/123,

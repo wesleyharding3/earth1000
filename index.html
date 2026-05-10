@@ -2317,6 +2317,10 @@ body.ticker-active #flowControls {
 
 /* Hide playback controls in aggregate mode */
 #flowControls.aggregate-mode .flowPlaybackRow { display: none; }
+/* Animated-clip share is only meaningful in non-aggregate mode (where
+   arcs play sequentially over time). Hidden in aggregate mode for the
+   same reason the play controls are. */
+#flowControls.aggregate-mode .flowShareClipBtn { display: none; }
 #flowControls.aggregate-mode .flowPanelRow:has(#flowSpeed) { display: none; }
 #flowControls.aggregate-mode .flowAggStats { display: block; }
 
@@ -15376,6 +15380,15 @@ window.__arcCtxSegmented = (function() {
          via __shareSnapshot. The image is the actual view + Earth00
          brand chrome; no link URL since news-flows views don't have
          a stable shareable URL beyond the live state. -->
+    <!-- Animated-clip share for flow time-series. Hidden in aggregate
+         mode via CSS (see #flowControls.aggregate-mode rule). Click
+         handler gracefully no-ops if MediaRecorder isn't supported or
+         no flow data is loaded — see __shareFlowsClip. -->
+    <button class="flowShareBtn flowShareClipBtn" id="flowShareClipBtn" title="Share clip (animated)" onclick="window.__shareFlowsClip?.()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
+      </svg>
+    </button>
     <button class="flowShareBtn" id="flowShareBtn" title="Share these flows" onclick="window.__shareNewsFlowsSnapshot?.()">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
@@ -16078,6 +16091,39 @@ window.__arcCtxSegmented = (function() {
 
     function applyYaw(rad)  { globeYaw += rad; }
     function applyTilt(rad) { globePitch = Math.max(-MAX_PITCH, Math.min(MAX_PITCH, globePitch + rad)); }
+
+    // Programmatically drive the globe through a full 360° yaw rotation
+    // over `durationMs`. Used by the share-clip recorder. Saves the
+    // start yaw and restores at end so the user's view is exactly where
+    // they left it (the spin lands back at the same orientation since
+    // we traverse a full 2π). Also kills any in-flight drag inertia so
+    // the spin reads as a clean cinematic loop.
+    window.__spinGlobeFor = function(durationMs) {
+      return new Promise((resolve) => {
+        const startYaw = globeYaw;
+        yawVelocity = 0;
+        tiltVelocity = 0;
+        const t0 = performance.now();
+        function step(now) {
+          const t = Math.min(1, (now - t0) / durationMs);
+          // Drive yaw absolutely so the existing animate() loop (which
+          // rebuilds globeQuat from globeYaw + globePitch each frame)
+          // picks up our new value without our writes fighting any
+          // damping logic.
+          globeYaw = startYaw + t * Math.PI * 2;
+          if (t >= 1) {
+            // Restore exactly so floating-point drift doesn't accumulate
+            // across multiple recordings.
+            globeYaw = startYaw;
+            resolve();
+            return;
+          }
+          requestAnimationFrame(step);
+        }
+        requestAnimationFrame(step);
+      });
+    };
+
     function rebuildGlobeQuat() {
       const qYaw = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), globeYaw);
       const qPitch = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), globePitch);
@@ -24630,6 +24676,63 @@ const settingsToggle     = document.getElementById("settingsToggle");
         window.__flowClearHighlights?.();
       }
     }
+  };
+
+  /* ── Programmatic single-pass flow playback for share-clip recorder ──
+     Plays through ALL arcs in flowData over `durationMs`, restoring
+     prior playback state on completion. Designed to compose with
+     __spinGlobeFor inside __shareGlobeClip — the user gets a rotating
+     globe with arcs replaying chronologically.
+
+     Firing rate is dynamically tuned: arcs are spread across the first
+     80% of durationMs (last 20% lets the final arc animate to peak
+     before recording stops). Capped at 25 arcs/sec so dense data
+     doesn't choke the renderer. If flowData is too large to fit at
+     that cap, the clip captures only the prefix that fits — better a
+     tight clip with the most-recent N arcs than a frantic blur of
+     thousands. */
+  window.__flowsHasSeries = function() {
+    return flowData.length > 0 && flowMode !== 'aggregate';
+  };
+  window.__playFlowsTimeseries = function(durationMs) {
+    return new Promise((resolve) => {
+      if (!window.__flowsHasSeries()) { resolve(); return; }
+
+      // Save state
+      const _wasPlaying = flowPlaying;
+      const _origSeqDelay = seqDelay;
+      const _origSpeed    = flowSpeed;
+
+      // Clear any in-flight arcs so the recording starts from a clean
+      // globe; otherwise old arcs would overlap with the new playback.
+      clearArcs();
+
+      // Compute fire rate. Cap at 25 arcs/sec so dense days don't
+      // produce a strobe. Floor seqDelay corresponds to MAX_RATE.
+      const MAX_RATE_PER_SEC = 25;
+      const minSeqDelay = 1 / MAX_RATE_PER_SEC;
+      const fireWindow = (durationMs / 1000) * 0.8;
+      const computedDelay = fireWindow / Math.max(1, flowData.length);
+      seqDelay = Math.max(minSeqDelay, computedDelay);
+      flowSpeed = 1.0;
+
+      seqIndex = 0;
+      seqTimer = 0;
+      flowProgress = 0;
+      flowPlaying = true;
+      const playBtn = document.getElementById('flowPlayBtn');
+      if (playBtn) playBtn.textContent = '❚❚';
+
+      setTimeout(() => {
+        flowPlaying = false;
+        if (playBtn) playBtn.textContent = '▶ Play';
+        seqDelay = _origSeqDelay;
+        flowSpeed = _origSpeed;
+        // Don't restore _wasPlaying — recordings are a one-shot;
+        // returning to "still playing" would surprise the user.
+        resolve();
+      }, durationMs);
+    });
   };
 
   /* ═══════════════════════════════════════════════════════════════
@@ -48729,6 +48832,92 @@ body.ticker-active .gTickerLabel {
     if (state.playTimer) { clearTimeout(state.playTimer); state.playTimer = null; }
   }
 
+  // ── Programmatic single-pass time-series playback ─────────────────────
+  // Used by the share-clip recorder. Steps through ALL buckets once over
+  // `durationMs`, ease-in-out crossfading between consecutive frames, then
+  // resolves. Distinct from startPlayback() which loops indefinitely at a
+  // fixed BUCKET_MS pace.
+  //
+  // Returns a Promise that resolves when the last bucket is painted.
+  // Caller (the recorder) tears down after the promise resolves so the
+  // final frame is captured before MediaRecorder stops.
+  window.__heatmapHasTimeseries = function() {
+    return !!(state.series && state.series.buckets && state.series.buckets.length >= 2);
+  };
+
+  window.__playHeatmapTimeseries = function(durationMs) {
+    return new Promise((resolve) => {
+      if (!window.__heatmapHasTimeseries()) { resolve(); return; }
+      // Stop any in-flight loop playback so it doesn't fight us.
+      if (state.playing) stopPlayback();
+      const buckets = state.series.buckets;
+      const N = buckets.length;
+      _ensurePlayBufs();
+      _playCurrentIdx = 0;
+      _updatePlaybackLabel(0);
+      _paintBucketInto(_playPrevBuf, 0);
+      _paintBucketInto(_playNextBuf, Math.min(1, N - 1));
+
+      const W = heatCanvas.width, H = heatCanvas.height;
+      const t0 = performance.now();
+      // (N - 1) transitions for N buckets so the last bucket lands at
+      // exactly t=durationMs. With N=1 (no animation possible) we
+      // already returned via __heatmapHasTimeseries above.
+      const perBucketMs = durationMs / (N - 1);
+
+      function tick(now) {
+        const elapsed = now - t0;
+        if (elapsed >= durationMs) {
+          // Land on the last bucket cleanly.
+          _updatePlaybackLabel(N - 1);
+          _paintBucketInto(_playNextBuf, N - 1);
+          heatCtx.save();
+          heatCtx.setTransform(1, 0, 0, 1, 0, 0);
+          heatCtx.globalCompositeOperation = 'source-over';
+          heatCtx.clearRect(0, 0, W, H);
+          heatCtx.drawImage(_playNextBuf, 0, 0);
+          heatCtx.restore();
+          heatTexture.needsUpdate = true;
+          setHeatVisible(true);
+          resolve();
+          return;
+        }
+        const totalT = elapsed / perBucketMs;
+        const fromIdx = Math.floor(totalT);
+        const t = totalT - fromIdx;
+        const nextIdx = Math.min(fromIdx + 1, N - 1);
+        // Bucket-boundary crossing: rotate buffers so the next transition
+        // crossfades from the now-current bucket into the following one.
+        if (fromIdx !== _playCurrentIdx) {
+          _playCurrentIdx = fromIdx;
+          _updatePlaybackLabel(fromIdx);
+          _paintBucketInto(_playPrevBuf, fromIdx);
+          _paintBucketInto(_playNextBuf, nextIdx);
+        }
+        // Identical ease + composite math as startPlayback's tick so
+        // the recorded clip looks visually identical to the user's
+        // live playback.
+        const eased = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+        heatCtx.save();
+        heatCtx.setTransform(1, 0, 0, 1, 0, 0);
+        heatCtx.globalCompositeOperation = 'source-over';
+        heatCtx.clearRect(0, 0, W, H);
+        heatCtx.globalAlpha = 1 - eased;
+        heatCtx.drawImage(_playPrevBuf, 0, 0);
+        heatCtx.globalCompositeOperation = 'lighter';
+        heatCtx.globalAlpha = eased;
+        heatCtx.drawImage(_playNextBuf, 0, 0);
+        heatCtx.globalCompositeOperation = 'source-over';
+        heatCtx.globalAlpha = 1;
+        heatCtx.restore();
+        heatTexture.needsUpdate = true;
+        setHeatVisible(true);
+        requestAnimationFrame(tick);
+      }
+      requestAnimationFrame(tick);
+    });
+  };
+
   playBtn.addEventListener('click', () => {
     if (state.playing) stopPlayback(); else startPlayback();
   });
@@ -52052,6 +52241,78 @@ body.ticker-active .gTickerLabel {
   function _attachHeatmapShareBtn() {
     const closeBtn = document.querySelector('#semHeatPanel .semHeatClose');
     if (!closeBtn || closeBtn.parentElement.querySelector('.shareBtn')) return;
+
+    // Animated-clip ("share GIF") button — placed FIRST so it sits to
+    // the left of the static-snapshot share. Hidden when the browser
+    // doesn't support MediaRecorder + captureStream (older iOS Safari).
+    const clipBtn = document.createElement('button');
+    clipBtn.className = 'shareBtn shareBtnClip';
+    clipBtn.title = 'Share clip (animated)';
+    clipBtn.setAttribute('aria-label', 'Share clip');
+    clipBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>`;
+    clipBtn.style.marginRight = '6px';
+    const _clipSupported = typeof MediaRecorder !== 'undefined' &&
+      typeof window.__renderer?.domElement?.captureStream === 'function';
+    if (!_clipSupported) clipBtn.style.display = 'none';
+    clipBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const panel = document.getElementById('semHeatPanel');
+      const qaQuestion = panel?.dataset?.qaQuestion ||
+                         (document.getElementById('semHeatAskInput')?.value || '').trim();
+      const activeModePill = document.querySelector('#semHeatModeRow .semHeatPill.active');
+      const heatMode = activeModePill?.dataset?.mode || 'coverage';
+      const keyword = (document.getElementById('semHeatKw')?.value || '').trim();
+
+      // Auto-detect animator: prefer time-series scrub if data is loaded.
+      // When projection is 'globe', compose with spin so the user gets a
+      // rotating globe whose heatmap animates through dates simultaneously
+      // (the user-spec'd "time-series globe spinning" variant). When
+      // projection is 'map' (2D), scrub only — spinning doesn't apply.
+      // Fall back to plain spin when no time-series data is loaded.
+      const hasTs    = typeof window.__heatmapHasTimeseries === 'function'
+                         ? window.__heatmapHasTimeseries()
+                         : false;
+      const projection = (window.__projection === 'map') ? 'map' : 'globe';
+      const isTsClip = hasTs;
+      let animator;
+      if (isTsClip && projection === 'globe') {
+        animator = (ms) => Promise.all([
+          window.__spinGlobeFor(ms),
+          window.__playHeatmapTimeseries(ms),
+        ]);
+      } else if (isTsClip) {
+        animator = (ms) => window.__playHeatmapTimeseries(ms);
+      } else {
+        animator = undefined; // default: globe spin
+      }
+
+      let shareTitle, shareText;
+      if (qaQuestion) {
+        shareTitle = 'Earth00 · Map This';
+        shareText  = `${qaQuestion} — Map This view on Earth00`;
+      } else if (keyword) {
+        shareTitle = `Earth00 · ${keyword}`;
+        shareText  = `${keyword} — ${heatMode} heatmap on Earth00${isTsClip ? ' (time-series)' : ''}`;
+      } else {
+        shareTitle = 'Earth00 · Heatmap';
+        shareText  = `Global news ${heatMode} heatmap on Earth00${isTsClip ? ' (time-series)' : ''}`;
+      }
+      const filenameBits = ['earth00', heatMode];
+      if (keyword) filenameBits.push(keyword);
+      if (isTsClip) filenameBits.push('timeseries');
+      else          filenameBits.push('clip');
+      const filenameBase = filenameBits.join('-').toLowerCase().replace(/[^a-z0-9-]+/g, '-');
+
+      window.__shareGlobeClip?.({
+        durationMs: isTsClip ? 8000 : 6000,
+        shareTitle,
+        shareText,
+        filenameBase,
+        animator,
+      });
+    });
+    closeBtn.parentElement.insertBefore(clipBtn, closeBtn);
+
     const btn = document.createElement('button');
     btn.className = 'shareBtn';
     btn.title = 'Share';
@@ -52061,15 +52322,9 @@ body.ticker-active .gTickerLabel {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
       const panel = document.getElementById('semHeatPanel');
-      const question = panel?.dataset?.qaQuestion || (document.getElementById('semHeatAskInput')?.value || '').trim();
-      const mode = panel?.dataset?.qaMode || 'percent';
-      if (!question) { showToast('Ask a question first'); return; }
-      const qs = new URLSearchParams({ q: question });
-      if (mode && mode !== 'percent') qs.set('mode', mode);
       const projectionTag = (window.__projection === 'map') ? '2D MAP' : 'GLOBE';
-      const titleQuestion = window.__snapTitleCase?.(question) || question;
-      // Read live heatmap legend from the DOM — see comments in
-      // www/index.html for the rationale.
+
+      // Live legend reader — used by all three heatmap share paths.
       const _readLegend = () => {
         try {
           const bar = document.getElementById('semHeatLegendBar');
@@ -52084,14 +52339,74 @@ body.ticker-active .gTickerLabel {
           return { colors, leftLabel: left, rightLabel: right };
         } catch (_) { return null; }
       };
+
+      // ── Path 1: Map This (AI Q&A) ─────────────────────────────────
+      // panel.dataset.qaQuestion gets stamped when the user submits an
+      // AI question. If present we share that — same shape as before.
+      const qaQuestion = panel?.dataset?.qaQuestion ||
+                         (document.getElementById('semHeatAskInput')?.value || '').trim();
+      if (qaQuestion) {
+        const mode = panel?.dataset?.qaMode || 'percent';
+        const qs = new URLSearchParams({ q: qaQuestion });
+        if (mode && mode !== 'percent') qs.set('mode', mode);
+        const titleQuestion = window.__snapTitleCase?.(qaQuestion) || qaQuestion;
+        window.__shareSnapshot({
+          title:      titleQuestion,
+          subtitle:   `MAP THIS · ${String(mode).toUpperCase()} · ${projectionTag}`,
+          badge:      'HEATMAP',
+          url:        `${SHARE_HOST}/share/heatmap?${qs}`,
+          shareTitle: 'Earth00 · Map This',
+          shareText:  `${qaQuestion} — Map This view on Earth00`,
+          legend:     _readLegend(),
+        });
+        return;
+      }
+
+      // ── Path 2 & 3: Coverage / Sentiment heatmap ──────────────────
+      // Used for "Total coverage" (no keyword) and "Keyword coverage"
+      // (with keyword). Reads live state from the heatmap UI controls
+      // (mode pill, control tab, keyword input, days select).
+      const activeModePill = document.querySelector('#semHeatModeRow .semHeatPill.active');
+      const heatMode = activeModePill?.dataset?.mode || 'coverage';
+      const activeCtl  = document.querySelector('#semHeatCtlTabs .semHeatCtlTab.active')?.dataset?.ctl || 'keyword';
+      let keyword = '';
+      let days    = '7';
+      let bucket  = '';
+      if (activeCtl === 'keyword') {
+        keyword = (document.getElementById('semHeatKw')?.value || '').trim();
+        days    = document.getElementById('semHeatKwDays')?.value || '7';
+      } else if (activeCtl === 'timeseries') {
+        keyword = (document.getElementById('semHeatKw')?.value || '').trim();
+        days    = document.getElementById('semHeatTsRange')?.value  || '7';
+        bucket  = document.getElementById('semHeatTsBucket')?.value || 'day';
+      }
+      const qs = new URLSearchParams();
+      qs.set('mode', heatMode);
+      if (keyword) qs.set('keyword', keyword);
+      qs.set('days', days);
+      if (bucket) qs.set('bucket', bucket);
+
+      const heatModeLabel = heatMode.charAt(0).toUpperCase() + heatMode.slice(1);
+      const daysLabel = (days === '1') ? '1 day' : `${days} days`;
+      const title     = keyword
+        ? (window.__snapTitleCase?.(keyword) || keyword)
+        : `Total ${heatModeLabel}`;
+      const shareText = keyword
+        ? `${keyword} — ${heatModeLabel.toLowerCase()} heatmap (last ${daysLabel}) on Earth00`
+        : `Global news ${heatModeLabel.toLowerCase()} heatmap (last ${daysLabel}) on Earth00`;
+      const subtitleBits = [heatModeLabel.toUpperCase()];
+      if (keyword) subtitleBits.push('KEYWORD');
+      subtitleBits.push(`${days}D`);
+      subtitleBits.push(projectionTag);
+
       window.__shareSnapshot({
-        title:    titleQuestion,
-        subtitle: `MAP THIS · ${String(mode).toUpperCase()} · ${projectionTag}`,
-        badge:    'HEATMAP',
-        url:      `${SHARE_HOST}/share/heatmap?${qs}`,
-        shareTitle: 'Earth00 · Map This',
-        shareText:  `${question} — Map This view on Earth00`,
-        legend:   _readLegend(),
+        title:      title,
+        subtitle:   subtitleBits.join(' · '),
+        badge:      'HEATMAP',
+        url:        `${SHARE_HOST}/share/heatmap?${qs}`,
+        shareTitle: keyword ? `Earth00 · ${title}` : 'Earth00 · Heatmap',
+        shareText:  shareText,
+        legend:     _readLegend(),
       });
     });
     closeBtn.parentElement.insertBefore(btn, closeBtn);
@@ -52819,6 +53134,172 @@ body.ticker-active .gTickerLabel {
     }
   };
   window.__snapTitleCase = _snapTitleCase;
+})();
+
+<!-- ═══════════════════════════════════════════════════════════════════════
+     ANIMATED-CLIP RECORDER — captures a few seconds of the live globe
+     canvas via MediaRecorder + canvas.captureStream, hands the blob to
+     navigator.share. Used by share buttons that opt into clip output
+     (vs the static-snapshot share above). The recorder reuses the live
+     renderer.domElement — there's no second WebGLRenderer involved —
+     so the user briefly sees the cinematic spin while it records. The
+     spin lands back at exactly the start orientation (full 2π loop)
+     and yawVelocity is pre-zeroed so any drag inertia is cancelled.
+     ═══════════════════════════════════════════════════════════════════════ -->
+<script>
+(function() {
+  // Pick the highest-quality recorder mime type the browser supports.
+  // Order matters: MP4/H.264 is the broadest-compatible (Twitter, X,
+  // iMessage). WebM is fine for direct downloads and most chat apps.
+  function _pickMimeType() {
+    if (typeof MediaRecorder === 'undefined') return null;
+    const candidates = [
+      'video/mp4;codecs=avc1.42E01E', // H.264 baseline — Safari outputs this
+      'video/mp4;codecs=avc1',
+      'video/mp4',
+      'video/webm;codecs=vp9',
+      'video/webm;codecs=vp8',
+      'video/webm',
+    ];
+    for (const t of candidates) {
+      try { if (MediaRecorder.isTypeSupported(t)) return t; } catch (_) {}
+    }
+    return null;
+  }
+
+  // Generic capture: starts recording from `canvas`, runs `animator`
+  // (which drives whatever animation should appear during the clip),
+  // stops at end, returns the resulting Blob. animator is a function
+  // returning a Promise that resolves when its animation is complete.
+  async function _recordCanvasClip({ canvas, animator, durationMs }) {
+    const mimeType = _pickMimeType();
+    if (!mimeType) throw new Error('MediaRecorder not supported in this browser');
+    if (typeof canvas.captureStream !== 'function') throw new Error('captureStream not supported on this canvas');
+    const stream = canvas.captureStream(60);
+    const chunks = [];
+    const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 6_000_000 });
+    recorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunks.push(e.data); };
+
+    const stopped = new Promise((resolve) => { recorder.onstop = resolve; });
+
+    recorder.start(250); // emit a chunk every 250ms — keeps memory bounded
+    try {
+      await animator(durationMs);
+    } finally {
+      // Wait two RAFs to ensure the final frame is captured by the encoder
+      // before we tear down the recorder.
+      await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+      try { recorder.stop(); } catch (_) {}
+      try { stream.getTracks().forEach(t => t.stop()); } catch (_) {}
+    }
+    await stopped;
+    const blob = new Blob(chunks, { type: mimeType });
+    const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
+    return { blob, mimeType, ext };
+  }
+
+  // Globe-spin clip: 6-second cinematic 360° rotation of the current
+  // globe view (whatever the user has on screen — heatmap, flows,
+  // article markers, all included automatically because we record from
+  // the live canvas).
+  window.__shareGlobeClip = async function(opts = {}) {
+    const {
+      durationMs = 6000,
+      shareTitle = 'Earth00',
+      shareText  = 'Captured on Earth00',
+      filenameBase = 'earth00-clip',
+      // Optional: override the default animator. Defaults to a 360°
+      // globe spin via __spinGlobeFor. Pass any function returning a
+      // Promise to drive a different animation (e.g. heatmap time-series
+      // scrub, or scrub + spin combined). The animator receives durationMs
+      // and should resolve when its animation is complete.
+      animator: animatorOverride,
+    } = opts;
+
+    const renderer = window.__renderer;
+    if (!renderer || !renderer.domElement) {
+      console.warn('[shareGlobeClip] renderer not ready'); return;
+    }
+    const animator = animatorOverride || window.__spinGlobeFor;
+    if (typeof animator !== 'function') {
+      console.warn('[shareGlobeClip] no animator (override or __spinGlobeFor) available'); return;
+    }
+
+    const toast = document.getElementById('shareToast');
+    const setToast = (msg) => { if (toast) { toast.textContent = msg; toast.classList.add('open'); } };
+    const hideToast = () => { setTimeout(() => toast?.classList.remove('open'), 1500); };
+
+    setToast('Generating clip…');
+    try {
+      const { blob, ext } = await _recordCanvasClip({
+        canvas: renderer.domElement,
+        animator: (ms) => animator(ms),
+        durationMs,
+      });
+
+      setToast('Clip ready');
+      const file = new File([blob], `${filenameBase}.${ext}`, { type: blob.type });
+
+      // Try native share with files first (iOS, Android, Edge). Some
+      // browsers report navigator.share but reject files; canShare
+      // probes that path safely.
+      const canShareFiles = typeof navigator !== 'undefined' &&
+        typeof navigator.share === 'function' &&
+        typeof navigator.canShare === 'function' &&
+        navigator.canShare({ files: [file] });
+      if (canShareFiles) {
+        try {
+          await navigator.share({ title: shareTitle, text: shareText, files: [file] });
+          hideToast();
+          return;
+        } catch (err) {
+          // User-cancelled isn't an error
+          if (err && /cancel|abort/i.test(err.name || err.message || '')) { hideToast(); return; }
+          console.warn('[shareGlobeClip] navigator.share rejected, falling back to download:', err.message);
+        }
+      }
+
+      // Fallback: trigger a direct download
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `${filenameBase}.${ext}`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+      setToast('Clip saved');
+    } catch (err) {
+      console.error('[shareGlobeClip] failed:', err);
+      setToast('Clip generation failed');
+    } finally {
+      hideToast();
+    }
+  };
+
+  // News-flows time-series clip — composes globe spin with the flow
+  // single-pass replay so the user gets a rotating globe whose arcs
+  // fire in chronological order. Reuses __shareGlobeClip via the
+  // animator-override option introduced in iteration #2.
+  window.__shareFlowsClip = async function(opts = {}) {
+    if (typeof window.__flowsHasSeries !== 'function' || !window.__flowsHasSeries()) {
+      console.warn('[shareFlowsClip] no flow data loaded'); return;
+    }
+    const projection = (window.__projection === 'map') ? 'map' : 'globe';
+    const animator = projection === 'globe'
+      ? (ms) => Promise.all([
+          window.__spinGlobeFor(ms),
+          window.__playFlowsTimeseries(ms),
+        ])
+      : (ms) => window.__playFlowsTimeseries(ms);
+    return window.__shareGlobeClip({
+      durationMs:   opts.durationMs   || 10000, // longer — flows reward more screen-time
+      shareTitle:   opts.shareTitle   || 'Earth00 · News Flows',
+      shareText:    opts.shareText    || 'News flows replay on Earth00',
+      filenameBase: opts.filenameBase || 'earth00-flows-timeseries',
+      animator,
+    });
+  };
+
 })();
 </script>
 
