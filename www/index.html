@@ -45504,12 +45504,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
   body.briefing-active #pageNav,
   body.briefing-active #privacyFooter { display: none !important; }
   body.briefing-active .bControlsWrap {
-    bottom: calc(env(safe-area-inset-bottom, 0px) + var(--app-bottom-inset, 0px) - 6px);
+    /* Sit above the safe-area inset with a noticeable gap so the pill
+     * doesn't crowd the bottom edge of the screen. The previous -6px
+     * pulled the controls into the home-indicator area; +28px lifts
+     * them clear with a visible breathing strip below. */
+    bottom: calc(env(safe-area-inset-bottom, 0px) + var(--app-bottom-inset, 0px) + 28px);
   }
   body.briefing-active .bSegmentSourcePie,
   body.briefing-active .bSegmentArticleRoll {
     top: auto;
-    bottom: calc(env(safe-area-inset-bottom, 0px) + var(--app-bottom-inset, 0px) + 110px);
+    /* Sit just above the control panel — its bottom is env+28 and the
+     * pill + seek-slider wrap is ~64px tall, so the wrap top is at
+     * env+92. +100 leaves an ~8px gap so the roll/pie reads as a
+     * separate row directly above the controls. */
+    bottom: calc(env(safe-area-inset-bottom, 0px) + var(--app-bottom-inset, 0px) + 100px);
   }
   body.briefing-active .bSegmentSourcePie { transform: translateY(8px); }
   body.briefing-active .bSegmentArticleRoll { transform: translateY(8px); }
