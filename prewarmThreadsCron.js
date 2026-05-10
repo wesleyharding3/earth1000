@@ -51,7 +51,7 @@
  */
 
 require('dotenv').config({ override: true });
-const { forceRefreshCaches } = require('./prewarmCommon');
+const { forceRefreshCaches, cacheBust, purgeCloudflareUrls } = require('./prewarmCommon');
 
 const API_URL      = (process.env.API_URL || 'http://localhost:3000').replace(/\/$/, '');
 const TIMEOUT_MS   = parseInt(process.env.PREWARM_TIMEOUT_MS  || '95000', 10);
@@ -116,15 +116,18 @@ async function pickTopThreads(n) {
 async function warm(label, url) {
   const t0 = Date.now();
   try {
-    const r = await fetchWithTimeout(url);
+    // Cache-bust so Cloudflare passes the request through to origin.
+    // CF cache for the canonical URL gets purged at end-of-run via
+    // purgeCloudflareUrls. See prewarmCommon.js for full rationale.
+    const r = await fetchWithTimeout(cacheBust(url));
     const ms = Date.now() - t0;
     // Cancel body — server cache is populated before res.json() runs,
     // so we don't need to download the response (would OOM on big feeds).
     try { await r.body?.cancel?.(); } catch {}
-    if (!r.ok) return { label, ms, err: `HTTP ${r.status}` };
-    return { label, ms };
+    if (!r.ok) return { label, url, ms, err: `HTTP ${r.status}` };
+    return { label, url, ms };
   } catch (e) {
-    return { label, ms: Date.now() - t0, err: e.message };
+    return { label, url, ms: Date.now() - t0, err: e.message };
   }
 }
 
@@ -182,16 +185,16 @@ async function warmCoreFeeds() {
     const url = `${API_URL}${path}`;
     const t0 = Date.now();
     try {
-      const r = await fetchWithTimeout(url);
+      const r = await fetchWithTimeout(cacheBust(url));
       const ms = Date.now() - t0;
       try { await r.body?.cancel?.(); } catch {}
       const tag = r.ok ? `${ms}ms` : `ERR HTTP ${r.status} (${ms}ms)`;
       console.log(`${TAG}   ${path.padEnd(28)} [${tag}]`);
-      out.push({ path, ok: r.ok, ms });
+      out.push({ path, url, ok: r.ok, ms });
     } catch (e) {
       const ms = Date.now() - t0;
       console.log(`${TAG}   ${path.padEnd(28)} [ERR ${e.message} (${ms}ms)]`);
-      out.push({ path, ok: false, ms, err: e.message });
+      out.push({ path, url, ok: false, ms, err: e.message });
     }
   }
   return out;
@@ -264,6 +267,14 @@ async function main() {
   const breakdown = Object.entries(byLabel).map(([k, v]) => `${k}=${v.ok}/${v.total}`).join(' ');
 
   console.log(`\n${TAG} done in ${((Date.now() - t0) / 1000).toFixed(1)}s — core_ok=${coreOk}/${coreResults.length} threads_ok=${ok}/${subRequests.length} (${breakdown}) total_query_ms=${totalMs}`);
+
+  // Purge Cloudflare cache for the canonical user-facing URLs we just
+  // warmed. See prewarmCommon.js for the full rationale.
+  const canonicalUrls = [
+    ...coreResults.filter(r => r.url).map(r => r.url),
+    ...subRequests.filter(r => r.url).map(r => r.url),
+  ];
+  await purgeCloudflareUrls({ urls: canonicalUrls, tag: TAG });
 
   // Non-zero exit only on catastrophic failure
   const totalCount = coreResults.length + subRequests.length;

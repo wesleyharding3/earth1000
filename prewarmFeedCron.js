@@ -33,7 +33,7 @@
  */
 
 require('dotenv').config({ override: true });
-const { forceRefreshCaches } = require('./prewarmCommon');
+const { forceRefreshCaches, cacheBust, purgeCloudflareUrls } = require('./prewarmCommon');
 
 const API_URL     = (process.env.API_URL || 'http://localhost:3000').replace(/\/$/, '');
 // 130s — must outlive the server's prewarm SQL ceiling (120s on
@@ -153,7 +153,10 @@ async function warm(label, url) {
   const _attempt = async () => {
     const t0 = Date.now();
     try {
-      const r = await fetchWithTimeout(url);
+      // Cache-bust so Cloudflare doesn't intercept the warmer's GET
+      // with a stale cached value. CF purge for the canonical URL
+      // happens at end-of-run via purgeCloudflareUrls.
+      const r = await fetchWithTimeout(cacheBust(url));
       const ms = Date.now() - t0;
       // Cancel body stream — the server's ttlCached() populates the cache
       // INSIDE the callback before res.json() runs, so by the time we get
@@ -170,11 +173,11 @@ async function warm(label, url) {
   if (r.err && r.status >= 500 && r.status < 600) {
     await new Promise(rs => setTimeout(rs, 3000));
     const r2 = await _attempt();
-    if (!r2.err) return { label, ms: r.ms + 3000 + r2.ms, retried: true };
-    return { label, ms: r.ms + 3000 + r2.ms, err: r2.err, retried: true };
+    if (!r2.err) return { label, url, ms: r.ms + 3000 + r2.ms, retried: true };
+    return { label, url, ms: r.ms + 3000 + r2.ms, err: r2.err, retried: true };
   }
-  if (r.err) return { label, ms: r.ms, err: r.err };
-  return { label, ms: r.ms };
+  if (r.err) return { label, url, ms: r.ms, err: r.err };
+  return { label, url, ms: r.ms };
 }
 
 async function main() {
@@ -195,12 +198,17 @@ async function main() {
     tag: TAG,
   });
 
+  // Track every URL warmed across phases so we can purge them all from
+  // Cloudflare at end-of-run. See prewarmCommon.js for the full why.
+  const _allWarmResults = [];
+  const _track = (results) => { _allWarmResults.push(...results); return results; };
+
   // Phase 0 — top-of-app feeds (no IDs needed)
   console.log(`${TAG} phase 0: warming top-of-app feeds…`);
-  const topOf = await Promise.all([
+  const topOf = _track(await Promise.all([
     warm('articles/recent', `${API_URL}/api/articles/recent`),
     warm('news/search',     `${API_URL}/api/news/search`),
-  ]);
+  ]));
   for (const r of topOf) {
     const tag = r.err ? `ERR ${r.err}` : `${r.ms}ms`;
     console.log(`${TAG}   /api/${r.label.padEnd(20)} [${tag}]`);
@@ -226,7 +234,7 @@ async function main() {
         const tasks = TAG_PAGES.map(off =>
           warm('tag', `${API_URL}/api/news/search?tag=${t.id}&limit=25${off}`)
         );
-        const results = await Promise.all(tasks);
+        const results = _track(await Promise.all(tasks));
         // Worst result (slowest / errored) summarizes the row
         const worst = results.reduce((a, r) => (r.err || (r.ms > (a.ms || 0))) ? r : a, results[0]);
         return { t, worst, allOk: results.every(r => !r.err), results };
@@ -279,7 +287,7 @@ async function main() {
         tasks.push(warm('local',  `${API_URL}/api/news/country/${c.id}${qs}`));
         tasks.push(warm('global', `${API_URL}/api/news/country/${c.id}/global${qs}&prewarm=1`));
       }
-      const results = await Promise.all(tasks);
+      const results = _track(await Promise.all(tasks));
       // Flatten into local/global summary so the existing log format still
       // works — report the worst (slowest / errored) per surface.
       const local  = results.filter(r => r.label === 'local').reduce((a, r) => a.err || (r.ms > (a.ms || 0)) ? r : a, results[0]);
@@ -317,7 +325,7 @@ async function main() {
             tasks.push(warm('local',  `${API_URL}/api/news/city/${c.id}${qs}`));
             tasks.push(warm('global', `${API_URL}/api/news/city/${c.id}/global${qs}&prewarm=1`));
           }
-          const results = await Promise.all(tasks);
+          const results = _track(await Promise.all(tasks));
           const local  = results.filter(r => r.label === 'local').reduce((a, r) => a.err || (r.ms > (a.ms || 0)) ? r : a, results[0]);
           const global = results.filter(r => r.label === 'global').reduce((a, r) => a.err || (r.ms > (a.ms || 0)) ? r : a, results[1]);
           return { c, local, global };
@@ -337,6 +345,12 @@ async function main() {
   const totalAttempts = topOf.length + tags.length + countries.length * 2 + cityCount * 2;
   const totalOk = topOk + tagOk + countryOk + cityOk;
   console.log(`\n${TAG} done in ${((Date.now() - t0) / 1000).toFixed(1)}s — top=${topOk}/${topOf.length} tags=${tagOk}/${tags.length} countries=${countryOk}/${countries.length * 2} cities=${cityOk}/${cityCount * 2}`);
+
+  // Purge Cloudflare cache for the canonical user-facing URLs we just
+  // warmed (without the cache-bust suffix). See prewarmCommon.js for
+  // the full rationale.
+  const canonicalUrls = _allWarmResults.filter(r => r.url).map(r => r.url);
+  await purgeCloudflareUrls({ urls: canonicalUrls, tag: TAG });
 
   if (totalAttempts > 0 && totalOk === 0) process.exit(1);
 }

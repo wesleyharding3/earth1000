@@ -34,7 +34,7 @@
  */
 
 require('dotenv').config({ override: true });
-const { forceRefreshCaches } = require('./prewarmCommon');
+const { forceRefreshCaches, cacheBust, purgeCloudflareUrls } = require('./prewarmCommon');
 
 const API_URL        = (process.env.API_URL || 'http://localhost:3000').replace(/\/$/, '');
 const TIMEOUT_MS     = parseInt(process.env.PREWARM_TIMEOUT_MS || '95000', 10);
@@ -74,15 +74,19 @@ async function pickTopTimelines(n) {
 async function warm(label, url) {
   const t0 = Date.now();
   try {
-    const r = await fetchWithTimeout(url);
+    // Cache-bust so Cloudflare doesn't serve a stale cached response and
+    // shortcut us before we reach origin. The canonical URL (without
+    // _warm=) is what users hit; we purge that from CF separately at
+    // end of run via purgeCloudflareUrls.
+    const r = await fetchWithTimeout(cacheBust(url));
     const ms = Date.now() - t0;
     // Cancel body — server cache is populated before res.json() runs,
     // so we don't need to download the response (would OOM on big feeds).
     try { await r.body?.cancel?.(); } catch {}
-    if (!r.ok) return { label, ms, err: `HTTP ${r.status}` };
-    return { label, ms };
+    if (!r.ok) return { label, url, ms, err: `HTTP ${r.status}` };
+    return { label, url, ms };
   } catch (e) {
-    return { label, ms: Date.now() - t0, err: e.message };
+    return { label, url, ms: Date.now() - t0, err: e.message };
   }
 }
 
@@ -170,6 +174,16 @@ async function main() {
   const breakdown = Object.entries(byLabel).map(([k, v]) => `${k}=${v.ok}/${v.total}`).join(' ');
 
   console.log(`\n${TAG} done in ${((Date.now() - t0) / 1000).toFixed(1)}s — ${totalOk}/${total} ok (list=${listResult.err ? 'ERR' : 'OK'}, ${breakdown}) total_query_ms=${totalMs}`);
+
+  // Purge Cloudflare cache for the canonical URLs we just warmed at
+  // origin. Without this, the CDN edge keeps serving its stale value
+  // for s-maxage seconds (60-120s on these endpoints), even though
+  // origin's in-memory cache is now fresh.
+  const canonicalUrls = [
+    `${API_URL}/api/timelines/latest`,
+    ...subRequests.filter(r => r.url).map(r => r.url),
+  ];
+  await purgeCloudflareUrls({ urls: canonicalUrls, tag: TAG });
 
   if (total > 0 && totalOk === 0) process.exit(1);
 }

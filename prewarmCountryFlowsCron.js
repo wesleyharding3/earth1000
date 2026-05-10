@@ -36,7 +36,7 @@
  */
 
 require('dotenv').config({ override: true });
-const { forceRefreshCaches } = require('./prewarmCommon');
+const { forceRefreshCaches, cacheBust, purgeCloudflareUrls } = require('./prewarmCommon');
 
 const API_URL     = (process.env.API_URL || 'http://localhost:3000').replace(/\/$/, '');
 // 130s — must be > server's prewarm SQL ceiling (120s) so the cron's
@@ -181,7 +181,10 @@ async function warmFlow(direction, country, mode) {
     const t0 = Date.now();
     let res;
     try {
-      res = await fetchWithTimeout(url);
+      // Cache-bust so Cloudflare passes through to origin instead of
+      // serving a stale cached response. CF purge for the canonical
+      // URL happens at end-of-run.
+      res = await fetchWithTimeout(cacheBust(url));
     } catch (e) {
       return { ms: Date.now() - t0, err: e.message, status: null };
     }
@@ -201,13 +204,13 @@ async function warmFlow(direction, country, mode) {
     const r2 = await _attempt();
     if (!r2.err) {
       // Second attempt succeeded — report combined timing.
-      return { direction, mode: mode.name, country, ms: r.ms + 3000 + r2.ms, retried: true };
+      return { direction, mode: mode.name, country, url, ms: r.ms + 3000 + r2.ms, retried: true };
     }
     // Both failed — surface the second error as canonical.
-    return { direction, mode: mode.name, country, ms: r.ms + 3000 + r2.ms, err: r2.err, retried: true };
+    return { direction, mode: mode.name, country, url, ms: r.ms + 3000 + r2.ms, err: r2.err, retried: true };
   }
-  if (r.err) return { direction, mode: mode.name, country, ms: r.ms, err: r.err };
-  return { direction, mode: mode.name, country, ms: r.ms };
+  if (r.err) return { direction, mode: mode.name, country, url, ms: r.ms, err: r.err };
+  return { direction, mode: mode.name, country, url, ms: r.ms };
 }
 
 async function processOne(country) {
@@ -316,6 +319,12 @@ async function main() {
     `flows_ok=${okCount}/${subRequests.length} (${breakdown}) ` +
     `total_flow_ms=${totalMs}`
   );
+
+  // Purge Cloudflare cache for the canonical /api/flows URLs. See
+  // prewarmCommon.js for the full rationale.
+  const canonicalUrls = results.flatMap(r => Object.values(r.results || {}))
+    .map(v => v?.url).filter(Boolean);
+  await purgeCloudflareUrls({ urls: canonicalUrls, tag: TAG });
 
   // Non-zero exit only if every flow sub-request failed (API likely down).
   if (subRequests.length > 0 && okCount === 0) process.exit(1);

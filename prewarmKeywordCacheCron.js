@@ -50,7 +50,7 @@
  */
 
 require('dotenv').config({ override: true });
-const { forceRefreshCaches } = require('./prewarmCommon');
+const { forceRefreshCaches, cacheBust, purgeCloudflareUrls } = require('./prewarmCommon');
 
 const API_URL     = (process.env.API_URL || 'http://localhost:3000').replace(/\/$/, '');
 // 60s — cold-buffer flows queries on a hot keyword can take 8–10s, plus
@@ -226,13 +226,15 @@ async function warmHeatmap(keyword) {
   // User-facing requests stay capped at 30s.
   const url = `${API_URL}/api/heatmap?keyword=${encodeURIComponent(keyword)}&days=7&mode=coverage&bucket=none&prewarm=1`;
   const t0 = Date.now();
-  const r = await fetchWithTimeout(url);
+  // Cache-bust so Cloudflare passes through to origin. CF purge for the
+  // canonical URL happens at end-of-run.
+  const r = await fetchWithTimeout(cacheBust(url));
   const ms = Date.now() - t0;
   // Cancel body — server cache is populated before res.json() runs,
   // so we don't need to download the heatmap payload (large JSON).
   try { await r.body?.cancel?.(); } catch {}
   if (!r.ok) throw new Error(`heatmap ${r.status} (${ms}ms)`);
-  return ms;
+  return { ms, url };
 }
 
 async function warmFlows(keyword) {
@@ -244,11 +246,11 @@ async function warmFlows(keyword) {
             + `&from_date=${isoDate(weekAgo)}&to_date=${isoDate(today)}`
             + `&keyword=${encodeURIComponent(keyword)}&prewarm=1`;
   const t0 = Date.now();
-  const r = await fetchWithTimeout(url);
+  const r = await fetchWithTimeout(cacheBust(url));
   const ms = Date.now() - t0;
   try { await r.body?.cancel?.(); } catch {}
   if (!r.ok) throw new Error(`flows ${r.status} (${ms}ms)`);
-  return ms;
+  return { ms, url };
 }
 
 async function warmOne(keyword) {
@@ -260,14 +262,14 @@ async function warmOne(keyword) {
   // connection in flight — the cron runs longer but never spikes load.
   let hmRes, flRes;
   try {
-    const ms = await warmHeatmap(keyword);
-    hmRes = { ok: true, ms };
+    const r = await warmHeatmap(keyword);
+    hmRes = { ok: true, ms: r.ms, url: r.url };
   } catch (e) {
     hmRes = { ok: false, err: e?.message || String(e) };
   }
   try {
-    const ms = await warmFlows(keyword);
-    flRes = { ok: true, ms };
+    const r = await warmFlows(keyword);
+    flRes = { ok: true, ms: r.ms, url: r.url };
   } catch (e) {
     flRes = { ok: false, err: e?.message || String(e) };
   }
@@ -275,6 +277,8 @@ async function warmOne(keyword) {
     keyword,
     heatmap: hmRes.ok ? `${hmRes.ms}ms` : `ERR ${hmRes.err}`,
     flows:   flRes.ok ? `${flRes.ms}ms` : `ERR ${flRes.err}`,
+    hmUrl:   hmRes.url,
+    flUrl:   flRes.url,
     // Track sub-requests independently so exit-code logic doesn't mark a
     // keyword as a total failure just because ONE of two sub-requests
     // failed (e.g., a hot keyword's flow query times out at the server's
@@ -330,6 +334,11 @@ async function main() {
     console.log(`${TAG}   ${r.keyword.padEnd(16)} hm=${r.heatmap.padEnd(12)} fl=${r.flows}`);
   }
   console.log(`${TAG} done in ${((Date.now() - t0) / 1000).toFixed(1)}s — kw_full_ok=${okCount} kw_partial=${partialOk} hm_ok=${hmOkCount}/${results.length} fl_ok=${flOkCount}/${results.length}`);
+
+  // Purge Cloudflare cache for the canonical /api/heatmap and /api/flows
+  // URLs we just warmed. See prewarmCommon.js for full rationale.
+  const canonicalUrls = results.flatMap(r => [r.hmUrl, r.flUrl]).filter(Boolean);
+  await purgeCloudflareUrls({ urls: canonicalUrls, tag: TAG });
 
   // Non-zero exit ONLY if every keyword sub-request failed.
   const anyOk = hmOkCount > 0 || flOkCount > 0;
