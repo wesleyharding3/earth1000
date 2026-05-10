@@ -14341,7 +14341,12 @@ window.fmtDate = function(d) {
       built.gain.connect(duckGain);
       built.start(now);
       built.gain.gain.setValueAtTime(0.0001, now);
-      built.gain.gain.exponentialRampToValueAtTime(1.0, now + fade);
+      // Layer max gain set to 0.5 (halved from 1.0) — user feedback the
+      // background music was too prominent. Affects all layered tracks
+      // (drone, sub, news, stats, globe) uniformly. One-shot UI sounds
+      // (clicks, taps, AI twinkles) bypass this and keep their own
+      // volumes via per-trigger gain envelopes.
+      built.gain.gain.exponentialRampToValueAtTime(0.5, now + fade);
       // Layers that route a wet/reverb send separately from the dry
       // path expose `wetGain` so we can fade BOTH in lockstep. Without
       // this, the wet wash arrives at full volume immediately because
@@ -14349,7 +14354,7 @@ window.fmtDate = function(d) {
       // the "sudden surge" the user reported on page transitions.
       if (built.wetGain) {
         built.wetGain.gain.setValueAtTime(0.0001, now);
-        built.wetGain.gain.exponentialRampToValueAtTime(1.0, now + fade);
+        built.wetGain.gain.exponentialRampToValueAtTime(0.5, now + fade);
       }
       layers.set(name, built);
     } else {
@@ -14639,7 +14644,9 @@ window.fmtDate = function(d) {
     opts = opts || {};
     const now = ctx.currentTime;
     const dur = opts.dur || 0.55;
-    const vol = (opts.vol == null) ? 0.16 : opts.vol;
+    // Halved 0.16 → 0.08 alongside the music-layer halving. Whooshes
+    // were prominent against the now-quieter background music.
+    const vol = (opts.vol == null) ? 0.08 : opts.vol;
     const fStart = opts.fStart || 2400;
     const fEnd   = opts.fEnd   || 380;
 
@@ -14677,10 +14684,10 @@ window.fmtDate = function(d) {
     opts = opts || {};
     const now = ctx.currentTime;
     const dur = opts.dur || 0.95;
-    // Halved from 0.12 — the swept-noise transient was overpowering
-    // the layer crossfade it was meant to bridge. 0.06 keeps the
-    // textural cue audible without dominating the moment.
-    const vol = (opts.vol == null) ? 0.06 : opts.vol;
+    // Halved 0.06 → 0.03 alongside the music-layer halving so the
+    // page-tab crossfade's swept-noise stays a quiet textural cue
+    // against the now-quieter background music. Original was 0.12.
+    const vol = (opts.vol == null) ? 0.03 : opts.vol;
     const fLow  = opts.fLow  || 320;
     const fHigh = opts.fHigh || 4200;
 

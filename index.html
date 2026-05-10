@@ -14004,10 +14004,11 @@ window.__arcCtxSegmented = (function() {
       built.gain.connect(duckGain);
       built.start(now);
       built.gain.gain.setValueAtTime(0.0001, now);
-      built.gain.gain.exponentialRampToValueAtTime(1.0, now + fade);
+      // Layer max gain 1.0 → 0.5 — see www/index.html for full rationale.
+      built.gain.gain.exponentialRampToValueAtTime(0.5, now + fade);
       if (built.wetGain) {
         built.wetGain.gain.setValueAtTime(0.0001, now);
-        built.wetGain.gain.exponentialRampToValueAtTime(1.0, now + fade);
+        built.wetGain.gain.exponentialRampToValueAtTime(0.5, now + fade);
       }
       layers.set(name, built);
     } else {
@@ -14319,7 +14320,8 @@ window.__arcCtxSegmented = (function() {
     opts = opts || {};
     const now = ctx.currentTime;
     const dur = opts.dur || 0.55;
-    const vol = (opts.vol == null) ? 0.16 : opts.vol;
+    // Halved 0.16 → 0.08 — see www/index.html.
+    const vol = (opts.vol == null) ? 0.08 : opts.vol;
     const fStart = opts.fStart || 2400;
     const fEnd   = opts.fEnd   || 380;
 
@@ -14359,9 +14361,8 @@ window.__arcCtxSegmented = (function() {
     opts = opts || {};
     const now = ctx.currentTime;
     const dur = opts.dur || 0.95;
-    // Halved 0.12 → 0.06 — see www/index.html. Whoosh was overpowering
-    // the layer crossfade it bridges; 0.06 keeps it as a textural cue.
-    const vol = (opts.vol == null) ? 0.06 : opts.vol;
+    // Halved 0.06 → 0.03 alongside music-layer halving. See www/index.html.
+    const vol = (opts.vol == null) ? 0.03 : opts.vol;
     // Direction parameter retired. The function used to flip the sweep
     // (down=high→low for forward nav, up=low→high for backward nav)
     // intending to give each tab change a directional pitch cue. But
