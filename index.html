@@ -43191,10 +43191,13 @@ body.ticker-active .gTickerLabel {
   // 4s music-alone window with the intro overlay visible — see
   // www/index.html for full rationale.
   const BRIEFING_INTRO_LEAD_MS = 4000;
-  let _bgMusic      = null;
-  let _bgMusicCtx   = null;
-  let _bgMusicGain  = null;
-  let _bgMusicSrc   = null;
+  let _bgMusic       = null;
+  let _bgMusicCtx    = null;
+  let _bgMusicGain   = null;
+  let _bgMusicSrc    = null;
+  // Track shared-vs-owned context — see www/index.html for the full
+  // iOS audio-session rationale (one ctx, one session, narrator works).
+  let _bgMusicOwnsCtx = false;
   const BG_VOL_FULL = 0.35;
   const BG_VOL_LOW  = 0.08;
   const BG_VOL_MUTE = 0.0;
@@ -43217,7 +43220,14 @@ body.ticker-active .gTickerLabel {
       if (_bgMusicLoaded) return;
       _bgMusicLoaded = true;
       try {
-        _bgMusicCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const sharedCtx = window.audioEngine?.ctx || null;
+        if (sharedCtx && sharedCtx.state !== 'closed') {
+          _bgMusicCtx = sharedCtx;
+          _bgMusicOwnsCtx = false;
+        } else {
+          _bgMusicCtx = new (window.AudioContext || window.webkitAudioContext)();
+          _bgMusicOwnsCtx = true;
+        }
         _bgMusicSrc = _bgMusicCtx.createMediaElementSource(_bgMusic);
         _bgMusicGain = _bgMusicCtx.createGain();
         _bgMusicGain.gain.value = BG_VOL_FULL;
@@ -43236,8 +43246,13 @@ body.ticker-active .gTickerLabel {
   }
   function destroyBgMusic() {
     if (_bgMusic) { try { _bgMusic.pause(); _bgMusic.src = ''; } catch (_) {} }
-    if (_bgMusicCtx && _bgMusicCtx.state !== 'closed') { try { _bgMusicCtx.close(); } catch (_) {} }
-    _bgMusic = null; _bgMusicCtx = null; _bgMusicGain = null; _bgMusicSrc = null; _bgMusicLoaded = false;
+    if (_bgMusicGain) { try { _bgMusicGain.disconnect(); } catch (_) {} }
+    if (_bgMusicSrc)  { try { _bgMusicSrc.disconnect();  } catch (_) {} }
+    if (_bgMusicOwnsCtx && _bgMusicCtx && _bgMusicCtx.state !== 'closed') {
+      try { _bgMusicCtx.close(); } catch (_) {}
+    }
+    _bgMusic = null; _bgMusicCtx = null; _bgMusicGain = null; _bgMusicSrc = null;
+    _bgMusicLoaded = false; _bgMusicOwnsCtx = false;
   }
   function duckBgMusic(targetVol, fadeSec) {
     if (!_bgMusic) return;
@@ -43839,13 +43854,19 @@ body.ticker-active .gTickerLabel {
     // "never cut off" constraint.
     if (_bgMusic) {
       duckBgMusic(BG_VOL_MUTE, BG_FADE_PAUSE);
-      const _toClose = _bgMusic;
+      const _toClose    = _bgMusic;
       const _ctxToClose = _bgMusicCtx;
+      const _gainToDisc = _bgMusicGain;
+      const _srcToDisc  = _bgMusicSrc;
+      const _ownedCtx   = _bgMusicOwnsCtx;
       _bgMusic = null; _bgMusicCtx = null; _bgMusicGain = null; _bgMusicSrc = null;
-      _bgMusicLoaded = false; _bgMusicSegmentPaused = false;
+      _bgMusicLoaded = false; _bgMusicSegmentPaused = false; _bgMusicOwnsCtx = false;
       setTimeout(() => {
         try { _toClose.pause(); _toClose.src = ''; } catch (_) {}
-        if (_ctxToClose && _ctxToClose.state !== 'closed') {
+        if (_gainToDisc) { try { _gainToDisc.disconnect(); } catch (_) {} }
+        if (_srcToDisc)  { try { _srcToDisc.disconnect();  } catch (_) {} }
+        // Only close the ctx if we created it — see www/index.html.
+        if (_ownedCtx && _ctxToClose && _ctxToClose.state !== 'closed') {
           try { _ctxToClose.close(); } catch (_) {}
         }
       }, BG_FADE_PAUSE * 1000 + 50);

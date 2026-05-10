@@ -45513,11 +45513,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
   body.briefing-active .bSegmentSourcePie,
   body.briefing-active .bSegmentArticleRoll {
     top: auto;
-    /* Sit just above the control panel — its bottom is env+28 and the
-     * pill + seek-slider wrap is ~64px tall, so the wrap top is at
-     * env+92. +100 leaves an ~8px gap so the roll/pie reads as a
-     * separate row directly above the controls. */
-    bottom: calc(env(safe-area-inset-bottom, 0px) + var(--app-bottom-inset, 0px) + 100px);
+    /* Sit directly above the control panel. Controls bottom = env+28,
+     * wrap height ~64px → wrap top at env+92. +94 puts the roll/pie
+     * bottom 2px above the controls — visually "just above" without a
+     * floating gap. The previous +100 left ~8px of dead space the user
+     * read as the panels being too high. */
+    bottom: calc(env(safe-area-inset-bottom, 0px) + var(--app-bottom-inset, 0px) + 94px);
   }
   body.briefing-active .bSegmentSourcePie { transform: translateY(8px); }
   body.briefing-active .bSegmentArticleRoll { transform: translateY(8px); }
@@ -47063,10 +47064,22 @@ body.ticker-active .gTickerLabel {
   // when segment 0 is type:'intro' (so non-intro first segments don't
   // see a blank delay).
   const BRIEFING_INTRO_LEAD_MS = 4000;
-  let _bgMusic      = null;    // Audio element for background music
-  let _bgMusicCtx   = null;    // AudioContext for gain control
-  let _bgMusicGain  = null;    // GainNode for smooth volume ducking
-  let _bgMusicSrc   = null;    // MediaElementSourceNode
+  let _bgMusic       = null;    // Audio element for background music
+  let _bgMusicCtx    = null;    // AudioContext for gain control
+  let _bgMusicGain   = null;    // GainNode for smooth volume ducking
+  let _bgMusicSrc    = null;    // MediaElementSourceNode
+  // True when we created the AudioContext ourselves; false when we
+  // reused window.audioEngine.ctx. Drives whether destroyBgMusic /
+  // closeBriefing close the context — closing audioEngine's ctx would
+  // tear down the procedural-audio engine that lives outside the
+  // briefing. The reuse path exists because iOS WKWebView serializes
+  // audio session ownership across multiple AudioContexts: when
+  // audioEngine is audibly active (phone NOT silent) and we'd
+  // otherwise create a second ctx for the briefing music, the
+  // narrator HTMLAudioElement could not claim the audio session at
+  // all and never started playback. One context — one session —
+  // narrator works.
+  let _bgMusicOwnsCtx = false;
   const BG_VOL_FULL = 0.35;   // volume during gaps (between segments)
   const BG_VOL_LOW  = 0.08;   // volume when narrator is speaking
   const BG_VOL_MUTE = 0.0;    // volume when YouTube video is playing
@@ -47091,7 +47104,21 @@ body.ticker-active .gTickerLabel {
       if (_bgMusicLoaded) return;
       _bgMusicLoaded = true;
       try {
-        _bgMusicCtx = new (window.AudioContext || window.webkitAudioContext)();
+        // Reuse the audioEngine context when it exists. iOS WKWebView
+        // can only have one AudioContext effectively claim the audio
+        // session; creating a second one here while the procedural
+        // engine is audibly active (phone NOT silent) blocked the
+        // narrator HTMLAudioElement from ever starting. Sharing the
+        // ctx removes that contention. _bgMusicOwnsCtx tracks whether
+        // teardown should close the context.
+        const sharedCtx = window.audioEngine?.ctx || null;
+        if (sharedCtx && sharedCtx.state !== 'closed') {
+          _bgMusicCtx = sharedCtx;
+          _bgMusicOwnsCtx = false;
+        } else {
+          _bgMusicCtx = new (window.AudioContext || window.webkitAudioContext)();
+          _bgMusicOwnsCtx = true;
+        }
         _bgMusicSrc = _bgMusicCtx.createMediaElementSource(_bgMusic);
         _bgMusicGain = _bgMusicCtx.createGain();
         _bgMusicGain.gain.value = BG_VOL_FULL;
@@ -47101,7 +47128,7 @@ body.ticker-active .gTickerLabel {
         console.warn('[bgMusic] AudioContext init failed, using volume fallback:', e.message);
         _bgMusic.volume = BG_VOL_FULL;
       }
-      console.log('[bgMusic] loaded and ready');
+      console.log('[bgMusic] loaded and ready (sharedCtx=' + (!_bgMusicOwnsCtx) + ')');
     }, { once: true });
 
     _bgMusic.addEventListener('error', () => {
@@ -47120,11 +47147,17 @@ body.ticker-active .gTickerLabel {
 
   function destroyBgMusic() {
     if (_bgMusic) { try { _bgMusic.pause(); _bgMusic.src = ''; } catch (_) {} }
-    if (_bgMusicCtx && _bgMusicCtx.state !== 'closed') {
+    // Disconnect the briefing's gain node so the audioEngine's
+    // shared destination doesn't keep a dangling node alive between
+    // briefing opens. Only close the context if WE created it —
+    // closing audioEngine's ctx would kill the procedural engine.
+    if (_bgMusicGain) { try { _bgMusicGain.disconnect(); } catch (_) {} }
+    if (_bgMusicSrc)  { try { _bgMusicSrc.disconnect();  } catch (_) {} }
+    if (_bgMusicOwnsCtx && _bgMusicCtx && _bgMusicCtx.state !== 'closed') {
       try { _bgMusicCtx.close(); } catch (_) {}
     }
     _bgMusic = null; _bgMusicCtx = null; _bgMusicGain = null; _bgMusicSrc = null;
-    _bgMusicLoaded = false;
+    _bgMusicLoaded = false; _bgMusicOwnsCtx = false;
   }
 
   // Smooth volume transitions via exponential ramp
@@ -47960,13 +47993,22 @@ body.ticker-active .gTickerLabel {
     // already ran above) so use a plain setTimeout.
     if (_bgMusic) {
       duckBgMusic(BG_VOL_MUTE, BG_FADE_PAUSE);
-      const _toClose = _bgMusic;
+      const _toClose    = _bgMusic;
       const _ctxToClose = _bgMusicCtx;
+      const _gainToDisc = _bgMusicGain;
+      const _srcToDisc  = _bgMusicSrc;
+      const _ownedCtx   = _bgMusicOwnsCtx;
       _bgMusic = null; _bgMusicCtx = null; _bgMusicGain = null; _bgMusicSrc = null;
-      _bgMusicLoaded = false; _bgMusicSegmentPaused = false;
+      _bgMusicLoaded = false; _bgMusicSegmentPaused = false; _bgMusicOwnsCtx = false;
       setTimeout(() => {
         try { _toClose.pause(); _toClose.src = ''; } catch (_) {}
-        if (_ctxToClose && _ctxToClose.state !== 'closed') {
+        // Disconnect briefing nodes from the (possibly shared) ctx.
+        if (_gainToDisc) { try { _gainToDisc.disconnect(); } catch (_) {} }
+        if (_srcToDisc)  { try { _srcToDisc.disconnect();  } catch (_) {} }
+        // Only close the context if we created it — closing
+        // audioEngine's shared ctx would tear down the procedural
+        // music engine that lives outside the briefing.
+        if (_ownedCtx && _ctxToClose && _ctxToClose.state !== 'closed') {
           try { _ctxToClose.close(); } catch (_) {}
         }
       }, BG_FADE_PAUSE * 1000 + 50);
