@@ -23020,8 +23020,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
         // Collision separation — push along the SHORTER overlap axis,
         // 8 iterations, 8px pad. See www/index.html for full rationale.
+        //
+        // CARD_OFFSET must match the .flowNodeLabel CSS transform
+        // translateY(-32px) — that's where the card's bottom-center
+        // actually renders. The leader-line endpoint, the collision
+        // rect, and the viewport clamp all use this same offset so
+        // they agree with the rendered card position.
         const PAD = 8;
         const ITERS = 8;
+        const CARD_OFFSET = 32;
         const vw = window.innerWidth, vh = window.innerHeight;
         for (let iter = 0; iter < ITERS; iter++) {
           let moved = false;
@@ -23029,9 +23036,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
             for (let j = i + 1; j < visible.length; j++) {
               const a = visible[i], b = visible[j];
               const aLeft = a.px - a.w / 2, aRight = a.px + a.w / 2;
-              const aBot  = a.py - 8,        aTop   = aBot - a.h;
+              const aBot  = a.py - CARD_OFFSET, aTop  = aBot - a.h;
               const bLeft = b.px - b.w / 2, bRight = b.px + b.w / 2;
-              const bBot  = b.py - 8,        bTop   = bBot - b.h;
+              const bBot  = b.py - CARD_OFFSET, bTop  = bBot - b.h;
               const overlapX = Math.min(aRight, bRight) - Math.max(aLeft, bLeft);
               const overlapY = Math.min(aBot,   bBot)   - Math.max(aTop,  bTop);
               if (overlapX <= -PAD || overlapY <= -PAD) continue;
@@ -23050,12 +23057,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
           if (!moved) break;
         }
         // Viewport clamp so collision-pushed labels don't escape.
+        // Uses CARD_OFFSET so the clamp operates on actual visual bounds.
         for (const r of visible) {
           const half = r.w / 2;
-          if (r.px - half < 4)        r.px = half + 4;
-          if (r.px + half > vw - 4)   r.px = vw - half - 4;
-          if (r.py - 8 - r.h < 4)     r.py = 4 + 8 + r.h;
-          if (r.py - 8 > vh - 4)      r.py = vh - 4 + 8;
+          if (r.px - half < 4)                r.px = half + 4;
+          if (r.px + half > vw - 4)           r.px = vw - half - 4;
+          if (r.py - CARD_OFFSET - r.h < 4)   r.py = 4 + CARD_OFFSET + r.h;
+          if (r.py - CARD_OFFSET > vh - 4)    r.py = vh - 4 + CARD_OFFSET;
         }
 
         const LEADER_MIN = 6;
@@ -23064,7 +23072,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
           r.l.cardEl.style.top  = r.py + 'px';
           r.l.cardEl.style.opacity = String(r.opacity);
 
-          const ex = r.px, ey = r.py - 8;
+          // Leader ends at the card's bottom-center. CARD_OFFSET=32
+          // matches the .flowNodeLabel CSS translateY(-32px). Was -8
+          // before the CSS lift, leaving a visible 24px stub.
+          const ex = r.px, ey = r.py - CARD_OFFSET;
           const dx = ex - r.ax, dy = ey - r.ay;
           const dist = Math.sqrt(dx * dx + dy * dy);
           r.l.lineEl.setAttribute('x1', r.ax.toFixed(1));
@@ -43143,24 +43154,26 @@ const settingsToggle     = document.getElementById("settingsToggle");
   }
 }
 
-/* ── Per-segment source-country pie — top-left, below the title.
+/* ── Per-segment source-country pie — bottom-LEFT during a briefing.
    Reuses the thread detail panel's "Coverage by source country" data
    so users can clock the geographic distribution at a glance during
-   the briefing. Hidden on non-story segments. */
+   the briefing. Pie always lives on the LEFT, the article-card roll
+   always lives on the RIGHT — single fixed convention so the user's
+   eye lands at the same place every segment. (Was right-anchored
+   before; flipped so pie and article roll consistently split the
+   screen.) */
 .bSegmentSourcePie {
   position: fixed;
-  /* Anchored to the BOTTOM of the screen now (was top: 50% right-center
-     pole). User asked for the pie + article cards to sit just above the
-     control pill so the briefing reads as a stacked layout:
+  /* Anchored to the BOTTOM of the screen. Layout reads as a stack:
        [globe                ]
-       [articles | pie       ]   ← anchored bottom-flanks
+       [pie  |  articles     ]   ← anchored bottom-flanks
        [controls bar         ]   ← bottom
      The bottom offset clears the controls pill (~60px) + nav (~48px) +
      safe-area + breathing room. */
   bottom: calc(var(--page-nav-height, 48px) + env(safe-area-inset-bottom, 0px) + var(--app-bottom-inset, 0px) + 80px);
-  right: 24px;
+  left: 24px;
   top: auto;
-  left: auto;
+  right: auto;
   z-index: 100018;
   width: 150px;
   pointer-events: none;
@@ -43404,14 +43417,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
   .bDataPanelChart svg { overflow: hidden; }
 }
 
-/* ── Left article panel ── */
+/* ── Right article panel — bottom-anchored.
+   Article cards always sit on the RIGHT during a briefing, with the
+   source pie always on the LEFT. Was left-anchored before; flipped
+   so the layout reads as [pie | articles] consistently. ── */
 .bArticlePanel {
   position: absolute;
   /* Bottom-anchored (was top: 50%). Mirror of .bSegmentSourcePie — sits
-     in the symmetrical LEFT slot just above the control pill so the
+     in the symmetrical RIGHT slot just above the control pill so the
      briefing layout reads as a clean three-row stack. */
   bottom: calc(var(--page-nav-height, 48px) + env(safe-area-inset-bottom, 0px) + var(--app-bottom-inset, 0px) + 80px);
-  left: 24px;
+  right: 24px;
+  left: auto;
   top: auto;
   transform: none;
   width: min(270px, 28vw);
@@ -43429,8 +43446,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
        +110px gives the same visual margin without taking too much
        additional vertical space. */
     bottom: calc(var(--page-nav-height, 48px) + env(safe-area-inset-bottom, 0px) + var(--app-bottom-inset, 0px) + 110px);
-    left: env(safe-area-inset-left, 8px);
-    right: auto;
+    right: env(safe-area-inset-right, 8px);
+    left: auto;
     transform: none;
     width: 30vw;
     max-width: 140px;
@@ -44030,7 +44047,12 @@ body.ticker-active .gTickerLabel {
   box-shadow:
     0 10px 26px rgba(0,0,0,0.50),
     0 0 14px rgba(255,180,80,0.18);
-  z-index: 50;
+  /* z-index 100100 sits ABOVE the briefing's article-card rolls
+     (.bArticlePanel + .bSegmentArticleRoll at 100018) and the source
+     pie. Previously 50 — the cards were painting OVER the volume
+     slider, hiding the control whenever it tried to open mid-segment.
+     Volume always wins z-stack against segment chrome. */
+  z-index: 100100;
   display: flex; flex-direction: column; align-items: center; gap: 8px;
 }
 .bVolPopover[hidden] { display: none; }

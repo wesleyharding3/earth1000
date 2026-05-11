@@ -24557,8 +24557,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // the other gets pushed outward. This prevents labels from
         // being pushed off-screen when they're already near a viewport
         // boundary.
+        //
+        // CARD_OFFSET must match the .flowNodeLabel CSS transform
+        // translateY(-32px) — that's where the card's bottom-center
+        // actually renders. Was 8 before the CSS lift; the lag created
+        // a 24px gap where the leader line ended below the card and
+        // the collision rect sat 24px lower than the card's true
+        // visual bounds. Keep these two in sync if the CSS changes.
         const PAD = 8;
         const ITERS = 8;
+        const CARD_OFFSET = 32;
         const vw = window.innerWidth, vh = window.innerHeight;
         for (let iter = 0; iter < ITERS; iter++) {
           let moved = false;
@@ -24566,9 +24574,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
             for (let j = i + 1; j < visible.length; j++) {
               const a = visible[i], b = visible[j];
               const aLeft = a.px - a.w / 2, aRight = a.px + a.w / 2;
-              const aBot  = a.py - 8,        aTop   = aBot - a.h;
+              const aBot  = a.py - CARD_OFFSET, aTop  = aBot - a.h;
               const bLeft = b.px - b.w / 2, bRight = b.px + b.w / 2;
-              const bBot  = b.py - 8,        bTop   = bBot - b.h;
+              const bBot  = b.py - CARD_OFFSET, bTop  = bBot - b.h;
               const overlapX = Math.min(aRight, bRight) - Math.max(aLeft, bLeft);
               const overlapY = Math.min(aBot,   bBot)   - Math.max(aTop,  bTop);
               // Both axes must overlap (with PAD slack) to count as collision.
@@ -24594,25 +24602,29 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // Pass 2.5 — viewport clamp. After collision separation, a
         // label might have been pushed off-screen. Clamp px/py back
         // inside the viewport so labels never disappear off the edge.
+        // Uses the same CARD_OFFSET as the collision rect so the clamp
+        // operates on the actual visual card bounds.
         for (const r of visible) {
           const half = r.w / 2;
-          if (r.px - half < 4)        r.px = half + 4;
-          if (r.px + half > vw - 4)   r.px = vw - half - 4;
-          // py is the bottom-of-label coordinate (effectively); clamp
-          // so the top of the card stays on screen.
-          if (r.py - 8 - r.h < 4)     r.py = 4 + 8 + r.h;
-          if (r.py - 8 > vh - 4)      r.py = vh - 4 + 8;
+          if (r.px - half < 4)                       r.px = half + 4;
+          if (r.px + half > vw - 4)                  r.px = vw - half - 4;
+          // py is the anchor-relative coordinate; the card bottom sits
+          // CARD_OFFSET pixels above py and extends UP by r.h.
+          if (r.py - CARD_OFFSET - r.h < 4)          r.py = 4 + CARD_OFFSET + r.h;
+          if (r.py - CARD_OFFSET > vh - 4)           r.py = vh - 4 + CARD_OFFSET;
         }
 
         // Pass 3 — commit. Card at (px, py); leader from anchor (ax, ay)
-        // up to label bottom-center (px, py-8); circle at the anchor.
+        // up to label bottom-center (px, py - CARD_OFFSET); circle at
+        // the anchor. CARD_OFFSET (32) matches the CSS translateY(-32px)
+        // on .flowNodeLabel — see comment above the collision pass.
         const LEADER_MIN = 6;
         for (const r of visible) {
           r.l.cardEl.style.left = r.px + 'px';
           r.l.cardEl.style.top  = r.py + 'px';
           r.l.cardEl.style.opacity = String(r.opacity);
 
-          const ex = r.px, ey = r.py - 8;
+          const ex = r.px, ey = r.py - CARD_OFFSET;
           const dx = ex - r.ax, dy = ey - r.ay;
           const dist = Math.sqrt(dx * dx + dy * dy);
           r.l.lineEl.setAttribute('x1', r.ax.toFixed(1));
@@ -46267,16 +46279,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
   }
 }
 
-/* ── Per-segment source-country pie — top-left, below the title.
+/* ── Per-segment source-country pie — bottom-LEFT during a briefing.
    Reuses the thread detail panel's "Coverage by source country" data
    so users can clock the geographic distribution at a glance during
-   the briefing. Hidden on phone-sized layouts. */
+   the briefing. Pie always lives on the LEFT, the article-card roll
+   always lives on the RIGHT — single fixed convention so the user's
+   eye lands at the same place every segment. (Was right-anchored
+   before; flipped so pie and article roll don't collide on the same
+   side of the screen on mobile.) */
 .bSegmentSourcePie {
   position: fixed;
   /* Bottom-anchored — see index.html for rationale. */
   bottom: calc(var(--page-nav-height, 48px) + env(safe-area-inset-bottom, 0px) + var(--app-bottom-inset, 0px) + 80px);
-  right: 24px;
-  left: auto;
+  left: 24px;
+  right: auto;
   top: auto;
   z-index: 100018;
   width: 150px;
@@ -46415,21 +46431,23 @@ const settingsToggle     = document.getElementById("settingsToggle");
   body.briefing-active #pageNav,
   body.briefing-active #privacyFooter { display: none !important; }
   body.briefing-active .bControlsWrap {
-    /* Sit above the safe-area inset with a noticeable gap so the pill
-     * doesn't crowd the bottom edge of the screen. The previous -6px
-     * pulled the controls into the home-indicator area; +28px lifts
-     * them clear with a visible breathing strip below. */
-    bottom: calc(env(safe-area-inset-bottom, 0px) + var(--app-bottom-inset, 0px) + 28px);
+    /* Drop the controls down to sit JUST above the home-indicator. The
+     * env(safe-area-inset-bottom) already accounts for the indicator
+     * itself; +8px gives a hair of breathing room without leaving a
+     * floating gap. Was +28px which left a visible band of empty
+     * space below the controls that the user read as wasted screen. */
+    bottom: calc(env(safe-area-inset-bottom, 0px) + var(--app-bottom-inset, 0px) + 8px);
   }
   body.briefing-active .bSegmentSourcePie,
   body.briefing-active .bSegmentArticleRoll {
     top: auto;
-    /* Sit directly above the control panel. Controls bottom = env+28,
-     * wrap height ~64px → wrap top at env+92. +94 puts the roll/pie
-     * bottom 2px above the controls — visually "just above" without a
-     * floating gap. The previous +100 left ~8px of dead space the user
-     * read as the panels being too high. */
-    bottom: calc(env(safe-area-inset-bottom, 0px) + var(--app-bottom-inset, 0px) + 94px);
+    /* Sit directly above the control panel. Controls now bottom at
+     * env+8px (lowered from env+28), wrap height ~64px → wrap top at
+     * env+72. +74 puts the roll/pie bottom 2px above the controls —
+     * visually "just above" without a floating gap. Was +94 paired
+     * with controls at env+28. Adjusted in lockstep with the controls
+     * drop above so the vertical relationship stays the same. */
+    bottom: calc(env(safe-area-inset-bottom, 0px) + var(--app-bottom-inset, 0px) + 74px);
   }
   body.briefing-active .bSegmentSourcePie { transform: translateY(8px); }
   body.briefing-active .bSegmentArticleRoll { transform: translateY(8px); }
@@ -46833,11 +46851,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
   .bDataPanelChart svg { overflow: hidden; }
 }
 
-/* ── Left article panel — bottom-anchored, see index.html. ── */
+/* ── Right article panel — bottom-anchored, see index.html.
+   Article cards always sit on the RIGHT to keep a fixed left-pie /
+   right-cards convention across desktop + mobile. Was left-anchored
+   before; flipped together with .bSegmentSourcePie so the two
+   panels split the screen consistently. ── */
 .bArticlePanel {
   position: absolute;
   bottom: calc(var(--page-nav-height, 48px) + env(safe-area-inset-bottom, 0px) + var(--app-bottom-inset, 0px) + 80px);
-  left: 24px;
+  right: 24px;
+  left: auto;
   top: auto;
   transform: none;
   width: min(270px, 28vw);
@@ -47444,7 +47467,12 @@ body.ticker-active .gTickerLabel {
   box-shadow:
     0 10px 26px rgba(0,0,0,0.50),
     0 0 14px rgba(255,180,80,0.18);
-  z-index: 50;
+  /* z-index 100100 sits ABOVE the briefing's mobile article roll
+     (.bSegmentArticleRoll at 100018) and source pie. Previously 50,
+     which let the article-card carousel paint on top of the volume
+     slider, hiding the control behind it the moment the segment
+     started. Volume controls must always be on top of segment chrome. */
+  z-index: 100100;
   display: flex; flex-direction: column; align-items: center; gap: 8px;
 }
 .bVolPopover[hidden] { display: none; }
