@@ -46527,6 +46527,60 @@ body.ticker-active .gTickerLabel {
     }
   }
 
+  // ── Audio coordination helpers ────────────────────────────────────────────
+  // See www/index.html for the full rationale. Briefly:
+  //   - _waitForCanPlay: resolves when audio is buffered enough to play
+  //     through (readyState ≥ 4); rejects on error/timeout. Gates the
+  //     start of music transitions on actual audio readiness rather
+  //     than the much-earlier loadedmetadata signal.
+  //   - _waitForPlaying: resolves on the `playing` event (audibly
+  //     progressing); rejects after timeoutMs. Catches the iOS
+  //     WKWebView "play() resolves but element stays paused" failure
+  //     so we can recover instead of leaving the user in silence.
+  //   - _briefingWait: addBTimer-backed sleep so it cancels with the
+  //     segment if the user pauses/skips mid-fade.
+  function _waitForCanPlay(sa, timeoutMs = 5000) {
+    return new Promise((resolve, reject) => {
+      if (!sa) return reject(new Error('no-audio'));
+      if (sa.readyState >= 4) { resolve(); return; }
+      let done = false;
+      const cleanup = () => {
+        if (done) return;
+        done = true;
+        sa.removeEventListener('canplaythrough', onCanPlay);
+        sa.removeEventListener('error', onError);
+        clearTimeout(t);
+      };
+      const onCanPlay = () => { cleanup(); resolve(); };
+      const onError   = () => { cleanup(); reject(new Error(`audio-error code=${sa.error?.code}`)); };
+      const t = setTimeout(() => { cleanup(); reject(new Error('canplay-timeout')); }, timeoutMs);
+      sa.addEventListener('canplaythrough', onCanPlay, { once: true });
+      sa.addEventListener('error', onError, { once: true });
+    });
+  }
+  function _waitForPlaying(sa, timeoutMs = 4000) {
+    return new Promise((resolve, reject) => {
+      if (!sa) return reject(new Error('no-audio'));
+      if (!sa.paused && sa.currentTime > 0) { resolve(); return; }
+      let done = false;
+      const cleanup = () => {
+        if (done) return;
+        done = true;
+        sa.removeEventListener('playing', onPlaying);
+        sa.removeEventListener('error', onError);
+        clearTimeout(t);
+      };
+      const onPlaying = () => { cleanup(); resolve(); };
+      const onError   = () => { cleanup(); reject(new Error(`audio-error code=${sa.error?.code}`)); };
+      const t = setTimeout(() => { cleanup(); reject(new Error('playing-timeout')); }, timeoutMs);
+      sa.addEventListener('playing', onPlaying, { once: true });
+      sa.addEventListener('error', onError, { once: true });
+    });
+  }
+  function _briefingWait(ms) {
+    return new Promise(resolve => addBTimer(setTimeout(() => resolve(true), ms)));
+  }
+
   // ── Go to segment ─────────────────────────────────────────────────────────
   // Each segment fetches its own MP3 slice. audio.ended drives advancement.
   // seek=true on user-initiated skips; seek=false on auto-advance (audio.ended).
@@ -46584,12 +46638,14 @@ body.ticker-active .gTickerLabel {
     // Stop story-detail panel audio if open
     if (window._detailAudio) { try { window._detailAudio.pause(); } catch (_) {} }
 
-    // Music phase routing per the briefing-music spec — see www/index.html
-    // for the full phase table.
-    // See www/index.html for the full lifecycle rationale.
+    // Music phase routing — see www/index.html for the full lifecycle.
+    // Story-segment fade-out is now DEFERRED to onReady once the
+    // narrator audio is canplaythrough, so music+narrator stay
+    // coordinated (no more "music silent for 600ms while audio
+    // loads" or "music still loud when narrator starts").
     const _enteringStory = seg?.type === 'story';
     if (_enteringStory) {
-      bgMusicFadeOutAndPause();
+      // Fade is deferred to onReady below.
     } else {
       if (_bgMusicSegmentPaused) bgMusicResumeForGap();
       else bgMusicNarratorEnd();
@@ -46617,76 +46673,17 @@ body.ticker-active .gTickerLabel {
       const estDur = getSegmentDuration(idx);
       let started = false;
 
-      const onReady = () => {
-        if (segIdx !== curIdx || !playing || started) return;
-        started = true;
-        const realDur = isFinite(sa.duration) && sa.duration > 1 ? sa.duration : estDur;
-        clearBTimers();
-        startGlobeTimers(curIdx, seg, realDur / playbackRate);
-        startBgMusic();
-        bgMusicNarratorStart();
-        sa.play().catch(e => console.warn('[briefing] play blocked:', e.message));
-
-        // Segment advance is driven by `audio.ended` (line below) — the
-        // ONLY reliable signal that the narrator has actually finished
-        // speaking. The previous metadata-based primary timer
-        // (`realDur + buffer`) was unreliable because the per-segment
-        // MP3 byte-range slice often reported a slightly-short duration
-        // when its trailing edge didn't fall on a frame boundary,
-        // firing the advance ~50-300ms before the audio actually ended
-        // and cutting the narrator mid-sentence on roughly half the
-        // segments. The fallback timer set outside onReady (estDur +
-        // 6s) still catches genuinely-stuck audio.
-      };
-
-      // Error handler: retry once on transient failures (502, network),
-      // then fall back to word-count timer if retry also fails.
-      let retried = false;
-      sa.addEventListener('error', () => {
-        if (segIdx !== curIdx || started) return;
-        if (!retried) {
-          retried = true;
-          console.warn(`[briefing] audio load error seg ${curIdx} — retrying`);
-          sa.src = `${API}/api/briefing/audio/${episode.id}/${curIdx}?at=${encodeURIComponent(window.__authToken || '')}&r=1`;
-          sa.load();
-          return;
-        }
-        // Retry failed — run segment on word-count timer with no audio
-        console.warn(`[briefing] audio retry failed seg ${curIdx} — using silent fallback`);
-        started = true;
-        clearBTimers();
-        startGlobeTimers(curIdx, seg, estDur / playbackRate);
-        clearTimeout(segTimer);
-        segTimer = setTimeout(() => {
-          if (segIdx !== curIdx || !playing) return;
-          goToSegment(curIdx + 1);
-        }, Math.round((estDur * 1000) / playbackRate) + (SEGMENT_BUFFER_MS / playbackRate));
-      });
-
-      if (sa.readyState >= 1) {
-        // Preloaded — metadata already available, fire immediately
-        onReady();
-      } else {
-        sa.addEventListener('loadedmetadata', onReady, { once: true });
-      }
-
-      // Backup: ended-driven advance in case the primary timer was cleared
-      // (e.g. user paused then resumed). Video segments use the long pause;
-      // regular segments use SEGMENT_BUFFER_MS for a breathing room gap.
-      sa.addEventListener('ended', () => {
+      // Segment-end handler hoisted above onReady so the recovery
+      // branch in onReady can re-attach it to a freshly-created
+      // Audio element. See www/index.html for full rationale.
+      const _onSegmentEnded = () => {
         if (segIdx !== curIdx || !playing) return;
-        // Resume paused music for an audible 3s swell during story
-        // gaps; ramp gain only when track is already playing-but-ducked.
-        // See www/index.html for full rationale.
         if (_bgMusicSegmentPaused) bgMusicResumeForGap();
         else bgMusicNarratorEnd();
         clearTimeout(segTimer);
         let pauseMs = seg.video_id
           ? (VIDEO_PAUSE_SECS * 1000) / playbackRate
           : SEGMENT_BUFFER_MS / playbackRate;
-        // Passive-overlay defer (twitter_post): if a focal overlay is
-        // still showing when narrator finishes, wait until it's done
-        // before advancing. See www/index.html for full rationale.
         if (_focalActive && _focalScheduledEndMs > 0) {
           const nowMs = (typeof performance !== 'undefined' ? performance.now() : Date.now());
           const focalRemaining = _focalScheduledEndMs - nowMs;
@@ -46698,7 +46695,117 @@ body.ticker-active .gTickerLabel {
           if (segIdx !== curIdx) return;
           goToSegment(curIdx + 1);
         }, pauseMs);
-      }, { once: true });
+      };
+
+      // onReady: async coordinator that waits for canplaythrough
+      // (readyState ≥ 4), sequences the music transition, plays the
+      // narrator, then verifies via _waitForPlaying that audio is
+      // audibly progressing. On any failure: ONE element-recreate
+      // retry, then advance instead of leaving the user in silence.
+      //
+      // Story-segment music fade is deferred here so timing is gated
+      // on narrator readiness (vs the prior "fire fade immediately,
+      // hope narrator catches up" pattern that produced the user-
+      // reported overlap-or-silent-gap mess).
+      const MUSIC_TO_NARRATOR_BUFFER_MS = 500;
+      let retried = false;
+      const onReady = async () => {
+        if (segIdx !== curIdx || !playing || started) return;
+        started = true;
+
+        try {
+          await _waitForCanPlay(sa, 6000);
+          if (segIdx !== curIdx || !playing) return;
+
+          const realDur = isFinite(sa.duration) && sa.duration > 1 ? sa.duration : estDur;
+          clearBTimers();
+          startGlobeTimers(curIdx, seg, realDur / playbackRate);
+
+          startBgMusic();
+          if (_enteringStory) {
+            bgMusicFadeOutAndPause();
+            await _briefingWait(BG_FADE_PAUSE * 1000 + MUSIC_TO_NARRATOR_BUFFER_MS);
+            if (segIdx !== curIdx || !playing) return;
+          } else {
+            bgMusicNarratorStart();
+          }
+
+          const p = sa.play();
+          if (p && typeof p.then === 'function') p.catch(() => {});
+          await _waitForPlaying(sa, 4000);
+          console.log(`[briefing] seg ${curIdx} playing — currentTime=${sa.currentTime.toFixed(2)} duration=${sa.duration.toFixed(2)}`);
+        } catch (err) {
+          console.warn(`[briefing] seg ${curIdx} start sequence failed: ${err.message}`);
+          if (segIdx !== curIdx || !playing) return;
+
+          if (!retried) {
+            retried = true;
+            try {
+              const fresh = new Audio(
+                `${API}/api/briefing/audio/${episode.id}/${curIdx}?at=${encodeURIComponent(window.__authToken || '')}&r=1`
+              );
+              fresh.preload = 'auto';
+              fresh._segIdx = curIdx;
+              fresh.playbackRate = playbackRate;
+              _bgRegisterNarration(fresh);
+              try { sa.pause(); } catch (_) {}
+              audio = fresh;
+              await _waitForCanPlay(fresh, 5000);
+              if (segIdx !== curIdx || !playing) return;
+              const p2 = fresh.play();
+              if (p2 && typeof p2.then === 'function') p2.catch(() => {});
+              await _waitForPlaying(fresh, 4000);
+              console.log(`[briefing] seg ${curIdx} recovered on retry`);
+              fresh.addEventListener('ended', _onSegmentEnded, { once: true });
+            } catch (err2) {
+              console.error(`[briefing] seg ${curIdx} recovery also failed (${err2.message}) — skipping segment`);
+              goToSegment(curIdx + 1);
+            }
+          } else {
+            goToSegment(curIdx + 1);
+          }
+        }
+      };
+
+      // Network-error handler — distinct from the canplay/playing-
+      // timeout path inside onReady (those are handled there).
+      sa.addEventListener('error', () => {
+        if (segIdx !== curIdx || started) return;
+        if (!retried) {
+          retried = true;
+          console.warn(`[briefing] audio load error seg ${curIdx} — retrying`);
+          sa.src = `${API}/api/briefing/audio/${episode.id}/${curIdx}?at=${encodeURIComponent(window.__authToken || '')}&r=1`;
+          sa.load();
+          return;
+        }
+        console.warn(`[briefing] audio retry failed seg ${curIdx} — using silent fallback`);
+        started = true;
+        clearBTimers();
+        startGlobeTimers(curIdx, seg, estDur / playbackRate);
+        clearTimeout(segTimer);
+        segTimer = setTimeout(() => {
+          if (segIdx !== curIdx || !playing) return;
+          goToSegment(curIdx + 1);
+        }, Math.round((estDur * 1000) / playbackRate) + (SEGMENT_BUFFER_MS / playbackRate));
+      });
+
+      // Trigger onReady on canplaythrough (readyState ≥ 4) — not the
+      // earlier loadedmetadata. See www/index.html for rationale.
+      if (sa.readyState >= 4) {
+        onReady();
+      } else {
+        sa.addEventListener('canplaythrough', onReady, { once: true });
+        // Belt-and-suspenders: 2s grace window for builds where
+        // canplaythrough doesn't fire on already-cached audio. onReady's
+        // internal _waitForCanPlay still gates the actual start.
+        addBTimer(setTimeout(() => {
+          if (!started && sa.readyState >= 1) onReady();
+        }, 2000));
+      }
+
+      // Ended-driven advance. _onSegmentEnded is declared above so
+      // the recovery branch above can re-attach it.
+      sa.addEventListener('ended', _onSegmentEnded, { once: true });
 
       // Fallback: advance anyway if audio stalls or never fires ended.
       // Guard includes !playing so a long pause can never trigger an advance.
