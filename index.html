@@ -43182,23 +43182,22 @@ const settingsToggle     = document.getElementById("settingsToggle");
      centering translateY since we're now bottom-anchored. */
   transform: translateY(8px);
   transition: opacity 0.45s ease, transform 0.45s cubic-bezier(0.32, 0.72, 0, 1);
-  /* Glass treatment — matches the canonical .bControlBtn / .flowNodeLabel
-     pattern: radial sheen at the top-left, linear gradient body, inset
-     white highlight + soft outer shadow, backdrop blur+saturate. So the
-     pie reads as part of the same crystal family the control pill, the
-     flow-arc labels, and the briefing buttons all sit in. */
+  /* Glass treatment — opacity bumped (was 0.45→0.55, now 0.82→0.92)
+     so the pie reads as a solid panel against busy globe content
+     rather than a translucent wash. Border + sheen also slightly
+     stronger to match. See www/index.html for full rationale. */
   background:
-    radial-gradient(ellipse 120% 60% at 30% 0%, rgba(255,255,255,0.18) 0%, transparent 60%),
-    linear-gradient(180deg, rgba(255,255,255,0.10) 0%, rgba(7,12,22,0.45) 50%, rgba(7,12,22,0.55) 100%);
-  border: 1px solid rgba(255,255,255,0.18);
+    radial-gradient(ellipse 120% 60% at 30% 0%, rgba(255,255,255,0.20) 0%, transparent 60%),
+    linear-gradient(180deg, rgba(255,255,255,0.14) 0%, rgba(7,12,22,0.82) 50%, rgba(7,12,22,0.92) 100%);
+  border: 1px solid rgba(255,255,255,0.22);
   border-radius: 12px;
   padding: 8px 10px 10px;
   backdrop-filter: blur(14px) saturate(1.2);
   -webkit-backdrop-filter: blur(14px) saturate(1.2);
   box-shadow:
-    0 8px 24px rgba(0,0,0,0.40),
-    inset 0 1px 1px 0 rgba(255,255,255,0.28),
-    inset 0 -1px 2px -1px rgba(0,0,0,0.15);
+    0 8px 24px rgba(0,0,0,0.45),
+    inset 0 1px 1px 0 rgba(255,255,255,0.30),
+    inset 0 -1px 2px -1px rgba(0,0,0,0.18);
 }
 .bSegmentSourcePie.visible {
   opacity: 1;
@@ -45592,25 +45591,44 @@ body.ticker-active .gTickerLabel {
     const el = document.getElementById('bSegmentSourcePie');
     if (!el) return;
     const myToken = ++_sourcePieToken;
-    if (seg?.type !== 'story' || !seg.thread_id) {
-      el.classList.remove('visible');
-      el.innerHTML = '';
+    // The pie should appear on EVERY segment in the same place
+    // (intro/outro/keywords/summary included). Each story thread has
+    // its own source-country panel; for non-story segments we surface
+    // a NEIGHBOR thread's pie so the panel never blanks:
+    //   - intro / pre-first-story → first story segment's thread_id
+    //   - between stories          → previous story (sticky via cache)
+    //   - outro / summary / keywords → most-recent prior story
+    // See www/index.html for the full rationale.
+    let threadId = seg?.thread_id || null;
+    if (!threadId && Array.isArray(episode?.segments)) {
+      const myIdx = (typeof segIdx === 'number') ? segIdx : -1;
+      for (let i = myIdx - 1; i >= 0; i--) {
+        const s = episode.segments[i];
+        if (s?.type === 'story' && s.thread_id) { threadId = s.thread_id; break; }
+      }
+      if (!threadId) {
+        for (let i = Math.max(0, myIdx + 1); i < episode.segments.length; i++) {
+          const s = episode.segments[i];
+          if (s?.type === 'story' && s.thread_id) { threadId = s.thread_id; break; }
+        }
+      }
+    }
+    if (!threadId) {
+      // No story anywhere in the episode → leave whatever was last
+      // rendered (safer than blanking).
       return;
     }
-    const threadId = seg.thread_id;
     const render = (panel) => {
       if (myToken !== _sourcePieToken) return;
       if (!panel || !window.__renderDataPanelHTML) {
-        el.classList.remove('visible');
-        el.innerHTML = '';
+        // Keep prior pie visible rather than blank it.
         return;
       }
       const data = (typeof panel.data === 'string') ? JSON.parse(panel.data) : (panel.data || {});
       const labels = Array.isArray(data.labels) ? data.labels : [];
       const values = Array.isArray(data.series?.[0]?.values) ? data.series[0].values : [];
       if (!labels.length || !values.length) {
-        el.classList.remove('visible');
-        el.innerHTML = '';
+        // Empty data — keep prior pie rather than blanking.
         return;
       }
       const colors = ['#ff9940', '#60c8ff', '#9be564', '#e07be0', '#ffd266', '#ff7b7b', '#6ba6ff', '#ff9e9e', '#b58cff'];
@@ -46721,13 +46739,17 @@ body.ticker-active .gTickerLabel {
           clearBTimers();
           startGlobeTimers(curIdx, seg, realDur / playbackRate);
 
+          // Music never fades to silence anymore — user prefers it
+          // stays audibly under the narrator for the whole briefing.
+          // Both story and non-story segments duck to BG_VOL_LOW under
+          // narrator; story segments still get the half-second buffer
+          // so the duck-down completes before the voice arrives. See
+          // www/index.html for the long-form rationale.
           startBgMusic();
+          bgMusicNarratorStart();
           if (_enteringStory) {
-            bgMusicFadeOutAndPause();
-            await _briefingWait(BG_FADE_PAUSE * 1000 + MUSIC_TO_NARRATOR_BUFFER_MS);
+            await _briefingWait(BG_FADE_OUT * 1000 + MUSIC_TO_NARRATOR_BUFFER_MS);
             if (segIdx !== curIdx || !playing) return;
-          } else {
-            bgMusicNarratorStart();
           }
 
           const p = sa.play();
