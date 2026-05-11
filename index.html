@@ -44156,7 +44156,9 @@ body.ticker-active .gTickerLabel {
   padding: 8px 12px;
   border-radius: 999px;
   position: relative;
-  overflow: hidden;
+  /* overflow: visible — was `hidden`, which clipped the volume popover.
+     See www/index.html for full rationale. */
+  overflow: visible;
   background:
     radial-gradient(ellipse 120% 60% at 30% 0%, rgba(255,255,255,0.14) 0%, transparent 60%),
     radial-gradient(ellipse 80% 50% at 80% 10%, rgba(200,220,255,0.10) 0%, transparent 50%),
@@ -45555,6 +45557,17 @@ body.ticker-active .gTickerLabel {
     const isoToName = window._isoToName || ((iso) => iso);
     for (const iso of (seg.flow_arc_isos || [])) push(iso, isoToName(iso));
     for (const iso of (seg.secondary_country_isos || [])) push(iso, isoToName(iso));
+    // Editorial nations arrays are authoritative — read them directly
+    // so we don't depend on the arc name-lookup that can miss on case
+    // / diacritic variants. See www/index.html for full rationale.
+    for (const iso of (seg.primary_nations || [])) push(iso, isoToName(iso));
+    for (const iso of (seg.secondary_nations || [])) push(iso, isoToName(iso));
+    // Also read secondary_locations — the chip row was the only consumer
+    // that wasn't iterating this field. See www/index.html.
+    for (const loc of (seg.secondary_locations || [])) {
+      if (loc?.iso || loc?.iso_code) push(loc.iso || loc.iso_code, loc?.name);
+      else if (loc?.name) push('', loc.name);
+    }
     if (isos.length < 2) {
       const arcs = [
         ...(Array.isArray(seg.flow_arcs) ? seg.flow_arcs : []),
@@ -45565,7 +45578,9 @@ body.ticker-active .gTickerLabel {
         push('', a?.to_name);
       }
     }
-    const capped = isos.slice(0, 5);
+    // Cap bumped 5 → 8 so a country that did render on the globe label
+    // doesn't get silently dropped from the chip row. See www version.
+    const capped = isos.slice(0, 8);
     if (!capped.length) {
       el.classList.remove('visible');
       el.innerHTML = '';
@@ -46790,17 +46805,35 @@ body.ticker-active .gTickerLabel {
       };
 
       // Network-error handler — distinct from the canplay/playing-
-      // timeout path inside onReady (those are handled there).
-      sa.addEventListener('error', () => {
+      // timeout path inside onReady. Retry path REFRESHES the auth
+      // token from Supabase before re-issuing the request: post-
+      // rebuild / cold-start failures are usually the auth-token-not-
+      // yet-hydrated race. See www/index.html for the long-form
+      // rationale.
+      sa.addEventListener('error', async () => {
         if (segIdx !== curIdx || started) return;
+        const code = sa.error?.code;
         if (!retried) {
           retried = true;
-          console.warn(`[briefing] audio load error seg ${curIdx} — retrying`);
-          sa.src = `${API}/api/briefing/audio/${episode.id}/${curIdx}?at=${encodeURIComponent(window.__authToken || '')}&r=1`;
+          console.warn(`[briefing] audio load error seg ${curIdx} (code=${code}) — refreshing token & retrying`);
+          let freshTok = window.__authToken || '';
+          try {
+            const supa = window.sb || window.__supabase || null;
+            if (supa?.auth?.getSession) {
+              const { data } = await supa.auth.getSession();
+              const newTok = data?.session?.access_token || '';
+              if (newTok) {
+                freshTok = newTok;
+                window.__authToken = newTok;
+              }
+            }
+          } catch (_) {}
+          if (segIdx !== curIdx || started) return;
+          sa.src = `${API}/api/briefing/audio/${episode.id}/${curIdx}?at=${encodeURIComponent(freshTok)}&r=1`;
           sa.load();
           return;
         }
-        console.warn(`[briefing] audio retry failed seg ${curIdx} — using silent fallback`);
+        console.warn(`[briefing] audio retry failed seg ${curIdx} (code=${code}) — using silent fallback`);
         started = true;
         clearBTimers();
         startGlobeTimers(curIdx, seg, estDur / playbackRate);
@@ -47260,10 +47293,13 @@ body.ticker-active .gTickerLabel {
     }
 
     // Non-featured YouTube reference — mount iframe inline as before.
+    // onload fires __bUnmuteVideoIframe so the user actually hears
+    // audio. See www/index.html for full rationale.
     return `<div class="bAPCard bAPVideoCard" id="bVideoCard" data-video-id="${videoId}" data-media-type="youtube">
       <iframe id="bVideoIframe" src="${window._ytEmbedUrl(videoId, { jsapi: true, cc: true })}"
         allowfullscreen allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
         referrerpolicy="origin"
+        onload="window.__bUnmuteVideoIframe?.(this)"
         onerror="this.closest('.bAPVideoCard').remove()"></iframe>
       <div class="bAPCardBody">
         <div class="bAPCardMeta">
@@ -47366,6 +47402,28 @@ body.ticker-active .gTickerLabel {
       event: 'command', func, args: args || []
     }), '*');
   }
+
+  // Reference (non-focal) YouTube iframe needs an unMute follow-up
+  // because the Capacitor proxy forces mute=1 in the URL for iOS
+  // autoplay. Backoff retries beat the YT-player-not-ready-yet race.
+  // See www/index.html for full rationale.
+  window.__bUnmuteVideoIframe = function(iframe) {
+    if (!iframe) return;
+    const send = () => {
+      try {
+        iframe.contentWindow?.postMessage(JSON.stringify({
+          event: 'command', func: 'unMute', args: []
+        }), '*');
+        iframe.contentWindow?.postMessage(JSON.stringify({
+          event: 'command', func: 'setVolume', args: [50]
+        }), '*');
+      } catch (_) {}
+    };
+    send();
+    setTimeout(send, 300);
+    setTimeout(send, 800);
+    setTimeout(send, 1500);
+  };
 
   const _volumeLevels = { low: 25, medium: 50, high: 75 };
 
@@ -47512,7 +47570,15 @@ body.ticker-active .gTickerLabel {
           _postYTCommand(iframe, 'playVideo');
         };
         sendCmds();
-        const onIframeLoad = () => { setTimeout(sendCmds, 250); };
+        // Staggered retries — see www/index.html. Single 250ms wasn't
+        // enough on cold proxy loads where YT player bootstrap can
+        // take 1.5s+.
+        const onIframeLoad = () => {
+          setTimeout(sendCmds, 250);
+          setTimeout(sendCmds, 750);
+          setTimeout(sendCmds, 1500);
+          setTimeout(sendCmds, 2500);
+        };
         try {
           const doc = iframe.contentDocument || iframe.contentWindow?.document;
           if (doc && doc.readyState === 'complete') onIframeLoad();

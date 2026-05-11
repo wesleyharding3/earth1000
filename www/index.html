@@ -47611,7 +47611,15 @@ body.ticker-active .gTickerLabel {
   padding: 8px 12px;
   border-radius: 999px;
   position: relative;
-  overflow: hidden;
+  /* overflow: visible — was `hidden`. The volume popover (.bVolPopover)
+     is position:absolute against .bVolWrap, but absolutely-positioned
+     descendants are STILL clipped by an `overflow:hidden` ancestor.
+     With hidden here, the popover rendered inside the DOM but was
+     invisible the moment it tried to extend above the pill's top
+     edge. The pill's rounded shape is from border-radius which clips
+     background gradients on its own — the overflow:hidden wasn't
+     doing anything else necessary. */
+  overflow: visible;
   background:
     radial-gradient(ellipse 120% 60% at 30% 0%, rgba(255,255,255,0.14) 0%, transparent 60%),
     radial-gradient(ellipse 80% 50% at 80% 10%, rgba(200,220,255,0.10) 0%, transparent 50%),
@@ -49213,8 +49221,30 @@ body.ticker-active .gTickerLabel {
     const isoToName = window._isoToName || ((iso) => iso);
     for (const iso of (seg.flow_arc_isos || [])) push(iso, isoToName(iso));
     for (const iso of (seg.secondary_country_isos || [])) push(iso, isoToName(iso));
-    // Fallback: derive ISOs from flow_arcs by name lookup if pre-resolved
-    // arrays were missing or empty (older briefing payloads).
+    // Editorial nations from the segment payload (briefingGenerator
+    // sometimes embeds `primary_nations` / `secondary_nations` arrays
+    // directly on the segment; sometimes it's only on the thread).
+    // The thread arrays ARE authoritative — see story_threads.primary_
+    // nations. The "Vietnam Elevates Ties with India and Sri Lanka"
+    // failure was the chip row reading only pre-resolved iso fields
+    // (which were empty) + arc name-lookup (which can miss on case /
+    // diacritic variants). Reading the nations arrays directly here
+    // bypasses both failure modes — we get IN + LK guaranteed when
+    // the thread says so.
+    for (const iso of (seg.primary_nations || [])) push(iso, isoToName(iso));
+    for (const iso of (seg.secondary_nations || [])) push(iso, isoToName(iso));
+    // secondary_locations is a 2nd source the chip row was missing.
+    // The segment we saw had: secondary_locations = [{name:'India', lat, lon},
+    // {name:'Sri Lanka', lat, lon}] but secondary_country_isos = []. The
+    // OTHER consumers (globe highlight, briefingAddFlowArcLabel) read
+    // secondary_locations directly — the chip row was the outlier.
+    for (const loc of (seg.secondary_locations || [])) {
+      if (loc?.iso || loc?.iso_code) push(loc.iso || loc.iso_code, loc?.name);
+      else if (loc?.name) push('', loc.name);
+    }
+    // Fallback: derive ISOs from flow_arcs by name lookup if all of the
+    // above came up short. Older briefing payloads pre-date the iso
+    // arrays entirely and only carry the arc objects with name strings.
     if (isos.length < 2) {
       const arcs = [
         ...(Array.isArray(seg.flow_arcs) ? seg.flow_arcs : []),
@@ -49225,7 +49255,13 @@ body.ticker-active .gTickerLabel {
         push('', a?.to_name);
       }
     }
-    const capped = isos.slice(0, 5);
+    // Cap bumped 5 → 8. The previous 5-cap silently dropped the 6th+
+    // country from the chip row even though all of them rendered as
+    // globe labels — that's why Sri Lanka was visible on the globe
+    // but missing from the header chips. 8 fits the typical primary
+    // (1-4) + secondary (0-12 with the 2% noise floor usually filtering
+    // down to 3-5) without making the header crowded.
+    const capped = isos.slice(0, 8);
     if (!capped.length) {
       el.classList.remove('visible');
       el.innerHTML = '';
@@ -50852,16 +50888,49 @@ body.ticker-active .gTickerLabel {
       // Network-error handler — only for transient HTTP errors. Distinct
       // from the canplay/playing-timeout path inside onReady (those are
       // handled by the recovery branch there).
-      sa.addEventListener('error', () => {
+      //
+      // The retry path REFRESHES the auth token from Supabase before
+      // re-issuing the request. Post-rebuild / post-cold-start failures
+      // are almost always the auth-token-not-yet-hydrated race: the
+      // briefing-audio endpoint requires a valid Bearer-ish `at=`
+      // query param, and `window.__authToken` is populated async from
+      // the iOS Keychain via Supabase's session restore. If the user
+      // taps Start Briefing in the first ~500ms after launch, the
+      // token is `undefined`, the first request 401s, and the prior
+      // retry just resent the same empty token. Now we re-pull the
+      // session before retrying so the second attempt actually has
+      // credentials.
+      sa.addEventListener('error', async () => {
         if (segIdx !== curIdx || started) return;
+        // Log the actual MediaError code so future failures are
+        // diagnosable. Codes: 1=ABORTED, 2=NETWORK, 3=DECODE, 4=SRC_NOT_SUPPORTED.
+        // 4 with our authed URL almost always means HTTP 401/403 — the
+        // server returned a JSON error body which the <audio> element
+        // refuses to decode.
+        const code = sa.error?.code;
         if (!retried) {
           retried = true;
-          console.warn(`[briefing] audio load error seg ${curIdx} — retrying`);
-          sa.src = `${API}/api/briefing/audio/${episode.id}/${curIdx}?at=${encodeURIComponent(window.__authToken || '')}&r=1`;
+          console.warn(`[briefing] audio load error seg ${curIdx} (code=${code}) — refreshing token & retrying`);
+          let freshTok = window.__authToken || '';
+          try {
+            // Force-pull the session — supports the cold-start case
+            // where __authToken hadn't hydrated when the briefing opened.
+            const supa = window.sb || window.__supabase || null;
+            if (supa?.auth?.getSession) {
+              const { data } = await supa.auth.getSession();
+              const newTok = data?.session?.access_token || '';
+              if (newTok) {
+                freshTok = newTok;
+                window.__authToken = newTok; // backfill for subsequent segments
+              }
+            }
+          } catch (_) {}
+          if (segIdx !== curIdx || started) return;
+          sa.src = `${API}/api/briefing/audio/${episode.id}/${curIdx}?at=${encodeURIComponent(freshTok)}&r=1`;
           sa.load();
           return;
         }
-        console.warn(`[briefing] audio retry failed seg ${curIdx} — using silent fallback`);
+        console.warn(`[briefing] audio retry failed seg ${curIdx} (code=${code}) — using silent fallback`);
         started = true;
         clearBTimers();
         startGlobeTimers(curIdx, seg, estDur / playbackRate);
@@ -51477,10 +51546,16 @@ body.ticker-active .gTickerLabel {
     }
 
     // Non-featured YouTube reference — mount iframe inline as before.
+    // onload fires __bUnmuteVideoIframe so the user actually hears the
+    // video — the Capacitor proxy enforces mute=1 in the URL (required
+    // for iOS autoplay), and without an unMute postMessage follow-up
+    // the audio stays silent. The helper retries unMute at multiple
+    // intervals to defeat the YT-player-not-ready-yet timing race.
     return `<div class="bAPCard bAPVideoCard" id="bVideoCard" data-video-id="${videoId}" data-media-type="youtube">
       <iframe id="bVideoIframe" src="${window._ytEmbedUrl(videoId, { jsapi: true, cc: true })}"
         allowfullscreen allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
         referrerpolicy="origin"
+        onload="window.__bUnmuteVideoIframe?.(this)"
         onerror="this.closest('.bAPVideoCard').remove()"></iframe>
       <div class="bAPCardBody">
         <div class="bAPCardMeta">
@@ -51603,6 +51678,42 @@ body.ticker-active .gTickerLabel {
       event: 'command', func, args: args || []
     }), '*');
   }
+
+  // Window-level helper for the reference (non-focal) YouTube iframe.
+  // The Capacitor proxy at /api/video-embed enforces mute=1 on the
+  // YouTube URL because iOS WKWebView blocks unmuted autoplay. The
+  // focal-video path follows up with an unMute postMessage; the
+  // reference-video path (the small inline card) had NO such follow-up,
+  // so the video played silent forever — that's the "audio is muted by
+  // default now even though it used to be unmuted" regression the user
+  // reported.
+  //
+  // Backoff retries: the YouTube player JS inside the proxy iframe
+  // needs to bootstrap + register its postMessage listener before our
+  // unMute lands. Empirically takes 100-1500ms depending on cold/warm
+  // cache. We fire the command at 0/300/800/1500ms — any one of them
+  // landing after the player is ready does the job; the others are
+  // idempotent no-ops.
+  window.__bUnmuteVideoIframe = function(iframe) {
+    if (!iframe) return;
+    const send = () => {
+      try {
+        iframe.contentWindow?.postMessage(JSON.stringify({
+          event: 'command', func: 'unMute', args: []
+        }), '*');
+        // Also send setVolume so the user's briefing volume actually
+        // takes effect (default YT volume = 100, our briefing audio
+        // sits at lower levels). 50 matches the focal-video default.
+        iframe.contentWindow?.postMessage(JSON.stringify({
+          event: 'command', func: 'setVolume', args: [50]
+        }), '*');
+      } catch (_) {}
+    };
+    send();
+    setTimeout(send, 300);
+    setTimeout(send, 800);
+    setTimeout(send, 1500);
+  };
 
   const _volumeLevels = { low: 25, medium: 50, high: 75 };
 
@@ -51811,12 +51922,23 @@ body.ticker-active .gTickerLabel {
         };
         // Defensive immediate send (works if iframe was already loaded).
         sendCmds();
-        // Plus a load-event-driven send for the cold-iframe case. The
-        // 250ms additional delay covers the YT player's bootstrap window
-        // — the iframe's `load` event fires when the document inside is
-        // parsed, but the YT.Player API needs another tick to be ready.
+        // Staggered retries with backoff so we defeat the YT-player-
+        // not-ready-yet timing race. The iframe's `load` event fires
+        // when the proxy document parses; the YT.Player JS inside that
+        // proxy needs additional time to bootstrap + register its
+        // postMessage listener. Empirically this can take 100-1500ms
+        // depending on cold/warm cache. We fire commands at multiple
+        // intervals after load — any one that lands post-ready does
+        // the job; the others are idempotent no-ops.
+        //
+        // This is the "video plays from the beginning + muted" failure
+        // mode the user reported regressing. The previous single
+        // 250ms retry wasn't enough on cold proxy loads.
         const onIframeLoad = () => {
           setTimeout(sendCmds, 250);
+          setTimeout(sendCmds, 750);
+          setTimeout(sendCmds, 1500);
+          setTimeout(sendCmds, 2500);
         };
         // If the iframe is already complete, fire onIframeLoad now;
         // otherwise wait for the `load` event.

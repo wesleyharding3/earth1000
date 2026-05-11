@@ -12001,6 +12001,15 @@ app.get("/api/timelines/:timelineId/panels", async (req, res) => {
 // source country at ingestion). Top 8 slices named; everything past 8 is
 // collapsed into a single "+N more" slice so the chart stays readable for
 // threads with 30+ source countries in their long tail.
+//
+// Fallback path (added after a briefing's story segments started showing
+// "no pie" because constituent articles had been detached by the audit-
+// articles cron between briefing generation and playback): if the article
+// join returns 0 rows, we fall back to the thread's `primary_nations` +
+// `secondary_nations` arrays — those carry the editorially-resolved
+// country set even when article_count drops to 0. This guarantees every
+// story thread that has ANY country tags can draw a pie. Timeline objects
+// don't have the nations arrays so the timeline path still returns null.
 async function computeCoveragePiePanel(pool, { type, id }) {
   const table = type === 'timeline' ? 'story_timeline_articles' : 'story_thread_articles';
   const col   = type === 'timeline' ? 'timeline_id' : 'thread_id';
@@ -12031,7 +12040,61 @@ async function computeCoveragePiePanel(pool, { type, id }) {
      ORDER BY n DESC
      LIMIT 32
   `, [id]);
-  if (!rows.length) return null;
+  if (!rows.length) {
+    // Threads only — fall back to the editorial nation arrays so a thread
+    // whose articles got detached post-briefing-generation still has a
+    // pie to render. Each PRIMARY iso gets weight 3 (more central) and
+    // each SECONDARY gets weight 1, so the pie still ranks them sensibly.
+    // Names come from the countries table (so the legend reads "France"
+    // rather than "FR"). Any iso missing from the countries table is
+    // skipped — protects against a stray "EU" / "XK" / hallucinated code.
+    if (type === 'thread') {
+      const { rows: tRow } = await pool.query(
+        `SELECT primary_nations, secondary_nations FROM story_threads WHERE id = $1`,
+        [id]
+      );
+      const primary   = (tRow[0]?.primary_nations || []).map(s => String(s).toUpperCase());
+      const secondary = (tRow[0]?.secondary_nations || []).map(s => String(s).toUpperCase());
+      const all = new Set([...primary, ...secondary]);
+      if (!all.size) return null;
+      const { rows: nameRows } = await pool.query(
+        `SELECT iso_code, name FROM countries WHERE UPPER(iso_code) = ANY($1::text[])`,
+        [[...all]]
+      );
+      const nameByIso = new Map(nameRows.map(r => [String(r.iso_code).toUpperCase(), r.name]));
+      const weighted = [...all]
+        .filter(iso => nameByIso.has(iso))
+        .map(iso => ({
+          iso_code: iso,
+          name:     nameByIso.get(iso),
+          n:        primary.includes(iso) ? 3 : 1,
+          recent_n: 0,
+          baseline_n: 0,
+        }))
+        .sort((a, b) => b.n - a.n);
+      if (!weighted.length) return null;
+      const TOP_N_FB = 8;
+      const top = weighted.slice(0, TOP_N_FB);
+      const rest = weighted.slice(TOP_N_FB);
+      const labels = top.map(r => r.name);
+      const values = top.map(r => r.n);
+      if (rest.length) {
+        labels.push(`+${rest.length} more`);
+        values.push(rest.reduce((s, r) => s + r.n, 0));
+      }
+      const total = values.reduce((a, b) => a + b, 0);
+      return {
+        title:      'Coverage by source country',
+        subtitle:   `${weighted.length} countr${weighted.length === 1 ? 'y' : 'ies'}`,
+        caption:    'Distribution from editorial country tags.',
+        chart_type: 'pie',
+        data:       { labels, series: [{ name: 'Weight', values }], unit: 'tags' },
+        source_name: 'earth00 (editorial tags)',
+        generated_by: 'computed_stats_fallback',
+      };
+    }
+    return null;
+  }
 
   const TOP_N = 8;
   const top = rows.slice(0, TOP_N);
