@@ -12780,9 +12780,24 @@ body.auth-modal-open > *:not(#authOverlay) { pointer-events: none !important; }
   justify-content: center; flex-shrink: 0; transition: all 0.15s;
 }
 .libItemRemove:hover { background: rgba(255,50,50,0.12); color: rgba(255,100,100,0.8); }
-/* Briefing paywall modal — anon-wall + weekly-used flavors. Same visual
-   vocabulary as the saved-views modal (centered glass card) so the app
-   has one consistent modal style. */
+/* Saved-view rows in the Views tab — a heat/flows glyph sits left of the
+   title to make the type readable at a glance. The icon block keeps
+   its own width so two-line view names don't push it out of alignment.
+   Re-uses .libItem flex layout for everything else. */
+.libItemIcon {
+  width: 28px; height: 28px;
+  flex: 0 0 28px;
+  border-radius: 8px;
+  background: rgba(255,195,70,0.08);
+  border: 1px solid rgba(255,195,70,0.16);
+  color: rgba(255,195,70,0.85);
+  display: flex; align-items: center; justify-content: center;
+  align-self: flex-start;
+}
+.libItemIcon svg { width: 14px; height: 14px; }
+/* Briefing paywall modal — anon-wall + weekly-used flavors. Centered
+   glass-card style shared with deleteAccountModal so the app has one
+   consistent modal vocabulary. */
 #briefingPaywall {
   display: none;
   position: fixed; inset: 0;
@@ -12888,102 +12903,9 @@ body.auth-modal-open > *:not(#authOverlay) { pointer-events: none !important; }
 }
 .bpwSecondary a:hover, .bpwSecondary button:hover { color: #fff; }
 
-/* Saved Views modal — opened from Settings → Saved Views. Same overlay
-   style as deleteAccountModal but with a list inside. */
-#savedViewsModal {
-  display: none;
-  position: fixed; inset: 0;
-  z-index: 100000;
-  background: rgba(0,0,0,0.55);
-  backdrop-filter: blur(6px);
-  -webkit-backdrop-filter: blur(6px);
-  align-items: center; justify-content: center;
-  padding: 20px;
-}
-#savedViewsModal.open { display: flex; }
-.svModalBox {
-  width: 100%; max-width: 440px;
-  max-height: 80vh;
-  background: rgba(15,18,26,0.96);
-  border: 1px solid rgba(255,220,180,0.18);
-  border-radius: 14px;
-  padding: 0;
-  display: flex; flex-direction: column;
-  box-shadow: 0 18px 40px rgba(0,0,0,0.5);
-  overflow: hidden;
-}
-.svModalHeader {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 14px 16px 12px;
-  border-bottom: 1px solid rgba(255,255,255,0.08);
-  flex-shrink: 0;
-}
-.svModalTitle { font-size: 14px; font-weight: 600; color: rgba(255,255,255,0.92); }
-.svModalClose {
-  width: 28px; height: 28px;
-  min-width: 28px; min-height: 28px;
-  border-radius: 50%; border: none;
-  background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.55);
-  cursor: pointer; display: flex; align-items: center; justify-content: center;
-  font-size: 16px;
-  padding: 0;
-}
-.svModalClose:hover { background: rgba(255,255,255,0.12); color: #fff; }
-.svModalBody {
-  flex: 1; overflow-y: auto;
-  padding: 12px;
-}
-.svItem {
-  display: flex; gap: 10px; align-items: center;
-  padding: 10px; border-radius: 8px;
-  background: rgba(255,255,255,0.02);
-  margin-bottom: 6px;
-  transition: background 0.15s;
-}
-.svItem:hover { background: rgba(255,255,255,0.04); }
-.svItemType {
-  width: 24px; height: 24px;
-  flex-shrink: 0;
-  border-radius: 6px;
-  display: flex; align-items: center; justify-content: center;
-  background: rgba(255,200,130,0.10);
-  color: rgba(255,200,130,0.85);
-}
-.svItemType svg { width: 14px; height: 14px; }
-.svItemBody { flex: 1; min-width: 0; }
-.svItemName {
-  font-size: 13px; font-weight: 500;
-  color: rgba(255,255,255,0.92);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.svItemMeta {
-  font-size: 10px; color: rgba(255,255,255,0.45);
-  margin-top: 2px;
-  text-transform: uppercase; letter-spacing: 0.06em;
-}
-.svItemBtns { display: flex; gap: 4px; flex-shrink: 0; }
-.svItemBtn {
-  width: 28px; height: 28px;
-  min-width: 28px; min-height: 28px;
-  border-radius: 6px; border: none;
-  background: rgba(255,255,255,0.06);
-  color: rgba(255,255,255,0.65);
-  cursor: pointer; padding: 0;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 14px;
-}
-.svItemBtn:hover { background: rgba(255,255,255,0.12); color: #fff; }
-.svItemBtn.danger:hover {
-  background: rgba(255,50,50,0.18);
-  color: rgba(255,150,150,0.95);
-}
-.svItemBtn svg { width: 14px; height: 14px; }
-.svEmpty {
-  text-align: center;
-  padding: 36px 16px;
-  color: rgba(255,255,255,0.45);
-  font-size: 12px;
-}
+/* Saved Views modal CSS removed — the list is now a tab in Library
+   (see .libItemIcon above + Views render path in _renderLib). The
+   .sv* classes are no longer referenced anywhere in the bundle. */
 </style>
 </head>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -15185,6 +15107,8 @@ window.__arcCtxSegmented = (function() {
         } catch (e) { console.warn('[savedViews] apply failed:', e.message); }
         return false;
       },
+      // Wipe all saved views — used by Library → Views → Clear all.
+      clearAll: () => { _write([]); },
     };
   }
 
@@ -15660,15 +15584,9 @@ window.__arcCtxSegmented = (function() {
             </svg>
             Notices
           </div>
-          <!-- Saved Views — opens a modal listing user-saved heatmap +
-               flows views with restore/delete affordances. See
-               window.__savedViews + the modal wiring below. -->
-          <div class="acctDpBtn" id="acctDpSavedViews">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
-            </svg>
-            Saved Views
-          </div>
+          <!-- (Saved Views row removed — relocated into Library → Views.
+               The bookmark icon on the Heatmap / News Flows panels still
+               saves; users now restore from the Library entry above.) -->
           <!-- Feedback / contact — opens a mailto: link. Pre-fills the
                subject so the inbox can route. On iOS the mailto: opens
                Mail.app natively; on desktop the user's default mail
@@ -16162,7 +16080,7 @@ window.__arcCtxSegmented = (function() {
   <div id="flowControls">
     <button class="flowMinBtn" id="flowMinBtn" title="Minimize">−</button>
     <!-- Save-view button — captures the current from/about/keyword/dates
-         filter set so the user can restore via Settings → Saved views. -->
+         filter set so the user can restore via Library → Views. -->
     <button class="flowShareBtn flowSaveViewBtn" id="flowSaveViewBtn" title="Save view" onclick="window.__saveFlowsView?.()">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
     </button>
@@ -16350,7 +16268,7 @@ window.__arcCtxSegmented = (function() {
       <div class="semHeatHeaderActions">
         <!-- Save-view button — see window.__savedViews. Captures the
              current mode/keyword/days/AI question into localStorage; the
-             user can restore via Settings → Saved views. -->
+             user can restore via Library → Views. -->
         <button class="semHeatMin savedViewBtn" id="semHeatSaveView" onclick="window.__saveHeatmapView?.()" title="Save view">
           <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
         </button>
@@ -41096,80 +41014,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
       window.location.href = `mailto:feedback@earth00.com?subject=${subject}&body=${body}`;
     });
 
-    // Saved Views — opens a modal listing all saved heatmap + flows
-    // views. Each row: type icon + name + restore (▶) + delete (×).
-    // Restore closes the modal + dispatches via window.__savedViews.apply.
-    const savedViewsBtn = document.getElementById('acctDpSavedViews');
-    const svModal       = document.getElementById('savedViewsModal');
-    const svModalBody   = document.getElementById('svModalBody');
-    const svModalClose  = document.getElementById('svModalClose');
-    function _renderSavedViewsList() {
-      if (!svModalBody) return;
-      const views = window.__savedViews?.list() || [];
-      if (!views.length) {
-        svModalBody.innerHTML = `<div class="svEmpty">No saved views yet.<br>Tap the bookmark icon on the Heatmap or News Flows panel to save the current state.</div>`;
-        return;
-      }
-      const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({
-        '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
-      }[c]));
-      const heatIco = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/><ellipse cx="12" cy="12" rx="4" ry="9"/></svg>';
-      const flowIco = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12 Q12 2 21 12"/><circle cx="3" cy="12" r="1.5" fill="currentColor"/><circle cx="21" cy="12" r="1.5" fill="currentColor"/></svg>';
-      svModalBody.innerHTML = views.map(v => {
-        const ico = v.type === 'heatmap' ? heatIco : flowIco;
-        const when = (() => {
-          try { return new Date(v.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); }
-          catch (_) { return ''; }
-        })();
-        return `<div class="svItem" data-sv-id="${esc(v.id)}">
-          <div class="svItemType">${ico}</div>
-          <div class="svItemBody">
-            <div class="svItemName">${esc(v.name)}</div>
-            <div class="svItemMeta">${esc(v.type)}${when ? ' · ' + esc(when) : ''}</div>
-          </div>
-          <div class="svItemBtns">
-            <button class="svItemBtn" data-sv-restore="${esc(v.id)}" title="Restore" aria-label="Restore">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-            </button>
-            <button class="svItemBtn danger" data-sv-delete="${esc(v.id)}" title="Delete" aria-label="Delete">&times;</button>
-          </div>
-        </div>`;
-      }).join('');
-      // Wire per-row handlers via delegation.
-      svModalBody.querySelectorAll('[data-sv-restore]').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          const id = btn.getAttribute('data-sv-restore');
-          if (svModal) svModal.classList.remove('open');
-          window.__savedViews?.apply(id);
-        });
-      });
-      svModalBody.querySelectorAll('[data-sv-delete]').forEach(btn => {
-        btn.addEventListener('click', (e) => {
-          e.stopPropagation();
-          const id = btn.getAttribute('data-sv-delete');
-          window.__savedViews?.remove(id);
-          _renderSavedViewsList();
-        });
-      });
-    }
-    function _openSavedViews() {
-      _renderSavedViewsList();
-      svModal?.classList.add('open');
-      // Close on backdrop tap.
-      svModal?.addEventListener('click', _backdropDismiss);
-    }
-    function _backdropDismiss(e) {
-      if (e.target === svModal) svModal.classList.remove('open');
-    }
-    savedViewsBtn?.addEventListener('click', e => { e.stopPropagation(); _openSavedViews(); });
-    svModalClose?.addEventListener('click', () => svModal?.classList.remove('open'));
-    // Escape closes (matches other modals in the app).
-    document.addEventListener('keydown', e => {
-      if (e.key === 'Escape' && svModal?.classList.contains('open')) {
-        svModal.classList.remove('open');
-      }
-    });
+    // Saved Views formerly lived in this dropdown as `acctDpSavedViews`
+    // and opened a dedicated modal (`#savedViewsModal`). The list is now
+    // a tab in the Library panel (data-lib="views"); see _renderLib for
+    // the Views render path and the libClearAll handler for clear-all.
+    // The modal + its wiring were removed together to keep one entry
+    // point. The bookmark icon on the Heatmap / News Flows panels still
+    // calls window.__savedViews.save(...) — unchanged.
   })();
 
   /* ── Delete Account (App Store guideline 5.1.1(v)) ──
@@ -41332,15 +41183,26 @@ const settingsToggle     = document.getElementById("settingsToggle");
     </div>`;
   }
 
-  // Search query — applied to BOTH tabs. Empty string means no filter.
+  // Search query — applied to ALL tabs (saved/history filter by title+
+  // source+type+date; views filter by view name + type). Empty = no filter.
   let _libSearchQuery = '';
 
+  // Helper: views always come from the window.__savedViews store rather
+  // than a local array so saves from elsewhere (heatmap, flows panel)
+  // show up immediately without a refresh.
+  function _viewsList() { return window.__savedViews?.list() || []; }
+
   function _filteredLibItems() {
-    const all = _libTab === 'saved' ? _savedItems : _historyItems;
+    let all;
+    if (_libTab === 'saved')        all = _savedItems;
+    else if (_libTab === 'history') all = _historyItems;
+    else                            all = _viewsList(); // 'views' tab
     const q = _libSearchQuery.trim().toLowerCase();
     if (!q) return { items: all, filtered: false };
     const filtered = all.filter(it => {
-      const hay = `${it.title || ''} ${it.source || ''} ${it.type || ''} ${it.date || ''}`.toLowerCase();
+      const hay = _libTab === 'views'
+        ? `${it.name || ''} ${it.type || ''}`.toLowerCase()
+        : `${it.title || ''} ${it.source || ''} ${it.type || ''} ${it.date || ''}`.toLowerCase();
       return hay.includes(q);
     });
     return { items: filtered, filtered: true };
@@ -41355,19 +41217,69 @@ const settingsToggle     = document.getElementById("settingsToggle");
     // narrows the list to 0; the underlying tab might still have items.
     const clearAllBtn = document.getElementById('libClearAll');
     if (clearAllBtn) {
-      const fullList = _libTab === 'saved' ? _savedItems : _historyItems;
-      clearAllBtn.disabled = !fullList.length;
+      let fullLen;
+      if (_libTab === 'saved')        fullLen = _savedItems.length;
+      else if (_libTab === 'history') fullLen = _historyItems.length;
+      else                            fullLen = _viewsList().length;
+      clearAllBtn.disabled = !fullLen;
     }
     if (!items.length) {
       if (filtered) {
         lc.innerHTML = `<div class="libNoMatches">No items match “${_esc(_libSearchQuery)}”.</div>`;
       } else {
-        lc.innerHTML = _libEmpty(
-          _libTab === 'saved'
-            ? 'No saved items yet.<br>Tap the bookmark icon on any article to save it.'
-            : 'No browsing history yet.'
-        );
+        const emptyMsg = _libTab === 'saved'
+          ? 'No saved items yet.<br>Tap the bookmark icon on any article to save it.'
+          : _libTab === 'history'
+            ? 'No browsing history yet.'
+            // Views tab — point users at the bookmark icons on the two
+            // panels that produce saveable state. Mirrors the modal's
+            // prior empty-state copy so muscle memory carries over.
+            : 'No saved views yet.<br>Tap the bookmark icon on the Heatmap or News Flows panel to save the current state.';
+        lc.innerHTML = _libEmpty(emptyMsg);
       }
+      return;
+    }
+    // ── Views tab: separate render path. Items are { id, type, name,
+    //    payload, createdAt } from window.__savedViews. Restore on
+    //    row tap (closes panel), delete via the X. Reuses the same
+    //    .libItem / .libItemRemove styles to inherit list visuals.
+    if (_libTab === 'views') {
+      const heatIco = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/><ellipse cx="12" cy="12" rx="4" ry="9"/></svg>';
+      const flowIco = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12 Q12 2 21 12"/><circle cx="3" cy="12" r="1.5" fill="currentColor"/><circle cx="21" cy="12" r="1.5" fill="currentColor"/></svg>';
+      lc.innerHTML = items.map(v => {
+        const ico = v.type === 'heatmap' ? heatIco : flowIco;
+        const when = (() => {
+          try { return new Date(v.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); }
+          catch (_) { return ''; }
+        })();
+        return `
+        <div class="libItem libViewItem" data-sv-id="${_esc(v.id)}">
+          <div class="libItemIcon">${ico}</div>
+          <div class="libItemBody">
+            <div class="libItemTitle">${_esc(v.name)}</div>
+            <div class="libItemMeta">${_esc(v.type)}${when ? ' · ' + _esc(when) : ''}</div>
+          </div>
+          <button class="libItemRemove" data-sv-delete="${_esc(v.id)}" title="Remove">&times;</button>
+        </div>`;
+      }).join('');
+      lc.querySelectorAll('.libViewItem').forEach(el => {
+        el.addEventListener('click', e => {
+          if (e.target.closest('.libItemRemove')) return;
+          const id = el.getAttribute('data-sv-id');
+          // Close the panel before applying so the user sees the
+          // restored heatmap/flows state rather than the library.
+          getLibPanel()?.classList.remove('open');
+          window.__savedViews?.apply(id);
+        });
+      });
+      lc.querySelectorAll('[data-sv-delete]').forEach(btn => {
+        btn.addEventListener('click', e => {
+          e.stopPropagation();
+          const id = btn.getAttribute('data-sv-delete');
+          window.__savedViews?.remove(id);
+          _renderLib();
+        });
+      });
       return;
     }
     // Each item's `data-idx` now refers to its index in the FULL underlying
@@ -41403,14 +41315,52 @@ const settingsToggle     = document.getElementById("settingsToggle");
           getLibPanel()?.classList.remove('open');
           return;
         }
-        // Defensive URL validation. Older localStorage entries from before
-        // the article_url-vs-url fix may still contain a bare fingerprint
-        // hash where a real URL belongs — opening that as a relative URL
-        // sends the user to earth00.com/<hash> and 404s. Only navigate when
-        // the value is unambiguously URL-shaped.
-        if (it.url && /^https?:\/\//i.test(it.url)) {
-          window.open(it.url, '_blank');
+        // Article rows now open the in-app article-detail panel rather
+        // than jumping straight to the publisher URL. The "Read Original"
+        // button inside the panel still routes out to the source for
+        // users who want the full page. Rationale: tapping a saved item
+        // should land you in the same context you saved it from (image +
+        // sentiment + analysis + source summary + View on Globe), not
+        // throw the user into a third-party tab where the in-app state
+        // disappears.
+        //
+        // The library item stores only a sparse snapshot
+        //   { id, type, title, source, url, date }
+        // which is too thin to render the panel directly — no image_url,
+        // iso_code, sentiment_score, source_summary, etc. We fetch the
+        // full row from /api/articles/by-ids (which is heavily cached
+        // server-side, so warm hits are sub-100ms) before handing off.
+        //
+        // Fallback to window.open(url) covers:
+        //   • legacy entries where item.id was stored as the fingerprint
+        //     hash rather than the integer id (pre-resolve fix)
+        //   • offline / API down — we still want the link to work
+        //   • openArticleDetail not yet bound (very early page-load tap)
+        const _openExternal = () => {
+          if (it.url && /^https?:\/\//i.test(it.url)) {
+            window.open(it.url, '_blank');
+          }
+        };
+        const id = Number(it.id);
+        if (!Number.isFinite(id) || !id || typeof window.openArticleDetail !== 'function') {
+          _openExternal();
+          return;
         }
+        // Close the library first so the article panel slides up over
+        // a quiet stage rather than fighting the library backdrop for
+        // attention. If the fetch fails we re-open the library? No —
+        // simpler: the URL fallback opens in a new tab and the library
+        // stays closed. The user can re-open from the menu.
+        getLibPanel()?.classList.remove('open');
+        const API = window.__API || 'https://earth-wjr6.onrender.com';
+        fetch(`${API}/api/articles/by-ids?ids=${id}`)
+          .then(r => r.ok ? r.json() : Promise.reject(new Error('fetch')))
+          .then(arr => {
+            const article = Array.isArray(arr) ? arr[0] : null;
+            if (!article) { _openExternal(); return; }
+            window.openArticleDetail(article, { type: 'feed' });
+          })
+          .catch(() => _openExternal());
       });
     });
     lc.querySelectorAll('.libItemRemove').forEach(btn => {
@@ -41491,7 +41441,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
     }
     if (clearAllBtn) {
       clearAllBtn.addEventListener('click', () => {
-        const tabLabel = _libTab === 'saved' ? 'saved items' : 'history';
+        const tabLabel = _libTab === 'saved'   ? 'saved items'
+                       : _libTab === 'history' ? 'history'
+                       :                         'saved views';
         // confirm() is a synchronous blocking modal — fine here because
         // the action is permanent and the user must explicitly opt in.
         // Could swap to an in-app dialog later if we want consistent UX.
@@ -41499,9 +41451,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
         if (_libTab === 'saved') {
           _savedItems = [];
           _persistSaved(); _updateSavedCount();
-        } else {
+        } else if (_libTab === 'history') {
           _historyItems = [];
           _persistHistory();
+        } else {
+          // Views — wipe via __savedViews so the source of truth (its
+          // localStorage key) stays consistent with the in-memory list.
+          window.__savedViews?.clearAll?.();
         }
         _renderLib();
       });
@@ -54294,21 +54250,10 @@ body.ticker-active .gTickerLabel {
   </div>
 </div>
 
-<!-- Saved Views modal — opened from Settings → Saved Views. Lists all
-     saved heatmap + flows views with one-tap restore + delete. -->
-<div id="savedViewsModal" role="dialog" aria-modal="true" aria-labelledby="svModalTitle">
-  <div class="svModalBox">
-    <div class="svModalHeader">
-      <span class="svModalTitle" id="svModalTitle">Saved Views</span>
-      <button class="svModalClose" id="svModalClose" type="button" aria-label="Close">&times;</button>
-    </div>
-    <div class="svModalBody" id="svModalBody">
-      <!-- Populated dynamically by _renderSavedViewsList(). -->
-    </div>
-  </div>
-</div>
+<!-- Saved Views modal removed — folded into Library → Views (see the
+     libraryPanel below + the Views render path in _renderLib). -->
 
-<!-- Library panel (Saved / History) -->
+<!-- Library panel (Saved / History / Views) -->
 <div id="libraryPanel">
   <div class="libHeader">
     <span class="libTitle">Library</span>
@@ -54317,6 +54262,11 @@ body.ticker-active .gTickerLabel {
   <div class="libTabs">
     <div class="libTab active" data-lib="saved">Saved</div>
     <div class="libTab" data-lib="history">History</div>
+    <!-- Views tab — heatmap + flows snapshots saved via the bookmark
+         icon on the Heatmap or News Flows panel. Was previously a
+         standalone modal opened from the account dropdown; folded into
+         Library so all "things the user kept" live in one place. -->
+    <div class="libTab" data-lib="views">Views</div>
   </div>
   <!-- Toolbar: search input on the left + "Clear all" on the right.
        Clears the ACTIVE tab's list only (Saved or History, not both),

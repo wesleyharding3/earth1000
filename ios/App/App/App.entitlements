@@ -2,8 +2,36 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<!--
+	  aps-environment selects which APNs server iOS uses for THIS build.
+	    development → sandbox APNs (Xcode "Run" / dev provisioning profile).
+	    production  → production APNs (TestFlight, App Store, ad-hoc).
+
+	  The server flips its target by APNS_USE_SANDBOX env var (see
+	  apnsClient.js). Keep these two in sync — sending a sandbox push
+	  to a production-environment device token (or vice versa) returns
+	  HTTP 400 BadDeviceToken from APNs and the user sees nothing.
+
+	  TestFlight / App Store builds MUST flip this to "production"
+	  before the build is uploaded. Xcode re-emits the entitlement
+	  based on the active provisioning profile, so for archive builds
+	  this typically updates automatically — but verify in the
+	  archived .ipa via `codesign -d --entitlements -` if banners
+	  silently stop working after a release.
+	-->
 	<key>aps-environment</key>
 	<string>development</string>
+	<!--
+	  Time-Sensitive Notifications (iOS 15+). Lets pushes break through
+	  Focus modes and Scheduled Summary — required for the
+	  'interruption-level': 'time-sensitive' flag set in apnsClient.js
+	  to actually take effect. Without this entitlement, iOS silently
+	  demotes time-sensitive pushes to 'active' level, which Focus mode
+	  is allowed to roll into a summary. The breaking-news + briefing-
+	  ready use cases are the canonical fit for this entitlement.
+	-->
+	<key>com.apple.developer.usernotifications.time-sensitive</key>
+	<true/>
 	<key>com.apple.developer.applesignin</key>
 	<array>
 		<string>Default</string>

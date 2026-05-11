@@ -105,12 +105,30 @@ async function send({ token, title, body, data = {}, collapseId = null }) {
     return { delivered: false, error: 'missing_required_fields' };
   }
 
+  // `interruption-level: 'time-sensitive'` is the iOS 15+ flag that lets
+  // a notification break through Focus modes and Scheduled Summary —
+  // critical for "your briefing is ready" and breaking-news thread alerts,
+  // because the default 'active' level lets iOS quietly fold those into
+  // a 9am summary the user may never open. Time-Sensitive requires the
+  // `com.apple.developer.usernotifications.time-sensitive` entitlement
+  // on the app (added in App.entitlements). Without the entitlement, iOS
+  // silently demotes back to 'active' — no crash, no error from APNs —
+  // so this is safe to ship even on builds that haven't picked up the
+  // entitlement yet, just less effective.
+  //
+  // `mutable-content: 1` was previously set on every push. That flag
+  // wakes a Notification Service Extension to mutate the payload before
+  // display (e.g. attach images). We don't have a service-extension
+  // target in the iOS project, and on certain iOS versions setting it
+  // without a backing extension has been linked to inconsistent banner
+  // display — so it's removed. If we add image-rich pushes later we'll
+  // also need a separate NSE target.
   const payload = JSON.stringify({
     aps: {
       alert: { title, body },
       sound: 'default',
       badge: 1,
-      'mutable-content': 1,
+      'interruption-level': 'time-sensitive',
     },
     // Custom data fields the client uses to deep-link the user.
     // Keep keys snake_case for parity with backend; the client decodes.
