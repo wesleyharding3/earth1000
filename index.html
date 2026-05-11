@@ -48857,8 +48857,21 @@ body.ticker-active .gTickerLabel {
     let dismissed = false;
     let shown = false;
     function _briefingBtn() { return document.getElementById('briefingBtn'); }
+    // True while a briefing is actively playing. Used to gate show()
+    // (so the "ready to listen" nudge can't pop up over an in-progress
+    // briefing) AND to dismiss the nudge if a briefing opens while it
+    // happens to be visible.
+    function _briefingIsActive() {
+      return document.body.classList.contains('briefing-active') ||
+             window.briefingActive === true;
+    }
     function show() {
       if (dismissed || shown) return;
+      // Hard gate: never show this nudge while a briefing is playing.
+      // Briefings are ~6min so an 8min timer normally fires after the
+      // briefing ends, but pause/resume + user mid-listen scrubs can
+      // push the timer into the briefing window — gate explicitly.
+      if (_briefingIsActive()) return;
       const access = window.__briefingAccess;
       if (access?.sessionPromptShown()) return;
       if (window._briefingAvailable === false) return;
@@ -48881,6 +48894,13 @@ body.ticker-active .gTickerLabel {
     }
 
     setTimeout(show, BRIEFING_NUDGE_MS);
+
+    // If the briefing opens while the nudge is up (user tapped the
+    // launcher directly instead of the nudge), retract the nudge so
+    // it doesn't overlap the briefing chrome. `shown` stays true so
+    // we don't re-show after the briefing ends — one promotion per
+    // session.
+    document.addEventListener('briefingOpen', hide);
 
     listenBtn.addEventListener('click', () => {
       hide();

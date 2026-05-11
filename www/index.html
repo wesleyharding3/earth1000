@@ -46431,27 +46431,37 @@ const settingsToggle     = document.getElementById("settingsToggle");
   body.briefing-active #pageNav,
   body.briefing-active #privacyFooter { display: none !important; }
   body.briefing-active .bControlsWrap {
-    /* Drop the controls down to sit JUST above the home-indicator.
+    /* Push the controls AS LOW as Apple HIG allows: the bottom edge
+     * sits exactly at the top of the home-indicator zone (env value).
      *
-     * CRITICAL: drop --app-bottom-inset here. The JS at syncAppViewport
-     * computes it as windowH - visualViewport.height - offsetTop, which
-     * on a home-indicator iPhone resolves to the SAME ~34px that
-     * env(safe-area-inset-bottom) already gives. Stacking both
-     * (env + app-bottom-inset) doubled the inset to ~68px+8 = 76px
-     * above the physical bottom of the screen — the user-reported
-     * "controls still aren't going down." env alone is the canonical
-     * iOS API; +8px gives breathing room without overlapping the
-     * indicator. */
-    bottom: calc(env(safe-area-inset-bottom, 0px) + 8px);
+     * History of this offset:
+     *   +28px → user-reported "still too high"
+     *   +8px  → user-reported "STILL not down enough"
+     *   0px   → flush with safe-area bottom — current
+     *
+     * Adding `bottom: 0` (no env) would put the wrap edge UNDER the
+     * home indicator and is rejected by Apple HIG (gesture conflict).
+     * `bottom: env(...)` with no extra padding is the lowest visually
+     * sensible position.
+     *
+     * !important is here because some CSS-variable-driven calcs
+     * elsewhere in the bundle expand `--app-bottom-inset` to the same
+     * 34px env value on iOS — stacking them doubled the inset and
+     * left the wrap floating ~70-80px above the bottom. The
+     * !important guarantees this calc wins regardless of any future
+     * helper trying to layer on top. */
+    bottom: env(safe-area-inset-bottom, 0px) !important;
   }
   body.briefing-active .bSegmentSourcePie,
   body.briefing-active .bSegmentArticleRoll {
     top: auto;
-    /* Sit directly above the controls. Controls now at env+8px, wrap
-     * height ~64px → wrap top at env+72. +74 puts the roll/pie bottom
-     * 2px above the controls. Same double-inset fix as above — drop
-     * --app-bottom-inset since env already covers the home-indicator. */
-    bottom: calc(env(safe-area-inset-bottom, 0px) + 74px);
+    /* Sit directly above the controls. Controls bottom is now at env+0
+     * (above), wrap ~64px tall → wrap top at env+64. +66 puts the
+     * roll/pie bottom 2px above the controls. !important for the same
+     * reason as the wrap rule above — keep the calc deterministic.
+     * Same double-inset fix as above — drop --app-bottom-inset since
+     * env alone covers the home-indicator. */
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 66px) !important;
   }
   body.briefing-active .bSegmentSourcePie { transform: translateY(8px); }
   body.briefing-active .bSegmentArticleRoll { transform: translateY(8px); }
@@ -53257,8 +53267,22 @@ body.ticker-active .gTickerLabel {
     if (!nudgeEl || !listenBtn || !closeBtn || !textEl) return;
     let dismissed = false, shown = false;
     function _briefingBtn() { return document.getElementById('briefingBtn'); }
+    // True while a briefing is actively playing. Used to gate show()
+    // (don't pop up the "ready to listen" nudge while the user is
+    // already listening — that's both confusing and visually noisy)
+    // AND to dismiss the nudge if the user opens a briefing while
+    // it's still hanging around on screen.
+    function _briefingIsActive() {
+      return document.body.classList.contains('briefing-active') ||
+             window.briefingActive === true;
+    }
     function show() {
       if (dismissed || shown) return;
+      // Hard gate: never show this nudge while a briefing is playing.
+      // Even though the 8-min timer is unlikely to fire mid-briefing
+      // (briefings are ~6min long), pause/resume + user mid-listen
+      // skips can push the timer to overlap, so we check explicitly.
+      if (_briefingIsActive()) return;
       const access = window.__briefingAccess;
       if (access?.sessionPromptShown()) return;
       if (window._briefingAvailable === false) return;
@@ -53276,6 +53300,12 @@ body.ticker-active .gTickerLabel {
       _briefingBtn()?.classList.remove('attention');
     }
     setTimeout(show, BRIEFING_NUDGE_MS);
+    // If the briefing opens while the nudge is up (e.g., user tapped
+    // the launcher directly instead of the nudge button), retract the
+    // nudge so it doesn't overlap the briefing chrome. `shown` stays
+    // true so the nudge doesn't re-show after the briefing ends —
+    // we've already promoted the user once this session.
+    document.addEventListener('briefingOpen', hide);
     listenBtn.addEventListener('click', () => {
       hide();
       try { window.__openBriefingLauncher?.() || document.getElementById('briefingBtn')?.click(); } catch (_) {}
