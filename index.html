@@ -52210,6 +52210,43 @@ body.ticker-active .gTickerLabel {
   function _attachClusterShareBtn() {
     const close = document.querySelector('#cdCloseBtn');
     if (!close || close.parentElement.querySelector('.shareBtn')) return;
+
+    // Animated-clip ("share GIF") button — placed FIRST so it sits to
+    // the left of the static-snapshot share. Click → 6s globe spin
+    // recording → native iOS share sheet (Capacitor) or Web Share /
+    // download (browser). Records whatever's on the globe right now,
+    // which for thread/line panels means the flow arcs for that entity.
+    const clipBtn = document.createElement('button');
+    clipBtn.className = 'shareBtn shareBtnClip';
+    clipBtn.title = 'Share clip (animated)';
+    clipBtn.setAttribute('aria-label', 'Share clip');
+    clipBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>`;
+    clipBtn.style.marginRight = '6px';
+    const _clipSupported = typeof MediaRecorder !== 'undefined' &&
+      typeof window.__renderer?.domElement?.captureStream === 'function';
+    if (!_clipSupported) clipBtn.style.display = 'none';
+    clipBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const panel = close.closest('#clusterDetailPanel') || document.getElementById('clusterDetailPanel');
+      const dataset = panel?.dataset || {};
+      const kind  = dataset.kind || 'thread';
+      const title = dataset.entityTitle || (panel?.querySelector('.cdTitle')?.textContent || '').trim();
+      const kindLabel = kind === 'line' ? 'Story Line' : 'Thread';
+      const safeTitle = (title || `Earth00 ${kindLabel}`).slice(0, 80);
+      const filenameSlug = (title || `earth00-${kind}`)
+        .toLowerCase()
+        .replace(/[^a-z0-9-]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 60);
+      window.__shareGlobeClip?.({
+        durationMs:   6000,
+        shareTitle:   `Earth00 · ${safeTitle}`,
+        shareText:    `${safeTitle} — ${kindLabel.toLowerCase()} on Earth00`,
+        filenameBase: `earth00-${kind}-${filenameSlug}`,
+      });
+    });
+    close.parentElement.insertBefore(clipBtn, close);
+
     const btn = document.createElement('button');
     btn.className = 'shareBtn';
     btn.title = 'Share';
