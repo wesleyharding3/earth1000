@@ -12768,6 +12768,105 @@ body.auth-modal-open > *:not(#authOverlay) { pointer-events: none !important; }
   justify-content: center; flex-shrink: 0; transition: all 0.15s;
 }
 .libItemRemove:hover { background: rgba(255,50,50,0.12); color: rgba(255,100,100,0.8); }
+/* Briefing paywall modal — anon-wall + weekly-used flavors. Same visual
+   vocabulary as the saved-views modal (centered glass card) so the app
+   has one consistent modal style. */
+#briefingPaywall {
+  display: none;
+  position: fixed; inset: 0;
+  z-index: 100001;
+  background: rgba(0,0,0,0.62);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  align-items: center; justify-content: center;
+  padding: 20px;
+}
+#briefingPaywall.open { display: flex; }
+.bpwBox {
+  width: 100%; max-width: 380px;
+  background: linear-gradient(180deg, rgba(20,16,10,0.96), rgba(12,10,8,0.96));
+  border: 1px solid rgba(255,200,130,0.25);
+  border-radius: 16px;
+  padding: 28px 24px 22px;
+  text-align: center;
+  position: relative;
+  box-shadow:
+    0 24px 50px rgba(0,0,0,0.6),
+    0 0 24px rgba(255,180,80,0.10);
+}
+.bpwClose {
+  position: absolute; top: 12px; right: 12px;
+  width: 28px; height: 28px;
+  min-width: 28px; min-height: 28px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.06);
+  color: rgba(255,255,255,0.55);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 18px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.15s, color 0.15s;
+}
+.bpwClose:hover { background: rgba(255,255,255,0.14); color: #fff; }
+.bpwIcon {
+  width: 52px; height: 52px;
+  margin: 0 auto 14px;
+  border-radius: 14px;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(255,200,130,0.10);
+  border: 1px solid rgba(255,200,130,0.22);
+  color: rgba(255,210,140,0.92);
+}
+.bpwIcon svg { width: 28px; height: 28px; }
+.bpwTitle {
+  font-size: 18px; font-weight: 700;
+  color: rgba(255,240,210,0.96);
+  letter-spacing: -0.01em;
+  margin-bottom: 8px;
+  line-height: 1.25;
+}
+.bpwBody {
+  font-size: 13px; line-height: 1.55;
+  color: rgba(255,255,255,0.72);
+  margin-bottom: 18px;
+}
+.bpwActions {
+  display: flex; flex-direction: column; gap: 8px;
+  margin-bottom: 8px;
+}
+.bpwPrimary {
+  background: linear-gradient(180deg, rgba(255,210,140,1), rgba(220,160,70,1));
+  color: rgba(28,18,8,0.96);
+  border: none;
+  border-radius: 10px;
+  padding: 12px 16px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  letter-spacing: 0.02em;
+  box-shadow:
+    0 6px 16px rgba(255,160,60,0.34),
+    inset 0 1px 0 rgba(255,255,255,0.35);
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+}
+.bpwPrimary:hover { transform: translateY(-1px); }
+.bpwPrimary:active { transform: translateY(0); }
+.bpwSecondary {
+  font-size: 12px;
+  color: rgba(255,255,255,0.45);
+  margin-top: 4px;
+}
+.bpwSecondary a, .bpwSecondary button {
+  color: rgba(255,210,140,0.85);
+  background: none; border: none;
+  cursor: pointer; font-size: 12px;
+  font-family: inherit;
+  padding: 4px 6px;
+  min-height: auto;
+  text-decoration: underline;
+}
+.bpwSecondary a:hover, .bpwSecondary button:hover { color: #fff; }
+
 /* Saved Views modal — opened from Settings → Saved Views. Same overlay
    style as deleteAccountModal but with a list inside. */
 #savedViewsModal {
@@ -42973,21 +43072,25 @@ const settingsToggle     = document.getElementById("settingsToggle");
    the briefing. Hidden on non-story segments. */
 .bSegmentSourcePie {
   position: fixed;
-  /* Vertically center on the right side of the globe. The article panel
-     occupies the symmetrical left-center slot (top: 50%; left: 24px), so
-     pinning the pie to the right keeps both flanks balanced and stops
-     them stacking on the same side of the viewport. */
-  top: 50%;
+  /* Anchored to the BOTTOM of the screen now (was top: 50% right-center
+     pole). User asked for the pie + article cards to sit just above the
+     control pill so the briefing reads as a stacked layout:
+       [globe                ]
+       [articles | pie       ]   ← anchored bottom-flanks
+       [controls bar         ]   ← bottom
+     The bottom offset clears the controls pill (~60px) + nav (~48px) +
+     safe-area + breathing room. */
+  bottom: calc(var(--page-nav-height, 48px) + env(safe-area-inset-bottom, 0px) + var(--app-bottom-inset, 0px) + 80px);
   right: 24px;
+  top: auto;
   left: auto;
   z-index: 100018;
   width: 150px;
   pointer-events: none;
   opacity: 0;
-  /* The entrance animation slides the panel up 8px while keeping it
-     vertically centered. translate-Y must include the centering offset
-     so we don't lose vertical centering during the transition. */
-  transform: translateY(calc(-50% - 8px));
+  /* Slide-in offset (8px lower → settle at bottom). No more vertical-
+     centering translateY since we're now bottom-anchored. */
+  transform: translateY(8px);
   transition: opacity 0.45s ease, transform 0.45s cubic-bezier(0.32, 0.72, 0, 1);
   /* Glass treatment — matches the canonical .bControlBtn / .flowNodeLabel
      pattern: radial sheen at the top-left, linear gradient body, inset
@@ -43009,7 +43112,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 }
 .bSegmentSourcePie.visible {
   opacity: 1;
-  transform: translateY(-50%);
+  transform: translateY(0);
 }
 .bSegmentSourcePieTitle {
   font-size: 8px;
@@ -43226,8 +43329,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
 /* ── Left article panel ── */
 .bArticlePanel {
-  position: absolute; top: 50%; left: 24px;
-  transform: translateY(-50%);
+  position: absolute;
+  /* Bottom-anchored (was top: 50%). Mirror of .bSegmentSourcePie — sits
+     in the symmetrical LEFT slot just above the control pill so the
+     briefing layout reads as a clean three-row stack. */
+  bottom: calc(var(--page-nav-height, 48px) + env(safe-area-inset-bottom, 0px) + var(--app-bottom-inset, 0px) + 80px);
+  left: 24px;
+  top: auto;
+  transform: none;
   width: min(270px, 28vw);
   display: flex; flex-direction: column; gap: 8px;
   opacity: 0; transition: opacity 0.4s ease;
@@ -43588,6 +43697,68 @@ body.ticker-active .gTickerLabel {
    stop the scroll and read a headline. animation-play-state is GPU-
    cheap; no re-layout. Auto-resumes via a JS timer (see _gTickerPause). */
 .gTickerTrack.paused-tap { animation-play-state: paused; }
+
+/* Briefing nudge — top banner that slides down 8 min into a session.
+   Sits above the global ticker / nav, dismissable, one-shot per session.
+   Hidden by default; .open class slides it in. */
+#briefingNudge {
+  position: fixed;
+  top: env(safe-area-inset-top, 0px);
+  left: 50%;
+  transform: translate(-50%, -120%);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px 8px 14px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(28,22,12,0.96), rgba(18,16,12,0.92));
+  border: 1px solid rgba(255,200,130,0.32);
+  box-shadow:
+    0 8px 22px rgba(0,0,0,0.42),
+    0 0 14px rgba(255,180,80,0.18);
+  opacity: 0;
+  pointer-events: none;
+  transition: transform 0.45s cubic-bezier(0.32, 0.72, 0, 1), opacity 0.3s ease;
+  max-width: calc(100vw - 24px);
+  margin-top: 8px;
+}
+#briefingNudge.open {
+  transform: translate(-50%, 0);
+  opacity: 1;
+  pointer-events: all;
+}
+.briefingNudgeBtn {
+  display: inline-flex; align-items: center; gap: 8px;
+  background: none; border: none;
+  color: rgba(255,235,200,0.96);
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 4px 6px;
+  min-height: auto;
+}
+.briefingNudgeBtn:hover { color: #fff; }
+.briefingNudgeIcon {
+  width: 16px; height: 16px;
+  color: rgba(255,200,130,0.92);
+  flex-shrink: 0;
+}
+.briefingNudgeText { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.briefingNudgeClose {
+  width: 24px; height: 24px;
+  min-width: 24px; min-height: 24px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.06);
+  color: rgba(255,255,255,0.55);
+  border: none;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px;
+  cursor: pointer;
+  padding: 0;
+}
+.briefingNudgeClose:hover { background: rgba(255,255,255,0.12); color: #fff; }
 .gTickerItem {
   display: inline; cursor: pointer;
   transition: opacity 0.15s;
@@ -43689,26 +43860,71 @@ body.ticker-active .gTickerLabel {
 .bCapWord { display: inline; opacity: 0; transition: opacity 0.16s ease-out; }
 .bCapWord.lit { opacity: 1; }
 
-/* ── Controls — sit just above the bottom nav bar ── */
+/* ── Controls — pinned to the very bottom (just above page nav).
+     Previously sat with a 34px gap above the nav; user-requested tighter
+     bottom anchoring so the pie + article cards have more room above. */
 .bControlsWrap {
   position: absolute;
-  bottom: calc(var(--page-nav-height) + env(safe-area-inset-bottom) + var(--app-bottom-inset, 0px) + 34px);
+  bottom: calc(var(--page-nav-height) + env(safe-area-inset-bottom) + var(--app-bottom-inset, 0px) + 8px);
   left: 50%; transform: translateX(-50%);
   display: flex; flex-direction: column; align-items: center; gap: 6px;
   opacity: 0; transition: opacity 0.5s ease 0.5s;
   z-index: 2;
 }
 #briefingOverlay.open .bControlsWrap { opacity: 1; }
-/* Briefing + Settings volume slider — uses a small icon + range input.
-   Same styling reused by the Settings sidebar via .volSlider. */
+/* Briefing volume button + popover wrapper. Button sits in the control
+   pill; popover (vertical slider) pops up above when the icon is tapped. */
 .bVolWrap {
-  display: inline-flex; align-items: center; gap: 6px;
-  padding: 0 6px;
+  position: relative;
+  display: inline-flex; align-items: center;
 }
+.bVolBtn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px;
+  min-width: 32px; min-height: 32px;
+  background: transparent; border: none; padding: 0;
+  color: rgba(255,235,200,0.85);
+  cursor: pointer;
+  border-radius: 50%;
+  transition: color 0.15s, background 0.15s;
+}
+.bVolBtn:hover { color: rgba(255,210,140,1); background: rgba(255,200,130,0.10); }
+.bVolBtn.active { color: rgba(255,210,140,1); }
 .bVolIcon {
-  width: 14px; height: 14px;
-  color: rgba(255,255,255,0.6);
+  width: 16px; height: 16px;
   flex-shrink: 0;
+}
+/* Vertical-slider popover — floats above the volume button. Glassy gold
+   chrome that matches the briefing player aesthetic; vertical slider
+   inside (with .bVolSlider styled via writing-mode: vertical-rl below). */
+.bVolPopover {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 14px 10px 10px;
+  background:
+    radial-gradient(120% 80% at 50% 0%, rgba(255,200,130,0.16) 0%, transparent 55%),
+    linear-gradient(180deg, rgba(28,22,12,0.96), rgba(18,16,12,0.92));
+  border: 1px solid rgba(255,200,130,0.30);
+  border-radius: 14px;
+  box-shadow:
+    0 10px 26px rgba(0,0,0,0.50),
+    0 0 14px rgba(255,180,80,0.18);
+  z-index: 50;
+  display: flex; flex-direction: column; align-items: center; gap: 8px;
+}
+.bVolPopover[hidden] { display: none; }
+.bVolPopover::after {
+  /* Pointer triangle — visually tethers the popover to the button. */
+  content: '';
+  position: absolute;
+  bottom: -5px; left: 50%;
+  transform: translateX(-50%) rotate(45deg);
+  width: 10px; height: 10px;
+  background: linear-gradient(135deg, transparent 50%, rgba(18,16,12,0.92) 50%);
+  border-right: 1px solid rgba(255,200,130,0.30);
+  border-bottom: 1px solid rgba(255,200,130,0.30);
 }
 /* Settings master volume — subtle white-on-glass slider. */
 .volSlider {
@@ -43738,17 +43954,20 @@ body.ticker-active .gTickerLabel {
   box-shadow: 0 0 6px rgba(255,200,130,0.5);
 }
 
-/* Briefing player volume — glowing gold variant. Track is a faint gold
-   gradient with an inset glow line, thumb is a brighter gold orb with a
-   stronger box-shadow halo so it visually pops against the dark briefing
-   chrome. Distinguishes the briefing-only volume from the Settings master
-   (which uses the subdued .volSlider above). */
+/* Briefing player volume — glowing gold vertical slider inside the
+   popover. Uses writing-mode + appearance:slider-vertical to render
+   the input as a tall column. Glow gold theme matches the popover
+   chrome; thumb is a radial-gradient orb with stacked halo shadows. */
 .bVolSlider {
-  -webkit-appearance: none; appearance: none;
-  width: 60px; height: 4px;
+  -webkit-appearance: slider-vertical;
+  appearance: slider-vertical;
+  writing-mode: vertical-lr;   /* modern spec equivalent for vertical input */
+  direction: rtl;              /* makes 0 sit at the bottom, max at top */
+  width: 8px;
+  height: 110px;
   background:
-    linear-gradient(180deg, rgba(255,200,130,0.10), rgba(255,170,80,0.22));
-  border-radius: 2px;
+    linear-gradient(180deg, rgba(255,170,80,0.32), rgba(255,200,130,0.10));
+  border-radius: 4px;
   outline: none;
   cursor: pointer;
   padding: 0; margin: 0;
@@ -43758,7 +43977,7 @@ body.ticker-active .gTickerLabel {
 }
 .bVolSlider::-webkit-slider-thumb {
   -webkit-appearance: none; appearance: none;
-  width: 12px; height: 12px;
+  width: 14px; height: 14px;
   border-radius: 50%;
   background:
     radial-gradient(circle at 35% 30%, rgba(255,240,200,1) 0%, rgba(255,200,130,1) 45%, rgba(220,150,60,1) 100%);
@@ -43770,7 +43989,7 @@ body.ticker-active .gTickerLabel {
     0 0 24px rgba(255,140,40,0.30);
 }
 .bVolSlider::-moz-range-thumb {
-  width: 12px; height: 12px;
+  width: 14px; height: 14px;
   border-radius: 50%;
   background:
     radial-gradient(circle at 35% 30%, rgba(255,240,200,1) 0%, rgba(255,200,130,1) 45%, rgba(220,150,60,1) 100%);
@@ -43781,6 +44000,16 @@ body.ticker-active .gTickerLabel {
     0 0 16px rgba(255,170,80,0.55),
     0 0 24px rgba(255,140,40,0.30);
 }
+/* Earth00 watermark badge — small composite logo at the left edge of
+   the control pill. Decorative; doesn't intercept clicks. */
+.bWatermark {
+  display: inline-flex; align-items: center;
+  width: 28px; height: 28px;
+  flex-shrink: 0;
+  pointer-events: none;
+  margin-right: 2px;
+}
+.bWatermark svg { width: 100%; height: 100%; display: block; }
 
 .bControls {
   display: inline-flex; align-items: center; gap: 10px;
@@ -43924,6 +44153,63 @@ body.ticker-active .gTickerLabel {
   z-index: 10;
 }
 .bRecap.open { opacity: 1; pointer-events: all; }
+/* End-of-briefing prompt card. Goldish gradient, sits above the story
+   grid. Copy varies by access state — populated by _renderRecapPromptCard. */
+.bRecapPrompt {
+  margin: 16px 24px 0;
+  padding: 14px 18px;
+  border-radius: 14px;
+  background:
+    radial-gradient(160% 130% at 0% 0%, rgba(255,210,140,0.16), transparent 55%),
+    linear-gradient(180deg, rgba(28,22,12,0.92), rgba(18,16,12,0.88));
+  border: 1px solid rgba(255,200,130,0.28);
+  box-shadow:
+    0 8px 20px rgba(0,0,0,0.34),
+    0 0 14px rgba(255,180,80,0.10);
+  display: flex; flex-direction: column; gap: 6px;
+  flex-shrink: 0;
+}
+.bRecapPrompt[hidden] { display: none; }
+.bRecapPromptTitle {
+  color: rgba(255,235,200,0.96);
+  font-size: 13px; font-weight: 700;
+  letter-spacing: 0.02em;
+}
+.bRecapPromptBody {
+  color: rgba(255,255,255,0.66);
+  font-size: 12px; line-height: 1.55;
+}
+.bRecapPromptActions {
+  display: flex; flex-direction: row; align-items: center; gap: 10px;
+  margin-top: 6px;
+}
+.bRecapPromptPrimary {
+  background: linear-gradient(180deg, rgba(255,210,140,1), rgba(220,160,70,1));
+  color: rgba(28,18,8,0.96);
+  border: none;
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  box-shadow:
+    0 4px 12px rgba(255,160,60,0.28),
+    inset 0 1px 0 rgba(255,255,255,0.30);
+  min-height: auto;
+}
+.bRecapPromptDismiss {
+  background: none;
+  border: none;
+  color: rgba(255,255,255,0.45);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 6px 8px;
+  font-family: inherit;
+  min-height: auto;
+}
+.bRecapPromptDismiss:hover { color: rgba(255,255,255,0.85); }
 .bRecapHeader {
   display: flex; align-items: center; justify-content: space-between;
   padding: max(18px, calc(env(safe-area-inset-top, 0px) + 10px)) 24px 10px;
@@ -44221,21 +44507,41 @@ body.ticker-active .gTickerLabel {
   </div>
   <div class="bControlsWrap">
     <div class="bControls">
+      <!-- Earth00 watermark — composite logo (rings + e + satellite) on
+           the left edge of the control pill. Static, decorative; reads
+           as a brand stamp without competing with the playback controls. -->
+      <span class="bWatermark" aria-hidden="true">
+        <svg viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+          <!-- Faint wireframe globe behind the 'e' -->
+          <ellipse cx="14" cy="17" rx="11" ry="11" fill="none" stroke="rgba(255,200,130,0.32)" stroke-width="0.75"/>
+          <ellipse cx="14" cy="17" rx="11" ry="4"  fill="none" stroke="rgba(255,200,130,0.22)" stroke-width="0.6"/>
+          <ellipse cx="14" cy="17" rx="4"  ry="11" fill="none" stroke="rgba(255,200,130,0.22)" stroke-width="0.6"/>
+          <!-- Italic 'e' centered on the globe -->
+          <text x="14" y="23" text-anchor="middle" font-family="Georgia, 'Times New Roman', serif" font-weight="900" font-style="italic" font-size="18" fill="rgba(255,210,140,0.95)">e</text>
+          <!-- Satellite: small star with orbital ring, top-right corner -->
+          <circle cx="26" cy="6" r="2.6" fill="none" stroke="rgba(255,220,140,0.55)" stroke-width="0.7"/>
+          <circle cx="26" cy="6" r="0.95" fill="rgba(255,235,170,0.95)"/>
+        </svg>
+      </span>
       <button class="bControlBtn" id="bPrev" title="Previous">&#8592;</button>
       <button class="bControlBtn primary" id="bPlayPause" title="Play/Pause">&#9654;</button>
       <button class="bControlBtn" id="bNext" title="Next">&#8594;</button>
       <button class="bControlBtn speed" id="bSpeed" title="Playback speed">1x</button>
       <button class="bControlBtn cc" id="bCCToggle" title="Toggle captions">CC</button>
-      <!-- Briefing volume — scales narration + background music. Composes
-           with the global master volume in Settings; effective audio =
-           master × briefing × per-segment ducking factor. Persisted under
-           earth00:briefingVol. -->
-      <div class="bVolWrap" title="Briefing volume">
-        <svg class="bVolIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-          <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
-          <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
-        </svg>
-        <input type="range" class="bVolSlider" id="bVolSlider" min="0" max="100" value="100" step="1" aria-label="Briefing volume" />
+      <!-- Briefing volume — click icon to open a vertical glowing-gold
+           slider popover above the button. Composes with the global
+           master volume; effective audio = master × briefing × ducking.
+           Persisted under earth00:briefingVol. -->
+      <div class="bVolWrap">
+        <button class="bControlBtn bVolBtn" id="bVolBtn" type="button" title="Volume" aria-label="Volume">
+          <svg class="bVolIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+            <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+          </svg>
+        </button>
+        <div class="bVolPopover" id="bVolPopover" hidden>
+          <input type="range" class="bVolSlider" id="bVolSlider" min="0" max="100" value="100" step="1" orient="vertical" aria-label="Briefing volume" />
+        </div>
       </div>
       <button class="bControlBtn close" id="bClose" title="Close briefing">✕</button>
     </div>
@@ -44251,6 +44557,11 @@ body.ticker-active .gTickerLabel {
       <span class="bRecapTitle">Today's Briefing — Summary</span>
       <button class="bRecapClose" id="bRecapClose">Close ✕</button>
     </div>
+    <!-- Soft prompt card surfaced when the briefing ends. Copy varies
+         by access state — see _renderRecapPromptCard. Hidden by default;
+         only injected when there's an actionable message (come-back,
+         "1 free briefing left", "sign in for week-long trial", etc.). -->
+    <div class="bRecapPrompt" id="bRecapPrompt" hidden></div>
     <div class="bRecapGrid" id="bRecapGrid"></div>
     <!-- Story detail (slides in over the grid) -->
     <div class="bStoryDetail" id="bStoryDetail">
@@ -44277,6 +44588,22 @@ body.ticker-active .gTickerLabel {
 </div>
 
 <!-- ── Global news ticker (always visible outside briefing) ── -->
+<!-- Briefing-ready nudge — appears 8 min into a session as a top banner.
+     Dismissable; never reappears in the same session. Only shows when
+     the user has briefing access remaining (anon ≤3, account with quota
+     left, or Pro). Wired by the IIFE near the bottom of this file. -->
+<div id="briefingNudge" role="status" aria-live="polite">
+  <button class="briefingNudgeBtn" id="briefingNudgeListen">
+    <svg class="briefingNudgeIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+      <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+      <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
+    </svg>
+    <span class="briefingNudgeText"></span>
+  </button>
+  <button class="briefingNudgeClose" id="briefingNudgeClose" type="button" aria-label="Dismiss">&times;</button>
+</div>
+
 <div id="globalTicker">
   <div class="gTickerLabel">Live</div>
   <div class="gTickerTrackWrap">
@@ -44619,9 +44946,253 @@ body.ticker-active .gTickerLabel {
 
   }
 
+  // ── Briefing access manager ──────────────────────────────────────────────
+  // Gates briefing listens by tier:
+  //   anon  → first 3 free (localStorage counter), then sign-in wall
+  //   free  → 7-day trial from signup, then 1/week
+  //   pro   → unlimited
+  // Client-side enforcement only — abuse rate <1% per the audit. Server
+  // already gates per-episode via briefing_access_log; this UI layer
+  // handles anon counting + trial countdown + weekly quota for accounts.
+  if (!window.__briefingAccess) {
+    const ANON_FREE_LIMIT = 3;
+    const TRIAL_DAYS = 7;
+    const FREE_PER_WEEK = 1;
+    const ANON_KEY = 'earth00:freeBriefingsConsumed';
+    const ANON_EPISODES_KEY = 'earth00:freeBriefingEpisodes'; // re-listens are free
+    const TRIAL_KEY = 'earth00:trialStartDate';
+    const WEEKLY_KEY = 'earth00:weeklyBriefingPlays';
+    const SESSION_FLAG = 'earth00:briefingPromptedSession';
+
+    function _isPro() { return window.__userTier === 'pro' || window.__userTier === 'enterprise' || window.__isAdmin === true; }
+    function _isSignedIn() { return !!window.__currentUser?.id; }
+    function _today() { return new Date().toISOString().slice(0, 10); }
+    function _weekKey(d) {
+      // ISO week number, formatted YYYY-Www. Resets on Monday 00:00 UTC.
+      const t = new Date(d || Date.now());
+      const day = (t.getUTCDay() + 6) % 7;
+      const monday = new Date(Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate() - day));
+      const jan4 = new Date(Date.UTC(monday.getUTCFullYear(), 0, 4));
+      const jan4Monday = new Date(jan4);
+      jan4Monday.setUTCDate(jan4.getUTCDate() - ((jan4.getUTCDay() + 6) % 7));
+      const week = 1 + Math.round((monday - jan4Monday) / 604800000);
+      return `${monday.getUTCFullYear()}-W${String(week).padStart(2, '0')}`;
+    }
+    function _readJSON(k, dflt) {
+      try { return JSON.parse(localStorage.getItem(k) || 'null') ?? dflt; }
+      catch (_) { return dflt; }
+    }
+    function _writeJSON(k, v) {
+      try { localStorage.setItem(k, JSON.stringify(v)); } catch (_) {}
+    }
+
+    // Trial start date for the current signed-in user. Lazily set on
+    // first access by an account user. Keyed by user id so signing in
+    // with a different account doesn't reuse the prior trial window.
+    function _trialStartFor(userId) {
+      const all = _readJSON(TRIAL_KEY, {});
+      if (!all[userId]) {
+        all[userId] = _today();
+        _writeJSON(TRIAL_KEY, all);
+      }
+      return all[userId];
+    }
+    function _trialDayCount(userId) {
+      const start = _trialStartFor(userId);
+      const ms = Date.now() - new Date(start + 'T00:00:00Z').getTime();
+      return Math.floor(ms / 86400000); // 0 = signup day, 7 = trial-end day
+    }
+
+    // Returns one of: 'pro' | 'trial-active' | 'weekly-fresh' | 'weekly-used'
+    //                 | 'anon-fresh' | 'anon-1-left' | 'anon-last' | 'anon-wall'
+    function _state() {
+      if (_isPro()) return 'pro';
+      if (_isSignedIn()) {
+        const userId = window.__currentUser.id;
+        if (_trialDayCount(userId) < TRIAL_DAYS) return 'trial-active';
+        const wk = _weekKey();
+        const plays = _readJSON(WEEKLY_KEY, {});
+        const userPlays = plays[userId] || {};
+        return (userPlays[wk] || 0) < FREE_PER_WEEK ? 'weekly-fresh' : 'weekly-used';
+      }
+      // Anonymous — by-count of total briefings consumed across sessions.
+      const consumed = _readJSON(ANON_KEY, 0);
+      if (consumed >= ANON_FREE_LIMIT) return 'anon-wall';
+      if (consumed === ANON_FREE_LIMIT - 1) return 'anon-last'; // 3rd briefing
+      if (consumed === ANON_FREE_LIMIT - 2) return 'anon-1-left'; // 2nd briefing
+      return 'anon-fresh'; // 1st briefing
+    }
+    function canListen(episodeId) {
+      const s = _state();
+      if (s === 'anon-wall' || s === 'weekly-used') {
+        // Re-listens of an already-consumed episode are always free
+        // (mirrors the server-side briefing_access_log behavior).
+        const episodes = _readJSON(ANON_EPISODES_KEY, []);
+        if (episodeId && episodes.includes(String(episodeId))) return true;
+        return false;
+      }
+      return true;
+    }
+    function consume(episodeId) {
+      const s = _state();
+      const idStr = episodeId != null ? String(episodeId) : null;
+      // Skip if this episode has already been counted (re-listen).
+      if (idStr) {
+        const episodes = _readJSON(ANON_EPISODES_KEY, []);
+        if (episodes.includes(idStr)) return s;
+        episodes.unshift(idStr);
+        _writeJSON(ANON_EPISODES_KEY, episodes.slice(0, 50));
+      }
+      if (s === 'pro') return 'pro';
+      if (_isSignedIn()) {
+        if (s === 'trial-active') return 'trial-active';
+        // weekly-fresh → bump the count for this week
+        const userId = window.__currentUser.id;
+        const wk = _weekKey();
+        const plays = _readJSON(WEEKLY_KEY, {});
+        plays[userId] = plays[userId] || {};
+        plays[userId][wk] = (plays[userId][wk] || 0) + 1;
+        _writeJSON(WEEKLY_KEY, plays);
+        return 'weekly-fresh';
+      }
+      // Anonymous — bump the persistent counter.
+      const consumed = _readJSON(ANON_KEY, 0);
+      _writeJSON(ANON_KEY, consumed + 1);
+      return s;
+    }
+    function counterText() {
+      const s = _state();
+      if (s === 'pro') return '';
+      if (s === 'trial-active') {
+        const userId = window.__currentUser.id;
+        const days = TRIAL_DAYS - _trialDayCount(userId);
+        return days <= 1 ? 'Last day of free trial' : `${days} days of free trial left`;
+      }
+      if (s === 'weekly-fresh') return '1 free briefing this week';
+      if (s === 'weekly-used')  return 'Used this week — Pro for daily';
+      if (s === 'anon-1-left' || s === 'anon-last') {
+        const left = ANON_FREE_LIMIT - _readJSON(ANON_KEY, 0);
+        return `${left} free briefing${left === 1 ? '' : 's'} left`;
+      }
+      if (s === 'anon-wall') return 'Sign in to listen';
+      return ''; // anon-fresh: keep clean
+    }
+    function sessionPromptShown() {
+      try { return sessionStorage.getItem(SESSION_FLAG) === '1'; }
+      catch (_) { return false; }
+    }
+    function markSessionPromptShown() {
+      try { sessionStorage.setItem(SESSION_FLAG, '1'); } catch (_) {}
+    }
+
+    window.__briefingAccess = {
+      state: _state,
+      canListen,
+      consume,
+      counterText,
+      isPro: _isPro,
+      isSignedIn: _isSignedIn,
+      sessionPromptShown,
+      markSessionPromptShown,
+      // Test/debug knobs — call from console to reset state if needed.
+      _reset: () => {
+        localStorage.removeItem(ANON_KEY);
+        localStorage.removeItem(ANON_EPISODES_KEY);
+        localStorage.removeItem(TRIAL_KEY);
+        localStorage.removeItem(WEEKLY_KEY);
+        sessionStorage.removeItem(SESSION_FLAG);
+      },
+      _debug: () => ({
+        state: _state(),
+        anonConsumed: _readJSON(ANON_KEY, 0),
+        weeklyPlays: _readJSON(WEEKLY_KEY, {}),
+        trialDates: _readJSON(TRIAL_KEY, {}),
+        userId: window.__currentUser?.id,
+        tier: window.__userTier,
+      }),
+    };
+  }
+
+  // ── Briefing paywall modal ───────────────────────────────────────────────
+  // Two modes:
+  //   "signin" → anon hit 3-briefing wall, pitch sign-in
+  //   "pro"    → account user used weekly quota, pitch Pro at $5/mo
+  // The actual price string ($5 / mo) lives in __PRO_PRICE_DISPLAY so a
+  // single change cascades through all surfaces if pricing ever shifts.
+  if (!window.__PRO_PRICE_DISPLAY) window.__PRO_PRICE_DISPLAY = '$5/month';
+  function _showBriefingPaywall(state) {
+    const modal     = document.getElementById('briefingPaywall');
+    const titleEl   = document.getElementById('bpwTitle');
+    const bodyEl    = document.getElementById('bpwBody');
+    const actionsEl = document.getElementById('bpwActions');
+    const secondEl  = document.getElementById('bpwSecondary');
+    if (!modal || !titleEl || !bodyEl || !actionsEl) return;
+
+    if (state === 'anon-wall') {
+      // Anonymous user tried briefing #4 → pitch sign-in.
+      titleEl.textContent = "You've heard 3 briefings";
+      bodyEl.innerHTML =
+        "Sign in to unlock your <strong>free 7-day trial</strong> of daily AI briefings — " +
+        "yours to keep with one tap.";
+      actionsEl.innerHTML = `
+        <button class="bpwPrimary" id="bpwSignIn">Sign in to continue</button>
+      `;
+      secondEl.innerHTML = `<button id="bpwDismiss">Maybe later</button>`;
+      actionsEl.querySelector('#bpwSignIn')?.addEventListener('click', () => {
+        modal.classList.remove('open');
+        try { window.__openAuthModal?.('signup'); } catch (_) {}
+      });
+    } else if (state === 'weekly-used') {
+      // Account user used their weekly free briefing → pitch Pro.
+      titleEl.textContent = 'Daily briefings with Pro';
+      bodyEl.innerHTML =
+        `Your weekly free briefing is in. Upgrade to <strong>Pro</strong> at <strong>${window.__PRO_PRICE_DISPLAY}</strong> ` +
+        "for daily briefings + Map This + Deep Analysis unlimited.";
+      actionsEl.innerHTML = `
+        <button class="bpwPrimary" id="bpwUpgrade">Upgrade to Pro</button>
+      `;
+      secondEl.innerHTML = `<button id="bpwDismiss">Maybe later</button>`;
+      actionsEl.querySelector('#bpwUpgrade')?.addEventListener('click', () => {
+        modal.classList.remove('open');
+        try { window.__openPricing?.('Unlock daily briefings with Pro.'); } catch (_) {}
+      });
+    } else {
+      // Fallback for any other gated state — generic message.
+      titleEl.textContent = 'Briefing locked';
+      bodyEl.textContent = 'Sign in or upgrade to keep listening.';
+      actionsEl.innerHTML = '<button class="bpwPrimary" id="bpwGenericPrimary">Sign in</button>';
+      secondEl.innerHTML = `<button id="bpwDismiss">Maybe later</button>`;
+      actionsEl.querySelector('#bpwGenericPrimary')?.addEventListener('click', () => {
+        modal.classList.remove('open');
+        try { window.__openAuthModal?.('signin'); } catch (_) {}
+      });
+    }
+    // Wire dismiss / X / backdrop / Escape uniformly.
+    secondEl.querySelector('#bpwDismiss')?.addEventListener('click', () => modal.classList.remove('open'));
+    document.getElementById('bpwClose')?.addEventListener('click', () => modal.classList.remove('open'), { once: true });
+    const onBackdrop = (e) => { if (e.target === modal) { modal.classList.remove('open'); modal.removeEventListener('click', onBackdrop); } };
+    modal.addEventListener('click', onBackdrop);
+    const onEsc = (e) => { if (e.key === 'Escape') { modal.classList.remove('open'); document.removeEventListener('keydown', onEsc); } };
+    document.addEventListener('keydown', onEsc);
+    modal.classList.add('open');
+  }
+
   // ── Open ─────────────────────────────────────────────────────────────────
   function openBriefing() {
     if (!episode) return;
+    // ── Access gate ───────────────────────────────────────────
+    // Block listening if the user has consumed their free allowance and
+    // doesn't have an account / has used their weekly free briefing.
+    // Re-listens of an already-consumed episode bypass the gate (matches
+    // server-side briefing_access_log semantics).
+    if (window.__briefingAccess && !window.__briefingAccess.canListen(episode.id)) {
+      const state = window.__briefingAccess.state();
+      try { _showBriefingPaywall(state); } catch (e) { console.warn('[briefing] paywall failed:', e.message); }
+      return;
+    }
+    // Record this listen against the user's allowance. Re-listens of the
+    // same episode are no-ops (consume() short-circuits on duplicate id).
+    try { window.__briefingAccess?.consume(episode.id); } catch (_) {}
     // Briefing is designed exclusively for the 3D globe (camera flies,
     // arcs render in world space, hover labels do dot-product checks
     // against the camera). The 2D map projection has none of that
@@ -47096,7 +47667,96 @@ body.ticker-active .gTickerLabel {
       }
     });
 
+    // Inject the access-aware prompt card BEFORE opening the recap so
+    // there's no FOUC. _renderRecapPromptCard reads __briefingAccess
+    // state and picks copy that matches: come-back nudge after 1st free,
+    // "1 left" warning after 2nd, sign-in pitch after 3rd, Pro pitch
+    // after trial-ends, etc.
+    _renderRecapPromptCard();
     document.getElementById('bRecap').classList.add('open');
+  }
+
+  // Render the soft prompt card at the top of the recap. Returns true
+  // if a card was shown, false if the user is fully unlocked (Pro) or
+  // the slot stays hidden for any other reason.
+  function _renderRecapPromptCard() {
+    const promptEl = document.getElementById('bRecapPrompt');
+    if (!promptEl) return false;
+    const access = window.__briefingAccess;
+    if (!access) { promptEl.hidden = true; return false; }
+    const state = access.state();
+
+    // After consume() bumps the count, the NEW state reflects what's
+    // left. So when the user just finished briefing 1, state is
+    // 'anon-1-left' (because consumed=1, ANON_FREE_LIMIT=3, the
+    // computed state matches "2 free briefings left", which our state
+    // helper labels 'anon-1-left'). When they finish briefing 3, the
+    // counter is now 3 and state becomes 'anon-wall' — perfect moment
+    // for the sign-in pitch.
+    let title = '', body = '', primary = '', primaryAction = null;
+    if (state === 'anon-1-left') {
+      // Just finished briefing 1 of 3 → catchy come-back, no ask.
+      title = 'Come back tomorrow 🌅';
+      body  = "Earth00's daily briefing drops every morning. See you then.";
+      // No primary CTA — let the user explore the recap.
+    } else if (state === 'anon-last') {
+      // Just finished briefing 2 of 3 → soft account pitch.
+      title = 'One free briefing left';
+      body  = "Sign in to unlock your <strong>free 7-day trial</strong> — keep the daily briefing rolling.";
+      primary = 'Sign in';
+      primaryAction = () => { try { window.__openAuthModal?.('signup'); } catch (_) {} };
+    } else if (state === 'anon-wall') {
+      // Just finished briefing 3 of 3 → firm sign-in pitch.
+      title = "You're hooked? 🎧";
+      body  = "Sign in to unlock your <strong>free 7-day trial</strong> of daily AI briefings.";
+      primary = 'Start free trial';
+      primaryAction = () => { try { window.__openAuthModal?.('signup'); } catch (_) {} };
+    } else if (state === 'trial-active') {
+      // Trial day — surface remaining days if it's the last day.
+      const counter = access.counterText();
+      if (counter === 'Last day of free trial') {
+        title = 'Last day of your trial';
+        body  = `Keep daily briefings rolling with <strong>Pro</strong> at <strong>${window.__PRO_PRICE_DISPLAY || '$5/month'}</strong>.`;
+        primary = 'Upgrade to Pro';
+        primaryAction = () => { try { window.__openPricing?.('Trial ends today — keep your daily briefing.'); } catch (_) {} };
+      } else {
+        // Mid-trial — silent, no card.
+        promptEl.hidden = true;
+        return false;
+      }
+    } else if (state === 'weekly-used') {
+      // Used this week's free briefing (just consumed it) → Pro pitch.
+      title = "That's your free briefing this week";
+      body  = `Upgrade to <strong>Pro</strong> at <strong>${window.__PRO_PRICE_DISPLAY || '$5/month'}</strong> for daily briefings, unlimited Map This, and Deep Analysis.`;
+      primary = 'Upgrade to Pro';
+      primaryAction = () => { try { window.__openPricing?.('Unlock daily briefings with Pro.'); } catch (_) {} };
+    } else {
+      // 'pro' / 'weekly-fresh' (won't happen because they just consumed)
+      // / 'anon-fresh' (only possible if access module loaded weirdly).
+      promptEl.hidden = true;
+      return false;
+    }
+
+    promptEl.hidden = false;
+    promptEl.innerHTML = `
+      <div class="bRecapPromptTitle">${title}</div>
+      <div class="bRecapPromptBody">${body}</div>
+      ${primary ? `<div class="bRecapPromptActions">
+        <button class="bRecapPromptPrimary" id="bRecapPromptPrimary">${primary}</button>
+        <button class="bRecapPromptDismiss" id="bRecapPromptDismiss">Maybe later</button>
+      </div>` : ''}
+    `;
+    if (primary && primaryAction) {
+      promptEl.querySelector('#bRecapPromptPrimary')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        primaryAction();
+      });
+      promptEl.querySelector('#bRecapPromptDismiss')?.addEventListener('click', (e) => {
+        e.stopPropagation();
+        promptEl.hidden = true;
+      });
+    }
+    return true;
   }
 
   // ── Story detail panel ───────────────────────────────────────────────────
@@ -47636,6 +48296,8 @@ body.ticker-active .gTickerLabel {
   // persisted briefing value on init, updates it on every input event,
   // and stops touch events from scrubbing the seek slider underneath.
   const _bVolSlider = document.getElementById('bVolSlider');
+  const _bVolBtn    = document.getElementById('bVolBtn');
+  const _bVolPop    = document.getElementById('bVolPopover');
   if (_bVolSlider) {
     try {
       const v = window.__earthVolume?.briefing ?? 1.0;
@@ -47645,10 +48307,46 @@ body.ticker-active .gTickerLabel {
       const v = (parseInt(_bVolSlider.value, 10) || 0) / 100;
       window.__earthVolume?.setBriefing(v);
     });
-    // Prevent the click from propagating into the briefing player chrome
-    // (would otherwise toggle play/pause via the outer click handler).
     ['click','pointerdown','touchstart'].forEach(evt =>
       _bVolSlider.addEventListener(evt, e => e.stopPropagation())
+    );
+  }
+  // Vertical popover toggle — click the speaker button to reveal the
+  // slider above. Click outside (or button again) to dismiss. The
+  // popover's parent .bVolWrap is position:relative so the absolute
+  // popover anchors to the button's column.
+  if (_bVolBtn && _bVolPop) {
+    let _bVolDocCloseHandler = null;
+    const _closeBVol = () => {
+      _bVolPop.hidden = true;
+      _bVolBtn.classList.remove('active');
+      if (_bVolDocCloseHandler) {
+        document.removeEventListener('click', _bVolDocCloseHandler, true);
+        _bVolDocCloseHandler = null;
+      }
+    };
+    _bVolBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const willOpen = _bVolPop.hidden;
+      if (willOpen) {
+        _bVolPop.hidden = false;
+        _bVolBtn.classList.add('active');
+        // Outside-click listener — deferred so the click that opened
+        // the popover doesn't immediately close it.
+        setTimeout(() => {
+          _bVolDocCloseHandler = (ev) => {
+            if (_bVolPop.contains(ev.target) || _bVolBtn.contains(ev.target)) return;
+            _closeBVol();
+          };
+          document.addEventListener('click', _bVolDocCloseHandler, true);
+        }, 0);
+      } else {
+        _closeBVol();
+      }
+    });
+    // Block popover-internal events from bubbling into the briefing chrome.
+    ['click','pointerdown','touchstart'].forEach(evt =>
+      _bVolPop.addEventListener(evt, e => e.stopPropagation())
     );
   }
   // Seek slider — scrub within current segment's audio
@@ -47892,6 +48590,60 @@ body.ticker-active .gTickerLabel {
   // phase so we toggle the pause class BEFORE the item-level click
   // handler navigates to the article detail.
   document.getElementById('globalTicker')?.addEventListener('click', _gTickerHandlePause, true);
+
+  // ── 8-min briefing nudge ────────────────────────────────────
+  // Slides in a top banner 8 minutes into a session, inviting the user
+  // to listen to today's briefing. Dismissable + one-shot per session.
+  // Only shows when:
+  //   - the user hasn't already opened the briefing this session
+  //   - they have briefing access left (anon ≤3 free, account with quota
+  //     remaining, or Pro)
+  //   - they haven't dismissed it earlier this session
+  //   - they're on the globe / news page (not in another modal)
+  (function wireBriefingNudge() {
+    const BRIEFING_NUDGE_MS = 8 * 60 * 1000; // 8 minutes
+    const nudgeEl  = document.getElementById('briefingNudge');
+    const listenBtn = document.getElementById('briefingNudgeListen');
+    const closeBtn  = document.getElementById('briefingNudgeClose');
+    const textEl    = nudgeEl?.querySelector('.briefingNudgeText');
+    if (!nudgeEl || !listenBtn || !closeBtn || !textEl) return;
+
+    let dismissed = false;
+    let shown = false;
+    function show() {
+      if (dismissed || shown) return;
+      // Skip if briefing already opened this session.
+      const access = window.__briefingAccess;
+      if (access?.sessionPromptShown()) return;
+      // Skip if briefing isn't available (no episode for today, etc.)
+      if (window._briefingAvailable === false) return;
+      // Pick copy based on whether user is signed in. Different line,
+      // same concept — see user spec.
+      const isSignedIn = !!window.__currentUser?.id;
+      textEl.textContent = isSignedIn
+        ? "Today's briefing is ready · 6 min"
+        : "Listen to today's briefing · free";
+      nudgeEl.classList.add('open');
+      shown = true;
+      access?.markSessionPromptShown();
+    }
+    function hide() { nudgeEl.classList.remove('open'); }
+
+    // Schedule the show after 8 min of session time. (Idle tabs DO
+    // count — this isn't tied to actual user activity, just elapsed
+    // time. A more sophisticated version would pause when document
+    // is hidden; we keep it simple here.)
+    setTimeout(show, BRIEFING_NUDGE_MS);
+
+    listenBtn.addEventListener('click', () => {
+      hide();
+      try { window.__openBriefingLauncher?.() || document.getElementById('briefingBtn')?.click(); } catch (_) {}
+    });
+    closeBtn.addEventListener('click', () => {
+      dismissed = true;
+      hide();
+    });
+  })();
 
   // ── Fetch and refresh ─────────────────────────────────────────────────────
   async function _fetchAndStart() {
@@ -53354,6 +54106,30 @@ body.ticker-active .gTickerLabel {
      onmouseout="this.style.color='rgba(255,255,255,0.22)'">
     Privacy Policy
   </a>
+</div>
+
+<!-- Briefing paywall modal — opens when the user attempts to listen but
+     their allowance is exhausted. Two flavors driven by data-mode:
+       "signin"  → anon hit the 3-briefing wall, prompt for account
+       "pro"     → account user has used their weekly free briefing
+     Closed via X / backdrop / Escape. -->
+<div id="briefingPaywall" role="dialog" aria-modal="true" aria-labelledby="bpwTitle">
+  <div class="bpwBox">
+    <div class="bpwClose" id="bpwClose" type="button" aria-label="Close">&times;</div>
+    <div class="bpwIcon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <rect x="3" y="3" width="18" height="18" rx="2"/>
+        <line x1="7" y1="8" x2="17" y2="8"/>
+        <line x1="7" y1="12" x2="17" y2="12"/>
+        <line x1="7" y1="16" x2="13" y2="16"/>
+        <circle cx="17" cy="16.5" r="1.5" fill="currentColor" stroke="none" opacity="0.6"/>
+      </svg>
+    </div>
+    <div class="bpwTitle" id="bpwTitle"></div>
+    <div class="bpwBody" id="bpwBody"></div>
+    <div class="bpwActions" id="bpwActions"></div>
+    <div class="bpwSecondary" id="bpwSecondary"></div>
+  </div>
 </div>
 
 <!-- Saved Views modal — opened from Settings → Saved Views. Lists all
