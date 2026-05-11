@@ -11088,7 +11088,16 @@ body.cb-safe .semHeatLegendBar:not(.coverage) {
     .sidebarInner {
       flex: 1;
       overflow-y: auto;
-      padding: 80px 16px 32px;
+      /* Bottom padding clears nav + ticker + safe-area — see index.html. */
+      padding:
+        80px
+        16px
+        calc(var(--page-nav-height, 48px)
+             + var(--global-ticker-height, 36px)
+             + var(--global-ticker-gap, 8px)
+             + env(safe-area-inset-bottom, 0px)
+             + var(--app-bottom-inset, 0px)
+             + 24px);
       scrollbar-width: thin;
       scrollbar-color: rgba(255,255,255,0.08) transparent;
     }
@@ -13756,7 +13765,12 @@ body.auth-modal-open > *:not(#authOverlay) { pointer-events: none !important; }
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
   align-items: center; justify-content: center;
-  padding: 20px;
+  /* Safe-area-aware padding — see index.html for rationale. */
+  padding:
+    max(20px, calc(env(safe-area-inset-top, 0px) + 16px))
+    20px
+    max(20px, calc(var(--page-nav-height, 0px) + env(safe-area-inset-bottom, 0px) + var(--app-bottom-inset, 0px) + 16px))
+    20px;
 }
 #briefingPaywall.open { display: flex; }
 .bpwBox {
@@ -16714,14 +16728,6 @@ window.__arcCtxSegmented = (function() {
           <input type="range" class="volSlider" id="settingsMasterVol" min="0" max="100" value="100" step="1" aria-label="Master volume" />
         </div>
       </div>
-      <!-- Accessibility section — see index.html for rationale. -->
-      <div class="sidebarSection sidebarSectionGlobal">
-        <div class="sidebarSectionLabel">Accessibility</div>
-        <label class="settingsToggleRow" style="margin-top:6px;">
-          <input type="checkbox" id="settingsCbSafe" />
-          <span class="settingsToggleLabel">Color-blind safe palette</span>
-        </label>
-      </div>
       <div class="sidebarDivider"></div>
 
       <!-- Country view -->
@@ -16732,9 +16738,13 @@ window.__arcCtxSegmented = (function() {
         </div>
         <div class="sidebarSection">
           <div class="sidebarSectionLabel">Globe Motion</div>
+          <label class="settingsToggleRow" style="margin-bottom:8px;">
+            <input type="checkbox" class="ambientToggle" data-ambient-toggle checked />
+            <span class="settingsToggleLabel">Enable ambient rotation</span>
+          </label>
           <div class="sliderRow">
             <div class="sliderLabelRow">
-              <span class="sliderLabel">Ambient Rotation</span>
+              <span class="sliderLabel">Speed</span>
               <span class="sliderValue" id="ambientVal">—</span>
             </div>
             <input class="settingsSlider" type="range" id="ambientSlider"
@@ -16833,9 +16843,13 @@ window.__arcCtxSegmented = (function() {
         </div>
         <div class="sidebarSection">
           <div class="sidebarSectionLabel">Globe Motion</div>
+          <label class="settingsToggleRow" style="margin-bottom:8px;">
+            <input type="checkbox" class="ambientToggle" data-ambient-toggle checked />
+            <span class="settingsToggleLabel">Enable ambient rotation</span>
+          </label>
           <div class="sliderRow">
             <div class="sliderLabelRow">
-              <span class="sliderLabel">Ambient Rotation</span>
+              <span class="sliderLabel">Speed</span>
               <span class="sliderValue" id="ambientValCity">—</span>
             </div>
             <input class="settingsSlider" type="range" id="ambientSliderCity"
@@ -16934,9 +16948,13 @@ window.__arcCtxSegmented = (function() {
         </div>
         <div class="sidebarSection">
           <div class="sidebarSectionLabel">Globe Motion</div>
+          <label class="settingsToggleRow" style="margin-bottom:8px;">
+            <input type="checkbox" class="ambientToggle" data-ambient-toggle checked />
+            <span class="settingsToggleLabel">Enable ambient rotation</span>
+          </label>
           <div class="sliderRow">
             <div class="sliderLabelRow">
-              <span class="sliderLabel">Ambient Rotation</span>
+              <span class="sliderLabel">Speed</span>
               <span class="sliderValue" id="ambientValDefault">—</span>
             </div>
             <input class="settingsSlider" type="range" id="ambientSliderDefault"
@@ -16981,6 +16999,16 @@ window.__arcCtxSegmented = (function() {
             </div>
           </div>
         </div>
+      </div>
+
+      <!-- Accessibility — moved to the bottom of the sidebar. See index.html. -->
+      <div class="sidebarDivider"></div>
+      <div class="sidebarSection sidebarSectionGlobal">
+        <div class="sidebarSectionLabel">Accessibility</div>
+        <label class="settingsToggleRow" style="margin-top:6px;">
+          <input type="checkbox" id="settingsCbSafe" />
+          <span class="settingsToggleLabel">Color-blind safe palette</span>
+        </label>
       </div>
 
     </div>
@@ -20216,22 +20244,48 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const ambientSliders = ["ambientSlider","ambientSliderCity","ambientSliderTransportation","ambientSliderDefault"];
       const ambientVals    = ["ambientVal","ambientValCity","ambientValTransportation","ambientValDefault"];
 
+      // Ambient on/off + last-speed memory — see index.html for rationale.
+      let _ambientLastSpeed = parseFloat(document.getElementById("ambientSlider")?.value || '0.0004');
+      function _syncAmbientToggles(enabled) {
+        document.querySelectorAll('[data-ambient-toggle]').forEach(cb => { cb.checked = enabled; });
+      }
+
       ambientSliders.forEach(id => {
         const el = document.getElementById(id);
         if (!el) return;
         el.addEventListener("input", () => {
           ambientSpeed = parseFloat(el.value);
+          if (ambientSpeed > 0) _ambientLastSpeed = ambientSpeed;
           ambientSliders.forEach(sid => { const s = document.getElementById(sid); if (s) s.value = el.value; });
           ambientVals.forEach(vid => { const v = document.getElementById(vid); if (v) v.textContent = formatSpeed(ambientSpeed); });
+          _syncAmbientToggles(ambientSpeed > 0);
         });
         el.addEventListener("pointerdown", (e) => e.stopPropagation());
       });
 
-      // Init display values
+      document.querySelectorAll('[data-ambient-toggle]').forEach(cb => {
+        cb.addEventListener('change', () => {
+          const target = cb.checked ? (_ambientLastSpeed || 0.0004) : 0;
+          if (!cb.checked && ambientSpeed > 0) _ambientLastSpeed = ambientSpeed;
+          const driver = document.getElementById('ambientSlider')
+                       || document.getElementById('ambientSliderDefault');
+          if (driver) {
+            driver.value = String(target);
+            driver.dispatchEvent(new Event('input', { bubbles: true }));
+          } else {
+            ambientSpeed = target;
+            ambientSliders.forEach(sid => { const s = document.getElementById(sid); if (s) s.value = String(target); });
+            ambientVals.forEach(vid => { const v = document.getElementById(vid); if (v) v.textContent = formatSpeed(target); });
+            _syncAmbientToggles(target > 0);
+          }
+        });
+      });
+
       ambientVals.forEach(vid => {
         const v = document.getElementById(vid);
         if (v) v.textContent = formatSpeed(parseFloat(document.getElementById("ambientSlider").value));
       });
+      _syncAmbientToggles(parseFloat(document.getElementById("ambientSlider")?.value || '0') > 0);
 
       const biomeOverlayToggles = [
         document.getElementById("biomeOverlayToggleCountry"),
@@ -47781,7 +47835,8 @@ body.ticker-active .gTickerLabel {
 .bRecapClose:hover { background: rgba(255,80,80,0.3); color: #fff; }
 .bRecapGrid {
   flex: 1; overflow-y: auto; overflow-x: hidden;
-  padding: 16px 20px 24px;
+  /* Bottom padding clears nav + safe-area — see index.html for rationale. */
+  padding: 16px 20px calc(var(--page-nav-height, 48px) + env(safe-area-inset-bottom, 0px) + var(--app-bottom-inset, 0px) + 24px);
   display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
   gap: 14px; align-content: start;
 }
@@ -52599,18 +52654,10 @@ body.ticker-active .gTickerLabel {
     // tier state to settle before deciding pro vs free. 5s safety
     // timeout in __markTierReady caps the worst-case wait.
     try { if (window.__tierReady) await window.__tierReady; } catch (_) {}
-    if (!window.__checkTier?.('pro')) {
-      // User isn't allowed in — restore music.
-      try {
-        const p = window.__currentPage;
-        window.audioEngine?.unduck?.(800);
-        if (p === 0)      window.audioEngine?.setLayer?.('stats', true);
-        else if (p === 1) window.audioEngine?.setLayer?.('globe', true);
-        else if (p === 2) window.audioEngine?.setLayer?.('news',  true);
-      } catch (_) {}
-      window.__openPricing?.();
-      return;
-    }
+    // NOTE: legacy `if (!__checkTier('pro')) → openPricing` hard-gate
+    // REMOVED — see index.html for full rationale. The launcher is now
+    // open to all tiers; access enforcement happens inside openBriefing
+    // via window.__briefingAccess.canListen.
     // Save today's episode on first open so past briefings don't overwrite it
     if (!_todayEpisode && episode && episode.status === 'ready') {
       _todayEpisode = episode;
@@ -63003,13 +63050,33 @@ body.ticker-active .gTickerLabel {
     const preBlessed = window.__earthIntroAudio;
     window.__earthIntroAudio = null;
     if (preBlessed) {
-      audio = preBlessed;
-      audio.muted = false;
-      // Defensive: silent-unlock may not have completed; re-set volume.
-      audio.volume = 1;
-      try { audio.currentTime = 0; } catch (_) {}
-      const p = audio.play();
-      if (p && p.then) p.catch(() => { try { unmuteBtn.style.display = ''; } catch (_) {} });
+      // Use a FRESH Audio element rather than reusing the pre-blessed
+      // one — iOS WKWebView's audio pipeline doesn't honor a seek-back
+      // cleanly on a paused element, producing a "here's the – here's
+      // the globe" stutter. See index.html for full rationale.
+      try { preBlessed.pause(); preBlessed.src = ''; } catch (_) {}
+
+      audio = new Audio(AUDIO_URL);
+      audio.preload = 'auto';
+      audio.muted   = false;
+      audio.volume  = 0; // fade in below
+      const FADE_IN_MS = 260;
+      const SILENCE_MS = 600;
+      setTimeout(() => {
+        if (aborted || !audio) return;
+        const p = audio.play();
+        if (p && p.then) p.catch(() => { try { unmuteBtn.style.display = ''; } catch (_) {} });
+        const t0 = performance.now();
+        function rampVol() {
+          if (aborted || !audio) return;
+          const dt = performance.now() - t0;
+          const v = Math.min(1, dt / FADE_IN_MS);
+          try { audio.volume = v; } catch (_) {}
+          if (v < 1) requestAnimationFrame(rampVol);
+        }
+        requestAnimationFrame(rampVol);
+      }, SILENCE_MS);
+
       unmuteBtn.style.display = 'none';
     } else {
       audio = new Audio(AUDIO_URL);
