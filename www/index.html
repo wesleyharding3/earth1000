@@ -2340,8 +2340,8 @@ body.ticker-active #flowControls {
 
 /* Hide playback controls in aggregate mode */
 #flowControls.aggregate-mode .flowPlaybackRow { display: none; }
-/* Animated-clip share hidden in aggregate mode — see index.html. */
-#flowControls.aggregate-mode .flowShareClipBtn { display: none; }
+/* "Clip" popover item hidden in aggregate mode — see index.html for
+   rationale. Rule lives in the .flowSharePopover section below. */
 #flowControls.aggregate-mode .flowPanelRow:has(#flowSpeed) { display: none; }
 #flowControls.aggregate-mode .flowAggStats { display: block; }
 
@@ -2444,6 +2444,49 @@ body.ticker-active #flowControls {
   transform: scale(1.08);
 }
 #flowControls.minimized .flowShareBtn { display: none; }
+
+/* Share popover — see index.html for full rationale. */
+.flowSharePopover {
+  position: absolute;
+  top: calc(28px * var(--mobile-control-scale));
+  right: calc(60px * var(--mobile-control-scale));
+  background: rgba(15, 18, 26, 0.96);
+  border: 1px solid rgba(255, 220, 180, 0.18);
+  border-radius: 8px;
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  z-index: 20;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+  backdrop-filter: blur(10px) saturate(1.2);
+  -webkit-backdrop-filter: blur(10px) saturate(1.2);
+  min-width: 140px;
+}
+.flowSharePopover[hidden] { display: none; }
+.flowSharePopoverItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: transparent;
+  border: none;
+  color: rgba(255, 220, 180, 0.92);
+  font-size: 13px;
+  cursor: pointer;
+  border-radius: 4px;
+  text-align: left;
+  white-space: nowrap;
+  transition: background 0.12s, color 0.12s;
+}
+.flowSharePopoverItem:hover {
+  background: rgba(255, 220, 180, 0.08);
+  color: #fff;
+}
+.flowSharePopoverItem svg { width: 14px; height: 14px; flex-shrink: 0; }
+#flowControls.aggregate-mode .flowSharePopoverItem[data-action="clip"] {
+  display: none;
+}
 
 /* Minimized state — collapse the panel smoothly instead of display:none so
    the live-arc list animates into the freed space. */
@@ -16412,19 +16455,24 @@ window.__arcCtxSegmented = (function() {
          via __shareSnapshot. The image is the actual view + Earth00
          brand chrome; no link URL since news-flows views don't have
          a stable shareable URL beyond the live state. -->
-    <!-- Animated-clip share for flow time-series. Hidden in aggregate
-         mode via CSS. See index.html for full rationale. -->
-    <button class="flowShareBtn flowShareClipBtn" id="flowShareClipBtn" title="Share clip (animated)" onclick="window.__shareFlowsClip?.()">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
-      </svg>
-    </button>
-    <button class="flowShareBtn" id="flowShareBtn" title="Share these flows" onclick="window.__shareNewsFlowsSnapshot?.()">
+    <!-- Single share button — opens a popover with image / clip options.
+         See index.html for full rationale. -->
+    <button class="flowShareBtn" id="flowShareBtn" title="Share…" onclick="window.__toggleFlowSharePopover?.(event)">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
         <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
       </svg>
     </button>
+    <div class="flowSharePopover" id="flowSharePopover" hidden>
+      <button class="flowSharePopoverItem" data-action="snapshot" onclick="window.__doShareFlowsSnapshot?.()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+        <span>Image</span>
+      </button>
+      <button class="flowSharePopoverItem" data-action="clip" onclick="window.__doShareFlowsClip?.()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+        <span>Clip</span>
+      </button>
+    </div>
     <button class="flowCloseBtn" id="flowCloseBtn" title="Close" onclick="window.__flowClosePanel?.()">✕</button>
 
     <!-- Minimized bar (shown when minimized) -->
@@ -53761,6 +53809,21 @@ body.ticker-active .gTickerLabel {
   window.__heatmapHasTimeseries = function() {
     return !!(state.series && state.series.buckets && state.series.buckets.length >= 2);
   };
+  // Returns the date range of the loaded series as YYYY-MM-DD strings.
+  // Used by the share-clip overlay to render the date pill for
+  // time-series heatmap recordings. Returns null when no series loaded.
+  window.__heatmapSeriesRange = function() {
+    if (!state.series || !state.series.buckets || !state.series.buckets.length) return null;
+    const buckets = state.series.buckets;
+    const first = buckets[0];
+    const last  = buckets[buckets.length - 1];
+    if (!first?.t || !last?.t) return null;
+    const fmt = (t) => {
+      try { return new Date(t).toISOString().slice(0, 10); }
+      catch (_) { return String(t || '').slice(0, 10); }
+    };
+    return { start: fmt(first.t), end: fmt(last.t) };
+  };
   window.__playHeatmapTimeseries = function(durationMs) {
     return new Promise((resolve) => {
       if (!window.__heatmapHasTimeseries()) { resolve(); return; }
@@ -58135,6 +58198,51 @@ body.ticker-active .gTickerLabel {
     color: #fff;
     transform: scale(1.08);
   }
+  /* Shared single-button popover for cluster + heatmap panels.
+     See index.html for full rationale. */
+  .shareBtnWrap {
+    position: relative;
+    display: inline-flex;
+    margin-right: 6px;
+  }
+  .shareBtnPopover {
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    background: rgba(15, 18, 26, 0.96);
+    border: 1px solid rgba(255, 220, 180, 0.18);
+    border-radius: 8px;
+    padding: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    z-index: 30;
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+    backdrop-filter: blur(10px) saturate(1.2);
+    -webkit-backdrop-filter: blur(10px) saturate(1.2);
+    min-width: 140px;
+  }
+  .shareBtnPopover[hidden] { display: none; }
+  .shareBtnPopoverItem {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    background: transparent;
+    border: none;
+    color: rgba(255, 220, 180, 0.92);
+    font-size: 13px;
+    cursor: pointer;
+    border-radius: 4px;
+    text-align: left;
+    white-space: nowrap;
+    transition: background 0.12s, color 0.12s;
+  }
+  .shareBtnPopoverItem:hover {
+    background: rgba(255, 220, 180, 0.08);
+    color: #fff;
+  }
+  .shareBtnPopoverItem svg { width: 14px; height: 14px; flex-shrink: 0; }
   /* Snapshot share picker — bottom-sheet modal with Story / Post /
      Other-apps options. Shown when the user taps a snapshot share
      button so we can render the right aspect ratio for their target
@@ -58425,21 +58533,32 @@ body.ticker-active .gTickerLabel {
   // the button on render. Idempotent — re-runs are safe.
   function _attachClusterShareBtn() {
     const close = document.querySelector('#cdCloseBtn');
-    if (!close || close.parentElement.querySelector('.shareBtn')) return;
+    if (!close || close.parentElement.querySelector('.shareBtnWrap')) return;
 
-    // Animated-clip share — see index.html for full rationale.
-    const clipBtn = document.createElement('button');
-    clipBtn.className = 'shareBtn shareBtnClip';
-    clipBtn.title = 'Share clip (animated)';
-    clipBtn.setAttribute('aria-label', 'Share clip');
-    clipBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>`;
-    clipBtn.style.marginRight = '6px';
     const _clipSupported = typeof MediaRecorder !== 'undefined' &&
       typeof window.__renderer?.domElement?.captureStream === 'function';
-    if (!_clipSupported) clipBtn.style.display = 'none';
-    clipBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const panel = close.closest('#clusterDetailPanel') || document.getElementById('clusterDetailPanel');
+
+    // Snapshot path — see index.html for full rationale.
+    const _doSnapshot = () => {
+      const panel = close.closest('#clusterDetail') || document.getElementById('clusterDetail');
+      const dataset = panel?.dataset || {};
+      const kind  = dataset.kind || 'thread';
+      const id    = dataset.entityId;
+      const title = dataset.entityTitle || (panel?.querySelector('.cdTitle')?.textContent || '').trim();
+      if (!id) { console.warn('[share] no entity id on cluster panel'); return; }
+      window.__shareEntity({
+        kind,
+        id: parseInt(id, 10),
+        title,
+        articleCount:  parseInt(dataset.entityArticles,  10),
+        languageCount: parseInt(dataset.entityLanguages, 10),
+        countryCount:  parseInt(dataset.entityCountries, 10),
+      });
+    };
+
+    // Clip path — see index.html for full rationale.
+    const _doClip = () => {
+      const panel = close.closest('#clusterDetail') || document.getElementById('clusterDetail');
       const dataset = panel?.dataset || {};
       const kind  = dataset.kind || 'thread';
       const title = dataset.entityTitle || (panel?.querySelector('.cdTitle')?.textContent || '').trim();
@@ -58450,51 +58569,87 @@ body.ticker-active .gTickerLabel {
         .replace(/[^a-z0-9-]+/g, '-')
         .replace(/^-+|-+$/g, '')
         .slice(0, 60);
+      const flagIsos = [];
+      panel?.querySelectorAll('.cdCountriesChips .nfNationCode').forEach(el => {
+        const iso = (el.textContent || '').trim();
+        if (iso && flagIsos.length < 8) flagIsos.push(iso);
+      });
+      const startDate = dataset.entityStart || dataset.entityFirstDate;
+      const endDate   = dataset.entityEnd   || dataset.entityLastDate;
+      let dateLine;
+      if (startDate && endDate) dateLine = `${_fmtClipDate(startDate)} – ${_fmtClipDate(endDate)}`;
+      else if (endDate)         dateLine = _fmtClipDate(endDate);
+      else                      dateLine = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
       window.__shareGlobeClip?.({
         durationMs:   6000,
         shareTitle:   `Earth00 · ${safeTitle}`,
         shareText:    `${safeTitle} — ${kindLabel.toLowerCase()} on Earth00`,
         filenameBase: `earth00-${kind}-${filenameSlug}`,
+        overlay: {
+          title:    safeTitle,
+          subtitle: kindLabel,
+          dateLine,
+          flagIsos,
+        },
       });
-    });
-    close.parentElement.insertBefore(clipBtn, close);
+    };
 
-    const btn = document.createElement('button');
-    btn.className = 'shareBtn';
-    btn.title = 'Share';
-    btn.setAttribute('aria-label', 'Share');
-    btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
-      <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
-    </svg>`;
-    btn.style.marginRight = '6px';
-    btn.addEventListener('click', (e) => {
+    // Build wrap → trigger → popover (see index.html for design notes).
+    const wrap = document.createElement('div');
+    wrap.className = 'shareBtnWrap';
+
+    const trigger = document.createElement('button');
+    trigger.className = 'shareBtn';
+    trigger.title = 'Share…';
+    trigger.setAttribute('aria-label', 'Share');
+    trigger.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>`;
+
+    const pop = document.createElement('div');
+    pop.className = 'shareBtnPopover';
+    pop.hidden = true;
+
+    const imgItem = document.createElement('button');
+    imgItem.className = 'shareBtnPopoverItem';
+    imgItem.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg><span>Image</span>`;
+    imgItem.addEventListener('click', (e) => {
       e.stopPropagation();
-      // Inspect the panel to figure out kind + id. Detail panel data is
-      // attached via dataset by the cluster-panel renderer (we may need
-      // to extend that to add `data-kind` / `data-id`).
-      const panel = close.closest('#clusterDetailPanel') || document.getElementById('clusterDetailPanel');
-      const dataset = panel?.dataset || {};
-      const kind  = dataset.kind || 'thread';
-      const id    = dataset.entityId;
-      const title = dataset.entityTitle || (panel?.querySelector('.cdTitle')?.textContent || '').trim();
-      if (!id) {
-        console.warn('[share] no entity id on cluster panel');
-        return;
-      }
-      // Forward the panel's already-known counts so the server skips
-      // its DB aggregation. parseInt → NaN if missing; __shareEntity →
-      // _fetchOgImageFile filters NaN with Number.isFinite.
-      window.__shareEntity({
-        kind,
-        id: parseInt(id, 10),
-        title,
-        articleCount:  parseInt(dataset.entityArticles,  10),
-        languageCount: parseInt(dataset.entityLanguages, 10),
-        countryCount:  parseInt(dataset.entityCountries, 10),
-      });
+      pop.hidden = true;
+      _doSnapshot();
     });
-    close.parentElement.insertBefore(btn, close);
+    pop.appendChild(imgItem);
+
+    if (_clipSupported) {
+      const clipItem = document.createElement('button');
+      clipItem.className = 'shareBtnPopoverItem';
+      clipItem.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg><span>Clip</span>`;
+      clipItem.addEventListener('click', (e) => {
+        e.stopPropagation();
+        pop.hidden = true;
+        _doClip();
+      });
+      pop.appendChild(clipItem);
+    }
+
+    trigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const willOpen = pop.hidden;
+      pop.hidden = !willOpen;
+      if (willOpen) {
+        setTimeout(() => {
+          const closeOnOutside = (ev) => {
+            if (pop.contains(ev.target) || trigger.contains(ev.target)) return;
+            pop.hidden = true;
+            document.removeEventListener('click', closeOnOutside);
+          };
+          document.addEventListener('click', closeOnOutside);
+        }, 0);
+      }
+    });
+
+    wrap.appendChild(trigger);
+    wrap.appendChild(pop);
+    close.parentElement.insertBefore(wrap, close);
   }
   // Heatmap panel: small share button next to the panel close.
   // Captures the live globe (or 2D map, depending on user's projection)
@@ -58504,20 +58659,13 @@ body.ticker-active .gTickerLabel {
   // Instagram strips the URL but still gets the rendered image.
   function _attachHeatmapShareBtn() {
     const closeBtn = document.querySelector('#semHeatPanel .semHeatClose');
-    if (!closeBtn || closeBtn.parentElement.querySelector('.shareBtn')) return;
+    if (!closeBtn || closeBtn.parentElement.querySelector('.shareBtnWrap')) return;
 
-    // Animated-clip share — see index.html for full rationale.
-    const clipBtn = document.createElement('button');
-    clipBtn.className = 'shareBtn shareBtnClip';
-    clipBtn.title = 'Share clip (animated)';
-    clipBtn.setAttribute('aria-label', 'Share clip');
-    clipBtn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>`;
-    clipBtn.style.marginRight = '6px';
     const _clipSupported = typeof MediaRecorder !== 'undefined' &&
       typeof window.__renderer?.domElement?.captureStream === 'function';
-    if (!_clipSupported) clipBtn.style.display = 'none';
-    clipBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
+
+    // Clip path — see index.html for full rationale.
+    const _doClip = () => {
       const panel = document.getElementById('semHeatPanel');
       const qaQuestion = panel?.dataset?.qaQuestion ||
                          (document.getElementById('semHeatAskInput')?.value || '').trim();
@@ -58525,7 +58673,6 @@ body.ticker-active .gTickerLabel {
       const heatMode = activeModePill?.dataset?.mode || 'coverage';
       const keyword = (document.getElementById('semHeatKw')?.value || '').trim();
 
-      // Animator selection — see index.html for full rationale.
       const hasTs = typeof window.__heatmapHasTimeseries === 'function'
                       ? window.__heatmapHasTimeseries()
                       : false;
@@ -58544,16 +58691,42 @@ body.ticker-active .gTickerLabel {
       }
 
       let shareTitle, shareText;
+      let overlayTitle, overlaySubtitle, overlayDateLine;
       if (qaQuestion) {
         shareTitle = 'Earth00 · Map This';
         shareText  = `${qaQuestion} — Map This view on Earth00`;
+        overlayTitle    = qaQuestion;
+        overlaySubtitle = 'Map This';
+        overlayDateLine = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
       } else if (keyword) {
         shareTitle = `Earth00 · ${keyword}`;
         shareText  = `${keyword} — ${heatMode} heatmap on Earth00${isTsClip ? ' (time-series)' : ''}`;
+        overlayTitle    = keyword;
+        overlaySubtitle = `${heatMode === 'sentiment' ? 'Sentiment' : 'News coverage'}${isTsClip ? ' · time-series' : ''}`;
       } else {
         shareTitle = 'Earth00 · Heatmap';
         shareText  = `Global news ${heatMode} heatmap on Earth00${isTsClip ? ' (time-series)' : ''}`;
+        overlayTitle    = `Total ${heatMode === 'sentiment' ? 'sentiment' : 'coverage'}`;
+        overlaySubtitle = isTsClip ? 'Time-series' : '';
       }
+
+      if (!overlayDateLine) {
+        if (isTsClip) {
+          try {
+            const series = window.__heatmapSeriesRange?.();
+            if (series?.start && series?.end) {
+              overlayDateLine = `${_fmtClipDate(series.start)} – ${_fmtClipDate(series.end)}`;
+            }
+          } catch (_) {}
+        }
+        if (!overlayDateLine) {
+          const days = parseInt(
+            document.getElementById('semHeatKwDays')?.value
+              || document.getElementById('semHeatTsRange')?.value || '7', 10);
+          overlayDateLine = (days === 1) ? 'Last 1 day' : `Last ${days} days`;
+        }
+      }
+
       const filenameBits = ['earth00', heatMode];
       if (keyword) filenameBits.push(keyword);
       if (isTsClip) filenameBits.push('timeseries');
@@ -58566,21 +58739,16 @@ body.ticker-active .gTickerLabel {
         shareText,
         filenameBase,
         animator,
+        overlay: {
+          title:    overlayTitle,
+          subtitle: overlaySubtitle,
+          dateLine: overlayDateLine,
+        },
       });
-    });
-    closeBtn.parentElement.insertBefore(clipBtn, closeBtn);
+    };
 
-    const btn = document.createElement('button');
-    btn.className = 'shareBtn';
-    btn.title = 'Share';
-    btn.setAttribute('aria-label', 'Share');
-    btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
-      <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
-    </svg>`;
-    btn.style.marginRight = '6px';
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
+    // Snapshot path — see index.html for full rationale.
+    const _doSnapshot = () => {
       const panel = document.getElementById('semHeatPanel');
       const projectionTag = (window.__projection === 'map') ? '2D MAP' : 'GLOBE';
 
@@ -58673,13 +58841,69 @@ body.ticker-active .gTickerLabel {
         shareText:  shareText,
         legend:     _readLegend(),
       });
+    };
+
+    // Build wrap → trigger → popover (see index.html for design notes).
+    const wrap = document.createElement('div');
+    wrap.className = 'shareBtnWrap';
+
+    const trigger = document.createElement('button');
+    trigger.className = 'shareBtn';
+    trigger.title = 'Share…';
+    trigger.setAttribute('aria-label', 'Share');
+    trigger.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>`;
+
+    const pop = document.createElement('div');
+    pop.className = 'shareBtnPopover';
+    pop.hidden = true;
+
+    const imgItem = document.createElement('button');
+    imgItem.className = 'shareBtnPopoverItem';
+    imgItem.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg><span>Image</span>`;
+    imgItem.addEventListener('click', (e) => {
+      e.stopPropagation();
+      pop.hidden = true;
+      _doSnapshot();
     });
-    closeBtn.parentElement.insertBefore(btn, closeBtn);
+    pop.appendChild(imgItem);
+
+    if (_clipSupported) {
+      const clipItem = document.createElement('button');
+      clipItem.className = 'shareBtnPopoverItem';
+      clipItem.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg><span>Clip</span>`;
+      clipItem.addEventListener('click', (e) => {
+        e.stopPropagation();
+        pop.hidden = true;
+        _doClip();
+      });
+      pop.appendChild(clipItem);
+    }
+
+    trigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const willOpen = pop.hidden;
+      pop.hidden = !willOpen;
+      if (willOpen) {
+        setTimeout(() => {
+          const closeOnOutside = (ev) => {
+            if (pop.contains(ev.target) || trigger.contains(ev.target)) return;
+            pop.hidden = true;
+            document.removeEventListener('click', closeOnOutside);
+          };
+          document.addEventListener('click', closeOnOutside);
+        }, 0);
+      }
+    });
+
+    wrap.appendChild(trigger);
+    wrap.appendChild(pop);
+    closeBtn.parentElement.insertBefore(wrap, closeBtn);
   }
   // Re-attach on every DOM change inside the cluster + heatmap panel
   // containers (each re-renders parts of its header on open). The
   // MutationObserver is cheap; the attach functions are idempotent.
-  const _watchTargets = ['clusterDetailPanel', 'semHeatPanel'];
+  // Cluster panel's real DOM id is `clusterDetail` — see index.html note.
+  const _watchTargets = ['clusterDetail', 'semHeatPanel'];
   _watchTargets.forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
@@ -59656,10 +59880,63 @@ body.ticker-active .gTickerLabel {
     return null;
   }
 
-  async function _recordCanvasClip({ canvas, animator, durationMs }) {
+  async function _recordCanvasClip({ canvas, animator, durationMs, overlay }) {
     const mimeType = _pickClipMimeType();
     if (!mimeType) throw new Error('MediaRecorder not supported in this browser');
     if (typeof canvas.captureStream !== 'function') throw new Error('captureStream not supported on this canvas');
+
+    // ── Overlay path: 2-canvas composite ─────────────────────────
+    // Each frame: copy globe → 1080×1080 recording canvas, paint
+    // overlay (title / date / flags / logo / earth00.com) on top.
+    // captureStream from the RECORDING canvas (not the globe canvas)
+    // so the encoded video bakes in the chrome.
+    if (overlay) {
+      const SIZE = 1080;
+      const recCanvas = document.createElement('canvas');
+      recCanvas.width = SIZE; recCanvas.height = SIZE;
+      const recCtx = recCanvas.getContext('2d');
+      // Pre-load async assets (logo + flag images) once. Returns a
+      // synchronous paint function for the hot loop.
+      const paintOverlay = await _buildClipOverlayPainter({ ...overlay, size: SIZE });
+      const stream = recCanvas.captureStream(30);
+      const chunks = [];
+      const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 6_000_000 });
+      recorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunks.push(e.data); };
+      const stopped = new Promise((resolve) => { recorder.onstop = resolve; });
+
+      let running = true;
+      let rafId   = null;
+      function paint() {
+        if (!running) return;
+        recCtx.fillStyle = '#000';
+        recCtx.fillRect(0, 0, SIZE, SIZE);
+        const gw = canvas.width, gh = canvas.height;
+        const srcSize = Math.min(gw, gh);
+        const srcX = (gw - srcSize) / 2;
+        const srcY = (gh - srcSize) / 2;
+        recCtx.drawImage(canvas, srcX, srcY, srcSize, srcSize, 0, 0, SIZE, SIZE);
+        paintOverlay(recCtx, SIZE, SIZE);
+        rafId = requestAnimationFrame(paint);
+      }
+
+      recorder.start(250);
+      paint();
+      try {
+        await animator(durationMs);
+      } finally {
+        running = false;
+        if (rafId) cancelAnimationFrame(rafId);
+        await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+        try { recorder.stop(); } catch (_) {}
+        try { stream.getTracks().forEach(t => t.stop()); } catch (_) {}
+      }
+      await stopped;
+      const blob = new Blob(chunks, { type: mimeType });
+      const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
+      return { blob, mimeType, ext };
+    }
+
+    // ── Raw path (no overlay): capture globe canvas directly ────
     const stream = canvas.captureStream(60);
     const chunks = [];
     const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 6_000_000 });
@@ -59679,6 +59956,159 @@ body.ticker-active .gTickerLabel {
     return { blob, mimeType, ext };
   }
 
+  // Builds the per-clip overlay painter. Pre-loads logo + flag images
+  // once, returns a synchronous paint(ctx, w, h) for the per-frame loop.
+  // opts = { title, subtitle, dateLine, flagIsos[], size }
+  async function _buildClipOverlayPainter(opts = {}) {
+    const { title = '', subtitle = '', dateLine = '', flagIsos = [], size = 1080 } = opts;
+    const loadImg = (src) => new Promise((resolve) => {
+      const img = new Image();
+      img.crossOrigin = 'anonymous';
+      img.onload  = () => resolve(img);
+      img.onerror = () => resolve(null);
+      img.src = src;
+    });
+    const [logoImg, ...flagImgs] = await Promise.all([
+      loadImg('./apple-touch-icon.png').catch(() => null),
+      ...(Array.isArray(flagIsos) ? flagIsos.slice(0, 8).map(iso =>
+        loadImg(`https://flagcdn.com/w80/${String(iso).toLowerCase()}.png`)
+      ) : []),
+    ]);
+
+    function wrapText(ctx, text, maxWidth, maxLines = 2) {
+      if (!text) return [];
+      const words = String(text).split(/\s+/).filter(Boolean);
+      const lines = [];
+      let cur = '';
+      for (const w of words) {
+        const test = cur ? cur + ' ' + w : w;
+        if (ctx.measureText(test).width > maxWidth && cur) {
+          lines.push(cur); cur = w;
+          if (lines.length === maxLines - 1) break;
+        } else { cur = test; }
+      }
+      if (cur && lines.length < maxLines) {
+        const remainingIdx = words.indexOf(cur.split(' ').pop()) + 1;
+        let last = cur;
+        if (remainingIdx < words.length) {
+          last = cur + '…';
+        }
+        lines.push(last);
+      }
+      return lines;
+    }
+
+    return function paintOverlay(ctx, w, h) {
+      const margin   = Math.round(w * 0.045);
+      const titlePx  = Math.round(w * 0.038);
+      const subPx    = Math.round(w * 0.022);
+      const datePx   = Math.round(w * 0.022);
+      const sitePx   = Math.round(w * 0.024);
+      const lineGap  = Math.round(titlePx * 1.15);
+
+      // ── Title (top-left, up to 2 lines, white with shadow)
+      if (title) {
+        ctx.save();
+        ctx.shadowColor = 'rgba(0,0,0,0.85)';
+        ctx.shadowBlur  = 10;
+        ctx.shadowOffsetY = 2;
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.97)';
+        ctx.font = `bold ${titlePx}px -apple-system, system-ui, "Helvetica Neue", sans-serif`;
+        ctx.textBaseline = 'top';
+        ctx.textAlign = 'left';
+        const titleMaxWidth = w - margin * 2 - (dateLine ? Math.round(w * 0.22) : 0);
+        const lines = wrapText(ctx, title, titleMaxWidth, 2);
+        let y = margin;
+        for (const line of lines) {
+          ctx.fillText(line, margin, y);
+          y += lineGap;
+        }
+        if (subtitle) {
+          ctx.font = `${subPx}px -apple-system, system-ui, sans-serif`;
+          ctx.fillStyle = 'rgba(255, 220, 180, 0.94)';
+          ctx.fillText(subtitle, margin, y + 4);
+        }
+        ctx.restore();
+      }
+
+      // ── Date line (top-right, gold-cream)
+      if (dateLine) {
+        ctx.save();
+        ctx.shadowColor = 'rgba(0,0,0,0.7)';
+        ctx.shadowBlur  = 8;
+        ctx.font = `600 ${datePx}px -apple-system, system-ui, sans-serif`;
+        ctx.fillStyle = 'rgba(255, 220, 180, 0.95)';
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'top';
+        ctx.fillText(dateLine, w - margin, margin + 6);
+        ctx.restore();
+      }
+
+      // ── Flag chip row (below title, if provided)
+      if (flagImgs && flagImgs.length) {
+        const valid = flagImgs.filter(Boolean);
+        if (valid.length) {
+          const chipW = Math.round(w * 0.060);
+          const chipH = Math.round(chipW * 0.66);
+          const gap   = Math.round(w * 0.010);
+          const flagY = margin + lineGap * 2 + (subtitle ? subPx + 14 : 8);
+          valid.forEach((img, i) => {
+            const x = margin + i * (chipW + gap);
+            ctx.save();
+            ctx.fillStyle = 'rgba(0,0,0,0.45)';
+            const padX = 3, padY = 3, r = 4;
+            const px = x - padX, py = flagY - padY;
+            const pw = chipW + padX * 2, ph = chipH + padY * 2;
+            ctx.beginPath();
+            ctx.moveTo(px + r, py);
+            ctx.lineTo(px + pw - r, py);
+            ctx.quadraticCurveTo(px + pw, py, px + pw, py + r);
+            ctx.lineTo(px + pw, py + ph - r);
+            ctx.quadraticCurveTo(px + pw, py + ph, px + pw - r, py + ph);
+            ctx.lineTo(px + r, py + ph);
+            ctx.quadraticCurveTo(px, py + ph, px, py + ph - r);
+            ctx.lineTo(px, py + r);
+            ctx.quadraticCurveTo(px, py, px + r, py);
+            ctx.closePath();
+            ctx.fill();
+            ctx.drawImage(img, x, flagY, chipW, chipH);
+            ctx.restore();
+          });
+        }
+      }
+
+      // ── Logo (bottom-left, app icon)
+      if (logoImg) {
+        const logoSize = Math.round(w * 0.085);
+        ctx.save();
+        ctx.globalAlpha = 0.95;
+        ctx.drawImage(logoImg, margin, h - margin - logoSize, logoSize, logoSize);
+        ctx.restore();
+      }
+
+      // ── earth00.com (bottom-right)
+      ctx.save();
+      ctx.shadowColor = 'rgba(0,0,0,0.7)';
+      ctx.shadowBlur  = 8;
+      ctx.font = `700 ${sitePx}px -apple-system, system-ui, sans-serif`;
+      ctx.fillStyle = 'rgba(255, 220, 180, 0.95)';
+      ctx.textAlign = 'right';
+      ctx.textBaseline = 'bottom';
+      ctx.fillText('earth00.com', w - margin, h - margin - 4);
+      ctx.restore();
+    };
+  }
+
+  // Format YYYY-MM-DD → "MMM D" for compact date pills on clips.
+  function _fmtClipDate(yyyyMmDd) {
+    try {
+      const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(String(yyyyMmDd || ''));
+      if (!m) return String(yyyyMmDd || '');
+      const d = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+    } catch (_) { return String(yyyyMmDd || ''); }
+  }
+
   window.__shareGlobeClip = async function(opts = {}) {
     const {
       durationMs = 6000,
@@ -59686,6 +60116,11 @@ body.ticker-active .gTickerLabel {
       shareText  = 'Captured on Earth00',
       filenameBase = 'earth00-clip',
       animator: animatorOverride,
+      // Optional: title / subtitle / date / flag chips baked into the
+      // recorded video as a chrome overlay. See _buildClipOverlayPainter
+      // for the painter and _recordCanvasClip's overlay branch for the
+      // 2-canvas composite path. Omit to capture raw globe (no chrome).
+      overlay,
     } = opts;
     const renderer = window.__renderer;
     if (!renderer || !renderer.domElement) { console.warn('[shareGlobeClip] renderer not ready'); return; }
@@ -59704,6 +60139,7 @@ body.ticker-active .gTickerLabel {
         canvas: renderer.domElement,
         animator: (ms) => animator(ms),
         durationMs,
+        overlay,
       });
       setToast('Clip ready');
 
@@ -59801,13 +60237,71 @@ body.ticker-active .gTickerLabel {
           window.__playFlowsTimeseries(ms),
         ])
       : (ms) => window.__playFlowsTimeseries(ms);
+
+    // Build overlay from live news-flows control state. Compose a
+    // one-line summary like "From Albania" / "About Ethiopia · 'hantavirus'"
+    // from the current filter UI, plus the date range from flowFrom/flowTo.
+    const fromCountry  = (document.getElementById('flowFromCountry')?.value || '').trim();
+    const aboutCountry = (document.getElementById('flowAboutCountry')?.value || '').trim();
+    const flowKeyword  = (document.getElementById('flowKeyword')?.value     || '').trim();
+    const fromDate     = (document.getElementById('flowFrom')?.value || '').trim();
+    const toDate       = (document.getElementById('flowTo')?.value   || '').trim();
+    const summaryBits = [];
+    if (fromCountry)  summaryBits.push(`From ${fromCountry}`);
+    if (aboutCountry) summaryBits.push(`About ${aboutCountry}`);
+    if (flowKeyword)  summaryBits.push(`“${flowKeyword}”`);
+    const summaryLine = summaryBits.length ? summaryBits.join(' · ') : 'Global news flows';
+    const dateLine = (fromDate && toDate) ? `${_fmtClipDate(fromDate)} – ${_fmtClipDate(toDate)}` :
+                     fromDate ? _fmtClipDate(fromDate) :
+                     toDate ? _fmtClipDate(toDate) : '';
+
     return window.__shareGlobeClip({
       durationMs:   opts.durationMs   || 10000,
       shareTitle:   opts.shareTitle   || 'Earth00 · News Flows',
       shareText:    opts.shareText    || 'News flows replay on Earth00',
       filenameBase: opts.filenameBase || 'earth00-flows-timeseries',
       animator,
+      overlay: opts.overlay || {
+        title:    summaryLine,
+        subtitle: 'News flow replay',
+        dateLine,
+      },
     });
+  };
+
+  // ─── Flow-share popover wiring ────────────────────────────────
+  // See index.html for full rationale.
+  window.__toggleFlowSharePopover = function(ev) {
+    ev?.stopPropagation();
+    const pop = document.getElementById('flowSharePopover');
+    if (!pop) return;
+    const willOpen = pop.hidden;
+    pop.hidden = !willOpen;
+    if (willOpen) {
+      setTimeout(() => {
+        const closeOnOutside = (e) => {
+          const btn = document.getElementById('flowShareBtn');
+          if (pop.contains(e.target) || btn?.contains(e.target)) return;
+          pop.hidden = true;
+          document.removeEventListener('click', closeOnOutside);
+        };
+        document.addEventListener('click', closeOnOutside);
+      }, 0);
+    }
+  };
+  window.__doShareFlowsSnapshot = function() {
+    const pop = document.getElementById('flowSharePopover');
+    if (pop) pop.hidden = true;
+    if (typeof window.__shareNewsFlowsSnapshot === 'function') {
+      window.__shareNewsFlowsSnapshot();
+    }
+  };
+  window.__doShareFlowsClip = function() {
+    const pop = document.getElementById('flowSharePopover');
+    if (pop) pop.hidden = true;
+    if (typeof window.__shareFlowsClip === 'function') {
+      window.__shareFlowsClip();
+    }
   };
 
   // ─── Phase 3: Universal Links — deep link router ──────────────
