@@ -13191,6 +13191,16 @@ app.get("/api/keywords/trending", async (req, res) => {
       // approximate but defensible (the dominant variant's day-count
       // typically dominates anyway). Exact COUNT(DISTINCT date) across
       // merged variants would require a third pass over the raw rows.
+      // Stopword filter is applied TWICE — once in the raw CTE (against
+      // the original-language keyword) AND again in the outer SELECT
+      // (against the normalized form). Without the second pass, foreign
+      // variants like `ngày` / `día` / `ημέρα` pass the inner check
+      // (they aren't in stopwords) but then get translation-mapped to
+      // `"day"` in the outer SELECT — and "day" IS in stopwords. Result
+      // before the fix: "day" leaked into trending with ~37k mentions
+      // (the sum of all multilingual variants), and the literal string
+      // "null" topped the list because the translator silently maps
+      // unrecognized junk tokens to it.
       const result = await pool.query(
         `WITH raw AS (
            SELECT k.keyword,
@@ -13207,6 +13217,10 @@ app.get("/api/keywords/trending", async (req, res) => {
            MAX(r.days_active)::int AS days_active
          FROM raw r
          LEFT JOIN keyword_translations kt ON kt.original_keyword = r.keyword
+         WHERE NOT EXISTS (
+           SELECT 1 FROM stopwords sw
+            WHERE sw.word = COALESCE(kt.normalized_keyword, r.keyword)
+         )
          GROUP BY COALESCE(kt.normalized_keyword, r.keyword)
          HAVING SUM(r.mentions) >= 3
          ORDER BY mentions DESC, COALESCE(kt.normalized_keyword, r.keyword) ASC
@@ -13371,6 +13385,17 @@ app.get("/api/keywords/rising", async (req, res) => {
          FROM recent r
          LEFT JOIN baseline b ON b.keyword = r.keyword
          WHERE r.recent_count >= 2
+           -- Post-translation stopword filter. The inner CTE (recent_raw)
+           -- already filters stopwords against the ORIGINAL-language
+           -- keyword, but the recent CTE then translation-maps multi-
+           -- lingual variants to a normalized form ("ngày" → "day"),
+           -- and that normalized form is what reaches this SELECT. If
+           -- the normalized form is itself a stopword, we have to
+           -- catch it here too. See the matching post-translation
+           -- filter in /api/keywords/trending for the full rationale.
+           AND NOT EXISTS (
+             SELECT 1 FROM stopwords sw WHERE sw.word = r.keyword
+           )
          ORDER BY momentum DESC, r.recent_count DESC, r.keyword ASC
          LIMIT $${limitIdx}`,
         params

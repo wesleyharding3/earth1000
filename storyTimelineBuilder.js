@@ -1774,9 +1774,30 @@ async function runArticleUmbrellaPhase(metrics, elapsed) {
       const phraseRegex = corePhrases.length
         ? '(?i)\\m(' + corePhrases.map(p => p.replace(/[\\.+*?()|\[\]{}^$]/g, m => '\\' + m)).join('|') + ')\\M'
         : null;
+      // Freshness-priority candidate scan.
+      //
+      // The previous query did `ORDER BY id, published_at DESC LIMIT N`
+      // outside the UNION. The `id, published_at DESC` was meant to
+      // deduplicate via DISTINCT ON (keep the freshest row per id),
+      // but it ALSO became the LIMIT's ordering — so the cap pulled
+      // 200 articles in `id ASC` order, dropping the freshest when
+      // the matching set was large (Iran-US-Israel War in particular
+      // saw ~5,000 candidates / week and the LIMIT kept the oldest
+      // 200 of them).
+      //
+      // Two-step fix:
+      //   1. CTE `deduped` does DISTINCT ON (id) to remove duplicate
+      //      ids when an article matches multiple branches.
+      //   2. Outer SELECT orders by `published_at DESC` BEFORE the
+      //      LIMIT — so the cap always pulls the FRESHEST 200
+      //      candidates, not just any 200.
+      //
+      // User-visible effect: articles published in the last 24-48h
+      // for big-volume lines (Iran/Israel/Ukraine/Gaza/Sudan) now
+      // reach scoring + attachment instead of being clipped at
+      // the SQL pre-filter stage.
       const { rows: candidates } = await _umbClient.query(`
-        SELECT DISTINCT ON (id) id, title, published_at, iso_code
-        FROM (
+        WITH raw AS (
           SELECT a.id, a.title, a.published_at, co.iso_code
           FROM news_articles a
           JOIN countries co ON co.id = a.country_id
@@ -1810,8 +1831,15 @@ async function runArticleUmbrellaPhase(metrics, elapsed) {
               SELECT 1 FROM story_timeline_articles sta
                WHERE sta.timeline_id = $1 AND sta.article_id = a.id
             )
-        ) u
-        ORDER BY id, published_at DESC
+        ),
+        deduped AS (
+          SELECT DISTINCT ON (id) id, title, published_at, iso_code
+          FROM raw
+          ORDER BY id, published_at DESC
+        )
+        SELECT id, title, published_at, iso_code
+        FROM deduped
+        ORDER BY published_at DESC
         LIMIT $4
       `, [tl.id, nations, keywords, UMBRELLA_CANDIDATES_PER_LINE, phraseRegex]);
 

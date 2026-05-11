@@ -35890,15 +35890,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
       };
 
       // ── Recency-based status & ranking ────────────────────────────
-      // Mirrors the server-side coolDownInactiveThreads policy in
-      // storyThreadBuilder.js:
-      //   ≤ 48h since latest article  → active
-      //   ≤  7d since latest article  → cooling
-      //   >  7d                       → dormant
-      // The server transitions are eventual (cron), so the client
-      // re-derives status from latest_published_at every render to
-      // avoid showing a stale "active" badge on a thread that's been
-      // quiet for 3 days but hasn't had its row updated yet.
+      // Story-line freshness rule:
+      //   ≤ 14 days since latest article  → active
+      //   ≤ 30 days                       → cooling
+      //   > 30 days                       → dormant
+      //
+      // The old thresholds (48h active / 7d cooling) were calibrated
+      // for individual threads — short bursts of news with sub-day
+      // freshness. Lines are MUCH longer-arc by nature; the
+      // "Iran-US-Israel War 2025" line has been live for weeks and
+      // should obviously be active so long as articles are still
+      // arriving. Treating a 5-day-old line as "cooling" was a mismatch
+      // with how users think about long-running stories.
       //
       // Sort priority (matches /api/threads/latest ORDER BY):
       //   1. status — active → cooling → dormant
@@ -35908,13 +35911,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const STATUS_RANK = { active: 0, cooling: 1, dormant: 2 };
       function applyRecencyStatus(data) {
         const now = Date.now();
-        const H48     = 48 * 60 * 60 * 1000;
-        const D7      =  7 * 24 * 60 * 60 * 1000;
+        const D14 = 14 * 24 * 60 * 60 * 1000;   // active window
+        const D30 = 30 * 24 * 60 * 60 * 1000;   // cooling window
         for (const t of data) {
           if (t.latest_published_at) {
             const age = now - new Date(t.latest_published_at).getTime();
-            if (age <= H48)      t.status = 'active';
-            else if (age <= D7)  t.status = 'cooling';
+            if (age <= D14)      t.status = 'active';
+            else if (age <= D30) t.status = 'cooling';
             else                 t.status = 'dormant';
           }
         }

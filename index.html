@@ -33369,14 +33369,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
       //   4. recency
       const STATUS_RANK = { active: 0, cooling: 1, dormant: 2 };
       function applyRecencyStatus(data) {
+        // 14d active / 30d cooling / >30d dormant — see www/index.html
+        // for the long-form rationale. Lines are long-arc by nature;
+        // the old 48h cutoff treated week-old conflict timelines as
+        // already "cooling," which doesn't match how users think about
+        // sustained stories.
         const now = Date.now();
-        const H48     = 48 * 60 * 60 * 1000;
-        const D7      =  7 * 24 * 60 * 60 * 1000;
+        const D14 = 14 * 24 * 60 * 60 * 1000;
+        const D30 = 30 * 24 * 60 * 60 * 1000;
         for (const t of data) {
           if (t.latest_published_at) {
             const age = now - new Date(t.latest_published_at).getTime();
-            if (age <= H48)      t.status = 'active';
-            else if (age <= D7)  t.status = 'cooling';
+            if (age <= D14)      t.status = 'active';
+            else if (age <= D30) t.status = 'cooling';
             else                 t.status = 'dormant';
           }
         }
