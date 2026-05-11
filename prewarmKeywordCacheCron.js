@@ -80,33 +80,94 @@ if (!process.env.API_URL) {
   console.warn('[prewarm-kw]          (e.g. https://earth-wjr6.onrender.com) or every request will fail.');
 }
 
-// Hand-curated fallback list. Used only when the rising-keywords API is
-// unreachable / empty (e.g. keywordCron.js failed and the DB cache is
-// stale). Lowercased — both endpoints lowercase server-side.
-const DEFAULT_KEYWORDS = [
-  'trump', 'biden', 'putin', 'xi jinping',
-  'ukraine', 'russia', 'china', 'israel', 'gaza', 'iran',
-  'north korea', 'taiwan', 'india', 'pakistan',
-  'climate', 'ai', 'bitcoin', 'crypto',
-  'election', 'inflation', 'fed', 'interest rates',
-  'immigration', 'border',
-  'supreme court', 'congress',
-  'nato', 'eu',
-  'oil', 'opec',
+// Hand-curated keep-warm list. ALWAYS merged into the warm set on top
+// of trending+rising — these are the high-leverage searches the user
+// reaches for whether or not they're trending right now. Categories:
+//   • US politicians, cabinet, top global heads of state
+//   • Active conflict regions + actors
+//   • Major economic terms (markets, energy, crypto)
+//   • Tech (AI labs, chip names, household tech names)
+//   • Recurring multilateral bodies + alliances
+//   • Climate / energy / health (slow-burn topics)
+//
+// Bumped 30 → ~140 after observing that the prior 39-keyword warm pool
+// (15 trending + 25 rising - overlap) missed obvious staples whenever
+// they fell off the live trending/rising lists for a few hours. The
+// extra ~100 entries are almost all fast-tail keywords (sub-2s queries)
+// since the slowest pool is the sustained-volume ones already in
+// trending. Net effect on run time: +60-120s versus a clean run; well
+// within the hourly cron budget.
+//
+// Lowercased — both /heatmap and /flows lowercase server-side.
+const KEEP_WARM = [
+  // ── US politics: principals + cabinet + opposition ────────────
+  'trump', 'donald trump', 'biden', 'joe biden', 'kamala harris',
+  'jd vance', 'marco rubio', 'pete hegseth', 'pam bondi', 'robert kennedy jr',
+  'tulsi gabbard', 'elise stefanik', 'mike johnson', 'chuck schumer',
+  'mitch mcconnell', 'nancy pelosi', 'aoc', 'ted cruz', 'ron desantis',
+  'supreme court', 'congress', 'senate', 'house of representatives',
+  // ── World heads of state / power players ──────────────────────
+  'putin', 'vladimir putin', 'xi jinping', 'modi', 'narendra modi',
+  'netanyahu', 'benjamin netanyahu', 'zelensky', 'volodymyr zelensky',
+  'kim jong un', 'macron', 'emmanuel macron', 'starmer', 'keir starmer',
+  'meloni', 'erdogan', 'mohammed bin salman', 'mbs', 'lula',
+  'orban', 'milei', 'sheinbaum', 'al-sharaa',
+  // ── Active conflicts / hot regions ────────────────────────────
+  'ukraine', 'russia', 'ukraine war', 'crimea', 'donbas',
+  'israel', 'gaza', 'west bank', 'palestine', 'hamas', 'hezbollah',
+  'lebanon', 'syria', 'yemen', 'houthi',
+  'iran', 'iraq', 'tehran',
+  'sudan', 'rsf', 'sahel', 'mali', 'niger', 'burkina faso',
+  'china', 'taiwan', 'south china sea', 'taiwan strait',
+  'north korea', 'south korea',
+  'india', 'pakistan', 'kashmir',
+  // ── Multilateral bodies + alliances ───────────────────────────
+  'nato', 'european union', 'eu', 'united nations', 'un',
+  'g7', 'g20', 'brics', 'opec', 'wto', 'imf', 'world bank',
+  'african union',
+  // ── Economy / markets ─────────────────────────────────────────
+  'inflation', 'recession', 'fed', 'federal reserve', 'interest rates',
+  'tariffs', 'trade war', 'stock market', 's&p 500', 'nasdaq', 'dow jones',
+  'oil', 'energy', 'gold', 'gas prices',
+  'bitcoin', 'crypto', 'ethereum',
+  // ── Tech / AI / semis ─────────────────────────────────────────
+  'ai', 'artificial intelligence', 'chatgpt', 'openai', 'sam altman',
+  'anthropic', 'claude', 'gemini', 'meta',
+  'nvidia', 'tsmc', 'semiconductors', 'chips',
+  'apple', 'google', 'microsoft', 'tesla', 'spacex', 'elon musk',
+  // ── Climate / health / disasters ──────────────────────────────
+  'climate', 'climate change', 'global warming', 'cop',
+  'wildfire', 'hurricane', 'flood', 'drought', 'earthquake', 'tsunami',
+  'emissions', 'renewable energy',
+  'pandemic', 'covid', 'avian flu', 'bird flu', 'mpox',
+  // ── Recurring categories users search for ─────────────────────
+  'election', 'protest', 'sanctions', 'cyberattack',
+  'immigration', 'border', 'asylum', 'refugees',
+  'summit', 'ceasefire', 'peace talks',
 ];
+
+// Used only when BOTH /trending and /rising are unreachable. KEEP_WARM
+// already covers the cold-start case, but this kept the historic
+// constant name + a small subset so any external runbooks that grep
+// for DEFAULT_KEYWORDS still find something sensible.
+const DEFAULT_KEYWORDS = KEEP_WARM.slice(0, 30);
 
 // Per-list caps. Earlier versions warmed only rising (max 40), which
 // missed sustained high-traffic keywords ("trump", "ukraine", "china")
 // because they weren't gaining momentum — they were already at top.
-// We now blend both sources: trending for the steady baseline and
-// rising for surge events, deduped at merge time.
-// Trending defaults trimmed to 15: sustained-volume keywords like "trump"
-// or "ukraine" are the slowest queries on the API (cold buffer + ~150K
-// articles in the join) and reliably hit the server's prewarm SQL caps
-// (90s heatmap / 60s flows). The top-15 capture nearly all sustained
-// search traffic; the long tail can warm organically. Lift to 25+ via
-// PREWARM_TRENDING_LIMIT only if pool monitoring shows headroom.
-const TRENDING_LIMIT = parseInt(process.env.PREWARM_TRENDING_LIMIT || '15', 10);
+// We now blend both sources PLUS a hand-curated KEEP_WARM list (see
+// above). Order of preference: KEEP_WARM → trending → rising, deduped
+// at merge time.
+//
+// Trending: bumped 15 → 25 so we capture the FULL top-of-list pool
+// each tick. The slowest sustained-volume keywords still come from
+// here, but adding the next 10 doesn't materially extend total run
+// time — those next 10 are sub-5s queries, not 30-60s monsters.
+//
+// Rising: stayed at 25 — beyond that point you're paying for sub-100ms
+// queries that probably don't have organic traffic anyway, and we
+// already cover the hand-curated baseline via KEEP_WARM.
+const TRENDING_LIMIT = parseInt(process.env.PREWARM_TRENDING_LIMIT || '25', 10);
 const RISING_LIMIT   = parseInt(process.env.PREWARM_RISING_LIMIT   || '25', 10);
 
 // Pause between keywords (ms). Lets pg pool drain between bursts so the
@@ -167,13 +228,14 @@ async function fetchKeywordList(path, label) {
 // Resolve the keyword list once per run. Order of preference:
 //   1. PREWARM_KEYWORDS env var (manual override — handy for ops or
 //      reproducing a specific failure scenario)
-//   2. Trending + rising, merged. Trending leads (sustained baseline
-//      that organic traffic depends on); rising follows (newly-spiking
-//      stories that don't have organic hits yet). Both fetched in
-//      parallel; deduped by lowercased keyword.
-//   3. DEFAULT_KEYWORDS — hand-curated fallback, used only when BOTH
-//      endpoints fail / return empty so a transient outage doesn't
-//      leave the entire cache cold.
+//   2. KEEP_WARM (hand-curated baseline) + trending + rising,
+//      merged + deduped. Order matters: KEEP_WARM leads so sustained
+//      high-traffic keywords ride the earlier cron slots — if the
+//      cron is killed mid-run we'd rather have warmed "trump" than
+//      "tchouaméni". Trending then rising on top.
+//   3. DEFAULT_KEYWORDS — used only when BOTH endpoints fail AND
+//      KEEP_WARM is somehow empty (shouldn't happen, but kept for
+//      safety so a cascading API outage doesn't break the cron).
 async function pickKeywordsToWarm() {
   if (process.env.PREWARM_KEYWORDS) {
     const list = process.env.PREWARM_KEYWORDS.split(',').map(s => s.trim()).filter(Boolean);
@@ -186,23 +248,27 @@ async function pickKeywordsToWarm() {
     fetchKeywordList(`/api/keywords/rising?limit=${RISING_LIMIT}`,             '/api/keywords/rising'),
   ]);
 
-  // Merge with dedup. Trending first so steady-volume keywords ride the
-  // earlier cron slots — if the cron is killed mid-run we'd rather have
-  // warmed "trump" than "tchouaméni".
+  // KEEP_WARM first (every cron must touch these) then trending then
+  // rising. Lowercase + dedup at merge. Anything bad-shape (e.g. an
+  // empty string snuck into KEEP_WARM) is filtered by the same
+  // _isWarmableKeyword used on API output.
   const seen = new Set();
   const merged = [];
-  for (const k of [...trendingList, ...risingList]) {
-    if (seen.has(k)) continue;
-    seen.add(k);
-    merged.push(k);
+  for (const k of [...KEEP_WARM, ...trendingList, ...risingList]) {
+    const lc = String(k || '').trim().toLowerCase();
+    if (!lc || seen.has(lc)) continue;
+    if (!_isWarmableKeyword(lc)) continue;
+    seen.add(lc);
+    merged.push(lc);
   }
 
   if (merged.length) {
-    console.log(`${TAG} discovered ${merged.length} keywords (trending=${trendingList.length}, rising=${risingList.length}, dedup_overlap=${trendingList.length + risingList.length - merged.length})`);
+    const apiCount = trendingList.length + risingList.length;
+    console.log(`${TAG} discovered ${merged.length} keywords (keep_warm=${KEEP_WARM.length}, trending=${trendingList.length}, rising=${risingList.length}, dedup_overlap=${KEEP_WARM.length + apiCount - merged.length})`);
     return merged;
   }
 
-  console.warn(`${TAG} both keyword endpoints returned empty — falling back to DEFAULTS`);
+  console.warn(`${TAG} keyword endpoints empty AND KEEP_WARM empty — falling back to DEFAULTS`);
   return DEFAULT_KEYWORDS;
 }
 
