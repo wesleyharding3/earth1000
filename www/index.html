@@ -32935,7 +32935,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
         title: 'Threads',
         caption: 'Stories that span dozens of articles, often across borders.',
         audio: AUDIO_BASE + '04_threads.mp3',
-        fallbackMs: 13000,
+        // Extended from 13000 → 19500 to cover the new flow-arc beat
+        // sequence (View on Globe → arcs render → AI badge highlights).
+        // See index.html for full rationale.
+        fallbackMs: 19500,
         chrome: 'top',
         onEnter: () => {
           try { window.__goToPage?.(2); } catch (_) {}
@@ -33000,10 +33003,36 @@ const settingsToggle     = document.getElementById("settingsToggle");
               pulse('#cdTimelineSection');
             }
           },
+          // 12.5s: pulse + click View on Globe so flow arcs render and
+          //         the flowCtxCard slides up. See index.html for full
+          //         rationale on the sequence.
+          { at: 12500, do: async () => {
+              const vog = document.querySelector('#cdViewOnGlobeSection .viewOnGlobeCta');
+              if (!vog) return;
+              scrollPanelTo('#cdViewOnGlobeSection');
+              pulse(vog);
+              await new Promise(r => setTimeout(r, 700));
+              try { vog.click(); } catch (_) {}
+            }
+          },
+          // 15.5s: spotlight + pulse the AI badge inside the flowCtxCard.
+          { at: 15500, do: async () => {
+              try {
+                const ai = await waitForElement('#flowCtxCard .aiAnalysisCtaBadge--full', { timeout: 2500 });
+                if (!ai) return;
+                spotlight(ai);
+                pulse(ai);
+              } catch (_) {}
+            }
+          },
+          // 18.5s: drop the spotlight before the chapter exit transition.
+          { at: 18500, do: () => clearSpotlight() },
         ],
         onExit: () => {
           clearSpotlight();
           try { window.__clusterCloseNodePanel?.(); } catch (_) {}
+          try { window.__flowClearArcs?.(); } catch (_) {}
+          try { window.__flowClosePanel?.(); } catch (_) {}
         },
       },
 
@@ -47166,9 +47195,9 @@ body.ticker-active .gTickerLabel {
 /* Briefing nudge — see index.html for rationale. */
 #briefingNudge {
   position: fixed;
-  top: env(safe-area-inset-top, 0px);
+  top: calc(env(safe-area-inset-top, 0px) + 72px);
   left: 50%;
-  transform: translate(-50%, -120%);
+  transform: translate(-50%, -8px);
   z-index: 9999;
   display: flex;
   align-items: center;
@@ -47184,12 +47213,45 @@ body.ticker-active .gTickerLabel {
   pointer-events: none;
   transition: transform 0.45s cubic-bezier(0.32, 0.72, 0, 1), opacity 0.3s ease;
   max-width: calc(100vw - 24px);
-  margin-top: 8px;
 }
 #briefingNudge.open {
   transform: translate(-50%, 0);
   opacity: 1;
   pointer-events: all;
+}
+/* Briefing button attention burst — see index.html for rationale. */
+@keyframes briefingBtnBurst {
+  0% {
+    box-shadow:
+      0 0 0 0 rgba(255, 200, 130, 0.78),
+      0 0 14px 2px rgba(255, 180, 80, 0.45),
+      inset 0 0 10px rgba(255, 220, 140, 0.30);
+  }
+  60% {
+    box-shadow:
+      0 0 0 12px rgba(255, 200, 130, 0.10),
+      0 0 22px 5px rgba(255, 180, 80, 0.50),
+      inset 0 0 10px rgba(255, 220, 140, 0.30);
+  }
+  100% {
+    box-shadow:
+      0 0 0 20px rgba(255, 200, 130, 0),
+      0 0 14px 2px rgba(255, 180, 80, 0.45),
+      inset 0 0 10px rgba(255, 220, 140, 0.30);
+  }
+}
+#briefingBtn.attention {
+  animation: briefingBtnBurst 1.55s ease-out infinite;
+  border-color: rgba(255, 220, 140, 0.85) !important;
+  color: rgba(255, 230, 180, 1) !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  #briefingBtn.attention {
+    animation: none;
+    box-shadow:
+      0 0 0 3px rgba(255, 200, 130, 0.55),
+      0 0 16px rgba(255, 180, 80, 0.55);
+  }
 }
 .briefingNudgeBtn {
   display: inline-flex; align-items: center; gap: 8px;
@@ -53030,6 +53092,7 @@ body.ticker-active .gTickerLabel {
     const textEl    = nudgeEl?.querySelector('.briefingNudgeText');
     if (!nudgeEl || !listenBtn || !closeBtn || !textEl) return;
     let dismissed = false, shown = false;
+    function _briefingBtn() { return document.getElementById('briefingBtn'); }
     function show() {
       if (dismissed || shown) return;
       const access = window.__briefingAccess;
@@ -53040,10 +53103,14 @@ body.ticker-active .gTickerLabel {
         ? "Today's briefing is ready · 6 min"
         : "Listen to today's briefing · free";
       nudgeEl.classList.add('open');
+      _briefingBtn()?.classList.add('attention');
       shown = true;
       access?.markSessionPromptShown();
     }
-    function hide() { nudgeEl.classList.remove('open'); }
+    function hide() {
+      nudgeEl.classList.remove('open');
+      _briefingBtn()?.classList.remove('attention');
+    }
     setTimeout(show, BRIEFING_NUDGE_MS);
     listenBtn.addEventListener('click', () => {
       hide();
@@ -62938,6 +63005,8 @@ body.ticker-active .gTickerLabel {
     if (preBlessed) {
       audio = preBlessed;
       audio.muted = false;
+      // Defensive: silent-unlock may not have completed; re-set volume.
+      audio.volume = 1;
       try { audio.currentTime = 0; } catch (_) {}
       const p = audio.play();
       if (p && p.then) p.catch(() => { try { unmuteBtn.style.display = ''; } catch (_) {} });
@@ -63042,21 +63111,22 @@ body.ticker-active .gTickerLabel {
       setTimeout(() => { try { w.remove(); } catch (_) {} if (after) after(); }, 540);
     }
     w.querySelector('#ewBegin').addEventListener('click', () => {
-      // SYNCHRONOUS gesture-unlock: build the Audio element and call
-      // .play() inside the click handler so iOS Safari / Capacitor
-      // grants the AudioContext sound permission. We immediately
-      // pause + reset so play() (called ~540ms later, after the fade)
-      // can resume from the start with sound — no "tap for sound" pill
-      // ever needed. If the play() promise rejects (rare), play() will
-      // fall back to muted-with-pill so the user still has a path.
+      // SYNCHRONOUS gesture-unlock with silent dance — see index.html
+      // for the full rationale on why volume:0 (not muted:true) here.
       try {
         const blessed = new Audio(AUDIO_URL);
         blessed.preload = 'auto';
         blessed.muted   = false;
+        blessed.volume  = 0;  // silent unlock — prevents "here" stutter
         const p = blessed.play();
         if (p && p.then) {
-          p.then(() => { try { blessed.pause(); blessed.currentTime = 0; } catch (_) {} })
-           .catch(() => {});
+          p.then(() => {
+            try {
+              blessed.pause();
+              blessed.currentTime = 0;
+              blessed.volume = 1;  // restore for the real play() below
+            } catch (_) {}
+          }).catch(() => {});
         }
         window.__earthIntroAudio = blessed;
       } catch (_) {}

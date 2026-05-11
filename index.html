@@ -30914,7 +30914,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
         title: 'Threads',
         caption: 'Stories that span dozens of articles, often across borders.',
         audio: AUDIO_BASE + '04_threads.mp3',
-        fallbackMs: 13000,
+        // Extended from 13000ms → 19500ms to cover the new flow-arc beat
+        // sequence (View on Globe → arcs render → AI badge highlights).
+        // If the narration audio is shorter than this, the visuals keep
+        // playing past audio end — fine, the visual demo finishes ~6s
+        // after the voice does.
+        fallbackMs: 19500,
         chrome: 'top',
         onEnter: () => {
           try { window.__goToPage?.(2); } catch (_) {}
@@ -30964,10 +30969,52 @@ const settingsToggle     = document.getElementById("settingsToggle");
               pulse('#cdTimelineSection');
             }
           },
+          // 12.5s: pulse the View on Globe CTA so the user sees what's
+          //         about to be tapped, then click it 600ms later. The
+          //         click closes the cluster panel and renders the
+          //         thread's flow arcs on the globe; the floating
+          //         flowCtxCard slides up with the "Generate Deep
+          //         Analysis" AI badge inside its body.
+          { at: 12500, do: async () => {
+              const vog = document.querySelector('#cdViewOnGlobeSection .viewOnGlobeCta');
+              if (!vog) return;
+              scrollPanelTo('#cdViewOnGlobeSection');
+              pulse(vog);
+              await new Promise(r => setTimeout(r, 700));
+              try { vog.click(); } catch (_) {}
+            }
+          },
+          // 15.5s: arcs are mid-animation; the flowCtxCard should be
+          //         visible by now with its AI badge in the body. Poll
+          //         briefly (cold start can take 1-2s for the card
+          //         transition) then spotlight + pulse the badge so the
+          //         viewer's eye is drawn to the Deep Read CTA — the
+          //         pay-off feature for any user who's interested in
+          //         the story they just opened arcs for.
+          { at: 15500, do: async () => {
+              try {
+                const ai = await waitForElement('#flowCtxCard .aiAnalysisCtaBadge--full', { timeout: 2500 });
+                if (!ai) return;
+                spotlight(ai);
+                pulse(ai);
+              } catch (_) {}
+            }
+          },
+          // 18.5s: drop the spotlight so the chapter exits clean and
+          //         the next chapter (Lines) starts without a lingering
+          //         dim. onExit also clears, but doing it here lets the
+          //         flowCtxCard close transition look natural.
+          { at: 18500, do: () => clearSpotlight() },
         ],
         onExit: () => {
           clearSpotlight();
+          // Tear down both the cluster panel AND any flow arcs +
+          // flowCtxCard the View on Globe beat opened. Without these,
+          // the next chapter would inherit a globe full of arcs and a
+          // floating card competing for attention.
           try { window.__clusterCloseNodePanel?.(); } catch (_) {}
+          try { window.__flowClearArcs?.(); } catch (_) {}
+          try { window.__flowClosePanel?.(); } catch (_) {}
         },
       },
 
@@ -43698,14 +43745,18 @@ body.ticker-active .gTickerLabel {
    cheap; no re-layout. Auto-resumes via a JS timer (see _gTickerPause). */
 .gTickerTrack.paused-tap { animation-play-state: paused; }
 
-/* Briefing nudge — top banner that slides down 8 min into a session.
-   Sits above the global ticker / nav, dismissable, one-shot per session.
-   Hidden by default; .open class slides it in. */
+/* Briefing nudge — drop-in banner that slides down 8 min into a session.
+   Anchored BELOW the top-left icon cluster (which sits at top:20px with
+   ~40-50px iconBtn height + 4-6px breathing room ≈ 72px). The previous
+   top:0 anchor was overlapping with the search wrapper + visual register
+   of the nav row; pushing it down clears the chrome and visually points
+   the user toward the briefing button (which now glow-bursts in
+   sync — see #briefingBtn.attention below). */
 #briefingNudge {
   position: fixed;
-  top: env(safe-area-inset-top, 0px);
+  top: calc(env(safe-area-inset-top, 0px) + 72px);
   left: 50%;
-  transform: translate(-50%, -120%);
+  transform: translate(-50%, -8px);
   z-index: 9999;
   display: flex;
   align-items: center;
@@ -43721,12 +43772,50 @@ body.ticker-active .gTickerLabel {
   pointer-events: none;
   transition: transform 0.45s cubic-bezier(0.32, 0.72, 0, 1), opacity 0.3s ease;
   max-width: calc(100vw - 24px);
-  margin-top: 8px;
 }
 #briefingNudge.open {
   transform: translate(-50%, 0);
   opacity: 1;
   pointer-events: all;
+}
+
+/* Briefing button attention burst — fires while the 8-min nudge banner
+   is visible, drawing the user's eye to the actual tap target. Animated
+   gold ring expands outward + fades, with a steady outer glow + brighter
+   border so the button reads as "tap me." Removed when the nudge is
+   dismissed or the user opens the briefing. */
+@keyframes briefingBtnBurst {
+  0% {
+    box-shadow:
+      0 0 0 0 rgba(255, 200, 130, 0.78),
+      0 0 14px 2px rgba(255, 180, 80, 0.45),
+      inset 0 0 10px rgba(255, 220, 140, 0.30);
+  }
+  60% {
+    box-shadow:
+      0 0 0 12px rgba(255, 200, 130, 0.10),
+      0 0 22px 5px rgba(255, 180, 80, 0.50),
+      inset 0 0 10px rgba(255, 220, 140, 0.30);
+  }
+  100% {
+    box-shadow:
+      0 0 0 20px rgba(255, 200, 130, 0),
+      0 0 14px 2px rgba(255, 180, 80, 0.45),
+      inset 0 0 10px rgba(255, 220, 140, 0.30);
+  }
+}
+#briefingBtn.attention {
+  animation: briefingBtnBurst 1.55s ease-out infinite;
+  border-color: rgba(255, 220, 140, 0.85) !important;
+  color: rgba(255, 230, 180, 1) !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  #briefingBtn.attention {
+    animation: none;
+    box-shadow:
+      0 0 0 3px rgba(255, 200, 130, 0.55),
+      0 0 16px rgba(255, 180, 80, 0.55);
+  }
 }
 .briefingNudgeBtn {
   display: inline-flex; align-items: center; gap: 8px;
@@ -48592,14 +48681,12 @@ body.ticker-active .gTickerLabel {
   document.getElementById('globalTicker')?.addEventListener('click', _gTickerHandlePause, true);
 
   // ── 8-min briefing nudge ────────────────────────────────────
-  // Slides in a top banner 8 minutes into a session, inviting the user
+  // Slides in a banner 8 minutes into a session, inviting the user
   // to listen to today's briefing. Dismissable + one-shot per session.
-  // Only shows when:
-  //   - the user hasn't already opened the briefing this session
-  //   - they have briefing access left (anon ≤3 free, account with quota
-  //     remaining, or Pro)
-  //   - they haven't dismissed it earlier this session
-  //   - they're on the globe / news page (not in another modal)
+  // While the nudge is visible the actual #briefingBtn pulses with a
+  // gold ring-burst (.attention class) so the user's eye is guided to
+  // the tap target on the top-left cluster. The pulse is removed on
+  // dismiss / click-listen so the chrome doesn't stay loud forever.
   (function wireBriefingNudge() {
     const BRIEFING_NUDGE_MS = 8 * 60 * 1000; // 8 minutes
     const nudgeEl  = document.getElementById('briefingNudge');
@@ -48610,29 +48697,30 @@ body.ticker-active .gTickerLabel {
 
     let dismissed = false;
     let shown = false;
+    function _briefingBtn() { return document.getElementById('briefingBtn'); }
     function show() {
       if (dismissed || shown) return;
-      // Skip if briefing already opened this session.
       const access = window.__briefingAccess;
       if (access?.sessionPromptShown()) return;
-      // Skip if briefing isn't available (no episode for today, etc.)
       if (window._briefingAvailable === false) return;
-      // Pick copy based on whether user is signed in. Different line,
-      // same concept — see user spec.
       const isSignedIn = !!window.__currentUser?.id;
       textEl.textContent = isSignedIn
         ? "Today's briefing is ready · 6 min"
         : "Listen to today's briefing · free";
       nudgeEl.classList.add('open');
+      // Light up the actual briefing button so the user can connect the
+      // nudge to the tap target. The pulse-and-burst is CSS-driven via
+      // #briefingBtn.attention — see the @keyframes briefingBtnBurst
+      // block alongside the nudge styling.
+      _briefingBtn()?.classList.add('attention');
       shown = true;
       access?.markSessionPromptShown();
     }
-    function hide() { nudgeEl.classList.remove('open'); }
+    function hide() {
+      nudgeEl.classList.remove('open');
+      _briefingBtn()?.classList.remove('attention');
+    }
 
-    // Schedule the show after 8 min of session time. (Idle tabs DO
-    // count — this isn't tied to actual user activity, just elapsed
-    // time. A more sophisticated version would pause when document
-    // is hidden; we keep it simple here.)
     setTimeout(show, BRIEFING_NUDGE_MS);
 
     listenBtn.addEventListener('click', () => {
@@ -56705,6 +56793,11 @@ body.ticker-active .gTickerLabel {
     if (preBlessed) {
       audio = preBlessed;
       audio.muted = false;
+      // Defensive: the gesture-unlock dance sets volume:0 during the
+      // pause-and-reset; if its play() promise hasn't resolved by now
+      // the volume might still be 0. Re-set to 1 so the real intro
+      // plays audibly.
+      audio.volume = 1;
       try { audio.currentTime = 0; } catch (_) {}
       const p = audio.play();
       if (p && p.then) p.catch(() => { /* fall back: surface unmute pill */
@@ -56829,19 +56922,35 @@ body.ticker-active .gTickerLabel {
     w.querySelector('#ewBegin').addEventListener('click', () => {
       // SYNCHRONOUS gesture-unlock: build the Audio element and call
       // .play() inside the click handler so iOS Safari / Capacitor
-      // grants the AudioContext sound permission. We immediately
-      // pause + reset so play() (called ~540ms later, after the fade)
-      // can resume from the start with sound — no "tap for sound" pill
-      // ever needed. If the play() promise rejects (rare), play() will
-      // fall back to muted-with-pill so the user still has a path.
+      // grants the AudioContext sound permission. The element is set
+      // to volume:0 during the unlock dance — iOS still counts this
+      // as a user-gesture-initiated unmuted play (it's not the .muted
+      // flag, which would lose us the unmuted permission), but no
+      // audible sound bleeds through to the speaker before pause/reset.
+      //
+      // The PRIOR version set volume:1 and relied on pause() firing
+      // ~50ms after play() resolved — but in that window the audio
+      // had already emitted the first word ("here") at full volume,
+      // and then play() called at t=540ms played it again — producing
+      // an audible "here" stutter on every cold start.
       try {
         const blessed = new Audio(AUDIO_URL);
         blessed.preload = 'auto';
         blessed.muted   = false;
+        blessed.volume  = 0;  // silent unlock — see comment above
         const p = blessed.play();
         if (p && p.then) {
-          p.then(() => { try { blessed.pause(); blessed.currentTime = 0; } catch (_) {} })
-           .catch(() => {});
+          p.then(() => {
+            try {
+              blessed.pause();
+              blessed.currentTime = 0;
+              // Restore volume so the real play() (~540ms later)
+              // plays audibly from frame 0. Re-zero is safe even
+              // if the user hammers Begin — play() below also
+              // sets volume to 1 defensively.
+              blessed.volume = 1;
+            } catch (_) {}
+          }).catch(() => {});
         }
         window.__earthIntroAudio = blessed;
       } catch (_) {}
