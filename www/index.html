@@ -5083,6 +5083,164 @@ button.arcCtxSegDot,
     }
 
     /* ──────────────────────────────────────────────────────────────────
+       Tutorial — Share chapter slideshow
+       Three preview cards cycle through to show users what each share
+       format looks like: Link (OG card), Snapshot (still globe), Clip
+       (animated globe spin). Mounted by the share chapter's onEnter
+       and torn down on onExit. Sits above #tutOverlay (z 5100) so the
+       caption strip + chrome panel don't compete for visual focus —
+       this is the centerpiece of the chapter.
+       ────────────────────────────────────────────────────────────── */
+    #tutShareSlideshow {
+      position: fixed;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 5120;
+      width: min(320px, 80vw);
+      height: 360px;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.4s ease;
+    }
+    #tutShareSlideshow.open { opacity: 1; }
+    .tutShareSlide {
+      position: absolute; inset: 0;
+      display: flex; flex-direction: column; align-items: center; gap: 12px;
+      opacity: 0;
+      transform: translateY(8px);
+      transition: opacity 0.5s ease, transform 0.5s cubic-bezier(0.32, 0.72, 0, 1);
+    }
+    .tutShareSlide.active {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    .tutShareCardLabel {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 10px; font-weight: 700; letter-spacing: 0.18em;
+      color: rgba(255, 200, 130, 0.94);
+      padding: 5px 12px;
+      border: 1px solid rgba(255, 200, 130, 0.32);
+      border-radius: 999px;
+      background: rgba(8, 6, 4, 0.78);
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+    }
+    .tutShareRecDot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: #ff4b4b;
+      animation: tutShareRecPulse 1.2s ease-in-out infinite;
+    }
+    @keyframes tutShareRecPulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+    /* LINK card — mimics the server-rendered OG share card (1.91:1 aspect). */
+    .tutShareLinkCard {
+      width: 100%;
+      aspect-ratio: 1.91 / 1;
+      background:
+        radial-gradient(ellipse 130% 70% at 30% 0%, rgba(255,255,255,0.16) 0%, transparent 60%),
+        linear-gradient(180deg, rgba(20, 26, 42, 0.95) 0%, rgba(7, 12, 22, 0.95) 100%);
+      border: 1px solid rgba(255, 200, 130, 0.28);
+      border-radius: 14px;
+      padding: 16px 18px;
+      display: flex; flex-direction: column; justify-content: space-between;
+      box-shadow: 0 14px 32px rgba(0, 0, 0, 0.55);
+    }
+    .tutShareLinkHeader {
+      font-size: 10px; letter-spacing: 0.20em;
+      color: rgba(255, 200, 130, 0.88); font-weight: 700;
+    }
+    .tutShareLinkTitle {
+      font-size: 14px; font-weight: 700; color: #fff;
+      line-height: 1.3;
+    }
+    .tutShareLinkMeta {
+      font-size: 10px; color: rgba(255, 255, 255, 0.55);
+    }
+    .tutShareLinkUrl {
+      font-size: 10px; color: rgba(255, 200, 130, 0.72);
+      font-family: ui-monospace, Menlo, monospace;
+    }
+    /* SNAPSHOT / CLIP — square preview card with stylized globe. */
+    .tutShareSnapPreview {
+      width: 240px;
+      aspect-ratio: 1 / 1;
+      position: relative;
+      background: linear-gradient(180deg, #0a1018 0%, #050a14 100%);
+      border: 1px solid rgba(255, 200, 130, 0.22);
+      border-radius: 14px;
+      overflow: hidden;
+      box-shadow: 0 14px 32px rgba(0, 0, 0, 0.55);
+      display: flex; flex-direction: column;
+    }
+    .tutShareSnapTitle {
+      padding: 14px 14px 0;
+      font-size: 12px; font-weight: 700; color: #fff;
+      line-height: 1.3;
+    }
+    .tutShareSnapGlobeWrap {
+      flex: 1;
+      display: flex; align-items: center; justify-content: center;
+      position: relative;
+    }
+    .tutShareSnapGlobe {
+      width: 130px; height: 130px;
+      border-radius: 50%;
+      background:
+        radial-gradient(ellipse 80% 70% at 35% 30%, rgba(120, 160, 220, 0.55) 0%, transparent 55%),
+        radial-gradient(ellipse 70% 60% at 65% 70%, rgba(80, 120, 180, 0.45) 0%, transparent 55%),
+        linear-gradient(160deg, rgba(40, 70, 120, 0.85) 0%, rgba(15, 25, 45, 1) 100%);
+      position: relative;
+      box-shadow:
+        inset 0 0 22px rgba(120, 160, 220, 0.18),
+        0 0 32px rgba(120, 160, 220, 0.18);
+    }
+    .tutShareSnapGlobe::before {
+      content: '';
+      position: absolute; inset: 14% 18% 14% 18%;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 50%;
+      pointer-events: none;
+    }
+    .tutShareSnapGlobe::after {
+      content: '';
+      position: absolute; inset: 40% 0;
+      border-top: 1px solid rgba(255, 255, 255, 0.10);
+      pointer-events: none;
+    }
+    .tutShareSnapGlobe--spinning {
+      animation: tutShareGlobeSpin 6s linear infinite;
+    }
+    @keyframes tutShareGlobeSpin {
+      to { transform: rotate(360deg); }
+    }
+    .tutShareSnapFlags {
+      position: absolute; bottom: 12px; left: 12px;
+      display: flex; gap: 4px;
+    }
+    .tutShareSnapFlag {
+      width: 22px; height: 16px;
+      background: rgba(255,255,255,0.08) center/cover no-repeat;
+      border: 1px solid rgba(255, 200, 130, 0.30);
+      border-radius: 3px;
+    }
+    .tutShareSnapWatermark {
+      position: absolute; bottom: 14px; right: 14px;
+      font-size: 9px; letter-spacing: 0.16em;
+      color: rgba(255, 200, 130, 0.65);
+      font-weight: 600;
+    }
+    @media (max-width: 720px) {
+      #tutShareSlideshow {
+        width: min(290px, 78vw);
+        height: 340px;
+      }
+      .tutShareSnapPreview { width: 220px; }
+      .tutShareSnapGlobe { width: 120px; height: 120px; }
+    }
+
+    /* ──────────────────────────────────────────────────────────────────
        Tutorial — chapter controls (Next / Prev / Pause)
        Sit above the dot row inside the existing #tutOverlay container.
        ────────────────────────────────────────────────────────────── */
@@ -32715,6 +32873,71 @@ const settingsToggle     = document.getElementById("settingsToggle");
     // duplicate of the audio narration so deaf/muted users can
     // follow. Caption fades in when chapter starts, out at chapter
     // end. Spotlight cleanup happens automatically in onExit.
+
+    // ── Share chapter slideshow helpers ────────────────────────────
+    // Builds + tears down a centered preview slideshow that cycles
+    // through Link / Snapshot / Clip mockups. Pure DOM — no real
+    // share dispatch, no globe capture, no MediaRecorder. The "Clip"
+    // slide just spins a CSS-animated globe placeholder so the user
+    // sees what an animated capture looks like without us running
+    // the actual recorder during a tutorial.
+    let _tutShareSlideshowEl = null;
+    function _tutShareMountSlideshow() {
+      _tutShareTeardownSlideshow();
+      const el = document.createElement('div');
+      el.id = 'tutShareSlideshow';
+      el.innerHTML = '' +
+        '<div class="tutShareSlide" data-idx="0">' +
+          '<div class="tutShareCardLabel">LINK</div>' +
+          '<div class="tutShareLinkCard">' +
+            '<div class="tutShareLinkHeader">EARTH00 · STORY</div>' +
+            '<div class="tutShareLinkTitle">Russian withdrawal triggers Sahel security collapse</div>' +
+            '<div class="tutShareLinkMeta">12 articles · 8 sources · 6 countries</div>' +
+            '<div class="tutShareLinkUrl">earth00.com</div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="tutShareSlide" data-idx="1">' +
+          '<div class="tutShareCardLabel">SNAPSHOT</div>' +
+          '<div class="tutShareSnapPreview">' +
+            '<div class="tutShareSnapTitle">Macron pushes Algeria reset</div>' +
+            '<div class="tutShareSnapGlobeWrap"><div class="tutShareSnapGlobe"></div></div>' +
+            '<div class="tutShareSnapFlags">' +
+              '<div class="tutShareSnapFlag" style="background-image:url(\'https://flagcdn.com/w20/fr.png\')"></div>' +
+              '<div class="tutShareSnapFlag" style="background-image:url(\'https://flagcdn.com/w20/dz.png\')"></div>' +
+            '</div>' +
+            '<div class="tutShareSnapWatermark">earth00.com</div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="tutShareSlide" data-idx="2">' +
+          '<div class="tutShareCardLabel"><span class="tutShareRecDot"></span>CLIP · 6 SEC</div>' +
+          '<div class="tutShareSnapPreview tutShareClipPreview">' +
+            '<div class="tutShareSnapTitle">Macron pushes Algeria reset</div>' +
+            '<div class="tutShareSnapGlobeWrap"><div class="tutShareSnapGlobe tutShareSnapGlobe--spinning"></div></div>' +
+            '<div class="tutShareSnapFlags">' +
+              '<div class="tutShareSnapFlag" style="background-image:url(\'https://flagcdn.com/w20/fr.png\')"></div>' +
+              '<div class="tutShareSnapFlag" style="background-image:url(\'https://flagcdn.com/w20/dz.png\')"></div>' +
+            '</div>' +
+            '<div class="tutShareSnapWatermark">earth00.com</div>' +
+          '</div>' +
+        '</div>';
+      document.body.appendChild(el);
+      _tutShareSlideshowEl = el;
+      requestAnimationFrame(() => el.classList.add('open'));
+    }
+    function _tutShareShowSlide(idx) {
+      if (!_tutShareSlideshowEl) return;
+      const slides = _tutShareSlideshowEl.querySelectorAll('.tutShareSlide');
+      slides.forEach(s => s.classList.toggle('active', Number(s.dataset.idx) === idx));
+    }
+    function _tutShareFadeOut() {
+      if (_tutShareSlideshowEl) _tutShareSlideshowEl.classList.remove('open');
+    }
+    function _tutShareTeardownSlideshow() {
+      if (!_tutShareSlideshowEl) return;
+      try { _tutShareSlideshowEl.remove(); } catch (_) {}
+      _tutShareSlideshowEl = null;
+    }
+
     const CHAPTERS = [
       // ── 1. Welcome (~4s) ─────────────────────────────────────────
       {
@@ -33558,7 +33781,52 @@ const settingsToggle     = document.getElementById("settingsToggle");
         },
       },
 
-      // ── 11. Keyword Intelligence (~9s) ───────────────────────────
+      // ── 11. Share (~36s) ─────────────────────────────────────────
+      // Centerpiece is a self-contained 3-slide slideshow that
+      // mockups the formats users get when they tap the share icon:
+      //   slide 0 — LINK: server-rendered OG card (the quick share)
+      //   slide 1 — SNAPSHOT: live globe view as a still image
+      //   slide 2 — CLIP: 6s animated globe spin (CSS-spinning
+      //                  placeholder; no real capture during the
+      //                  tutorial since the recorder is heavy + the
+      //                  user is just learning what to expect)
+      // Beats align with the narration so each format is on screen
+      // when the narrator names it. fallbackMs covers the audio's
+      // natural length + a small buffer in case TTS lands slightly
+      // longer than estimated.
+      {
+        id: 'share',
+        title: 'Share',
+        caption: 'Three formats — link, snapshot, and a six-second clip.',
+        audio: AUDIO_BASE + '13_share.mp3',
+        fallbackMs: 36000,
+        chrome: 'top',
+        onEnter: () => {
+          // Navigate to globe page so the slideshow has a calm
+          // backdrop (no busy panel chrome behind the preview cards).
+          try { window.__goToPage?.(1); } catch (_) {}
+          clearSpotlight();
+          _tutShareMountSlideshow();
+          _tutShareShowSlide(0); // start on LINK
+        },
+        beats: [
+          // Narration timing (~158 wpm, ~36s total):
+          //   0-7s   "Found a story… three formats" → LINK on screen
+          //   7-13s  "Link is the quick version…"
+          //   13-21s "Snapshot is your live globe view…"
+          //   21-30s "Clip is a six-second cinematic spin…"
+          //   30-33s "Send what catches your eye."
+          { at: 13000, do: () => _tutShareShowSlide(1) }, // SNAPSHOT slide
+          { at: 21000, do: () => _tutShareShowSlide(2) }, // CLIP slide (spin starts via CSS class)
+          { at: 33000, do: () => _tutShareFadeOut() },    // fade out before chapter ends
+        ],
+        onExit: () => {
+          clearSpotlight();
+          _tutShareTeardownSlideshow();
+        },
+      },
+
+      // ── 12. Keyword Intelligence (~9s) ───────────────────────────
       // Page 0 (Stats / Words view). Demo arc:
       //   ~1.5s  pulse the trending list (default mode = "Trend").
       //   ~4.5s  HALFWAY — switch to Rising mode (pulse + click the
@@ -46300,25 +46568,27 @@ const settingsToggle     = document.getElementById("settingsToggle");
   opacity: 0;
   transform: translateY(-8px);
   transition: opacity 0.45s ease, transform 0.45s cubic-bezier(0.32, 0.72, 0, 1);
-  /* Glass treatment — matches the canonical .bControlBtn / .flowNodeLabel
-     pattern: radial sheen at the top-left, linear gradient body, inset
-     white highlight + soft outer shadow, backdrop blur+saturate.
-     Opacity bumped (was 0.45→0.55, now 0.82→0.92) so the pie reads as
-     a solid panel against busy globe content rather than a translucent
-     wash the user could see through. Border + sheen pushed slightly
-     brighter to match the stronger body. */
+  /* Frosted-glass treatment — the dark body sits at low opacity so the
+     globe bleeds through, the backdrop-filter does the heavy lifting
+     to make whatever's behind the panel readable as a blurred wash
+     rather than visual chaos. Higher blur (24px) + saturate boost
+     (1.4) is the canonical "frosted glass" pairing.
+     Iterated:
+       0.45→0.55 (original)   — too transparent, hard to read pie
+       0.82→0.92 (solid panel) — user said too solid
+       0.18→0.32 (glass)      — current, frosted with sheen */
   background:
-    radial-gradient(ellipse 120% 60% at 30% 0%, rgba(255,255,255,0.20) 0%, transparent 60%),
-    linear-gradient(180deg, rgba(255,255,255,0.14) 0%, rgba(7,12,22,0.82) 50%, rgba(7,12,22,0.92) 100%);
-  border: 1px solid rgba(255,255,255,0.22);
+    radial-gradient(ellipse 120% 60% at 30% 0%, rgba(255,255,255,0.18) 0%, transparent 65%),
+    linear-gradient(180deg, rgba(255,255,255,0.10) 0%, rgba(18,26,46,0.20) 50%, rgba(7,12,22,0.32) 100%);
+  border: 1px solid rgba(255,255,255,0.20);
   border-radius: 12px;
   padding: 8px 10px 10px;
-  backdrop-filter: blur(14px) saturate(1.2);
-  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  backdrop-filter: blur(24px) saturate(1.4);
+  -webkit-backdrop-filter: blur(24px) saturate(1.4);
   box-shadow:
-    0 8px 24px rgba(0,0,0,0.45),
-    inset 0 1px 1px 0 rgba(255,255,255,0.30),
-    inset 0 -1px 2px -1px rgba(0,0,0,0.18);
+    0 8px 24px rgba(0,0,0,0.35),
+    inset 0 1px 1px 0 rgba(255,255,255,0.28),
+    inset 0 -1px 2px -1px rgba(0,0,0,0.12);
 }
 .bSegmentSourcePie.visible {
   opacity: 1;
@@ -47413,13 +47683,19 @@ body.ticker-active .gTickerLabel {
 /* On mobile the captions move from above-the-controls to below-the-
    country-chip-row, sitting just under the title block and above the
    globe. The bottom-of-screen real estate is now claimed by the pie
-   graph and article roll, so captions take the top slot. The country
-   chip row's top edge is safe-area-top + 44px and chips are ~30px
-   tall with padding, so we anchor the caption block at safe-area-top
-   + 80px. */
+   graph and article roll, so captions take the top slot.
+   The country chip row's top edge is safe-area-top + 44px and ONE
+   row of chips is ~26px tall with padding. After bumping the chip
+   cap (5 → 8) and adding more data sources (secondary_locations +
+   nations arrays), narrow phones with story segments naming 6+
+   countries now WRAP to two rows. Two rows fill env+44 to ~env+100
+   (chips ~26px + 8px row-gap + ~22px second row). Captions anchor
+   at env+114 so they always clear the second row with a 14px
+   breathing band, and stay in the same slot when only one row
+   shows — small price for never having captions and chips collide. */
 @media (max-width: 720px) {
   .bCaptions {
-    top: calc(env(safe-area-inset-top, 0px) + 80px);
+    top: calc(env(safe-area-inset-top, 0px) + 114px);
     bottom: auto;
     max-width: calc(100vw - 32px);
     font-size: 13px;

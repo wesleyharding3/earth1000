@@ -4658,6 +4658,115 @@ button.arcCtxSegDot,
       }
     }
 
+    /* Tutorial — Share chapter slideshow (see www/index.html for full
+       rationale). Three preview cards cycle Link → Snapshot → Clip. */
+    #tutShareSlideshow {
+      position: fixed;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 5120;
+      width: min(320px, 80vw);
+      height: 360px;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.4s ease;
+    }
+    #tutShareSlideshow.open { opacity: 1; }
+    .tutShareSlide {
+      position: absolute; inset: 0;
+      display: flex; flex-direction: column; align-items: center; gap: 12px;
+      opacity: 0;
+      transform: translateY(8px);
+      transition: opacity 0.5s ease, transform 0.5s cubic-bezier(0.32, 0.72, 0, 1);
+    }
+    .tutShareSlide.active { opacity: 1; transform: translateY(0); }
+    .tutShareCardLabel {
+      display: inline-flex; align-items: center; gap: 6px;
+      font-size: 10px; font-weight: 700; letter-spacing: 0.18em;
+      color: rgba(255, 200, 130, 0.94);
+      padding: 5px 12px;
+      border: 1px solid rgba(255, 200, 130, 0.32);
+      border-radius: 999px;
+      background: rgba(8, 6, 4, 0.78);
+      backdrop-filter: blur(6px);
+      -webkit-backdrop-filter: blur(6px);
+    }
+    .tutShareRecDot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: #ff4b4b;
+      animation: tutShareRecPulse 1.2s ease-in-out infinite;
+    }
+    @keyframes tutShareRecPulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+    .tutShareLinkCard {
+      width: 100%;
+      aspect-ratio: 1.91 / 1;
+      background:
+        radial-gradient(ellipse 130% 70% at 30% 0%, rgba(255,255,255,0.16) 0%, transparent 60%),
+        linear-gradient(180deg, rgba(20, 26, 42, 0.95) 0%, rgba(7, 12, 22, 0.95) 100%);
+      border: 1px solid rgba(255, 200, 130, 0.28);
+      border-radius: 14px;
+      padding: 16px 18px;
+      display: flex; flex-direction: column; justify-content: space-between;
+      box-shadow: 0 14px 32px rgba(0, 0, 0, 0.55);
+    }
+    .tutShareLinkHeader { font-size: 10px; letter-spacing: 0.20em; color: rgba(255, 200, 130, 0.88); font-weight: 700; }
+    .tutShareLinkTitle  { font-size: 14px; font-weight: 700; color: #fff; line-height: 1.3; }
+    .tutShareLinkMeta   { font-size: 10px; color: rgba(255, 255, 255, 0.55); }
+    .tutShareLinkUrl    { font-size: 10px; color: rgba(255, 200, 130, 0.72); font-family: ui-monospace, Menlo, monospace; }
+    .tutShareSnapPreview {
+      width: 240px;
+      aspect-ratio: 1 / 1;
+      position: relative;
+      background: linear-gradient(180deg, #0a1018 0%, #050a14 100%);
+      border: 1px solid rgba(255, 200, 130, 0.22);
+      border-radius: 14px;
+      overflow: hidden;
+      box-shadow: 0 14px 32px rgba(0, 0, 0, 0.55);
+      display: flex; flex-direction: column;
+    }
+    .tutShareSnapTitle { padding: 14px 14px 0; font-size: 12px; font-weight: 700; color: #fff; line-height: 1.3; }
+    .tutShareSnapGlobeWrap { flex: 1; display: flex; align-items: center; justify-content: center; position: relative; }
+    .tutShareSnapGlobe {
+      width: 130px; height: 130px;
+      border-radius: 50%;
+      background:
+        radial-gradient(ellipse 80% 70% at 35% 30%, rgba(120, 160, 220, 0.55) 0%, transparent 55%),
+        radial-gradient(ellipse 70% 60% at 65% 70%, rgba(80, 120, 180, 0.45) 0%, transparent 55%),
+        linear-gradient(160deg, rgba(40, 70, 120, 0.85) 0%, rgba(15, 25, 45, 1) 100%);
+      position: relative;
+      box-shadow: inset 0 0 22px rgba(120, 160, 220, 0.18), 0 0 32px rgba(120, 160, 220, 0.18);
+    }
+    .tutShareSnapGlobe::before {
+      content: ''; position: absolute; inset: 14% 18% 14% 18%;
+      border: 1px solid rgba(255, 255, 255, 0.18); border-radius: 50%; pointer-events: none;
+    }
+    .tutShareSnapGlobe::after {
+      content: ''; position: absolute; inset: 40% 0;
+      border-top: 1px solid rgba(255, 255, 255, 0.10); pointer-events: none;
+    }
+    .tutShareSnapGlobe--spinning { animation: tutShareGlobeSpin 6s linear infinite; }
+    @keyframes tutShareGlobeSpin { to { transform: rotate(360deg); } }
+    .tutShareSnapFlags { position: absolute; bottom: 12px; left: 12px; display: flex; gap: 4px; }
+    .tutShareSnapFlag {
+      width: 22px; height: 16px;
+      background: rgba(255,255,255,0.08) center/cover no-repeat;
+      border: 1px solid rgba(255, 200, 130, 0.30);
+      border-radius: 3px;
+    }
+    .tutShareSnapWatermark {
+      position: absolute; bottom: 14px; right: 14px;
+      font-size: 9px; letter-spacing: 0.16em;
+      color: rgba(255, 200, 130, 0.65); font-weight: 600;
+    }
+    @media (max-width: 720px) {
+      #tutShareSlideshow { width: min(290px, 78vw); height: 340px; }
+      .tutShareSnapPreview { width: 220px; }
+      .tutShareSnapGlobe { width: 120px; height: 120px; }
+    }
+
     #tutControls {
       display: flex;
       gap: 8px;
@@ -30755,6 +30864,66 @@ const settingsToggle     = document.getElementById("settingsToggle");
     // duplicate of the audio narration so deaf/muted users can
     // follow. Caption fades in when chapter starts, out at chapter
     // end. Spotlight cleanup happens automatically in onExit.
+
+    // ── Share chapter slideshow helpers (see www/index.html for full
+    //    rationale + structure). ─────────────────────────────────
+    let _tutShareSlideshowEl = null;
+    function _tutShareMountSlideshow() {
+      _tutShareTeardownSlideshow();
+      const el = document.createElement('div');
+      el.id = 'tutShareSlideshow';
+      el.innerHTML = '' +
+        '<div class="tutShareSlide" data-idx="0">' +
+          '<div class="tutShareCardLabel">LINK</div>' +
+          '<div class="tutShareLinkCard">' +
+            '<div class="tutShareLinkHeader">EARTH00 · STORY</div>' +
+            '<div class="tutShareLinkTitle">Russian withdrawal triggers Sahel security collapse</div>' +
+            '<div class="tutShareLinkMeta">12 articles · 8 sources · 6 countries</div>' +
+            '<div class="tutShareLinkUrl">earth00.com</div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="tutShareSlide" data-idx="1">' +
+          '<div class="tutShareCardLabel">SNAPSHOT</div>' +
+          '<div class="tutShareSnapPreview">' +
+            '<div class="tutShareSnapTitle">Macron pushes Algeria reset</div>' +
+            '<div class="tutShareSnapGlobeWrap"><div class="tutShareSnapGlobe"></div></div>' +
+            '<div class="tutShareSnapFlags">' +
+              '<div class="tutShareSnapFlag" style="background-image:url(\'https://flagcdn.com/w20/fr.png\')"></div>' +
+              '<div class="tutShareSnapFlag" style="background-image:url(\'https://flagcdn.com/w20/dz.png\')"></div>' +
+            '</div>' +
+            '<div class="tutShareSnapWatermark">earth00.com</div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="tutShareSlide" data-idx="2">' +
+          '<div class="tutShareCardLabel"><span class="tutShareRecDot"></span>CLIP · 6 SEC</div>' +
+          '<div class="tutShareSnapPreview tutShareClipPreview">' +
+            '<div class="tutShareSnapTitle">Macron pushes Algeria reset</div>' +
+            '<div class="tutShareSnapGlobeWrap"><div class="tutShareSnapGlobe tutShareSnapGlobe--spinning"></div></div>' +
+            '<div class="tutShareSnapFlags">' +
+              '<div class="tutShareSnapFlag" style="background-image:url(\'https://flagcdn.com/w20/fr.png\')"></div>' +
+              '<div class="tutShareSnapFlag" style="background-image:url(\'https://flagcdn.com/w20/dz.png\')"></div>' +
+            '</div>' +
+            '<div class="tutShareSnapWatermark">earth00.com</div>' +
+          '</div>' +
+        '</div>';
+      document.body.appendChild(el);
+      _tutShareSlideshowEl = el;
+      requestAnimationFrame(() => el.classList.add('open'));
+    }
+    function _tutShareShowSlide(idx) {
+      if (!_tutShareSlideshowEl) return;
+      const slides = _tutShareSlideshowEl.querySelectorAll('.tutShareSlide');
+      slides.forEach(s => s.classList.toggle('active', Number(s.dataset.idx) === idx));
+    }
+    function _tutShareFadeOut() {
+      if (_tutShareSlideshowEl) _tutShareSlideshowEl.classList.remove('open');
+    }
+    function _tutShareTeardownSlideshow() {
+      if (!_tutShareSlideshowEl) return;
+      try { _tutShareSlideshowEl.remove(); } catch (_) {}
+      _tutShareSlideshowEl = null;
+    }
+
     const CHAPTERS = [
       // ── 1. Welcome (~4s) ─────────────────────────────────────────
       {
@@ -31458,7 +31627,35 @@ const settingsToggle     = document.getElementById("settingsToggle");
         },
       },
 
-      // ── 11. Keyword Intelligence (~9s) ───────────────────────────
+      // ── 11. Share (~36s) ─────────────────────────────────────────
+      // Self-contained 3-slide slideshow showing what each share
+      // format looks like: Link / Snapshot / Clip. See www/index.html
+      // for full rationale + beat timing.
+      {
+        id: 'share',
+        title: 'Share',
+        caption: 'Three formats — link, snapshot, and a six-second clip.',
+        audio: AUDIO_BASE + '13_share.mp3',
+        fallbackMs: 36000,
+        chrome: 'top',
+        onEnter: () => {
+          try { window.__goToPage?.(1); } catch (_) {}
+          clearSpotlight();
+          _tutShareMountSlideshow();
+          _tutShareShowSlide(0);
+        },
+        beats: [
+          { at: 13000, do: () => _tutShareShowSlide(1) },
+          { at: 21000, do: () => _tutShareShowSlide(2) },
+          { at: 33000, do: () => _tutShareFadeOut() },
+        ],
+        onExit: () => {
+          clearSpotlight();
+          _tutShareTeardownSlideshow();
+        },
+      },
+
+      // ── 12. Keyword Intelligence (~9s) ───────────────────────────
       // Halfway switch from Trend → Rising mode, then mock-stream a
       // keyword analysis. See www/index.html for full rationale.
       {
@@ -43182,22 +43379,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
      centering translateY since we're now bottom-anchored. */
   transform: translateY(8px);
   transition: opacity 0.45s ease, transform 0.45s cubic-bezier(0.32, 0.72, 0, 1);
-  /* Glass treatment — opacity bumped (was 0.45→0.55, now 0.82→0.92)
-     so the pie reads as a solid panel against busy globe content
-     rather than a translucent wash. Border + sheen also slightly
-     stronger to match. See www/index.html for full rationale. */
+  /* Frosted-glass treatment — low opacity body + heavy backdrop blur
+     so the globe shows through as a blurred wash. See www/index.html. */
   background:
-    radial-gradient(ellipse 120% 60% at 30% 0%, rgba(255,255,255,0.20) 0%, transparent 60%),
-    linear-gradient(180deg, rgba(255,255,255,0.14) 0%, rgba(7,12,22,0.82) 50%, rgba(7,12,22,0.92) 100%);
-  border: 1px solid rgba(255,255,255,0.22);
+    radial-gradient(ellipse 120% 60% at 30% 0%, rgba(255,255,255,0.18) 0%, transparent 65%),
+    linear-gradient(180deg, rgba(255,255,255,0.10) 0%, rgba(18,26,46,0.20) 50%, rgba(7,12,22,0.32) 100%);
+  border: 1px solid rgba(255,255,255,0.20);
   border-radius: 12px;
   padding: 8px 10px 10px;
-  backdrop-filter: blur(14px) saturate(1.2);
-  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  backdrop-filter: blur(24px) saturate(1.4);
+  -webkit-backdrop-filter: blur(24px) saturate(1.4);
   box-shadow:
-    0 8px 24px rgba(0,0,0,0.45),
-    inset 0 1px 1px 0 rgba(255,255,255,0.30),
-    inset 0 -1px 2px -1px rgba(0,0,0,0.18);
+    0 8px 24px rgba(0,0,0,0.35),
+    inset 0 1px 1px 0 rgba(255,255,255,0.28),
+    inset 0 -1px 2px -1px rgba(0,0,0,0.12);
 }
 .bSegmentSourcePie.visible {
   opacity: 1;
