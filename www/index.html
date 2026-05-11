@@ -2444,6 +2444,11 @@ body.ticker-active #flowControls {
   transform: scale(1.08);
 }
 #flowControls.minimized .flowShareBtn { display: none; }
+/* Save-view button — see index.html. */
+.flowSaveViewBtn {
+  right: calc(100px * var(--mobile-control-scale)) !important;
+}
+#flowControls.minimized .flowSaveViewBtn { display: none; }
 
 /* Share popover — see index.html for full rationale. */
 .flowSharePopover {
@@ -6740,6 +6745,44 @@ button.arcCtxSegDot,
 
 .semHeatLegend { display: flex; align-items: center; gap: 6px; font-size: 10px; color: rgba(255,255,255,0.55); }
 .semHeatLegendBar { flex: 1; height: 8px; border-radius: 4px; background: linear-gradient(to right, #e74c3c, #f1c40f, #2ecc71); }
+/* Color-blind safe palette — see index.html for rationale. */
+body.cb-safe .semHeatLegendBar:not(.coverage) {
+  background: linear-gradient(to right, #3a78c8, #e8e0d0, #f5c64a);
+}
+/* Researching status (3 pulsing gold dots + rotating text) — see index.html. */
+.semHeatAskStatus {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 14px;
+  line-height: 1.4;
+  font-size: 10px;
+  color: rgba(255,255,255,0.62);
+}
+.semHeatAskDots {
+  display: none;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.semHeatAskStatus.semHeatAsking .semHeatAskDots { display: inline-flex; }
+.semHeatAskDot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: rgba(255, 200, 130, 0.92);
+  box-shadow: 0 0 6px rgba(255, 200, 130, 0.65);
+  animation: semHeatAskDotPulse 1.05s ease-in-out infinite;
+}
+.semHeatAskDot:nth-child(2) { animation-delay: 0.18s; }
+.semHeatAskDot:nth-child(3) { animation-delay: 0.36s; }
+@keyframes semHeatAskDotPulse {
+  0%, 80%, 100% { transform: scale(0.65); opacity: 0.45; }
+  40%           { transform: scale(1);    opacity: 1;    }
+}
+.semHeatAskStatusText {
+  flex: 1; min-width: 0;
+  transition: opacity 0.2s ease;
+}
 .semHeatLegendBar.coverage { background: linear-gradient(to right, rgba(60,140,255,0.2), rgba(60,180,255,0.55), rgba(120,230,255,1)); }
 
 /* Heatmap color pickers — surfaced when displayMode='colored'. */
@@ -6819,6 +6862,29 @@ button.arcCtxSegDot,
 
 .semHeatKwRow { display: flex; gap: 6px; align-items: stretch; }
 .semHeatKwRow .semHeatInput { flex: 1; }
+/* Clear-X for heatmap keyword + ask inputs — see index.html for rationale. */
+.semHeatInputWrap { position: relative; flex: 1; min-width: 60px; }
+.semHeatInputWrap input { width: 100%; box-sizing: border-box; }
+.kwAutoWrap.has-value .semHeatInput,
+.semHeatInputWrap.has-value .semHeatInput { padding-right: 28px; }
+.semHeatInputClear {
+  position: absolute; right: 6px; top: 50%;
+  transform: translateY(-50%);
+  width: 18px; height: 18px;
+  min-width: 18px; min-height: 18px;
+  display: none; align-items: center; justify-content: center;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255,255,255,0.10);
+  color: rgba(255,255,255,0.80);
+  cursor: pointer; padding: 0;
+  font-size: 12px; line-height: 1;
+  transition: background 0.12s, color 0.12s;
+  z-index: 2;
+}
+.semHeatInputClear:hover { background: rgba(255,255,255,0.20); color: #fff; }
+.kwAutoWrap.has-value .semHeatInputClear,
+.semHeatInputWrap.has-value .semHeatInputClear { display: flex; }
 .semHeatGoBtn {
   flex-shrink: 0;
   background: rgba(255,160,80,0.18);
@@ -10026,6 +10092,24 @@ button.arcCtxSegDot,
       color: rgba(255,180,80,0.30); pointer-events: none;
     }
     .nfTextIcon svg { width: 12px; height: 12px; display: block; }
+    /* Clear-X — see index.html for rationale. */
+    .nfTextClear {
+      position: absolute; right: 6px; top: 50%;
+      transform: translateY(-50%);
+      width: 18px; height: 18px;
+      min-width: 18px; min-height: 18px;
+      display: none; align-items: center; justify-content: center;
+      border-radius: 50%;
+      border: none;
+      background: rgba(255,180,80,0.12);
+      color: rgba(255,230,180,0.78);
+      cursor: pointer; padding: 0;
+      font-size: 12px; line-height: 1;
+      transition: background 0.12s, color 0.12s;
+    }
+    .nfTextClear:hover { background: rgba(255,180,80,0.22); color: #fff; }
+    .nfTextWrap.has-value .nfTextIcon  { display: none; }
+    .nfTextWrap.has-value .nfTextClear { display: flex; }
 
     /* ── Media type toggles (Article / Video) ── */
     .nfMediaToggles {
@@ -10974,6 +11058,32 @@ button.arcCtxSegDot,
       transition: transform 0.36s cubic-bezier(0.32,0.72,0,1);
     }
     #viewSidebar.open #sidebarTab svg { transform: rotate(180deg); }
+
+    /* Explicit close X — see index.html for full rationale. */
+    #viewSidebarClose {
+      position: absolute;
+      top: 14px;
+      right: 14px;
+      width: 28px; height: 28px;
+      min-width: 28px; min-height: 28px;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 6px;
+      background: rgba(255,255,255,0.04);
+      border: 1px solid rgba(255,255,255,0.10);
+      color: rgba(255,255,255,0.62);
+      cursor: pointer;
+      padding: 0;
+      font-size: 16px;
+      line-height: 1;
+      z-index: 5;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
+    }
+    #viewSidebarClose:hover {
+      background: rgba(255,255,255,0.08);
+      color: #fff;
+      border-color: rgba(255,255,255,0.22);
+    }
+    #viewSidebarClose:active { transform: scale(0.94); }
 
     .sidebarInner {
       flex: 1;
@@ -12439,6 +12549,29 @@ button.arcCtxSegDot,
     0 0 26px rgba(212,168,67,0.32);
 }
 .aiAnalysisCtaBadge:active { transform: translateY(0); }
+/* Cost preview — see index.html for full rationale. */
+.aiAnalysisCostHint {
+  display: block;
+  text-align: center;
+  margin-top: 6px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: rgba(255,220,140,0.55);
+  text-transform: none;
+  pointer-events: none;
+  user-select: none;
+}
+.aiAnalysisCostHint .aiCostNum { color: rgba(255,220,140,0.88); font-weight: 700; }
+.aiAnalysisCtaBadge .aiAnalysisCostHint--inline {
+  position: absolute;
+  bottom: 12px; left: 0; right: 0;
+  flex-basis: 100%;
+  margin-top: 0;
+}
+.aiAnalysisCtaBadge.aiAnalysisCtaBadge--full .aiAnalysisCostHint--inline {
+  bottom: 22px;
+}
 .aiAnalysisCtaBadge:disabled { cursor: default; transform: none; }
 .aiAnalysisCtaBadge > * { position: relative; z-index: 2; }
 
@@ -12874,6 +13007,42 @@ body.auth-modal-open > *:not(#authOverlay) { pointer-events: none !important; }
 }
 .authField input:focus { border-color: rgba(255,160,40,0.5); }
 .authField input::placeholder { color: rgba(255,255,255,0.18); }
+/* Password field with eye toggle — see index.html for rationale. */
+.authPwWrap { position: relative; }
+.authPwWrap input { padding-right: 44px; }
+.authPwEye {
+  position: absolute; right: 8px; top: 50%;
+  transform: translateY(-50%);
+  width: 32px; height: 32px;
+  min-width: 32px; min-height: 32px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 6px;
+  border: none;
+  background: transparent;
+  color: rgba(255,255,255,0.42);
+  cursor: pointer; padding: 0;
+  transition: background 0.12s, color 0.12s;
+}
+.authPwEye:hover { background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.85); }
+.authPwEye svg { width: 18px; height: 18px; display: block; }
+.authResendVerify {
+  display: none;
+  margin-top: 8px;
+  text-align: center;
+  font-size: 12px;
+  color: rgba(255,200,140,0.78);
+}
+.authResendVerify.show { display: block; }
+.authResendVerify button {
+  background: none; border: none;
+  color: rgba(255,200,140,0.92);
+  cursor: pointer; padding: 4px 6px;
+  font-size: 12px; font-family: inherit;
+  text-decoration: underline;
+  min-height: auto;
+}
+.authResendVerify button:hover { color: #fff; }
+.authResendVerify button[disabled] { color: rgba(255,200,140,0.45); cursor: default; text-decoration: none; }
 .authRemember {
   display: flex; align-items: center; gap: 8px;
   font-size: 12px; color: rgba(255,255,255,0.5);
@@ -13463,7 +13632,9 @@ body.auth-modal-open > *:not(#authOverlay) { pointer-events: none !important; }
 }
 .libTitle { font-size: 15px; font-weight: 600; color: rgba(255,255,255,0.9); flex: 1; }
 .libClose {
-  width: 28px; height: 28px; border-radius: 50%; border: none;
+  width: 28px; height: 28px;
+  min-width: 28px; min-height: 28px;
+  border-radius: 50%; border: none;
   background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.5);
   cursor: pointer; display: flex; align-items: center; justify-content: center;
   font-size: 16px; transition: background 0.15s;
@@ -13471,6 +13642,71 @@ body.auth-modal-open > *:not(#authOverlay) { pointer-events: none !important; }
 .libClose:hover { background: rgba(255,255,255,0.12); color: #fff; }
 .libTabs {
   display: flex; border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+/* Toolbar (search + Clear-all) — see index.html for rationale. */
+.libToolbar {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.06);
+}
+.libSearchWrap { position: relative; flex: 1; }
+.libSearchInput {
+  width: 100%; box-sizing: border-box;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: 8px;
+  padding: 7px 28px 7px 10px;
+  color: rgba(255,255,255,0.9);
+  font-size: 12px; font-family: inherit;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.libSearchInput::placeholder { color: rgba(255,255,255,0.30); }
+.libSearchInput:focus { border-color: rgba(255,195,70,0.5); }
+.libSearchClear {
+  position: absolute; right: 6px; top: 50%;
+  transform: translateY(-50%);
+  width: 18px; height: 18px;
+  min-width: 18px; min-height: 18px;
+  display: none; align-items: center; justify-content: center;
+  border-radius: 50%;
+  border: none;
+  background: rgba(255,255,255,0.10);
+  color: rgba(255,255,255,0.78);
+  cursor: pointer; padding: 0;
+  font-size: 12px; line-height: 1;
+}
+.libSearchClear:hover { background: rgba(255,255,255,0.20); color: #fff; }
+.libSearchWrap.has-value .libSearchClear { display: flex; }
+.libClearAllBtn {
+  flex-shrink: 0;
+  background: transparent;
+  border: 1px solid rgba(255,255,255,0.10);
+  border-radius: 8px;
+  padding: 6px 10px;
+  color: rgba(255,255,255,0.55);
+  font-size: 11px; font-family: inherit;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  min-height: auto;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+.libClearAllBtn:hover {
+  background: rgba(255,50,50,0.10);
+  color: rgba(255,150,150,0.92);
+  border-color: rgba(255,80,80,0.35);
+}
+.libClearAllBtn:disabled { opacity: 0.35; cursor: default; }
+.libClearAllBtn:disabled:hover {
+  background: transparent;
+  color: rgba(255,255,255,0.55);
+  border-color: rgba(255,255,255,0.10);
+}
+.libNoMatches {
+  text-align: center;
+  padding: 32px 16px;
+  color: rgba(255,255,255,0.45);
+  font-size: 12px;
 }
 .libTab {
   flex: 1; padding: 10px; text-align: center; font-size: 12px; font-weight: 600;
@@ -13502,12 +13738,106 @@ body.auth-modal-open > *:not(#authOverlay) { pointer-events: none !important; }
   font-size: 10px; color: rgba(255,255,255,0.3); margin-top: 4px;
 }
 .libItemRemove {
-  align-self: center; width: 22px; height: 22px; border-radius: 50%;
+  align-self: center; width: 22px; height: 22px;
+  min-width: 22px; min-height: 22px;
+  border-radius: 50%;
   border: none; background: transparent; color: rgba(255,255,255,0.25);
   cursor: pointer; font-size: 13px; display: flex; align-items: center;
   justify-content: center; flex-shrink: 0; transition: all 0.15s;
 }
 .libItemRemove:hover { background: rgba(255,50,50,0.12); color: rgba(255,100,100,0.8); }
+/* Saved Views modal — see index.html for rationale. */
+#savedViewsModal {
+  display: none;
+  position: fixed; inset: 0;
+  z-index: 100000;
+  background: rgba(0,0,0,0.55);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  align-items: center; justify-content: center;
+  padding: 20px;
+}
+#savedViewsModal.open { display: flex; }
+.svModalBox {
+  width: 100%; max-width: 440px;
+  max-height: 80vh;
+  background: rgba(15,18,26,0.96);
+  border: 1px solid rgba(255,220,180,0.18);
+  border-radius: 14px;
+  padding: 0;
+  display: flex; flex-direction: column;
+  box-shadow: 0 18px 40px rgba(0,0,0,0.5);
+  overflow: hidden;
+}
+.svModalHeader {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 16px 12px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+  flex-shrink: 0;
+}
+.svModalTitle { font-size: 14px; font-weight: 600; color: rgba(255,255,255,0.92); }
+.svModalClose {
+  width: 28px; height: 28px;
+  min-width: 28px; min-height: 28px;
+  border-radius: 50%; border: none;
+  background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.55);
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  font-size: 16px;
+  padding: 0;
+}
+.svModalClose:hover { background: rgba(255,255,255,0.12); color: #fff; }
+.svModalBody { flex: 1; overflow-y: auto; padding: 12px; }
+.svItem {
+  display: flex; gap: 10px; align-items: center;
+  padding: 10px; border-radius: 8px;
+  background: rgba(255,255,255,0.02);
+  margin-bottom: 6px;
+  transition: background 0.15s;
+}
+.svItem:hover { background: rgba(255,255,255,0.04); }
+.svItemType {
+  width: 24px; height: 24px;
+  flex-shrink: 0;
+  border-radius: 6px;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(255,200,130,0.10);
+  color: rgba(255,200,130,0.85);
+}
+.svItemType svg { width: 14px; height: 14px; }
+.svItemBody { flex: 1; min-width: 0; }
+.svItemName {
+  font-size: 13px; font-weight: 500;
+  color: rgba(255,255,255,0.92);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.svItemMeta {
+  font-size: 10px; color: rgba(255,255,255,0.45);
+  margin-top: 2px;
+  text-transform: uppercase; letter-spacing: 0.06em;
+}
+.svItemBtns { display: flex; gap: 4px; flex-shrink: 0; }
+.svItemBtn {
+  width: 28px; height: 28px;
+  min-width: 28px; min-height: 28px;
+  border-radius: 6px; border: none;
+  background: rgba(255,255,255,0.06);
+  color: rgba(255,255,255,0.65);
+  cursor: pointer; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 14px;
+}
+.svItemBtn:hover { background: rgba(255,255,255,0.12); color: #fff; }
+.svItemBtn.danger:hover {
+  background: rgba(255,50,50,0.18);
+  color: rgba(255,150,150,0.95);
+}
+.svItemBtn svg { width: 14px; height: 14px; }
+.svEmpty {
+  text-align: center;
+  padding: 36px 16px;
+  color: rgba(255,255,255,0.45);
+  font-size: 12px;
+}
 </style>
 </head>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
@@ -14232,7 +14562,7 @@ window.fmtDate = function(d) {
     duckGain   = ctx.createGain();
     masterGain = ctx.createGain();
     duckGain.gain.value   = 1.0;
-    masterGain.gain.value = muted ? 0.0001 : MASTER_DEFAULT;
+    masterGain.gain.value = muted ? 0.0001 : Math.max(0.0001, MASTER_DEFAULT * userMaster);
     duckGain.connect(masterGain).connect(ctx.destination);
 
     // Shared reverb bus: layers tap reverbIn at any send level they choose.
@@ -14791,6 +15121,27 @@ window.fmtDate = function(d) {
 
   function unduck(durationMs) { duck(1.0, durationMs || 1200); }
 
+  // User-volume multiplier — see index.html for full rationale.
+  let userMaster = 1.0;
+  try {
+    const v = parseFloat(localStorage.getItem('earth00:masterVol') || '');
+    if (Number.isFinite(v) && v >= 0 && v <= 1) userMaster = v;
+  } catch(_) {}
+  function _engineEffectiveTarget() {
+    return muted ? 0.0001 : Math.max(0.0001, MASTER_DEFAULT * userMaster);
+  }
+  function setMasterVolume(v) {
+    const clamped = Math.max(0, Math.min(1, Number(v) || 0));
+    userMaster = clamped;
+    try { localStorage.setItem('earth00:masterVol', String(clamped)); } catch(_) {}
+    if (!ctx || !masterGain) return;
+    const now = ctx.currentTime;
+    masterGain.gain.cancelScheduledValues(now);
+    masterGain.gain.setValueAtTime(Math.max(masterGain.gain.value, 0.0001), now);
+    masterGain.gain.exponentialRampToValueAtTime(_engineEffectiveTarget(), now + 0.2);
+  }
+  function getMasterVolume() { return userMaster; }
+
   function setMasterMute(v) {
     muted = !!v;
     try { localStorage.setItem(STORAGE_KEY, muted ? '1' : '0'); } catch(_){}
@@ -14798,7 +15149,7 @@ window.fmtDate = function(d) {
     const now = ctx.currentTime;
     masterGain.gain.cancelScheduledValues(now);
     masterGain.gain.setValueAtTime(Math.max(masterGain.gain.value, 0.0001), now);
-    masterGain.gain.exponentialRampToValueAtTime(muted ? 0.0001 : MASTER_DEFAULT, now + 0.45);
+    masterGain.gain.exponentialRampToValueAtTime(_engineEffectiveTarget(), now + 0.45);
     // When unmuting, also re-sync the page-appropriate layer in case
     // the user toggled mute during a session where the layer had been
     // torn down (e.g. visited a silent page in between). No-op if the
@@ -14825,12 +15176,100 @@ window.fmtDate = function(d) {
     attachUnlockListeners();
   }
 
+  // Color-blind safe palette toggle — see index.html for rationale.
+  try {
+    const _cb = localStorage.getItem('earth00:cbSafe') === '1';
+    window.__cbSafe = _cb;
+    if (_cb) document.documentElement.classList.add('cb-safe'),
+             document.body && document.body.classList.add('cb-safe');
+  } catch(_) { window.__cbSafe = false; }
+  window.__setCbSafe = function(on) {
+    const v = !!on;
+    window.__cbSafe = v;
+    try { localStorage.setItem('earth00:cbSafe', v ? '1' : '0'); } catch(_) {}
+    if (document.body) document.body.classList.toggle('cb-safe', v);
+    document.documentElement.classList.toggle('cb-safe', v);
+  };
+
+  // Global volume manager — see index.html for full rationale.
+  if (!window.__earthVolume) {
+    const _vol = { master: userMaster, briefing: 1.0, _listeners: [] };
+    try {
+      const m = parseFloat(localStorage.getItem('earth00:masterVol') || '');
+      if (Number.isFinite(m) && m >= 0 && m <= 1) _vol.master = m;
+      const b = parseFloat(localStorage.getItem('earth00:briefingVol') || '');
+      if (Number.isFinite(b) && b >= 0 && b <= 1) _vol.briefing = b;
+    } catch(_) {}
+    _vol.setMaster = function(v) {
+      const c = Math.max(0, Math.min(1, Number(v) || 0));
+      _vol.master = c;
+      try { localStorage.setItem('earth00:masterVol', String(c)); } catch(_) {}
+      setMasterVolume(c);
+      _vol._listeners.forEach(fn => { try { fn('master', c); } catch(_) {} });
+    };
+    _vol.setBriefing = function(v) {
+      const c = Math.max(0, Math.min(1, Number(v) || 0));
+      _vol.briefing = c;
+      try { localStorage.setItem('earth00:briefingVol', String(c)); } catch(_) {}
+      _vol._listeners.forEach(fn => { try { fn('briefing', c); } catch(_) {} });
+    };
+    _vol.onChange = function(fn) {
+      if (typeof fn === 'function') _vol._listeners.push(fn);
+      return () => { _vol._listeners = _vol._listeners.filter(f => f !== fn); };
+    };
+    _vol.briefingMultiplier = function() { return _vol.master * _vol.briefing; };
+    window.__earthVolume = _vol;
+  }
+
+  // ── Saved Views ──────────────────────────────────────────────
+  // See index.html for full rationale.
+  if (!window.__savedViews) {
+    const KEY = 'earth00:savedViews';
+    const _read = () => {
+      try { return JSON.parse(localStorage.getItem(KEY) || '[]'); }
+      catch (_) { return []; }
+    };
+    const _write = (arr) => {
+      try { localStorage.setItem(KEY, JSON.stringify(arr)); } catch (_) {}
+    };
+    const _newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    window.__savedViews = {
+      list: () => _read(),
+      listByType: (type) => _read().filter(v => v.type === type),
+      save: ({ type, name, payload }) => {
+        const arr = _read();
+        const view = {
+          id: _newId(),
+          type,
+          name: (name || `${type === 'heatmap' ? 'Heatmap' : 'Flows'} view`).slice(0, 60),
+          payload,
+          createdAt: new Date().toISOString(),
+        };
+        arr.unshift(view);
+        if (arr.length > 50) arr.length = 50;
+        _write(arr);
+        return view;
+      },
+      remove: (id) => { _write(_read().filter(v => v.id !== id)); },
+      apply: (id) => {
+        const v = _read().find(x => x.id === id);
+        if (!v) return false;
+        try {
+          if (v.type === 'heatmap') return !!window.__restoreHeatmapView?.(v.payload);
+          if (v.type === 'flows')   return !!window.__restoreFlowsView?.(v.payload);
+        } catch (e) { console.warn('[savedViews] apply failed:', e.message); }
+        return false;
+      },
+    };
+  }
+
   window.audioEngine = {
     unlock, setLayer, triggerStab, triggerWhoosh, triggerArticleTap,
     triggerThreadTap, triggerLineTap, triggerAiTwinkle,
     triggerNavClick, triggerPageWhoosh,
     pulseActivity,
     duck, unduck, setMasterMute, isMuted, isUnlocked,
+    setMasterVolume, getMasterVolume,
     get ctx() { return ctx; },
     _debug() {
       return {
@@ -15100,6 +15539,11 @@ window.__earthAnalysis = (function() {
     if (!body) return;
     const anyTyping = blocks.some(b => b.status !== 'done');
     body.className = 'arcCtxBody ' + (anyTyping ? 'arcCtxStateTyping' : 'arcCtxStateSettled');
+    // Preserve scroll across re-renders — see index.html for rationale.
+    // Replaces prior `body.scrollTop = body.scrollHeight` which auto-
+    // scrolled to bottom on every chunk, pushing segment titles out of
+    // view at the top.
+    const _prevScrollTop = body.scrollTop;
     body.innerHTML = blocks.map((b, i) => {
       const kindClass = b.kind === 'primary' || b.kind === 'secondary' ? b.kind : 'summary';
       const statusClass = b.status === 'done' ? 'is-done' : 'is-typing';
@@ -15114,7 +15558,7 @@ window.__earthAnalysis = (function() {
         '</section>'
       );
     }).join('');
-    body.scrollTop = body.scrollHeight;
+    body.scrollTop = _prevScrollTop;
     // Thread / line detail panels: always segmented + always manual.
     if (window.__arcCtxSegmented) {
       window.__arcCtxSegmented.setManualMode(body, true);
@@ -15146,7 +15590,7 @@ window.__earthAnalysis = (function() {
       b.typedText = target.slice(0, typed);
       const textEl = body?.querySelector('[data-block="' + index + '"]');
       if (textEl) textEl.textContent = b.typedText;
-      if (body) body.scrollTop = body.scrollHeight;
+      // (was: body.scrollTop = body.scrollHeight — removed, see index.html.)
       const keepGoing = await sleep(typed < 48 ? 18 : typed < 180 ? 22 : 28, signal);
       if (!keepGoing) return false;
     }
@@ -16020,6 +16464,21 @@ window.__arcCtxSegmented = (function() {
             </svg>
             Notices
           </div>
+          <!-- Saved Views — opens a modal. See index.html for rationale. -->
+          <div class="acctDpBtn" id="acctDpSavedViews">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>
+            </svg>
+            Saved Views
+          </div>
+          <!-- Feedback — mailto: link. See index.html for rationale. -->
+          <div class="acctDpBtn" id="acctDpFeedback">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/>
+              <polyline points="22,6 12,13 2,6"/>
+            </svg>
+            Send Feedback
+          </div>
           <!-- App Store guideline 5.1.1(v): in-app account deletion is
                required since 2022. Hidden until signed in (the dropdown
                itself is gated upstream). -->
@@ -16125,6 +16584,7 @@ window.__arcCtxSegmented = (function() {
         <polyline points="6.5,2 3.5,5 6.5,8"/>
       </svg>
     </div>
+    <button id="viewSidebarClose" type="button" title="Close" aria-label="Close sidebar">&times;</button>
 
     <div class="sidebarInner">
 
@@ -16138,7 +16598,8 @@ window.__arcCtxSegmented = (function() {
           </div>
         </div>
       </div>
-      <!-- Always-visible global control: ambient sound master mute. -->
+      <!-- Always-visible global control: mute pill + master volume slider.
+           See index.html for full rationale. -->
       <div class="sidebarSection sidebarSectionGlobal">
         <div class="sidebarSectionLabel">Sound</div>
         <div class="themeToggleRow" style="margin-top:0;">
@@ -16147,6 +16608,22 @@ window.__arcCtxSegmented = (function() {
             <button class="themePillBtn" data-audio="off">Off</button>
           </div>
         </div>
+        <div class="settingsVolRow" style="margin-top:10px;">
+          <svg class="settingsVolIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+            <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+            <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
+          </svg>
+          <input type="range" class="volSlider" id="settingsMasterVol" min="0" max="100" value="100" step="1" aria-label="Master volume" />
+        </div>
+      </div>
+      <!-- Accessibility section — see index.html for rationale. -->
+      <div class="sidebarSection sidebarSectionGlobal">
+        <div class="sidebarSectionLabel">Accessibility</div>
+        <label class="settingsToggleRow" style="margin-top:6px;">
+          <input type="checkbox" id="settingsCbSafe" />
+          <span class="settingsToggleLabel">Color-blind safe palette</span>
+        </label>
       </div>
       <div class="sidebarDivider"></div>
 
@@ -16450,6 +16927,10 @@ window.__arcCtxSegmented = (function() {
   <!-- Flow controls panel -->
   <div id="flowControls">
     <button class="flowMinBtn" id="flowMinBtn" title="Minimize">−</button>
+    <!-- Save-view button — see index.html for rationale. -->
+    <button class="flowShareBtn flowSaveViewBtn" id="flowSaveViewBtn" title="Save view" onclick="window.__saveFlowsView?.()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+    </button>
     <!-- Share button — captures the live globe (arcs visible at the
          current playback time / aggregate composite) and dispatches
          via __shareSnapshot. The image is the actual view + Earth00
@@ -16637,6 +17118,10 @@ window.__arcCtxSegmented = (function() {
     <div class="semHeatHeader">
       <div class="semHeatTitle">Heatmap</div>
       <div class="semHeatHeaderActions">
+        <!-- Save view — see index.html for rationale. -->
+        <button class="semHeatMin savedViewBtn" id="semHeatSaveView" onclick="window.__saveHeatmapView?.()" title="Save view">
+          <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
+        </button>
         <button class="semHeatMin" onclick="window.__semHeatMinimize?.()" title="Minimize">−</button>
         <button class="semHeatClose" onclick="window.__semHeatClose?.()" title="Close">&times;</button>
       </div>
@@ -16687,6 +17172,7 @@ window.__arcCtxSegmented = (function() {
           <div class="semHeatKwRow">
             <div class="kwAutoWrap">
               <input type="text" class="semHeatInput" id="semHeatKw" placeholder="e.g. election, tariffs, flood…" autocomplete="off" />
+              <button type="button" class="semHeatInputClear" id="semHeatKwClear" title="Clear" aria-label="Clear keyword">&times;</button>
               <div class="kwAutoList" id="heatKwAutoList"></div>
             </div>
             <button type="button" class="semHeatGoBtn" id="semHeatGoBtn">Enter</button>
@@ -16731,8 +17217,11 @@ window.__arcCtxSegmented = (function() {
         <!-- Ask-AI panel: free-form question → Claude tool call → heat. -->
         <div class="semHeatCtlPanel active" data-panel="ask">
           <div class="semHeatKwRow">
-            <input type="text" class="semHeatInput" id="semHeatAskInput"
-                   placeholder="e.g. countries with active volcanoes" autocomplete="off" maxlength="280" />
+            <div class="semHeatInputWrap">
+              <input type="text" class="semHeatInput" id="semHeatAskInput"
+                     placeholder="e.g. countries with active volcanoes" autocomplete="off" maxlength="280" />
+              <button type="button" class="semHeatInputClear" id="semHeatAskInputClear" title="Clear" aria-label="Clear question">&times;</button>
+            </div>
             <button type="button" class="semHeatGoBtn" id="semHeatAskGoBtn">Map</button>
           </div>
           <div style="display:flex;gap:6px;align-items:center;">
@@ -16743,7 +17232,14 @@ window.__arcCtxSegmented = (function() {
               <option value="binary">Binary (yes / no)</option>
             </select>
           </div>
-          <div id="semHeatAskStatus" style="font-size:10px;color:rgba(255,255,255,0.55);min-height:14px;line-height:1.4;"></div>
+          <div id="semHeatAskStatus" class="semHeatAskStatus">
+            <span class="semHeatAskDots" aria-hidden="true">
+              <span class="semHeatAskDot"></span>
+              <span class="semHeatAskDot"></span>
+              <span class="semHeatAskDot"></span>
+            </span>
+            <span class="semHeatAskStatusText" id="semHeatAskStatusText"></span>
+          </div>
           <div id="semHeatAskNote" style="font-size:9px;color:rgba(255,200,140,0.75);font-style:italic;line-height:1.4;display:none;"></div>
         </div>
       </div>
@@ -19598,6 +20094,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
       settingsToggle.addEventListener("click", (e) => { e.stopPropagation(); sidebarOpen ? closeSidebar() : openSidebar(); });
       sidebarTab.addEventListener("click",     (e) => { e.stopPropagation(); sidebarOpen ? closeSidebar() : openSidebar(); });
+      document.getElementById("viewSidebarClose")?.addEventListener("click", (e) => { e.stopPropagation(); closeSidebar(); });
       window.addEventListener("click", (e) => {
         if (sidebarOpen && !viewSidebar.contains(e.target) && !settingsToggle.contains(e.target)) closeSidebar();
       });
@@ -19796,6 +20293,32 @@ const settingsToggle     = document.getElementById("settingsToggle");
         btn.addEventListener("pointerdown", (e) => e.stopPropagation());
       });
       syncAudioControls();
+
+      // Master-volume slider — see index.html for rationale.
+      const settingsMasterVolEl = document.getElementById('settingsMasterVol');
+      if (settingsMasterVolEl) {
+        try {
+          const v = window.__earthVolume?.master ?? 1.0;
+          settingsMasterVolEl.value = String(Math.round(v * 100));
+        } catch(_) {}
+        settingsMasterVolEl.addEventListener('input', () => {
+          const v = (parseInt(settingsMasterVolEl.value, 10) || 0) / 100;
+          window.__earthVolume?.setMaster(v);
+        });
+        ['click','pointerdown','touchstart'].forEach(evt =>
+          settingsMasterVolEl.addEventListener(evt, e => e.stopPropagation())
+        );
+      }
+
+      // Color-blind safe palette toggle — see index.html for rationale.
+      const settingsCbSafeEl = document.getElementById('settingsCbSafe');
+      if (settingsCbSafeEl) {
+        try { settingsCbSafeEl.checked = !!window.__cbSafe; } catch(_) {}
+        settingsCbSafeEl.addEventListener('change', () => {
+          window.__setCbSafe(settingsCbSafeEl.checked);
+          try { window.__heatmapReload?.(); } catch(_) {}
+        });
+      }
 
       // Auto-mount the 2D map after a short delay if the persisted choice is
       // 'map'. We poll briefly because window.__map2d is defined further down
@@ -25546,6 +26069,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
   function sentimentColor(score) {
     if (score == null) return new THREE.Color(0.6, 0.6, 0.7);
     const t = (score + 1) / 2;
+    // CB-safe variant — see index.html for rationale.
+    if (window.__cbSafe) {
+      return new THREE.Color(
+        0.23 + (0.91 - 0.23) * t,
+        0.47 + (0.78 - 0.47) * t,
+        0.78 + (0.29 - 0.78) * t
+      );
+    }
     return new THREE.Color(
       t < 0.5 ? 1 : 2*(1-t),
       t > 0.5 ? 1 : 2*t,
@@ -26754,6 +27285,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
       }
       const anyTyping = blocks.some((block) => block.status !== 'done');
       _arcCtxApplyBodyState(anyTyping ? 'arcCtxStateTyping' : 'arcCtxStateSettled');
+      // Capture scroll BEFORE the innerHTML rewrite — see index.html
+      // for full rationale. Restored after .innerHTML below.
+      const _captureBodyScroll = body.scrollTop;
       body.innerHTML = blocks.map((block, index) => {
         // 'edge' is the flow-scope variant — paired-country header + per-
         // edge relationship prose. 'primary'/'secondary' are the entities-
@@ -26791,7 +27325,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           `</section>`
         );
       }).join('');
-      body.scrollTop = body.scrollHeight;
+      body.scrollTop = _captureBodyScroll;
       // Flow context panel: segmented + MANUAL (always). Each block
       // types to completion, then waits for the user to click Next.
       if (window.__arcCtxSegmented) {
@@ -26957,6 +27491,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
           `</span>` +
           `<span class="aiAnalysisDot"></span>` +
           `<span>✦ Generate Deep Analysis</span>` +
+          // flow_context = 10 credits — see creditLedger.js + index.html.
+          `<div class="aiAnalysisCostHint aiAnalysisCostHint--inline">Uses <span class="aiCostNum">10</span> credits</div>` +
         `</button>`;
       body.scrollTop = 0;
     }
@@ -27005,7 +27541,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const body = document.getElementById('arcCtxBody');
           const textEl = body?.querySelector(`[data-block="${blockIndex}"]`);
           if (textEl) textEl.textContent = block.typedText;
-          if (body) body.scrollTop = body.scrollHeight;
+          // (was: body.scrollTop = body.scrollHeight — removed, see above.)
         }
         const keepGoing = await _arcCtxSleep(typed < 48 ? 18 : typed < 180 ? 22 : 28, signal);
         if (!keepGoing) return false;
@@ -29695,6 +30231,48 @@ const settingsToggle     = document.getElementById("settingsToggle");
   window.__flowCreateArc = createArc;
   window.__flowClearArcs = function() { clearArcs(); };
   window.__flowClosePanel = closeFlowPanel;
+
+  // Saved Views: flows save/restore — see index.html.
+  window.__saveFlowsView = function() {
+    const payload = {
+      fromCountry: (document.getElementById('flowFromCountry')?.value || '').trim(),
+      aboutCountry: (document.getElementById('flowAboutCountry')?.value || '').trim(),
+      keyword:    (document.getElementById('flowKeyword')?.value || '').trim(),
+      fromDate:   (document.getElementById('flowFrom')?.value || '').trim(),
+      toDate:     (document.getElementById('flowTo')?.value   || '').trim(),
+      colorMode:  document.querySelector('.flowColorPill.active')?.dataset?.color || '',
+      animMode:   document.querySelector('.flowAnimPill.active')?.dataset?.anim   || '',
+    };
+    const bits = [];
+    if (payload.fromCountry)  bits.push(`from ${payload.fromCountry}`);
+    if (payload.aboutCountry) bits.push(`about ${payload.aboutCountry}`);
+    if (payload.keyword)      bits.push(`"${payload.keyword}"`);
+    if (payload.fromDate || payload.toDate) bits.push(`${payload.fromDate || ''}–${payload.toDate || ''}`);
+    const label = bits.join(' · ') || 'Flows view';
+    const name = window.prompt('Name this view:', label);
+    if (name === null) return;
+    const view = window.__savedViews?.save({ type: 'flows', name: name || label, payload });
+    if (view) window.__showToast?.('Saved view: ' + view.name);
+  };
+  window.__restoreFlowsView = function(p) {
+    if (!p) return false;
+    try {
+      const setVal = (id, v) => {
+        const el = document.getElementById(id);
+        if (el && v != null) { el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); }
+      };
+      setVal('flowFromCountry',  p.fromCountry);
+      setVal('flowAboutCountry', p.aboutCountry);
+      setVal('flowKeyword',      p.keyword);
+      setVal('flowFrom',         p.fromDate);
+      setVal('flowTo',           p.toDate);
+      if (p.colorMode) document.querySelector(`.flowColorPill[data-color="${p.colorMode}"]`)?.click();
+      if (p.animMode)  document.querySelector(`.flowAnimPill[data-anim="${p.animMode}"]`)?.click();
+      try { window.__flowSetOpen?.(true); } catch(_) {}
+      document.getElementById('flowApplyBtn')?.click();
+      return true;
+    } catch (e) { console.warn('[savedViews] flows restore failed:', e.message); return false; }
+  };
   window.__flowSetOpen = function(open) {
     // Mutual exclusion: the sentiment heatmap must never be active at the
     // same time as flow arcs. Tear it down before enabling flow mode.
@@ -31539,7 +32117,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
         </div>
         <!-- Bias filter -->
         <div class="nfBiasWrap" id="nfBiasWrap">
-          <div class="nfBiasBtn" id="nfBiasBtn">
+          <div class="nfBiasBtn" id="nfBiasBtn"
+               data-hold-tip-title="Source bias"
+               data-hold-tip="Filter results by the political lean of the publisher. Left / Center / Right reflect a publication's editorial stance based on independent media-bias ratings. Pick any combination to narrow the feed.">
             <span class="nfBiasActiveDots" id="nfBiasActiveDots"></span>
             <span id="nfBiasLabel">Bias</span>
             <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="2,3.5 5,6.5 8,3.5"/></svg>
@@ -31554,6 +32134,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
               <line x1="16.5" y1="16.5" x2="22" y2="22"/>
             </svg>
           </span>
+          <button class="nfTextClear" id="nfTextFilterClear" type="button" title="Clear" aria-label="Clear filter">&times;</button>
         </div>
       </div>
 
@@ -34251,12 +34832,24 @@ const settingsToggle     = document.getElementById("settingsToggle");
     requestAnimationFrame(() => requestAnimationFrame(_alignBiasToVideos));
 
     let textDebounce = null;
+    const _nfTextWrapEl = textFilter_el.closest('.nfTextWrap');
+    const _syncNfTextClear = () => {
+      if (_nfTextWrapEl) _nfTextWrapEl.classList.toggle('has-value', !!textFilter_el.value);
+    };
     textFilter_el.addEventListener("input", () => {
+      _syncNfTextClear();
       clearTimeout(textDebounce);
       textDebounce = setTimeout(() => {
         textFilter = textFilter_el.value.trim().toLowerCase();
         renderCards(filtered(), true); updateMetaCount();
       }, 160);
+    });
+    document.getElementById("nfTextFilterClear")?.addEventListener("click", () => {
+      textFilter_el.value = "";
+      textFilter = "";
+      _syncNfTextClear();
+      renderCards(filtered(), true); updateMetaCount();
+      textFilter_el.focus();
     });
 
     function syncClearBtn() {
@@ -34300,7 +34893,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       _lastRenderedCount = 0;
       // Reset prefetch state on new search
       _prefetchedData = null; _prefetchInFlight = null; _prefetchOffset = -1;
-      textFilter = ""; textFilter_el.value = "";
+      textFilter = ""; textFilter_el.value = ""; _syncNfTextClear();
       welcome.style.display = "none";
       viewport.classList.add("on");
       // Hydrate first paint from the preload so the feed isn't blank.
@@ -40763,7 +41356,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
               ` onclick="window.__adpAnalysisStartFromGate?.(this)">` +
         `<span class="aiAnalysisDot"></span>` +
         `<span>✦ Generate Deep Analysis</span>` +
-      `</button>`;
+      `</button>` +
+      // article_analysis = 8 credits — see creditLedger.js + index.html.
+      `<div class="aiAnalysisCostHint">Uses <span class="aiCostNum">8</span> credits</div>`;
     body.scrollTop = 0;
   }
   function _adpAnalysisShowMessage(cls, html) {
@@ -40777,6 +41372,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
     if (!body) return;
     const anyTyping = blocks.some(b => b.status !== 'done');
     body.className = 'arcCtxBody ' + (anyTyping ? 'arcCtxStateTyping' : 'arcCtxStateSettled');
+    // Preserve scroll across re-renders — see index.html for rationale.
+    const _prevAdpScroll = body.scrollTop;
     body.innerHTML = blocks.map((block, index) => {
       const kindClass = block.kind === 'primary' || block.kind === 'secondary' ? block.kind : 'summary';
       const badge = _adpEscAnalysis(block.badge || '');
@@ -40794,7 +41391,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         `</section>`
       );
     }).join('');
-    body.scrollTop = body.scrollHeight;
+    body.scrollTop = _prevAdpScroll;
     // Article detail panel: always segmented + always manual.
     if (window.__arcCtxSegmented) {
       window.__arcCtxSegmented.setManualMode(body, true);
@@ -40827,7 +41424,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const body = document.getElementById('adpAnalysisBody');
       const textEl = body?.querySelector(`[data-block="${index}"]`);
       if (textEl) textEl.textContent = block.typedText;
-      if (body) body.scrollTop = body.scrollHeight;
+      // (was: body.scrollTop = body.scrollHeight — removed, see arcCtxBody.)
       const keepGoing = await _adpAnalysisSleep(typed < 48 ? 18 : typed < 180 ? 22 : 28, signal);
       if (!keepGoing) return false;
     }
@@ -41741,7 +42338,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
       </div>
       <div class="authField">
         <label>Password</label>
-        <input type="password" id="siPassword" placeholder="••••••••" autocomplete="current-password" />
+        <div class="authPwWrap">
+          <input type="password" id="siPassword" placeholder="••••••••" autocomplete="current-password" />
+          <button type="button" class="authPwEye" data-pw-toggle="siPassword" aria-label="Show password" title="Show password">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+        </div>
       </div>
       <label class="authRemember"><input type="checkbox" id="siRemember" checked /> Remember me</label>
       <button class="authSubmit" id="siSubmit">Sign In</button>
@@ -41755,9 +42357,26 @@ const settingsToggle     = document.getElementById("settingsToggle");
       </div>
       <div class="authField">
         <label>Password</label>
-        <input type="password" id="suPassword" placeholder="Min. 8 characters" autocomplete="new-password" />
+        <div class="authPwWrap">
+          <input type="password" id="suPassword" placeholder="Min. 8 characters" autocomplete="new-password" />
+          <button type="button" class="authPwEye" data-pw-toggle="suPassword" aria-label="Show password" title="Show password">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+        </div>
+      </div>
+      <div class="authField">
+        <label>Confirm password</label>
+        <div class="authPwWrap">
+          <input type="password" id="suPasswordConfirm" placeholder="Re-enter password" autocomplete="new-password" />
+          <button type="button" class="authPwEye" data-pw-toggle="suPasswordConfirm" aria-label="Show password" title="Show password">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+        </div>
       </div>
       <button class="authSubmit" id="suSubmit">Create Account</button>
+      <div class="authResendVerify" id="authResendVerify">
+        Didn't get the email? <button type="button" id="authResendVerifyBtn">Resend verification</button>
+      </div>
     </div>
     <!-- Legal footer — App Store guideline 3.1.2 requires Privacy + Terms
          to be visible BEFORE any subscription purchase. The pricing modal
@@ -41976,7 +42595,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
   const siSubmit        = document.getElementById('siSubmit');
   const suEmail         = document.getElementById('suEmail');
   const suPassword      = document.getElementById('suPassword');
+  const suPasswordConfirm = document.getElementById('suPasswordConfirm');
   const suSubmit        = document.getElementById('suSubmit');
+  const authResendVerifyEl  = document.getElementById('authResendVerify');
+  const authResendVerifyBtn = document.getElementById('authResendVerifyBtn');
   const forgotLink      = document.getElementById('forgotLink');
   const acctDpEmail     = document.getElementById('acctDpEmail');
   const acctDpTier      = document.getElementById('acctDpTier');
@@ -42697,8 +43319,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
   async function signUp() {
     const email = suEmail.value.trim(), pw = suPassword.value;
+    const pwConfirm = suPasswordConfirm?.value || '';
     if (!email || !pw) return showMsg('Please fill in all fields.', 'error');
     if (pw.length < 8) return showMsg('Password must be at least 8 characters.', 'error');
+    if (pw !== pwConfirm) return showMsg('Passwords do not match.', 'error');
     suSubmit.disabled = true; suSubmit.textContent = 'Creating account…';
     // emailRedirectTo lands on /auth/verify which iOS Universal Links
     // route into the Capacitor app; non-iOS / app-not-installed users
@@ -42710,6 +43334,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
     suSubmit.disabled = false; suSubmit.textContent = 'Create Account';
     if (error) return showMsg(error.message, 'error');
     showMsg('Check your email to confirm your account!', 'success');
+    if (authResendVerifyEl) {
+      authResendVerifyEl.dataset.email = email;
+      authResendVerifyEl.classList.add('show');
+    }
+    if (authResendVerifyBtn) {
+      authResendVerifyBtn.disabled = false;
+      authResendVerifyBtn.textContent = 'Resend verification';
+    }
   }
 
   let _userInitiatedSignOut = false;
@@ -42886,6 +43518,65 @@ const settingsToggle     = document.getElementById("settingsToggle");
   tabs.forEach(t => t.addEventListener('click', () => switchTab(t.dataset.tab)));
   siSubmit.addEventListener('click', signIn);
   suSubmit.addEventListener('click', signUp);
+
+  // ── Show/hide password (eye toggle) — see index.html for rationale.
+  document.getElementById('authOverlay')?.addEventListener('click', (e) => {
+    const btn = e.target?.closest?.('[data-pw-toggle]');
+    if (!btn) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const targetId = btn.getAttribute('data-pw-toggle');
+    const input = document.getElementById(targetId);
+    if (!input) return;
+    const reveal = input.type === 'password';
+    input.type = reveal ? 'text' : 'password';
+    btn.setAttribute('aria-label', reveal ? 'Hide password' : 'Show password');
+    btn.setAttribute('title', reveal ? 'Hide password' : 'Show password');
+    btn.innerHTML = reveal
+      ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>'
+      : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+  });
+
+  // ── Resend verification email — see index.html for rationale.
+  let _resendCooldownTimer = null;
+  authResendVerifyBtn?.addEventListener('click', async () => {
+    const email = authResendVerifyEl?.dataset.email || '';
+    if (!email) return;
+    authResendVerifyBtn.disabled = true;
+    authResendVerifyBtn.textContent = 'Sending…';
+    try {
+      const { error } = await sb.auth.resend({
+        type: 'signup',
+        email,
+        options: { emailRedirectTo: 'https://earth00.com/auth/verify' },
+      });
+      if (error) {
+        showMsg(error.message || 'Resend failed. Try again in a moment.', 'error');
+        authResendVerifyBtn.disabled = false;
+        authResendVerifyBtn.textContent = 'Resend verification';
+        return;
+      }
+      showMsg('Verification email resent — check your inbox.', 'success');
+      let secs = 30;
+      authResendVerifyBtn.textContent = `Resend (${secs}s)`;
+      clearInterval(_resendCooldownTimer);
+      _resendCooldownTimer = setInterval(() => {
+        secs--;
+        if (secs <= 0) {
+          clearInterval(_resendCooldownTimer);
+          authResendVerifyBtn.disabled = false;
+          authResendVerifyBtn.textContent = 'Resend verification';
+        } else {
+          authResendVerifyBtn.textContent = `Resend (${secs}s)`;
+        }
+      }, 1000);
+    } catch (err) {
+      console.warn('[auth] resend failed:', err);
+      showMsg('Resend failed. Try again in a moment.', 'error');
+      authResendVerifyBtn.disabled = false;
+      authResendVerifyBtn.textContent = 'Resend verification';
+    }
+  });
 
   // Google sign-in. Two paths, mirroring the Apple Sign In pattern above.
   //
@@ -43201,6 +43892,85 @@ const settingsToggle     = document.getElementById("settingsToggle");
     privacy?.addEventListener('click', e => { e.stopPropagation(); openLegalDoc('/privacy.html'); });
     terms?.addEventListener('click',   e => { e.stopPropagation(); openLegalDoc('/terms.html');   });
     notices?.addEventListener('click', e => { e.stopPropagation(); openLegalDoc('/notices.html'); });
+
+    // Feedback — mailto: link. See index.html for rationale.
+    const feedback = document.getElementById('acctDpFeedback');
+    feedback?.addEventListener('click', e => {
+      e.stopPropagation();
+      const subject = encodeURIComponent('Earth00 Feedback');
+      const body = encodeURIComponent('What would you like to share?\n\n');
+      window.location.href = `mailto:feedback@earth00.com?subject=${subject}&body=${body}`;
+    });
+
+    // Saved Views — modal listing user-saved heatmap + flows views.
+    // See index.html for full rationale.
+    const savedViewsBtn = document.getElementById('acctDpSavedViews');
+    const svModal       = document.getElementById('savedViewsModal');
+    const svModalBody   = document.getElementById('svModalBody');
+    const svModalClose  = document.getElementById('svModalClose');
+    function _renderSavedViewsList() {
+      if (!svModalBody) return;
+      const views = window.__savedViews?.list() || [];
+      if (!views.length) {
+        svModalBody.innerHTML = `<div class="svEmpty">No saved views yet.<br>Tap the bookmark icon on the Heatmap or News Flows panel to save the current state.</div>`;
+        return;
+      }
+      const esc = (s) => String(s ?? '').replace(/[&<>"']/g, c => ({
+        '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+      }[c]));
+      const heatIco = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/><ellipse cx="12" cy="12" rx="4" ry="9"/></svg>';
+      const flowIco = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12 Q12 2 21 12"/><circle cx="3" cy="12" r="1.5" fill="currentColor"/><circle cx="21" cy="12" r="1.5" fill="currentColor"/></svg>';
+      svModalBody.innerHTML = views.map(v => {
+        const ico = v.type === 'heatmap' ? heatIco : flowIco;
+        const when = (() => {
+          try { return new Date(v.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }); }
+          catch (_) { return ''; }
+        })();
+        return `<div class="svItem" data-sv-id="${esc(v.id)}">
+          <div class="svItemType">${ico}</div>
+          <div class="svItemBody">
+            <div class="svItemName">${esc(v.name)}</div>
+            <div class="svItemMeta">${esc(v.type)}${when ? ' · ' + esc(when) : ''}</div>
+          </div>
+          <div class="svItemBtns">
+            <button class="svItemBtn" data-sv-restore="${esc(v.id)}" title="Restore" aria-label="Restore">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            </button>
+            <button class="svItemBtn danger" data-sv-delete="${esc(v.id)}" title="Delete" aria-label="Delete">&times;</button>
+          </div>
+        </div>`;
+      }).join('');
+      svModalBody.querySelectorAll('[data-sv-restore]').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const id = btn.getAttribute('data-sv-restore');
+          if (svModal) svModal.classList.remove('open');
+          window.__savedViews?.apply(id);
+        });
+      });
+      svModalBody.querySelectorAll('[data-sv-delete]').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          const id = btn.getAttribute('data-sv-delete');
+          window.__savedViews?.remove(id);
+          _renderSavedViewsList();
+        });
+      });
+    }
+    savedViewsBtn?.addEventListener('click', e => {
+      e.stopPropagation();
+      _renderSavedViewsList();
+      svModal?.classList.add('open');
+    });
+    svModalClose?.addEventListener('click', () => svModal?.classList.remove('open'));
+    svModal?.addEventListener('click', (e) => {
+      if (e.target === svModal) svModal.classList.remove('open');
+    });
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape' && svModal?.classList.contains('open')) {
+        svModal.classList.remove('open');
+      }
+    });
   })();
 
   /* ── Delete Account (App Store guideline 5.1.1(v)) ──
@@ -43373,47 +44143,71 @@ const settingsToggle     = document.getElementById("settingsToggle");
     </div>`;
   }
 
+  // Search query — applied to both tabs. See index.html for rationale.
+  let _libSearchQuery = '';
+  function _filteredLibItems() {
+    const all = _libTab === 'saved' ? _savedItems : _historyItems;
+    const q = _libSearchQuery.trim().toLowerCase();
+    if (!q) return { items: all, filtered: false };
+    const filtered = all.filter(it => {
+      const hay = `${it.title || ''} ${it.source || ''} ${it.type || ''} ${it.date || ''}`.toLowerCase();
+      return hay.includes(q);
+    });
+    return { items: filtered, filtered: true };
+  }
+  function _esc(s) {
+    return String(s ?? '').replace(/[&<>"']/g, c => ({
+      '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+    }[c]));
+  }
+
   function _renderLib() {
     const lc = getLibContent();
     if (!lc) return;
-    const items = _libTab === 'saved' ? _savedItems : _historyItems;
+    const { items, filtered } = _filteredLibItems();
+    const clearAllBtn = document.getElementById('libClearAll');
+    if (clearAllBtn) {
+      const fullList = _libTab === 'saved' ? _savedItems : _historyItems;
+      clearAllBtn.disabled = !fullList.length;
+    }
     if (!items.length) {
-      lc.innerHTML = _libEmpty(
-        _libTab === 'saved'
-          ? 'No saved items yet.<br>Tap the bookmark icon on any article to save it.'
-          : 'No browsing history yet.'
-      );
+      if (filtered) {
+        lc.innerHTML = `<div class="libNoMatches">No items match “${_esc(_libSearchQuery)}”.</div>`;
+      } else {
+        lc.innerHTML = _libEmpty(
+          _libTab === 'saved'
+            ? 'No saved items yet.<br>Tap the bookmark icon on any article to save it.'
+            : 'No browsing history yet.'
+        );
+      }
       return;
     }
-    lc.innerHTML = items.map((it, i) => `
+    const fullList = _libTab === 'saved' ? _savedItems : _historyItems;
+    lc.innerHTML = items.map(it => {
+      const i = fullList.indexOf(it);
+      // History tab now also gets a per-item delete button.
+      return `
       <div class="libItem" data-idx="${i}" data-url="${it.url || ''}" data-type="${it.type || 'article'}">
         <div class="libItemBody">
           <div class="libItemTitle">${it.title || 'Untitled'}</div>
           <div class="libItemMeta">${it.source || (it.type === 'thread' ? 'Thread' : it.type === 'timeline' ? 'Line' : '')}${(it.source || it.type) && it.date ? ' · ' : ''}${it.date || ''}</div>
         </div>
-        ${_libTab === 'saved' ? `<button class="libItemRemove" data-rm="${i}" title="Remove">&times;</button>` : ''}
-      </div>`).join('');
+        <button class="libItemRemove" data-rm="${i}" title="Remove">&times;</button>
+      </div>`;
+    }).join('');
 
     lc.querySelectorAll('.libItem').forEach(el => {
       el.addEventListener('click', e => {
         if (e.target.closest('.libItemRemove')) return;
         const idx = parseInt(el.dataset.idx);
-        const it = items[idx];
+        const list = _libTab === 'saved' ? _savedItems : _historyItems;
+        const it = list[idx];
         if (!it) return;
-        // Threads + lines reopen in their cluster panel via the saved
-        // payload (we stored the full thread/timeline object on save so
-        // this works without a network fetch and without needing
-        // separate fetch endpoints per type).
         if ((it.type === 'thread' || it.type === 'timeline') && it.data && window.openThreadInPanel) {
-          // Pass kind so openThreadInPanel picks the right pulse.
           window.openThreadInPanel(it.data, { kind: it.type });
           getLibPanel()?.classList.remove('open');
           return;
         }
-        // Defensive URL validation — older entries may still contain a
-        // bare fingerprint hash where a real URL belongs (would open as
-        // relative earth00.com/<hash> and 404). Only navigate when the
-        // value is unambiguously absolute.
         if (it.url && /^https?:\/\//i.test(it.url)) {
           window.open(it.url, '_blank');
         }
@@ -43423,8 +44217,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
       btn.addEventListener('click', e => {
         e.stopPropagation();
         const idx = parseInt(btn.dataset.rm);
-        _savedItems.splice(idx, 1);
-        _persistSaved(); _updateSavedCount(); _renderLib();
+        if (_libTab === 'saved') {
+          _savedItems.splice(idx, 1);
+          _persistSaved(); _updateSavedCount();
+        } else {
+          _historyItems.splice(idx, 1);
+          _persistHistory();
+        }
+        _renderLib();
       });
     });
   }
@@ -43433,6 +44233,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
     const lp = getLibPanel();
     _libTab = tab || 'saved';
     if (lp) lp.querySelectorAll('.libTab').forEach(t => t.classList.toggle('active', t.dataset.lib === _libTab));
+    _libSearchQuery = '';
+    const searchInput = document.getElementById('libSearch');
+    if (searchInput) searchInput.value = '';
+    document.getElementById('libSearchWrap')?.classList.remove('has-value');
     _renderLib();
     accountDropdown.classList.remove('open');
     if (lp) requestAnimationFrame(() => lp.classList.add('open'));
@@ -43444,8 +44248,50 @@ const settingsToggle     = document.getElementById("settingsToggle");
     const lc2 = getLibClose();
     if (lc2) lc2.addEventListener('click', () => lp && lp.classList.remove('open'));
     if (lp) lp.querySelectorAll('.libTab').forEach(t => {
-      t.addEventListener('click', () => { _libTab = t.dataset.lib; lp.querySelectorAll('.libTab').forEach(x => x.classList.toggle('active', x === t)); _renderLib(); });
+      t.addEventListener('click', () => {
+        _libTab = t.dataset.lib;
+        lp.querySelectorAll('.libTab').forEach(x => x.classList.toggle('active', x === t));
+        _renderLib();
+      });
     });
+
+    // Toolbar wiring — search + Clear-all. See index.html for rationale.
+    const searchInput = document.getElementById('libSearch');
+    const searchWrap  = document.getElementById('libSearchWrap');
+    const searchClear = document.getElementById('libSearchClear');
+    const clearAllBtn = document.getElementById('libClearAll');
+
+    if (searchInput) {
+      searchInput.addEventListener('input', () => {
+        _libSearchQuery = searchInput.value || '';
+        searchWrap?.classList.toggle('has-value', !!_libSearchQuery);
+        _renderLib();
+      });
+    }
+    if (searchClear) {
+      searchClear.addEventListener('click', () => {
+        if (!searchInput) return;
+        searchInput.value = '';
+        _libSearchQuery = '';
+        searchWrap?.classList.remove('has-value');
+        _renderLib();
+        searchInput.focus();
+      });
+    }
+    if (clearAllBtn) {
+      clearAllBtn.addEventListener('click', () => {
+        const tabLabel = _libTab === 'saved' ? 'saved items' : 'history';
+        if (!window.confirm(`Clear all ${tabLabel}? This cannot be undone.`)) return;
+        if (_libTab === 'saved') {
+          _savedItems = [];
+          _persistSaved(); _updateSavedCount();
+        } else {
+          _historyItems = [];
+          _persistHistory();
+        }
+        _renderLib();
+      });
+    }
   });
   // Single "Library" entry point — opens the panel with the Saved tab
   // active by default; user can flip to History via the libTab switcher
@@ -46211,6 +47057,8 @@ body.ticker-active .gTickerLabel {
   will-change: transform;
 }
 .gTickerTrack.reset { animation: none; }
+/* Tap-to-pause — see index.html for rationale. */
+.gTickerTrack.paused-tap { animation-play-state: paused; }
 .gTickerItem {
   display: inline; cursor: pointer;
   transition: opacity 0.15s;
@@ -46339,6 +47187,107 @@ body.ticker-active .gTickerLabel {
   z-index: 2;
 }
 #briefingOverlay.open .bControlsWrap { opacity: 1; }
+/* Volume controls — see index.html for full rationale. */
+.bVolWrap {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 0 6px;
+}
+.bVolIcon {
+  width: 14px; height: 14px;
+  color: rgba(255,255,255,0.6);
+  flex-shrink: 0;
+}
+/* Settings master volume — see index.html for rationale. */
+.volSlider {
+  -webkit-appearance: none; appearance: none;
+  width: 100%; height: 5px;
+  background: rgba(255,255,255,0.15);
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+  padding: 0; margin: 0;
+}
+.volSlider::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  background: rgba(255,200,130,0.92);
+  cursor: pointer;
+  border: none;
+  box-shadow: 0 0 6px rgba(255,200,130,0.5);
+}
+.volSlider::-moz-range-thumb {
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  background: rgba(255,200,130,0.92);
+  cursor: pointer;
+  border: none;
+  box-shadow: 0 0 6px rgba(255,200,130,0.5);
+}
+
+/* Briefing player volume — glowing gold variant. See index.html. */
+.bVolSlider {
+  -webkit-appearance: none; appearance: none;
+  width: 60px; height: 4px;
+  background:
+    linear-gradient(180deg, rgba(255,200,130,0.10), rgba(255,170,80,0.22));
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+  padding: 0; margin: 0;
+  box-shadow:
+    inset 0 0 4px rgba(255,180,80,0.35),
+    0 0 6px rgba(255,180,80,0.22);
+}
+.bVolSlider::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 35% 30%, rgba(255,240,200,1) 0%, rgba(255,200,130,1) 45%, rgba(220,150,60,1) 100%);
+  cursor: pointer;
+  border: none;
+  box-shadow:
+    0 0 8px rgba(255,200,130,0.85),
+    0 0 16px rgba(255,170,80,0.55),
+    0 0 24px rgba(255,140,40,0.30);
+}
+.bVolSlider::-moz-range-thumb {
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 35% 30%, rgba(255,240,200,1) 0%, rgba(255,200,130,1) 45%, rgba(220,150,60,1) 100%);
+  cursor: pointer;
+  border: none;
+  box-shadow:
+    0 0 8px rgba(255,200,130,0.85),
+    0 0 16px rgba(255,170,80,0.55),
+    0 0 24px rgba(255,140,40,0.30);
+}
+.settingsVolRow {
+  display: flex; align-items: center; gap: 10px;
+  padding: 4px 2px;
+}
+/* Settings checkbox row — see index.html. */
+.settingsToggleRow {
+  display: flex; align-items: center; gap: 8px;
+  padding: 4px 2px;
+  cursor: pointer;
+  font-size: 12px;
+  color: rgba(255,255,255,0.78);
+}
+.settingsToggleRow input[type="checkbox"] {
+  width: 14px; height: 14px;
+  accent-color: rgba(255,200,130,0.92);
+  cursor: pointer;
+}
+.settingsToggleLabel { line-height: 1.3; user-select: none; }
+.settingsVolIcon {
+  width: 16px; height: 16px;
+  color: rgba(255,255,255,0.55);
+  flex-shrink: 0;
+}
+
 .bControls {
   display: inline-flex; align-items: center; gap: 10px;
   padding: 8px 12px;
@@ -46880,6 +47829,14 @@ body.ticker-active .gTickerLabel {
       <button class="bControlBtn" id="bNext" title="Next">&#8594;</button>
       <button class="bControlBtn speed" id="bSpeed" title="Playback speed">1x</button>
       <button class="bControlBtn cc" id="bCCToggle" title="Toggle captions">CC</button>
+      <!-- Briefing volume — see index.html for rationale. -->
+      <div class="bVolWrap" title="Briefing volume">
+        <svg class="bVolIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+          <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+        </svg>
+        <input type="range" class="bVolSlider" id="bVolSlider" min="0" max="100" value="100" step="1" aria-label="Briefing volume" />
+      </div>
       <button class="bControlBtn close" id="bClose" title="Close briefing">✕</button>
     </div>
     <div class="bSeekWrap">
@@ -47060,12 +48017,13 @@ body.ticker-active .gTickerLabel {
         }
         _bgMusicSrc = _bgMusicCtx.createMediaElementSource(_bgMusic);
         _bgMusicGain = _bgMusicCtx.createGain();
-        _bgMusicGain.gain.value = BG_VOL_FULL;
+        // Apply user volume multiplier on top of canonical BG_VOL_FULL.
+        _bgMusicGain.gain.value = Math.max(0.001, BG_VOL_FULL * _bgUserMul());
         _bgMusicSrc.connect(_bgMusicGain);
         _bgMusicGain.connect(_bgMusicCtx.destination);
       } catch (e) {
         console.warn('[bgMusic] AudioContext init failed, using volume fallback:', e.message);
-        _bgMusic.volume = BG_VOL_FULL;
+        _bgMusic.volume = Math.max(0.001, BG_VOL_FULL * _bgUserMul());
       }
       console.log('[bgMusic] loaded and ready (sharedCtx=' + (!_bgMusicOwnsCtx) + ')');
     }, { once: true });
@@ -47099,18 +48057,53 @@ body.ticker-active .gTickerLabel {
     _bgMusicLoaded = false; _bgMusicOwnsCtx = false;
   }
 
+  // Track last requested target so user-volume changes mid-playback can
+  // recompute effective gain at the current ducking level. See index.html.
+  let _bgMusicCurrentTarget = BG_VOL_FULL;
+  function _bgUserMul() {
+    try { return window.__earthVolume?.briefingMultiplier?.() ?? 1.0; }
+    catch(_) { return 1.0; }
+  }
   // Smooth volume transitions via exponential ramp
   function duckBgMusic(targetVol, fadeSec) {
     if (!_bgMusic) return;
+    _bgMusicCurrentTarget = targetVol;
+    const effective = Math.max(0.001, targetVol * _bgUserMul());
     if (_bgMusicGain && _bgMusicCtx) {
       const now = _bgMusicCtx.currentTime;
       _bgMusicGain.gain.cancelScheduledValues(now);
       _bgMusicGain.gain.setValueAtTime(_bgMusicGain.gain.value, now);
-      _bgMusicGain.gain.exponentialRampToValueAtTime(Math.max(targetVol, 0.001), now + fadeSec);
+      _bgMusicGain.gain.exponentialRampToValueAtTime(effective, now + fadeSec);
     } else {
       // Fallback: direct volume (no smooth ramp)
-      _bgMusic.volume = targetVol;
+      _bgMusic.volume = effective;
     }
+  }
+  function _bgRefreshUserVolume() {
+    if (!_bgMusic) return;
+    const effective = Math.max(0.001, _bgMusicCurrentTarget * _bgUserMul());
+    if (_bgMusicGain && _bgMusicCtx) {
+      const now = _bgMusicCtx.currentTime;
+      _bgMusicGain.gain.cancelScheduledValues(now);
+      _bgMusicGain.gain.setValueAtTime(_bgMusicGain.gain.value, now);
+      _bgMusicGain.gain.exponentialRampToValueAtTime(effective, now + 0.15);
+    } else { _bgMusic.volume = effective; }
+    _bgNarrationAudios.forEach(a => {
+      try { a.volume = _bgUserMul(); } catch(_) {}
+    });
+  }
+  const _bgNarrationAudios = new Set();
+  function _bgRegisterNarration(audio) {
+    if (!audio) return;
+    try { audio.volume = _bgUserMul(); } catch(_) {}
+    _bgNarrationAudios.add(audio);
+    const drop = () => { _bgNarrationAudios.delete(audio); };
+    audio.addEventListener('ended', drop, { once: true });
+    audio.addEventListener('error', drop, { once: true });
+  }
+  if (window.__earthVolume && !window.__earthVolume.__briefingHooked) {
+    window.__earthVolume.__briefingHooked = true;
+    window.__earthVolume.onChange(_bgRefreshUserVolume);
   }
 
   // Called when narrator audio STARTS playing
@@ -48990,6 +49983,7 @@ body.ticker-active .gTickerLabel {
         sa = new Audio(`${API}/api/briefing/audio/${episode.id}/${idx}?at=${encodeURIComponent(window.__authToken || '')}`);
         sa.preload = 'auto';
         sa._segIdx = idx;
+        _bgRegisterNarration(sa);
       }
       audio = sa;
       sa.playbackRate = playbackRate;
@@ -49170,6 +50164,7 @@ body.ticker-active .gTickerLabel {
       audioNext = new Audio(`${API}/api/briefing/audio/${episode.id}/${nextIdx}?at=${encodeURIComponent(window.__authToken || '')}`);
       audioNext.preload = 'auto';
       audioNext._segIdx = nextIdx;
+      _bgRegisterNarration(audioNext);
       audioNext.load();
     }
 
@@ -50633,6 +51628,7 @@ body.ticker-active .gTickerLabel {
       audioBar.style.display = 'flex';
       const da = new Audio(`${API}/api/briefing/audio/${episode.id}/${actualIdx}?at=${encodeURIComponent(window.__authToken || '')}`);
       da.preload = 'metadata';
+      _bgRegisterNarration(da);
       detailAudio = da;
       window._detailAudio = da;  // expose for single-voice guarantee
 
@@ -51146,6 +52142,21 @@ body.ticker-active .gTickerLabel {
   document.getElementById('bPrev')?.addEventListener('click', () => { _resumeSingle = false; goToSegment(Math.max(0, segIdx - 1), true); });
   document.getElementById('bCCToggle')?.addEventListener('click', () => setCaptions(!captionsOn));
   document.getElementById('bSpeed')?.addEventListener('click', cycleSpeed);
+  // Briefing volume slider — see index.html for rationale.
+  const _bVolSlider = document.getElementById('bVolSlider');
+  if (_bVolSlider) {
+    try {
+      const v = window.__earthVolume?.briefing ?? 1.0;
+      _bVolSlider.value = String(Math.round(v * 100));
+    } catch(_) {}
+    _bVolSlider.addEventListener('input', () => {
+      const v = (parseInt(_bVolSlider.value, 10) || 0) / 100;
+      window.__earthVolume?.setBriefing(v);
+    });
+    ['click','pointerdown','touchstart'].forEach(evt =>
+      _bVolSlider.addEventListener(evt, e => e.stopPropagation())
+    );
+  }
   // Seek slider — scrub within current segment's audio
   const _seekSlider = document.getElementById('bSeekSlider');
   if (_seekSlider) {
@@ -51402,6 +52413,21 @@ body.ticker-active .gTickerLabel {
     const art = _articles.find(a => a.id === id);
     if (art && window.openArticleDetail) window.openArticleDetail(art, { type: 'feed' });
   };
+
+  // Tap-to-pause — 5s auto-resume. See index.html for rationale.
+  let _gTickerPauseTimer = null;
+  const _GTICKER_PAUSE_MS = 5000;
+  function _gTickerHandlePause() {
+    const track = document.getElementById('gTickerTrack');
+    if (!track) return;
+    track.classList.add('paused-tap');
+    clearTimeout(_gTickerPauseTimer);
+    _gTickerPauseTimer = setTimeout(() => {
+      track.classList.remove('paused-tap');
+      _gTickerPauseTimer = null;
+    }, _GTICKER_PAUSE_MS);
+  }
+  document.getElementById('globalTicker')?.addEventListener('click', _gTickerHandlePause, true);
 
   // ── Fetch and refresh ─────────────────────────────────────────────────────
   async function _fetchAndStart() {
@@ -51965,6 +52991,8 @@ body.ticker-active .gTickerLabel {
               <span class="aiAnalysisDot"></span>
               <span>✦ Generate Deep Analysis</span>
             </button>
+            <!-- Credit-cost preview — see index.html + creditLedger.js. -->
+            <div class="aiAnalysisCostHint">Uses <span class="aiCostNum">${isTimeline ? 17 : 13}</span> credits</div>
           </div>
         </div>
         ${isTimeline ? `
@@ -53809,6 +54837,50 @@ body.ticker-active .gTickerLabel {
   window.__heatmapHasTimeseries = function() {
     return !!(state.series && state.series.buckets && state.series.buckets.length >= 2);
   };
+
+  // Saved Views: heatmap save/restore — see index.html.
+  window.__saveHeatmapView = function() {
+    const panel = document.getElementById('semHeatPanel');
+    const activeMode = document.querySelector('#semHeatModeRow .semHeatPill.active')?.dataset?.mode || 'coverage';
+    const activeCtl  = document.querySelector('#semHeatCtlTabs .semHeatCtlTab.active')?.dataset?.ctl || 'keyword';
+    const payload = {
+      mode: activeMode, ctl: activeCtl,
+      keyword: (document.getElementById('semHeatKw')?.value || '').trim(),
+      days:    document.getElementById('semHeatKwDays')?.value || document.getElementById('semHeatTsRange')?.value || '7',
+      bucket:  document.getElementById('semHeatTsBucket')?.value || '',
+      qaQuestion: panel?.dataset?.qaQuestion || (document.getElementById('semHeatAskInput')?.value || '').trim(),
+      qaMode:  panel?.dataset?.qaMode || document.getElementById('semHeatAskMode')?.value || '',
+    };
+    let label;
+    if (payload.qaQuestion) label = `Map This: ${payload.qaQuestion.slice(0, 32)}`;
+    else if (payload.keyword) label = `${payload.keyword} · ${payload.mode} · ${payload.days}d`;
+    else label = `Total ${payload.mode} · ${payload.days}d`;
+    const name = window.prompt('Name this view:', label);
+    if (name === null) return;
+    const view = window.__savedViews?.save({ type: 'heatmap', name: name || label, payload });
+    if (view) window.__showToast?.('Saved view: ' + view.name);
+  };
+  window.__restoreHeatmapView = function(p) {
+    if (!p) return false;
+    try {
+      const tab = document.querySelector(`#semHeatCtlTabs [data-ctl="${p.ctl}"]`);
+      if (tab) tab.click();
+      const modePill = document.querySelector(`#semHeatModeRow .semHeatPill[data-mode="${p.mode}"]`);
+      if (modePill) modePill.click();
+      const setVal = (id, v) => {
+        const el = document.getElementById(id);
+        if (el && v != null) { el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true })); }
+      };
+      setVal('semHeatKw',       p.keyword);
+      setVal('semHeatKwDays',   p.days);
+      setVal('semHeatTsRange',  p.days);
+      setVal('semHeatTsBucket', p.bucket);
+      setVal('semHeatAskInput', p.qaQuestion);
+      setVal('semHeatAskMode',  p.qaMode);
+      try { window.__semHeatOpen?.(); } catch(_) {}
+      return true;
+    } catch (e) { console.warn('[savedViews] heatmap restore failed:', e.message); return false; }
+  };
   // Returns the date range of the loaded series as YYYY-MM-DD strings.
   // Used by the share-clip overlay to render the date pill for
   // time-series heatmap recordings. Returns null when no series loaded.
@@ -54190,7 +55262,9 @@ body.ticker-active .gTickerLabel {
       try { renderPoints({ country_points: [], city_points: [] }); } catch (_) {}
       if (!briefingMode) {
         const status = document.getElementById('semHeatAskStatus');
-        if (status) status.textContent = '⚠ ' + refusal;
+        const textEl = document.getElementById('semHeatAskStatusText');
+        if (status) status.classList.remove('semHeatAsking');
+        if (textEl) textEl.textContent = '⚠ ' + refusal;
         const note = document.getElementById('semHeatAskNote');
         if (note) { note.textContent = ''; note.style.display = 'none'; }
       }
@@ -54215,7 +55289,9 @@ body.ticker-active .gTickerLabel {
       // surface a single picker (binary / percent), 5 pickers (rank), etc.
       try { syncPaletteUI(); } catch (_) {}
       const status = document.getElementById('semHeatAskStatus');
-      if (status) status.textContent = `${pts.length} countries · ${state.qaLegend}`;
+      const textEl = document.getElementById('semHeatAskStatusText');
+      if (status) status.classList.remove('semHeatAsking');
+      if (textEl) textEl.textContent = `${pts.length} countries · ${state.qaLegend}`;
       const note = document.getElementById('semHeatAskNote');
       if (note) {
         if (state.qaSourceNote) {
@@ -54263,6 +55339,32 @@ body.ticker-active .gTickerLabel {
     const stat = document.getElementById('semHeatAskStatus');
     if (!inp || !btn) return;
     let inflight = false;
+
+    // Status setter — see index.html for full rationale.
+    const textEl = document.getElementById('semHeatAskStatusText');
+    let _researchTimer = null;
+    function setAskStatus(text, isAsking) {
+      if (textEl) textEl.textContent = text || '';
+      if (stat) stat.classList.toggle('semHeatAsking', !!isAsking);
+    }
+    function startResearching() {
+      const stages = [
+        'Searching news…',
+        'Reading sources…',
+        'Cross-referencing facts…',
+        'Composing answer…',
+      ];
+      let i = 0;
+      setAskStatus(stages[0], true);
+      _researchTimer = setInterval(() => {
+        i = (i + 1) % stages.length;
+        setAskStatus(stages[i], true);
+      }, 2800);
+    }
+    function stopResearching() {
+      if (_researchTimer) { clearInterval(_researchTimer); _researchTimer = null; }
+    }
+
     async function submit() {
       const q = (inp.value || '').trim();
       if (!q || inflight) return;
@@ -54276,7 +55378,7 @@ body.ticker-active .gTickerLabel {
       btn.disabled = true;
       const prevLabel = btn.textContent;
       btn.textContent = '…';
-      if (stat) stat.textContent = 'Asking…';
+      startResearching();
       // Stash the question so the country-click inspector can label
       // each country's QA value with the question that produced it.
       state.qaQuestion = q;
@@ -54351,18 +55453,20 @@ body.ticker-active .gTickerLabel {
         const data = await res.json().catch(() => ({}));
         if (_isQaSessionStale(_myToken)) return;
         if (!res.ok) {
+          stopResearching();
           if (res.status === 401) {
-            if (stat) stat.textContent = 'Sign in to ask questions.';
+            setAskStatus('Sign in to ask questions.', false);
             window.__openAuthModal?.();
             return;
           }
           if (res.status === 429 && data.limitReached) {
-            if (stat) stat.textContent = `Out of credits (${data.cost} needed).`;
+            setAskStatus(`Out of credits (${data.cost} needed).`, false);
             return;
           }
-          if (stat) stat.textContent = `Error: ${data.error || res.statusText}`;
+          setAskStatus(`Error: ${data.error || res.statusText}`, false);
           return;
         }
+        stopResearching();
         window.__semHeatRenderQA({
           values: data.values || [],
           legend: data.legend,
@@ -54373,14 +55477,16 @@ body.ticker-active .gTickerLabel {
         });
         if (data.credits) window.__updateCreditMeterFromResponse?.(data.credits);
       } catch (err) {
+        stopResearching();
         // AbortError fires when the user closed the panel mid-fetch —
         // expected, not an error to surface.
         if (err && err.name === 'AbortError') {
-          if (stat && _isQaSessionStale(_myToken)) stat.textContent = '';
+          if (_isQaSessionStale(_myToken)) setAskStatus('', false);
           return;
         }
-        if (stat) stat.textContent = `Network error: ${err.message}`;
+        setAskStatus(`Network error: ${err.message}`, false);
       } finally {
+        stopResearching();
         // Only clear inflight + button state if THIS submit is still
         // the active session. Otherwise a slow-resolving canceled
         // fetch shouldn't unlock the button while a fresh submit may
@@ -54398,7 +55504,13 @@ body.ticker-active .gTickerLabel {
   })();
 
   let _kwTimer = null;
+  // Clear-X sync for both heatmap inputs — see index.html for rationale.
+  const _kwWrapEl = kwInput.closest('.kwAutoWrap');
+  const _syncKwClear = () => {
+    if (_kwWrapEl) _kwWrapEl.classList.toggle('has-value', !!kwInput.value);
+  };
   kwInput.addEventListener('input', () => {
+    _syncKwClear();
     if (state.ctl !== 'keyword' && state.ctl !== 'timeseries') return;
     clearTimeout(_kwTimer);
     _kwTimer = setTimeout(reload, 450);
@@ -54406,9 +55518,32 @@ body.ticker-active .gTickerLabel {
   kwInput.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { clearTimeout(_kwTimer); reload(); }
   });
+  document.getElementById('semHeatKwClear')?.addEventListener('click', () => {
+    kwInput.value = '';
+    _syncKwClear();
+    clearTimeout(_kwTimer);
+    if (state.ctl === 'keyword' || state.ctl === 'timeseries') reload();
+    kwInput.focus();
+  });
   const goBtn = document.getElementById('semHeatGoBtn');
   if (goBtn) goBtn.addEventListener('click', () => { clearTimeout(_kwTimer); reload(); });
   kwDays.addEventListener('change', reload);
+
+  // ── Ask-AI input clear-X wiring ─────────────────────────────────
+  const _askInp     = document.getElementById('semHeatAskInput');
+  const _askWrapEl  = _askInp?.closest('.semHeatInputWrap');
+  const _syncAskClear = () => {
+    if (_askWrapEl && _askInp) _askWrapEl.classList.toggle('has-value', !!_askInp.value);
+  };
+  if (_askInp) {
+    _askInp.addEventListener('input', _syncAskClear);
+  }
+  document.getElementById('semHeatAskInputClear')?.addEventListener('click', () => {
+    if (!_askInp) return;
+    _askInp.value = '';
+    _syncAskClear();
+    _askInp.focus();
+  });
 
   // ── Block pointer/mouse/wheel/touch events from bubbling out of the
   //    panel to the globe's window-level listeners.
@@ -54501,6 +55636,11 @@ body.ticker-active .gTickerLabel {
       if (v == null || isNaN(v)) return 'rgba(255,255,255,0.5)';
       if (scoreField === 'sentiment_score') {
         const t = (Number(v) + 1) / 2;
+        // CB-safe variant — see index.html.
+        if (window.__cbSafe) {
+          const hue = Math.round(210 + (50 - 210) * t);
+          return `hsla(${hue},70%,60%,0.95)`;
+        }
         const hue = Math.round(10 + 110 * t);
         return `hsla(${hue},80%,65%,0.95)`;
       }
@@ -55159,7 +56299,10 @@ body.ticker-active .gTickerLabel {
           // can restore the overview instantly without a re-query.
           const overviewHtml = rows.map((r) => {
             const t = (r.sent + 1) / 2;
-            const hue = Math.round(10 + 110 * t); // red→green
+            // CB-safe variant — see index.html.
+            const hue = window.__cbSafe
+              ? Math.round(210 + (50 - 210) * t)
+              : Math.round(10 + 110 * t); // red→green
             const sentTxt = (r.sent >= 0 ? '+' : '') + r.sent.toFixed(2);
             const clickable = !!r.iso;
             const rowClass = clickable ? 'semHeatInspRow' : 'semHeatInspRow static';
@@ -55761,8 +56904,10 @@ body.ticker-active .gTickerLabel {
     // status, button re-enabled, label restored.
     try {
       const _stat = document.getElementById('semHeatAskStatus');
+      const _statText = document.getElementById('semHeatAskStatusText');
       const _btn  = document.getElementById('semHeatAskGoBtn');
-      if (_stat) _stat.textContent = '';
+      if (_stat) _stat.classList.remove('semHeatAsking');
+      if (_statText) _statText.textContent = '';
       if (_btn)  { _btn.disabled = false; _btn.textContent = 'Map'; }
     } catch (_) {}
     stopPlayback();
@@ -56980,6 +58125,17 @@ body.ticker-active .gTickerLabel {
   </a>
 </div>
 
+<!-- Saved Views modal — see index.html for rationale. -->
+<div id="savedViewsModal" role="dialog" aria-modal="true" aria-labelledby="svModalTitle">
+  <div class="svModalBox">
+    <div class="svModalHeader">
+      <span class="svModalTitle" id="svModalTitle">Saved Views</span>
+      <button class="svModalClose" id="svModalClose" type="button" aria-label="Close">&times;</button>
+    </div>
+    <div class="svModalBody" id="svModalBody"></div>
+  </div>
+</div>
+
 <!-- Library panel (Saved / History) -->
 <div id="libraryPanel">
   <div class="libHeader">
@@ -56989,6 +58145,14 @@ body.ticker-active .gTickerLabel {
   <div class="libTabs">
     <div class="libTab active" data-lib="saved">Saved</div>
     <div class="libTab" data-lib="history">History</div>
+  </div>
+  <!-- Toolbar: search + Clear-all — see index.html for rationale. -->
+  <div class="libToolbar">
+    <div class="libSearchWrap" id="libSearchWrap">
+      <input class="libSearchInput" id="libSearch" type="text" placeholder="Search…" autocomplete="off" />
+      <button class="libSearchClear" id="libSearchClear" type="button" title="Clear" aria-label="Clear search">&times;</button>
+    </div>
+    <button class="libClearAllBtn" id="libClearAll" type="button" title="Clear all items in this tab">Clear all</button>
   </div>
   <div class="libContent" id="libContent"></div>
 </div>
