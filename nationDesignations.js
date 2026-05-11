@@ -1,5 +1,7 @@
 'use strict';
 
+const { normalizeIso } = require('./isoCountryCodes');
+
 /**
  * nationDesignations.js — single source of truth for how a thread's (or
  * timeline's) `primary_nations` / `secondary_nations` arrays are derived.
@@ -21,10 +23,24 @@
  *   SECONDARY_CAP = 12  — generous, captures tangential mentions a story
  *                         legitimately touches without the bloat that
  *                         was making the flow context AI incoherent
+ *
+ * Noise floor (MIN_COUNT_FLOOR / MIN_COUNT_FRACTION) — without it, a
+ * single passing mention of "Peru" or "Nicaragua" in one article out
+ * of a 200-article Ukraine thread was enough to put those countries in
+ * secondary_nations (the country gets a slot any time fewer than 16
+ * distinct ISOs appear, and threads usually have 8-14). This was the
+ * "why is Nicaragua on the Ukraine diplomacy thread" failure. The
+ * floor requires either ≥MIN_COUNT_FLOOR distinct articles OR a share
+ * ≥MIN_COUNT_FRACTION of the corpus, whichever is GREATER — so big
+ * threads need proportionally more evidence (e.g. 200 articles → 4
+ * mentions; 1000 articles → 20 mentions). Small threads keep the
+ * floor of 2 so we don't accidentally blank legitimate tags.
  */
 
 const PRIMARY_CAP   = 4;
 const SECONDARY_CAP = 12;
+const MIN_COUNT_FLOOR    = 2;     // a country needs at least this many distinct articles
+const MIN_COUNT_FRACTION = 0.02;  // …or this share of the thread, whichever is larger
 
 /**
  * Compute primary/secondary nation arrays for an arbitrary article-id set.
@@ -64,8 +80,29 @@ async function computeNationsFromArticles(pool, articleIds) {
   `, [ids]);
 
   const mentions = rows.map(r => ({ iso: String(r.iso).toUpperCase(), count: r.count }));
-  const primary  = mentions.slice(0, PRIMARY_CAP).map(m => m.iso);
-  const secondary = mentions.slice(PRIMARY_CAP, PRIMARY_CAP + SECONDARY_CAP).map(m => m.iso);
+
+  // Noise-floor filter — see module header. A country needs at least
+  // MAX(MIN_COUNT_FLOOR, ceil(MIN_COUNT_FRACTION * total)) distinct
+  // article mentions to make the cut. For a 50-article thread that's
+  // 2 articles; for a 200-article thread it's 4; for a 1000-article
+  // thread it's 20. The intent is "the country has to be more than
+  // a single passing reference in the corpus."
+  const minCount = Math.max(
+    MIN_COUNT_FLOOR,
+    Math.ceil(MIN_COUNT_FRACTION * ids.length)
+  );
+  const significant = mentions.filter(m => m.count >= minCount);
+
+  // Graceful fallback: if the filter would zero out everything (rare —
+  // happens on tiny heterogeneous threads where no country gets even
+  // 2 distinct-article mentions), keep the raw ranking rather than
+  // blanking a thread's tags. Blanking would cascade into "no country
+  // badges in the UI" + "the thread can no longer be found via country
+  // filter," which is a worse failure mode than a slightly noisy tag.
+  const eligible = significant.length ? significant : mentions;
+
+  const primary   = eligible.slice(0, PRIMARY_CAP).map(m => m.iso);
+  const secondary = eligible.slice(PRIMARY_CAP, PRIMARY_CAP + SECONDARY_CAP).map(m => m.iso);
   return { primary, secondary, total: ids.length, mentions };
 }
 
@@ -101,15 +138,21 @@ async function computeNationsForItem(pool, kind, itemId) {
  *   4. Cap primary at PRIMARY_CAP, secondary at SECONDARY_CAP.
  */
 function enforceDisjointAndCapped(primaryRaw, secondaryRaw) {
+  // Single-source-of-truth normalization via isoCountryCodes.normalizeIso:
+  //   - rejects garbage strings ("EU", "XX", "AAAA")
+  //   - canonicalizes alpha-3 → alpha-2 ("POL" → "PL", "RUS" → "RU")
+  //   - applies the UK → GB legacy alias
+  //   - rejects non-country codes that don't pass the whitelist
+  // Replaces the prior /^[A-Za-z]{2}$/ regex which accepted ANY 2-letter
+  // sequence, letting Claude hallucinations like "AA"/"XX" through, AND
+  // the older /^[A-Za-z]{2,3}$/ form (still present elsewhere on the
+  // read side) which allowed alpha-3 to land in primary_nations and
+  // broke the FE chip's flag URL.
   const norm = (raw) => {
     const out = [], seen = new Set();
     for (const v of (raw || [])) {
-      if (v == null) continue;
-      const s = String(v).trim();
-      if (!/^[A-Za-z]{2}$/.test(s)) continue;
-      let code = s.toUpperCase();
-      if (code === 'UK') code = 'GB';
-      if (seen.has(code)) continue;
+      const code = normalizeIso(v);
+      if (!code || seen.has(code)) continue;
       seen.add(code);
       out.push(code);
     }

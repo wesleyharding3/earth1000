@@ -52,6 +52,7 @@ function _creditsBlock(access) {
 const { extractArticleSignals } = require("./sentimentLexicon");
 const { findBucketImage, guaranteeHeroImage } = require("./imageFallback");
 const { loadGazetteer: loadNationGazetteer, extractNations } = require("./nationExtractor");
+const { normalizeIsoList } = require("./isoCountryCodes");
 const {
   logEditorEvent,
   snapshotThread: snapshotThreadRow,
@@ -4192,14 +4193,16 @@ async function _buildTieredFlows({ kind, id, rowTable, articleJoinTable, article
   }
 }
 
+// Thin wrapper around isoCountryCodes.normalizeIsoList for the
+// read paths that fan out into thread/timeline tiering. Previously
+// inlined a /^[A-Z]{2,3}$/ regex which let alpha-3 codes pass through
+// — those then broke the FE flag chip (flagcdn.com only serves
+// alpha-2 like pl.png, not pol.png), so the chip silently rendered
+// as text instead of a flag. Routing all reads through the shared
+// normalizer transparently converts alpha-3 → alpha-2 for stale data
+// and drops anything not on the whitelist.
 function _normIsoArr(arr) {
-  if (!Array.isArray(arr)) return [];
-  const seen = new Set();
-  for (const v of arr) {
-    const iso = String(v || '').trim().toUpperCase();
-    if (/^[A-Z]{2,3}$/.test(iso)) seen.add(iso);
-  }
-  return [...seen];
+  return normalizeIsoList(arr);
 }
 
 /* =========================================
@@ -5440,14 +5443,15 @@ app.put('/api/admin/threads/:id', requireAdmin, async (req, res) => {
     const sets = []; const params = [];
     let pi = 1;
 
-    // Shared ISO-list normalizer: accept array or comma-separated string,
-    // uppercase/trim each code, drop empties + anything that isn't a
-    // plausible ISO 2-3 letter code. Keeps admin curation tolerant of
-    // pasted formats while rejecting garbage.
+    // Shared ISO-list normalizer for admin curation. Accepts array or
+    // comma-separated string. Routes through the single-source-of-truth
+    // normalizer in isoCountryCodes — alpha-3 ("POL") canonicalized to
+    // alpha-2 ("PL"), UK → GB, anything outside the whitelist dropped.
+    // Previously a local /^[A-Z]{2,3}$/ regex let garbage like "EU" or
+    // alpha-3 codes through, which the FE flag chip couldn't render.
     const _parseIsoList = (v) => {
       const arr = Array.isArray(v) ? v : String(v || '').split(',');
-      return arr.map(k => String(k || '').trim().toUpperCase())
-                .filter(k => /^[A-Z]{2,3}$/.test(k));
+      return normalizeIsoList(arr);
     };
 
     if (title !== undefined)            { sets.push(`title = $${pi++}`);            params.push(title); }
@@ -5824,12 +5828,14 @@ app.put('/api/admin/timelines/:id', requireAdmin, async (req, res) => {
     const sets = []; const params = [];
     let pi = 1;
 
-    // Tolerant ISO-list parser — accept array or comma string, normalize
-    // to uppercase, drop anything that isn't a 2-3 letter ISO code.
+    // Tolerant ISO-list parser — accept array or comma string. Routes
+    // through the canonical normalizer (isoCountryCodes.normalizeIsoList)
+    // so alpha-3 ("POL") becomes alpha-2 ("PL") and any non-whitelisted
+    // code is dropped. See the parallel parser in the threads endpoint
+    // above for the full rationale.
     const _parseIsoList = (v) => {
       const arr = Array.isArray(v) ? v : String(v || '').split(',');
-      return arr.map(k => String(k || '').trim().toUpperCase())
-                .filter(k => /^[A-Z]{2,3}$/.test(k));
+      return normalizeIsoList(arr);
     };
 
     if (title !== undefined)            { sets.push(`title = $${pi++}`);            params.push(title); }
@@ -6465,10 +6471,14 @@ app.patch('/api/admin/regions/:id', requireAdmin, express.json({ limit: '2mb' })
 const UMBRELLA_ATTACH_THRESHOLD_FOR_BACKFILL = 3.0;
 const UMBRELLA_CAP_PER_BACKFILL_RUN          = 500;
 
+// Module-level alias of the same shared normalizer. The two duplicate
+// `_parseIsoList` definitions above live inside specific request
+// handlers; this one is used at module scope by the backfill/audit
+// paths farther down the file. All three route through the same
+// isoCountryCodes.normalizeIsoList — single source of truth.
 function _parseIsoListField(v) {
   const arr = Array.isArray(v) ? v : String(v || '').split(',');
-  return arr.map(k => String(k || '').trim().toUpperCase())
-            .filter(k => /^[A-Z]{2,3}$/.test(k));
+  return normalizeIsoList(arr);
 }
 function _normKwList(v) {
   const arr = Array.isArray(v) ? v : String(v || '').split(',');
