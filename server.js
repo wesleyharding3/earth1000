@@ -565,7 +565,9 @@ async function ttlCached(key, ttlMs, producer) {
       const bg = (async () => {
         try {
           const value = await producer();
-          _ttlCache.set(key, { expires: _jitteredExpiry(ttlMs), value });
+          // Stamp ttlMs so the prune at line ~610 respects this entry's
+          // SWR window instead of dumping it 5 min after expiry.
+          _ttlCache.set(key, { expires: _jitteredExpiry(ttlMs), value, ttlMs });
       if (_SNAPSHOT_KEYS.has(key)) _persistFeedSnapshot();
         } catch (_) {} finally { _ttlInflight.delete(key); }
       })();
@@ -578,7 +580,9 @@ async function ttlCached(key, ttlMs, producer) {
   const p = (async () => {
     try {
       const value = await producer();
-      _ttlCache.set(key, { expires: _jitteredExpiry(ttlMs), value });
+      // Stamp ttlMs so the prune at line ~610 respects this entry's
+      // SWR window instead of dumping it 5 min after expiry.
+      _ttlCache.set(key, { expires: _jitteredExpiry(ttlMs), value, ttlMs });
       if (_SNAPSHOT_KEYS.has(key)) _persistFeedSnapshot();
 
       return value;
@@ -602,12 +606,27 @@ async function ttlCached(key, ttlMs, producer) {
   return p;
 }
 
-// Periodic pruning of expired TTL cache entries to prevent memory leaks
+// Periodic pruning of expired TTL cache entries to prevent memory leaks.
+//
+// IMPORTANT: this MUST preserve the SWR window (2× TTL after expiry) so
+// soft-eviction (mode='soft' in _evictCacheKeys) keeps working. The
+// previous version used a hardcoded 5-minute threshold, which deleted
+// soft-evicted entries 5 min into the cron's 20-40 min run — collapsing
+// the SWR safety net for every country the cron hadn't yet warmed and
+// forcing user requests onto cold producers behind a 45s SQL timeout.
+// That was the "Spain/Russia/UK global feeds take many minutes" symptom.
+//
+// Per-entry `ttlMs` is the original TTL stamped at write time (in
+// ttlCached). For entries written without it (snapshot loader, a few
+// direct `_ttlCache.set` callers), we fall back to a generous 4-hour
+// window — well past the 5-min crash mode and safe for all current TTLs
+// up to /api/flows' 13h country-aggregate (still preserved by its
+// per-entry stamp).
 setInterval(() => {
   const now = Date.now();
   for (const [key, entry] of _ttlCache) {
-    // Evict entries that have been stale for more than 5× their original TTL
-    if (entry.expires < now - 300_000) _ttlCache.delete(key);
+    const swrWindowMs = entry.ttlMs ? entry.ttlMs * 2 : 14_400_000;
+    if (entry.expires < now - swrWindowMs) _ttlCache.delete(key);
   }
 }, 120_000).unref?.();
 
@@ -14377,7 +14396,7 @@ app.get("/api/globe-stats", async (req, res) => {
     }
     const dbCached = await getDbKeywordCache("globe-stats", "global", 4320); // 72h max staleness
     if (dbCached && Object.keys(dbCached).length > 0) {
-      _ttlCache.set('globe-stats:all', { expires: Date.now() + 86_400_000, value: dbCached });
+      _ttlCache.set('globe-stats:all', { expires: Date.now() + 86_400_000, value: dbCached, ttlMs: 86_400_000 });
       return res.json(dbCached);
     }
     // No data anywhere (cron never populated, or last write > 72h old).

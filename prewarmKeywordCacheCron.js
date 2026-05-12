@@ -50,7 +50,7 @@
  */
 
 require('dotenv').config({ override: true });
-const { forceRefreshCaches, cacheBust, purgeCloudflareUrls } = require('./prewarmCommon');
+const { forceRefreshCaches, cacheBust, purgeCloudflareUrls, fetchPrewarm } = require('./prewarmCommon');
 
 const API_URL     = (process.env.API_URL || 'http://localhost:3000').replace(/\/$/, '');
 // 60s — cold-buffer flows queries on a hot keyword can take 8–10s, plus
@@ -184,20 +184,48 @@ const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 // still slip through if the keyword extractor wrote a stringified JS
 // null into keyword_daily_stats. This second pass keeps a rogue row
 // from burning ~108s of cron + Claude budget on each run.
-//
-// Rules:
-//   - reject "null", "undefined" (literal strings, case-insensitive)
-//   - reject < 2 chars after trim (single chars are noise)
-//   - reject pure-punctuation / pure-whitespace
-//   - everything else passes; real stopword filtering belongs in the
-//     stopwords DB table, not here.
 const _BAD_SHAPE_RX = /^(null|undefined|nan|none|n\/a|na)$/i;
+
+// Generic English / dictionary stopwords that consistently show up in
+// the trending list (because they literally appear in many articles)
+// but represent ZERO actual search value. Empirically, each one takes
+// 30-80 seconds to heatmap because the query matches a huge fraction
+// of the corpus, and nobody actually searches "life" or "next" or
+// "work" expecting useful results.
+//
+// Observed from prewarmKeywordCacheCron run on 2026-05-12:
+//   life:  74s heatmap / 68s flows
+//   work:  60s heatmap / 82s flows
+//   next:  60s heatmap / 36s flows
+//   days:  33s / 36s
+//   country: 55s / 63s
+//   health: 60s / 88s
+//   american: 60s / 47s
+//   ... etc.
+//
+// Together these ~20 keywords were consuming ~1500s (25 minutes) of
+// cron budget per run. Filtering them out cuts run time roughly in
+// half and frees up budget for the keywords that actually matter.
+// The DB-side stopwords table SHOULD include these too, but until
+// that's fixed this local cutoff keeps the cron tractable.
+const _JUNK_GENERIC = new Set([
+  'life', 'next', 'days', 'work', 'meeting', 'country', 'health',
+  'american', 'international', 'ship', 'victory', 'attack', 'company',
+  'death', 'european', 'cruise', 'people', 'time', 'year', 'world',
+  'home', 'family', 'children', 'man', 'woman', 'men', 'women',
+  'kid', 'kids', 'student', 'students', 'teacher', 'school',
+  'business', 'industry', 'public', 'private', 'local',
+  'morning', 'evening', 'night', 'today', 'tomorrow', 'yesterday',
+  'video', 'photo', 'article', 'story', 'news', 'report',
+  'statement', 'comment', 'response', 'reaction', 'announcement',
+]);
 function _isWarmableKeyword(s) {
   if (!s) return false;
   const trimmed = String(s).trim();
   if (trimmed.length < 2) return false;
   if (_BAD_SHAPE_RX.test(trimmed)) return false;
   if (!/[a-z0-9]/i.test(trimmed)) return false; // no letters/digits at all
+  if (_JUNK_GENERIC.has(trimmed.toLowerCase())) return false;
   return true;
 }
 
@@ -283,24 +311,65 @@ function fetchWithTimeout(url) {
     .finally(() => clearTimeout(t));
 }
 
+// Same shape as fetchWithTimeout but adds the x-cache-mode: refresh
+// header (via fetchPrewarm) so the API's ttlCached bypasses SWR-stale
+// and actually runs the producer. Pairs with the soft-eviction call
+// in main() — together they keep user requests served from stale
+// cache while the warmer does the real work in the background.
+function fetchPrewarmWithTimeout(url) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+  return fetchPrewarm(url, { signal: ctrl.signal })
+    .finally(() => clearTimeout(t));
+}
+
 // NOTE: feed-surface warming (articles/recent, news/search, country/city
 // feeds) lives in prewarmFeedCron.js (hourly, matches article fetcher
 // cadence). This cron stays focused on keyword heatmap + flows only.
+
+// Wraps a single fetch attempt + retry-once on transient 5xx / network.
+// 4xx errors (auth, malformed) skip retry — they won't change in 3s.
+// Match the pattern used in prewarmThreadsCron / prewarmFeedCron.
+async function _attemptWarm(label, url) {
+  const t0 = Date.now();
+  let r, status = null;
+  try {
+    // fetchPrewarmWithTimeout adds x-cache-mode: refresh so the
+    // server's ttlCached bypasses SWR-stale and actually runs the
+    // producer for this request — concurrent user requests still
+    // get the stale value via SWR.
+    r = await fetchPrewarmWithTimeout(cacheBust(url));
+  } catch (e) {
+    return { ms: Date.now() - t0, err: e?.message || String(e), status: null };
+  }
+  const ms = Date.now() - t0;
+  status = r.status;
+  // Cancel body — server cache populates before res.json() runs.
+  try { await r.body?.cancel?.(); } catch {}
+  if (!r.ok) return { ms, err: `${label} ${r.status} (${ms}ms)`, status };
+  return { ms, url };
+}
+
+async function _warmWithRetry(label, url) {
+  let r = await _attemptWarm(label, url);
+  const isTransient = r.err && (r.status === null || (r.status >= 500 && r.status < 600));
+  if (isTransient) {
+    // 2.5-4s backoff with jitter to avoid synchronized retries.
+    await new Promise(rs => setTimeout(rs, 2500 + Math.random() * 1500));
+    const r2 = await _attemptWarm(label, url);
+    if (!r2.err) return { ms: r.ms + 3000 + r2.ms, url: r2.url || url, retried: true };
+    return { ms: r.ms + 3000 + r2.ms, err: r2.err, retried: true };
+  }
+  return r;
+}
 
 async function warmHeatmap(keyword) {
   // prewarm=1 — server bumps SQL timeout 30s → 60s for this request only.
   // User-facing requests stay capped at 30s.
   const url = `${API_URL}/api/heatmap?keyword=${encodeURIComponent(keyword)}&days=7&mode=coverage&bucket=none&prewarm=1`;
-  const t0 = Date.now();
-  // Cache-bust so Cloudflare passes through to origin. CF purge for the
-  // canonical URL happens at end-of-run.
-  const r = await fetchWithTimeout(cacheBust(url));
-  const ms = Date.now() - t0;
-  // Cancel body — server cache is populated before res.json() runs,
-  // so we don't need to download the heatmap payload (large JSON).
-  try { await r.body?.cancel?.(); } catch {}
-  if (!r.ok) throw new Error(`heatmap ${r.status} (${ms}ms)`);
-  return { ms, url };
+  const r = await _warmWithRetry('heatmap', url);
+  if (r.err) throw new Error(r.err);
+  return { ms: r.ms, url };
 }
 
 async function warmFlows(keyword) {
@@ -311,12 +380,9 @@ async function warmFlows(keyword) {
   const url = `${API_URL}/api/flows?mode=aggregate&view_mode=country&limit=500`
             + `&from_date=${isoDate(weekAgo)}&to_date=${isoDate(today)}`
             + `&keyword=${encodeURIComponent(keyword)}&prewarm=1`;
-  const t0 = Date.now();
-  const r = await fetchWithTimeout(cacheBust(url));
-  const ms = Date.now() - t0;
-  try { await r.body?.cancel?.(); } catch {}
-  if (!r.ok) throw new Error(`flows ${r.status} (${ms}ms)`);
-  return { ms, url };
+  const r = await _warmWithRetry('flows', url);
+  if (r.err) throw new Error(r.err);
+  return { ms: r.ms, url };
 }
 
 async function warmOne(keyword) {
@@ -364,13 +430,36 @@ async function main() {
   const KEYWORDS = await pickKeywordsToWarm();
   console.log(`${TAG} start ${new Date().toISOString()} api=${API_URL} keywords=${KEYWORDS.length} concurrency=${CONCURRENCY} timeout=${TIMEOUT_MS}ms`);
 
-  // Force-evict the heatmap + flow caches so the warmer's GETs below
-  // cache-miss and repopulate from current DB state. This cron runs
-  // hourly, so without eviction we'd just touch the existing 65m-TTL
-  // entries without ever refreshing them.
+  // Startup jitter — sleep a randomized 0-60s before any work. The
+  // hourly schedule clusters with other top-of-hour crons (article
+  // fetcher, prewarmFeed, prewarmThreads); jittering smears starts
+  // so we don't all hit the Postgres connection-slot ceiling at the
+  // same second. Toggle off via PREWARM_NO_JITTER=1 for local debug.
+  if (!process.env.PREWARM_NO_JITTER) {
+    const jitterMs = Math.floor(Math.random() * 60_000);
+    if (jitterMs > 1000) {
+      console.log(`${TAG} startup jitter: sleeping ${(jitterMs / 1000).toFixed(1)}s`);
+      await new Promise(r => setTimeout(r, jitterMs));
+    }
+  }
+
+  // SOFT-evict the heatmap + flow caches so user requests during the
+  // cron's run see stale-but-valid cached values via SWR instead of
+  // cold-miss 500s. The warmer's GETs carry the x-cache-mode:refresh
+  // header (via fetchPrewarm) so they bypass SWR and actually run
+  // the producers.
+  //
+  // Was 'hard' mode (delete entries). With the keyword cron's 82-min
+  // run time on slow common keywords ("president", "country", "life",
+  // etc.), the cold-cache window was wide enough that users hitting
+  // /api/heatmap or /api/flows mid-run consistently saw 500s — the
+  // same pattern observed in the user's two-run log where every
+  // common-keyword request stalled 30-80s. Soft eviction means the
+  // existing 65m-TTL value keeps serving while the warmer refreshes.
   await forceRefreshCaches({
     apiUrl: API_URL,
     prefixes: ['heatmap:', 'flows:'],
+    mode: 'soft',
     tag: TAG,
   });
 
