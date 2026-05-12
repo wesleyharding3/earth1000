@@ -9395,33 +9395,50 @@ body.cb-safe .semHeatLegendBar:not(.coverage) {
     }
     /* Per-row heatmap launcher — mirrors the nav-bar #semHeatToggleBtn 3×3
        gradient grid so users recognize the symbol from the globe overlay.
+       Sized to match the ✦ AI context button (.kwi-row-ctx-btn) so the
+       two sit side-by-side as visual peers, with the warm amber palette
+       of the heatmap distinguishing it from the purple AI button.
        Stops click propagation in the inline handler so tapping the icon
-       doesn't also fire kwiBarClick on the row. */
+       doesn't also fire the row's main click target. */
     .kwi-heatmap-btn {
-      flex-shrink: 0;
+      margin-left: 6px;
       width: 22px;
       height: 22px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      background: transparent;
-      border: 1px solid rgba(255,200,80,0.25);
-      border-radius: 5px;
-      cursor: pointer;
       padding: 0;
-      margin-left: 2px;
-      opacity: 0.55;
-      transition: opacity 0.15s, border-color 0.15s, background 0.15s;
+      box-sizing: border-box;
+      flex-shrink: 0;
+      border-radius: 6px;
+      border: 1px solid rgba(255,200,80,0.35);
+      background: rgba(255,200,80,0.10);
+      color: rgba(255,210,150,0.95);
+      cursor: pointer;
+      display: inline-flex; align-items: center; justify-content: center;
+      transition: background 0.15s, border-color 0.15s, color 0.15s;
       -webkit-appearance: none;
       appearance: none;
     }
-    .kwi-bar-row:hover .kwi-heatmap-btn { opacity: 0.85; }
     .kwi-heatmap-btn:hover {
-      opacity: 1;
-      border-color: rgba(255,200,80,0.65);
-      background: rgba(255,200,80,0.10);
+      background: rgba(255,200,80,0.22);
+      border-color: rgba(255,200,80,0.70);
+      color: #ffd28a;
     }
     .kwi-heatmap-btn svg { width: 12px; height: 12px; display: block; }
+    /* Mobile parity with .kwi-row-ctx-btn — shrink to 18×18 so it doesn't
+       force trending-list rows taller than necessary on narrow viewports. */
+    @media (max-width: 768px) {
+      .kwi-heatmap-btn {
+        margin-left: 4px !important;
+        width: 18px !important;
+        min-width: 18px !important;
+        max-width: 18px !important;
+        height: 18px !important;
+        min-height: 18px !important;
+        max-height: 18px !important;
+        flex: 0 0 18px !important;
+        border-radius: 5px !important;
+      }
+      .kwi-heatmap-btn svg { width: 10px; height: 10px; }
+    }
     /* Active keyword chip */
     .kwi-active-chip {
       display: none;
@@ -40848,6 +40865,22 @@ const settingsToggle     = document.getElementById("settingsToggle");
             <span class="kwi-trending-badge ${badgeClass}">${growth}</span>
             <div class="kwi-trending-mentions">${recentMentions.toLocaleString()}</div>
             <button class="kwi-row-ctx-btn" onclick="event.stopPropagation(); window.kwiExplainInlineForKeyword('${kwEsc}', this)" title="Context">✦</button>
+            <button type="button" class="kwi-heatmap-btn"
+                    aria-label="Show ${r.keyword.replace(/"/g,'&quot;')} on globe heatmap"
+                    title="Show on globe heatmap"
+                    onclick="event.stopPropagation(); window.__kwiOpenHeatmap?.('${kwEsc}');">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="3"  y="3"  width="5" height="5" rx="1" fill="rgba(255,200,80,0.95)"/>
+                <rect x="9"  y="3"  width="5" height="5" rx="1" fill="rgba(220,140,60,0.85)"/>
+                <rect x="15" y="3"  width="5" height="5" rx="1" fill="rgba(120,90,80,0.6)"/>
+                <rect x="3"  y="9"  width="5" height="5" rx="1" fill="rgba(220,140,60,0.85)"/>
+                <rect x="9"  y="9"  width="5" height="5" rx="1" fill="rgba(255,210,90,1)"/>
+                <rect x="15" y="9"  width="5" height="5" rx="1" fill="rgba(180,120,70,0.75)"/>
+                <rect x="3"  y="15" width="5" height="5" rx="1" fill="rgba(120,90,80,0.6)"/>
+                <rect x="9"  y="15" width="5" height="5" rx="1" fill="rgba(180,120,70,0.75)"/>
+                <rect x="15" y="15" width="5" height="5" rx="1" fill="rgba(80,80,90,0.45)"/>
+              </svg>
+            </button>
           </div>
           <div class="kwi-row-ctx"></div>
         </div>
@@ -40877,6 +40910,22 @@ const settingsToggle     = document.getElementById("settingsToggle");
             <div class="kwi-trending-keyword">${t.keyword}${isRising ? ' 🔥' : ''}</div>
             <div class="kwi-trending-mentions">${parseInt(t.mentions).toLocaleString()}</div>
             <button class="kwi-row-ctx-btn" onclick="event.stopPropagation(); window.kwiExplainInlineForKeyword('${kwEsc}', this)" title="Context">✦</button>
+            <button type="button" class="kwi-heatmap-btn"
+                    aria-label="Show ${t.keyword.replace(/"/g,'&quot;')} on globe heatmap"
+                    title="Show on globe heatmap"
+                    onclick="event.stopPropagation(); window.__kwiOpenHeatmap?.('${kwEsc}');">
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <rect x="3"  y="3"  width="5" height="5" rx="1" fill="rgba(255,200,80,0.95)"/>
+                <rect x="9"  y="3"  width="5" height="5" rx="1" fill="rgba(220,140,60,0.85)"/>
+                <rect x="15" y="3"  width="5" height="5" rx="1" fill="rgba(120,90,80,0.6)"/>
+                <rect x="3"  y="9"  width="5" height="5" rx="1" fill="rgba(220,140,60,0.85)"/>
+                <rect x="9"  y="9"  width="5" height="5" rx="1" fill="rgba(255,210,90,1)"/>
+                <rect x="15" y="9"  width="5" height="5" rx="1" fill="rgba(180,120,70,0.75)"/>
+                <rect x="3"  y="15" width="5" height="5" rx="1" fill="rgba(120,90,80,0.6)"/>
+                <rect x="9"  y="15" width="5" height="5" rx="1" fill="rgba(180,120,70,0.75)"/>
+                <rect x="15" y="15" width="5" height="5" rx="1" fill="rgba(80,80,90,0.45)"/>
+              </svg>
+            </button>
           </div>
           <div class="kwi-row-ctx"></div>
         </div>
@@ -49367,7 +49416,11 @@ body.ticker-active .gTickerLabel {
     const ANON_EPISODES_KEY = 'earth00:freeBriefingEpisodes';
     const TRIAL_KEY = 'earth00:trialStartDate';
     const WEEKLY_KEY = 'earth00:weeklyBriefingPlays';
-    const SESSION_FLAG = 'earth00:briefingPromptedSession';
+    // Was 'earth00:briefingPromptedSession' (sessionStorage, per-session).
+    // Switched to localStorage + ISO-date payload so the nudge is throttled
+    // to AT MOST once per calendar day per device. Pro/Enterprise users
+    // never see the nudge at all (gated in wireBriefingNudge.show).
+    const DAILY_FLAG = 'earth00:briefingPromptedDay';
 
     function _isPro() { return window.__userTier === 'pro' || window.__userTier === 'enterprise' || window.__isAdmin === true; }
     function _isSignedIn() { return !!window.__currentUser?.id; }
@@ -49465,20 +49518,27 @@ body.ticker-active .gTickerLabel {
       if (s === 'anon-wall') return 'Sign in to listen';
       return '';
     }
-    function sessionPromptShown() {
-      try { return sessionStorage.getItem(SESSION_FLAG) === '1'; } catch (_) { return false; }
+    // dailyPromptShown — returns true if the nudge has already been
+    // promoted to this device today. Stored as the ISO date (YYYY-MM-DD)
+    // so an explicit string compare rolls over at local midnight without
+    // a timer. Falls back safely if localStorage is unavailable
+    // (private-mode iOS Safari) — returns false so the prompt still has
+    // a chance to show, since the rate-limit is a best-effort UX nicety
+    // not a hard quota.
+    function dailyPromptShown() {
+      try { return localStorage.getItem(DAILY_FLAG) === _today(); } catch (_) { return false; }
     }
-    function markSessionPromptShown() {
-      try { sessionStorage.setItem(SESSION_FLAG, '1'); } catch (_) {}
+    function markDailyPromptShown() {
+      try { localStorage.setItem(DAILY_FLAG, _today()); } catch (_) {}
     }
     window.__briefingAccess = {
       state: _state, canListen, consume, counterText,
       isPro: _isPro, isSignedIn: _isSignedIn,
-      sessionPromptShown, markSessionPromptShown,
+      dailyPromptShown, markDailyPromptShown,
       _reset: () => {
         localStorage.removeItem(ANON_KEY); localStorage.removeItem(ANON_EPISODES_KEY);
         localStorage.removeItem(TRIAL_KEY); localStorage.removeItem(WEEKLY_KEY);
-        sessionStorage.removeItem(SESSION_FLAG);
+        localStorage.removeItem(DAILY_FLAG);
       },
       _debug: () => ({
         state: _state(),
@@ -54336,7 +54396,14 @@ body.ticker-active .gTickerLabel {
       // skips can push the timer to overlap, so we check explicitly.
       if (_briefingIsActive()) return;
       const access = window.__briefingAccess;
-      if (access?.sessionPromptShown()) return;
+      // Pro / Enterprise (and admins) NEVER see the nudge — they already
+      // have unlimited access and don't need a CTA toward something
+      // they're paying for. _isPro covers all three tiers internally.
+      if (access?.isPro?.()) return;
+      // Per-day rate limit: at most one prompt per calendar day per
+      // device (was once-per-session — too aggressive for users who
+      // close-and-reopen the app multiple times daily).
+      if (access?.dailyPromptShown()) return;
       if (window._briefingAvailable === false) return;
       const isSignedIn = !!window.__currentUser?.id;
       textEl.textContent = isSignedIn
@@ -54345,7 +54412,7 @@ body.ticker-active .gTickerLabel {
       nudgeEl.classList.add('open');
       _briefingBtn()?.classList.add('attention');
       shown = true;
-      access?.markSessionPromptShown();
+      access?.markDailyPromptShown();
     }
     function hide() {
       nudgeEl.classList.remove('open');
