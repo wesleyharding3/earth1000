@@ -369,12 +369,18 @@ async function warmHeatmap(keyword) {
 }
 
 async function warmFlows(keyword) {
-  const today = new Date();
-  const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
-  // prewarm=1 — server bumps SQL timeout 30s → 60s for this request only.
+  // CRITICAL: omit from_date / to_date — the UI's loadFlows() and the
+  // heatmap's keyword path both leave those unset by default, and the
+  // server's flows cache key includes them verbatim. Passing explicit
+  // dates here lands our cache entry at a different key than the user's
+  // request, defeating the whole prewarm. The server's default 7-day
+  // window (server.js: `if (!fromDate && !toDate) … NOW() - INTERVAL
+  // '7 days'`) gives the same data shape. Same bug previously fixed in
+  // prewarmCountryFlowsCron.js — see the comment in warmFlow there.
+  //
+  // prewarm=1 — server bumps SQL timeout 30s → 120s for this request only.
   // User-facing requests stay capped at 30s.
   const url = `${API_URL}/api/flows?mode=aggregate&view_mode=country&limit=500`
-            + `&from_date=${isoDate(weekAgo)}&to_date=${isoDate(today)}`
             + `&keyword=${encodeURIComponent(keyword)}&prewarm=1`;
   const r = await _warmWithRetry('flows', url);
   if (r.err) throw new Error(r.err);

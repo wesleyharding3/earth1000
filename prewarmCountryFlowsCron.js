@@ -168,14 +168,21 @@ const MODES = [
 ];
 
 async function warmFlow(direction, country, mode) {
-  const today = new Date();
-  const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
+  // CRITICAL: do NOT pass from_date / to_date. The UI's loadFlows() leaves
+  // those params unset by default, and the server's flows cache key
+  // includes them verbatim (server.js:3144). If we pass dates, our cache
+  // entry lands at key `flows:agg:country:500:DATE-A:DATE-B::ID:::true`
+  // while the user's request lands at key `flows:agg:country:500::::ID:::true`
+  // — total cache miss, the user falls through to the live producer at
+  // the 30s user-pool ceiling, and heavy countries (IL/US/GB/RU) time
+  // out before completing. Letting the server's default 7-day window
+  // apply (which is what `if (!fromDate && !toDate) NOW() - INTERVAL
+  // '7 days'` does at server.js:~3162) keeps cron and UI cache keys
+  // identical.
   const params = new URLSearchParams({
     mode:        mode.name,
     view_mode:   'country',
     limit:       mode.limit,
-    from_date:   isoDate(weekAgo),
-    to_date:     isoDate(today),
     [direction === 'about' ? 'about_country' : 'from_country']: String(country.id),
     // Tell the server we're a prewarm — it bumps SQL timeout 30s → 120s
     // for the heaviest country queries. Real users stay at 30s.
