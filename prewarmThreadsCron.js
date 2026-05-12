@@ -51,7 +51,7 @@
  */
 
 require('dotenv').config({ override: true });
-const { forceRefreshCaches, cacheBust, purgeCloudflareUrls } = require('./prewarmCommon');
+const { forceRefreshCaches, cacheBust, purgeCloudflareUrls, fetchPrewarm } = require('./prewarmCommon');
 
 const API_URL      = (process.env.API_URL || 'http://localhost:3000').replace(/\/$/, '');
 const TIMEOUT_MS   = parseInt(process.env.PREWARM_TIMEOUT_MS  || '95000', 10);
@@ -69,6 +69,17 @@ function fetchWithTimeout(url) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   return fetch(url, { signal: ctrl.signal }).finally(() => clearTimeout(t));
+}
+
+// Same shape as fetchWithTimeout but adds the x-cache-mode: refresh
+// header (via fetchPrewarm) so the API's ttlCached bypasses SWR-stale
+// and actually runs the producer. Pairs with the soft-eviction call
+// in main() — together they keep user requests served from stale
+// cache while the warmer does the real work in the background.
+function fetchPrewarmWithTimeout(url) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+  return fetchPrewarm(url, { signal: ctrl.signal }).finally(() => clearTimeout(t));
 }
 
 async function fetchJSON(url) {
@@ -114,21 +125,49 @@ async function pickTopThreads(n) {
 }
 
 async function warm(label, url) {
-  const t0 = Date.now();
-  try {
-    // Cache-bust so Cloudflare passes the request through to origin.
-    // CF cache for the canonical URL gets purged at end-of-run via
-    // purgeCloudflareUrls. See prewarmCommon.js for full rationale.
-    const r = await fetchWithTimeout(cacheBust(url));
-    const ms = Date.now() - t0;
-    // Cancel body — server cache is populated before res.json() runs,
-    // so we don't need to download the response (would OOM on big feeds).
-    try { await r.body?.cancel?.(); } catch {}
-    if (!r.ok) return { label, url, ms, err: `HTTP ${r.status}` };
-    return { label, url, ms };
-  } catch (e) {
-    return { label, url, ms: Date.now() - t0, err: e.message };
+  // Single attempt + one retry on transient 5xx. The user's run showed
+  // ~12% sub-request failure rate as HTTP 500s scattered randomly
+  // across the run — clear signature of brief Postgres contention
+  // when this cron and the article fetcher overlap. One retry with
+  // a small backoff usually rides through the contention window;
+  // permanent errors (4xx, bad URL, schema) still surface on attempt 2
+  // so they're not silently masked.
+  const _attempt = async () => {
+    const t0 = Date.now();
+    try {
+      // Cache-bust so Cloudflare passes the request through to origin.
+      // CF cache for the canonical URL gets purged at end-of-run via
+      // purgeCloudflareUrls. See prewarmCommon.js for full rationale.
+      // fetchPrewarmWithTimeout adds x-cache-mode: refresh so the
+      // server's ttlCached bypasses SWR-stale and actually runs the
+      // producer.
+      const r = await fetchPrewarmWithTimeout(cacheBust(url));
+      const ms = Date.now() - t0;
+      // Cancel body — server cache is populated before res.json() runs,
+      // so we don't need to download the response (would OOM on big feeds).
+      try { await r.body?.cancel?.(); } catch {}
+      if (!r.ok) return { label, url, ms, err: `HTTP ${r.status}`, status: r.status };
+      return { label, url, ms };
+    } catch (e) {
+      return { label, url, ms: Date.now() - t0, err: e.message, status: null };
+    }
+  };
+
+  let r = await _attempt();
+  // Retry once on HTTP 5xx (transient API/DB saturation). Skip retry
+  // on 4xx (auth, malformed URL) — those won't change with another try.
+  // Also retry on network errors (status null) since those usually mean
+  // a brief abort/connect failure that resolves on the next attempt.
+  const isTransient = r.err && (r.status === null || (r.status >= 500 && r.status < 600));
+  if (isTransient) {
+    await new Promise(rs => setTimeout(rs, 2500 + Math.random() * 1500)); // 2.5-4s
+    const r2 = await _attempt();
+    if (!r2.err) {
+      return { label, url, ms: r.ms + 3000 + r2.ms, retried: true };
+    }
+    return { label, url, ms: r.ms + 3000 + r2.ms, err: r2.err, retried: true };
   }
+  return r;
 }
 
 const PER_THREAD_ENDPOINTS = [
@@ -185,7 +224,9 @@ async function warmCoreFeeds() {
     const url = `${API_URL}${path}`;
     const t0 = Date.now();
     try {
-      const r = await fetchWithTimeout(cacheBust(url));
+      // fetchPrewarmWithTimeout — see warm() for rationale. Core feeds
+      // benefit from the same SWR-bypass + retry semantics.
+      const r = await fetchPrewarmWithTimeout(cacheBust(url));
       const ms = Date.now() - t0;
       try { await r.body?.cancel?.(); } catch {}
       const tag = r.ok ? `${ms}ms` : `ERR HTTP ${r.status} (${ms}ms)`;
@@ -204,12 +245,37 @@ async function main() {
   const t0 = Date.now();
   console.log(`${TAG} start ${new Date().toISOString()} api=${API_URL} threads=${THREAD_LIMIT} concurrency=${CONCURRENCY} timeout=${TIMEOUT_MS}ms`);
 
-  // Force-evict the thread + thread-flow caches so the warmer's GETs
-  // below cache-miss and repopulate from current DB state. See
-  // prewarmCommon.js for the full rationale.
+  // Startup jitter — sleep a randomized 0-60s before doing any work.
+  // The "5 past every 4th hour" cron schedule clusters with the article
+  // fetcher (hourly at :00) and the thread builder; jittering spreads
+  // their starts so the Postgres connection-slot ceiling isn't hit at
+  // the exact same second. Set PREWARM_NO_JITTER=1 to disable for
+  // local debugging.
+  if (!process.env.PREWARM_NO_JITTER) {
+    const jitterMs = Math.floor(Math.random() * 60_000);
+    if (jitterMs > 1000) {
+      console.log(`${TAG} startup jitter: sleeping ${(jitterMs / 1000).toFixed(1)}s`);
+      await new Promise(r => setTimeout(r, jitterMs));
+    }
+  }
+
+  // SOFT-evict the thread + thread-flow caches so user requests during
+  // the cron's run see the stale-but-valid cached values via SWR
+  // instead of cold-miss 500s. The warmer's own GETs carry the
+  // x-cache-mode: refresh header (via fetchPrewarm) so they bypass
+  // SWR and actually run the producers.
+  //
+  // Was 'hard' mode (delete entries), which left a 9-minute window
+  // where users hitting any of the 150 warmed threads paid full
+  // cold-DB latency or got HTTP 500 from contended Postgres. The
+  // user's most recent run (555s, 91/750 failures) is the worst
+  // case of that pattern. Soft eviction + retry-aware warm() turns
+  // those 500s into transparent cache-served stale responses for
+  // the user, and lets the cron re-attempt failed sub-requests.
   await forceRefreshCaches({
     apiUrl: API_URL,
     prefixes: ['threads/', 'flows/thread:'],
+    mode: 'soft',
     tag: TAG,
   });
 

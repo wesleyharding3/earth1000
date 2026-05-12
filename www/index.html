@@ -5639,6 +5639,15 @@ button.arcCtxSegDot,
       text-decoration: none;
       color: inherit;
       height: 440px;
+      /* position:relative so absolutely-positioned descendants
+         (.articleTranslateBtn) anchor to the card itself rather than
+         the outer grid-item wrapper. Without this, the translate
+         button anchored to the wrapper — which CSS grid stretches to
+         match the row's tallest item — landing in the empty space
+         BELOW the card whenever cards in a row had uneven content
+         heights. User-reported as "translation button is off the card
+         and down on the second row where there's no cards." */
+      position: relative;
     }
 
     .articleCard:hover {
@@ -23101,8 +23110,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
                     <div class="articleCardDate">${fmtDate(article.published_at)}</div>
                   </div>
                 </div>
+                ${!article.translated_title && article.title ? `<button class="articleTranslateBtn" data-id="${article.id}" data-title="${(article.title||'').replace(/"/g,'&quot;')}" data-summary="${(article.summary||'').replace(/"/g,'&quot;')}" onclick="translateCard(event,this)" title="Translate">EN</button>` : ""}
               </div>
-              ${!article.translated_title && article.title ? `<button class="articleTranslateBtn" data-id="${article.id}" data-title="${(article.title||'').replace(/"/g,'&quot;')}" data-summary="${(article.summary||'').replace(/"/g,'&quot;')}" onclick="translateCard(event,this)" title="Translate">EN</button>` : ""}
             </div>`;
         }
 
@@ -25148,8 +25157,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
                 <div class="articleCardTitle" data-aid="${a.id}">${title}</div>
                 ${summary ? `<div class="articleCardSummary" data-aid="${a.id}">${summary}</div>` : ""}
               </div>
+              ${translateBtn}
             </div>
-            ${translateBtn}
             </div>`;
           }).join("");
         }
@@ -30449,8 +30458,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
                   <div class="articleCardDate">${fmtDate(article.published_at)}</div>
                 </div>
               </div>
+              ${translateBtn}
             </div>
-            ${translateBtn}
           </div>`;
       }).join('');
       
