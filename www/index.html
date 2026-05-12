@@ -1161,6 +1161,14 @@
       outline: none;
       background: rgba(0, 0, 0, 0.85);
       color: #fff;
+      /* <input> elements don't inherit font-family by default — they
+         fall back to the browser's built-in form-control font (e.g.
+         iOS WKWebView's default Helvetica) even when the body has
+         -apple-system set. That's why the search field looked
+         different from the country/city panel text. Forcing inherit
+         pulls in the body's system stack so the search input matches
+         the panel's article-card typography. */
+      font-family: inherit;
       font-size: 14px;
       letter-spacing: 0.4px;
       opacity: 0;
@@ -4250,6 +4258,8 @@ button.arcCtxSegDot,
       outline: none;
       background: rgba(255,255,255,0.06);
       color: #fff;
+      /* Force inherit — see #citySearch for full rationale. */
+      font-family: inherit;
       font-size: 12px;
       letter-spacing: 0.3px;
       box-sizing: border-box;
@@ -19570,6 +19580,13 @@ function computeCityTiers(cities) {
       const ringCount = 3;
       const ringMeshes = [];
       const ringStates = [];
+      // When true, ring states loop instead of one-shot. Set by focusCity
+      // so a selected/searched city emits continuous pulses out from its
+      // position. Cleared by focusCountry so countries keep the original
+      // single-burst behaviour. Also auto-quiets when isFocused goes
+      // false (user drags away, closes panel) — see the animation loop
+      // below for the per-state guard.
+      let ringsContinuous = false;
 
       for (let i = 0; i < ringCount; i++) {
         const ringGeo = new THREE.RingGeometry(
@@ -24067,6 +24084,24 @@ const settingsToggle     = document.getElementById("settingsToggle");
               e.preventDefault();
               lockAmbientRotation();
               preFocusZoom = camera.position.z;
+              // CRITICAL: switch view mode to "country" FIRST. The
+              // polygon overlay (where the selection glow renders) is
+              // only visible when `window.__currentViewMode === 'country'`
+              // — see the tickViewMode rAF loop in the polygon-layer
+              // IIFE (overlaySphere.visible = (vm === 'country') ||
+              // flowActive). If the user reached this country search
+              // result after previously searching a city (which puts
+              // us in city mode via the sibling handler below), the
+              // overlay is hidden AND selectedKey is reset to null on
+              // every frame. selectCountry() would set selectedKey,
+              // but the next animation tick wipes it before any pixel
+              // gets painted — that's why the illumination didn't
+              // appear. Mode-switch first → overlay becomes visible →
+              // selectCountry's selectedKey assignment persists.
+              try {
+                const countryOpt = document.querySelector('.viewOption[data-mode="country"]');
+                if (countryOpt && !countryOpt.classList.contains('active')) countryOpt.click();
+              } catch (_) {}
               focusCountry(country);
               try { openNodePanel(country, "country"); targetZoom = 2.3; } catch (_) {}
               // Illuminate the country polygon on the globe — same
@@ -24077,11 +24112,21 @@ const settingsToggle     = document.getElementById("settingsToggle");
               // (Kosovo, Western Sahara, Somaliland) key on
               // name.toLowerCase() instead — fall back to that when
               // iso_code is missing so those countries still glow.
-              try {
-                const polyKey = (country.iso_code || '').toUpperCase()
-                              || (country.name || '').toLowerCase();
-                window.__polygonLayer?.selectCountry?.(polyKey);
-              } catch (_) {}
+              //
+              // Defer to the next frame so the view-mode switch above
+              // has time to flip `__currentViewMode` to 'country' and
+              // the tickViewMode loop has set overlaySphere.visible =
+              // true. Without this defer, selectCountry runs in the
+              // same tick as the mode switch and tickViewMode's
+              // NEXT frame reads the still-stale "city" mode, clearing
+              // selectedKey before repaint can render it.
+              requestAnimationFrame(() => {
+                try {
+                  const polyKey = (country.iso_code || '').toUpperCase()
+                                || (country.name || '').toLowerCase();
+                  window.__polygonLayer?.selectCountry?.(polyKey);
+                } catch (_) {}
+              });
               resultsContainer.style.display = "none";
               searchInput.value = country.name;
             });
@@ -24186,6 +24231,10 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const ringY =  (radius + ringAltitude) * Math.cos(phi);
         ringGroup.position.set(ringX, ringY, ringZ);
         ringGroup.lookAt(0, 0, 0);
+        // Cities pulse CONTINUOUSLY — the animation loop loops each
+        // ring's progress instead of deactivating at progress=1.
+        // Auto-quiets when isFocused goes false (panel close, drag).
+        ringsContinuous = true;
         ringStates.forEach((state, i) => { state.progress = 0; state.delay = i * ringBurstDelay; state.active = true; ringMeshes[i].scale.set(1,1,1); ringMeshes[i].material.opacity = 0; });
       }
 
@@ -24201,6 +24250,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const ringY =  (radius + ringAltitude) * Math.cos(phi);
         ringGroup.position.set(ringX, ringY, ringZ);
         ringGroup.lookAt(0, 0, 0);
+        // Countries keep the original ONE-SHOT burst — clear continuous
+        // flag in case the previous focus was a city.
+        ringsContinuous = false;
         ringStates.forEach((state, i) => { state.progress = 0; state.delay = i * ringBurstDelay; state.active = true; ringMeshes[i].scale.set(1,1,1); ringMeshes[i].material.opacity = 0; });
       }
 
@@ -25386,7 +25438,25 @@ const settingsToggle     = document.getElementById("settingsToggle");
             const scale = 1 + state.progress * (ringMultiplierMax - 1);
             ringMeshes[i].scale.set(scale, scale, scale);
             ringMeshes[i].material.opacity = Math.pow(1 - state.progress, 1.8);
-            if (state.progress >= 1) { ringMeshes[i].material.opacity = 0; state.active = false; }
+            if (state.progress >= 1) {
+              ringMeshes[i].material.opacity = 0;
+              // Continuous-pulse mode (set by focusCity) loops the
+              // ring instead of deactivating. We re-zero progress so
+              // it sweeps out again from the start; the per-ring
+              // index `i` keeps the original cascade stagger because
+              // each ring's loop point lands at a different frame
+              // (Ring 1 finishes ~ringBurstDelay frames after Ring 0,
+              // Ring 2 ~ringBurstDelay after Ring 1). Auto-quiets
+              // when isFocused goes false — focus-clear paths
+              // (user drag, panel close) flip the flag externally
+              // and we deactivate naturally, the same one-shot path
+              // as before.
+              if (ringsContinuous && isFocused) {
+                state.progress = 0;
+              } else {
+                state.active = false;
+              }
+            }
           });
         } else if (!isFocused) {
           ringMeshes.forEach(ring => { ring.material.opacity = 0; });
