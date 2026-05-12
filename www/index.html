@@ -35890,18 +35890,32 @@ const settingsToggle     = document.getElementById("settingsToggle");
       };
 
       // ── Recency-based status & ranking ────────────────────────────
-      // Story-line freshness rule:
-      //   ≤ 14 days since latest article  → active
-      //   ≤ 30 days                       → cooling
-      //   > 30 days                       → dormant
+      // Two distinct freshness policies — threads vs. lines.
       //
-      // The old thresholds (48h active / 7d cooling) were calibrated
-      // for individual threads — short bursts of news with sub-day
-      // freshness. Lines are MUCH longer-arc by nature; the
-      // "Iran-US-Israel War 2025" line has been live for weeks and
-      // should obviously be active so long as articles are still
-      // arriving. Treating a 5-day-old line as "cooling" was a mismatch
-      // with how users think about long-running stories.
+      // THREADS (individual story bursts — "Romania's Bolojan Falls",
+      // "Trump Backs Modi's BJP", "Iran Nuclear Program Unaffected"):
+      //   ≤ 48h since latest article → active
+      //   ≤  7d                      → cooling
+      //   >  7d                      → dormant
+      // Mirrors storyThreadBuilder.coolDownInactiveThreads exactly so
+      // a thread the DB has already moved to `cooling` doesn't get
+      // force-flipped back to `active` by the client. Threads are
+      // discrete news arcs that genuinely get stale after a few days
+      // of no new articles — a May-5 thread on May-11 IS cooling.
+      //
+      // LINES / UMBRELLAS (long-arc story collections — "Iran-US War
+      // 2025", "EU Russia Sanctions Arc"):
+      //   ≤ 14d since latest article → active
+      //   ≤ 30d                      → cooling
+      //   > 30d                      → dormant
+      // Lines aggregate multiple threads over weeks/months. A 5-day
+      // gap on the "Iran-US War" umbrella isn't "cooling" — it's the
+      // normal cadence of a slow-moving multi-month arc.
+      //
+      // Earlier code applied the line policy (14d/30d) to threads too,
+      // which forced threads the DB had correctly cooled back into
+      // `active`. Splitting by `mode` restores the DB's authority for
+      // threads while keeping the user-requested 14d window for lines.
       //
       // Sort priority (matches /api/threads/latest ORDER BY):
       //   1. status — active → cooling → dormant
@@ -35909,16 +35923,22 @@ const settingsToggle     = document.getElementById("settingsToggle");
       //   3. category tier
       //   4. recency
       const STATUS_RANK = { active: 0, cooling: 1, dormant: 2 };
-      function applyRecencyStatus(data) {
+      function applyRecencyStatus(data, mode) {
         const now = Date.now();
-        const D14 = 14 * 24 * 60 * 60 * 1000;   // active window
-        const D30 = 30 * 24 * 60 * 60 * 1000;   // cooling window
+        const isLine = mode === 'line' || mode === 'timeline';
+        // Threads: 48h / 7d. Lines: 14d / 30d.
+        const ACTIVE_MS  = isLine
+          ? 14 * 24 * 60 * 60 * 1000
+          :  2 * 24 * 60 * 60 * 1000;
+        const COOLING_MS = isLine
+          ? 30 * 24 * 60 * 60 * 1000
+          :  7 * 24 * 60 * 60 * 1000;
         for (const t of data) {
           if (t.latest_published_at) {
             const age = now - new Date(t.latest_published_at).getTime();
-            if (age <= D14)      t.status = 'active';
-            else if (age <= D30) t.status = 'cooling';
-            else                 t.status = 'dormant';
+            if (age <= ACTIVE_MS)       t.status = 'active';
+            else if (age <= COOLING_MS) t.status = 'cooling';
+            else                        t.status = 'dormant';
           }
         }
         data.sort((a, b) => {
@@ -36074,7 +36094,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
         // threads grid is populated the moment the user opens the panel.
         if (Array.isArray(window.__preloadedThreads) && window.__preloadedThreads.length) {
           threadsData = window.__preloadedThreads;
-          applyRecencyStatus(threadsData);
+          applyRecencyStatus(threadsData, 'thread');
           threadsLoaded = true;
           if (currentView === 'threads') { activeGridData = threadsData; renderThreads(); }
         } else if (currentView === 'threads') {
@@ -36084,7 +36104,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           const res = await cachedFetch(`${API}/api/threads/latest?limit=1000`);
           if (!res.ok) throw new Error('Failed');
           threadsData = await res.json();
-          applyRecencyStatus(threadsData);
+          applyRecencyStatus(threadsData, 'thread');
           threadsLoaded = true;
           if (currentView === 'threads') { activeGridData = threadsData; renderThreads(); }
         } catch (e) {
@@ -36103,7 +36123,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
           // Tag each item as a timeline so the card renderer and click handler
           // route to the right endpoints (timeline flows vs thread flows).
           timelinesData = (raw || []).map(t => ({ ...t, __kind: 'timeline' }));
-          applyRecencyStatus(timelinesData);
+          applyRecencyStatus(timelinesData, 'line');
           timelinesLoaded = true;
           if (currentView === 'timelines') { activeGridData = timelinesData; renderThreads(); }
         } catch (e) {
