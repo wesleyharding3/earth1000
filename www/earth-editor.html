@@ -192,12 +192,26 @@
       display: none; margin-top: 10px; padding: 10px;
       background: rgba(0,212,255,0.05); border: 1px solid rgba(0,212,255,0.15);
       border-radius: 6px; font-size: 0.8rem; gap: 10px; align-items: center;
+      position: relative;  /* anchor for the × clear button */
     }
     .video-preview.visible { display: flex; }
     .video-preview img { width: 80px; height: 45px; border-radius: 4px; object-fit: cover; flex-shrink: 0; }
-    .video-preview .video-info { flex: 1; min-width: 0; }
+    .video-preview .video-info { flex: 1; min-width: 0; padding-right: 26px; }
     .video-preview .video-title { font-weight: 600; color: #e2e8f0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .video-preview .video-id { color: #94a3b8; font-size: 0.75rem; }
+    /* × button to clear a resolved video. Sits in the top-right
+       corner of the preview chip. Lets the user undo a video that
+       was added to the wrong thread without rebuilding the whole
+       enrichment state. */
+    .video-preview .video-clear {
+      position: absolute; top: 6px; right: 6px;
+      width: 22px; height: 22px; border-radius: 50%;
+      background: rgba(239,68,68,0.85); color: #fff;
+      border: none; cursor: pointer; font-size: 14px; font-weight: 700;
+      line-height: 1; display: flex; align-items: center; justify-content: center;
+      transition: background 0.12s;
+    }
+    .video-preview .video-clear:hover { background: #ef4444; }
 
     /* ── Segment editor (briefing step 3) ── */
     .segment-card { background: #111827; border: 1px solid #1e293b; border-radius: 8px; margin-bottom: 12px; overflow: hidden; }
@@ -1627,6 +1641,7 @@
           ? `<div class="video-preview visible" id="vp-${id}">
               ${d.video_meta.thumbnail ? `<img src="${escHtml(d.video_meta.thumbnail)}" alt="" />` : ''}
               <div class="video-info"><div class="video-title">${escHtml(d.video_meta.title || '')}</div><div class="video-id">${escHtml(d.video_meta.video_id || '')}</div></div>
+              <button type="button" class="video-clear" title="Remove video from this thread" onclick="clearVideo(${id})">×</button>
             </div>`
           : `<div class="video-preview" id="vp-${id}"></div>`;
         // Featured-media controls — live in Step 2 so the narrative
@@ -1920,6 +1935,34 @@
       }
       btn.disabled = false; btn.textContent = 'Resolve';
     }
+
+    // Remove a resolved video from an enrichment thread. Called from
+    // the × button rendered on the video-preview chip when video_meta
+    // is set. Wipes the URL + meta and, if the featured-media block
+    // was wired to play THIS video (media_type === 'youtube'), flips
+    // it back to the default heatmap so saving the manifest doesn't
+    // produce a segment referencing an orphaned video.
+    //
+    // The user's start_sec/end_sec/transition prefs on featured_video
+    // are preserved — re-resolving a different YouTube URL and
+    // flipping media_type back to 'youtube' restores them. They have
+    // to explicitly uncheck the featured-media box to wipe everything.
+    function clearVideo(id) {
+      if (!enrichData[id]) return;
+      if (!confirm('Remove the video from this thread?')) return;
+      enrichData[id].youtube_url = '';
+      enrichData[id].video_meta  = null;
+      const fv = enrichData[id].featured_video;
+      if (fv && fv.media_type === 'youtube') {
+        // Flip back to the heatmap default so save doesn't carry
+        // a `youtube` media type without a resolved video.
+        fv.media_type = 'heatmap';
+      }
+      // Re-render the enrich list — both the URL input and the
+      // featured-media YouTube-fields block need to update.
+      buildEnrichList();
+    }
+    window.clearVideo = clearVideo;
 
     // ── Segment Editor with Data Panel Eligibility ──
     function renderSegmentEditor(segments) {

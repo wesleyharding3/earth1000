@@ -625,10 +625,26 @@
       background: #444;
       color: #fff;
       border: none;
-      padding: 4px 8px;
       cursor: pointer;
-      font-size: 12px;
+      font-size: 14px;
       border-radius: 4px;
+      /* iOS WKWebView square hardening — see www/index.html for the
+         long-form rationale. Without these the button rendered as a
+         stretched rectangle. */
+      -webkit-appearance: none;
+      appearance: none;
+      box-sizing: border-box;
+      width: 26px;
+      height: 26px;
+      min-width: 26px;
+      min-height: 26px;
+      padding: 0;
+      line-height: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex: 0 0 26px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     }
     #infoPanel button.closePanel:hover { background: #666; }
     .panelHeaderBtnGroup {
@@ -45533,8 +45549,72 @@ body.ticker-active .gTickerLabel {
     modal.classList.add('open');
   }
 
+  // ── Cold-start warmup ────────────────────────────────────────────────
+  // Mirrors www/index.html. Set after first briefing open; used by
+  // _warmupBriefing to skip the seg-0 preload step on subsequent opens.
+  let _briefingFirstLaunch = true;
+
+  // See www/index.html for the full rationale. Three steps:
+  //   1. Force-pull Supabase session if window.__authToken is unset
+  //      (covers fresh-install cold launch where keychain restore races
+  //      the briefing tap).
+  //   2. Await AudioContext.resume() so the music-duck gain ramp on the
+  //      first segment actually applies (was firing in suspended-state
+  //      time and getting lost).
+  //   3. First-launch only: pre-load seg-0 audio into audioNext so
+  //      goToSegment(0)'s onReady gets a hot canplaythrough instead of
+  //      paying TLS handshake + Render dyno cold start.
+  async function _warmupBriefing() {
+    if (!window.__authToken) {
+      try {
+        const supa = window.sb || window.__supabase || null;
+        if (supa?.auth?.getSession) {
+          const session = await Promise.race([
+            supa.auth.getSession(),
+            new Promise(r => setTimeout(() => r(null), 3000)),
+          ]);
+          const tok = session?.data?.session?.access_token || '';
+          if (tok) window.__authToken = tok;
+        }
+      } catch (_) {}
+    }
+    if (_bgMusicCtx && _bgMusicCtx.state === 'suspended') {
+      try {
+        await Promise.race([
+          _bgMusicCtx.resume(),
+          new Promise(r => setTimeout(r, 1500)),
+        ]);
+      } catch (_) {}
+    }
+    if (_briefingFirstLaunch) {
+      _briefingFirstLaunch = false;
+      try {
+        if (episode?.has_audio &&
+            Array.isArray(episode.segments) &&
+            episode.segments[0]?.start_ms != null) {
+          const sa = new Audio(
+            `${API}/api/briefing/audio/${episode.id}/0?at=${encodeURIComponent(window.__authToken || '')}`
+          );
+          sa.preload = 'auto';
+          sa._segIdx = 0;
+          _bgRegisterNarration(sa);
+          audioNext = sa;
+          await Promise.race([
+            new Promise(resolve => {
+              sa.addEventListener('canplaythrough', resolve, { once: true });
+              sa.addEventListener('error',          resolve, { once: true });
+            }),
+            new Promise(r => setTimeout(r, 3000)),
+          ]);
+        }
+      } catch (e) {
+        console.warn('[briefing] warmup seg-0 preload failed:', e.message);
+      }
+    }
+  }
+
   // ── Open ─────────────────────────────────────────────────────────────────
-  function openBriefing() {
+  async function openBriefing() {
     if (!episode) return;
     // ── Access gate ───────────────────────────────────────────
     // Block listening if the user has consumed their free allowance and
@@ -45590,10 +45670,21 @@ body.ticker-active .gTickerLabel {
     // earlier blanket delay caused "videos aren't playing"; this
     // version paints the intro chrome immediately so the user sees
     // the briefing branding while the music plays alone).
+    // CRITICAL: startBgMusic() fires SYNCHRONOUSLY here, before the
+    // await below — iOS WKWebView's autoplay policy keys off the user
+    // gesture, and an await before play() would let the gesture expire.
     startBgMusic();
     const _firstSeg = episode?.segments?.[0];
     if (_firstSeg?.type === 'intro') {
+      // Show overlay immediately; warmup runs in parallel with the 4s lead-in.
       showIntroOverlay();
+    }
+    // Absorb cold-start latency (auth + AudioContext + dyno wake)
+    // before kicking off the segment pipeline. See www/index.html
+    // for the per-step rationale.
+    await _warmupBriefing();
+    if (!window.briefingActive) return; // user closed during warmup
+    if (_firstSeg?.type === 'intro') {
       addBTimer(setTimeout(() => {
         if (!window.briefingActive) return;
         goToSegment(0);
@@ -46642,8 +46733,14 @@ body.ticker-active .gTickerLabel {
             console.warn(`[briefing/focal] seg ${idx} missing focal_trigger_ms — deferring takeover to end-of-voiceover (${seg.voiceover_ms}ms).`);
           }
 
+          // triggerDelayMs aims at the BEFORE/AFTER audio boundary
+          // (focalOffsetMs). FOCAL_PRE_PAUSE_MS used to be added here,
+          // which caused audio.pause() to land 350ms past the boundary
+          // — into the after-piece's first syllable — cutting the
+          // narrator's resume sentence mid-word. The breath now happens
+          // BETWEEN pause and advance in poll() below.
           const triggerDelayMs = (focalOffsetMs != null)
-            ? (focalOffsetMs + FOCAL_PRE_PAUSE_MS)
+            ? focalOffsetMs
             : ms(triggerPct);
 
           if (isHeatmap) {
@@ -46709,7 +46806,12 @@ body.ticker-active .gTickerLabel {
               const ct = audio?.currentTime || 0;
               if (!audio || audio.ended || ct >= targetSec || _now() > deadline) {
                 try { audio?.pause(); } catch (_) {}
-                advance();
+                // Breath BETWEEN pause and advance — see www/index.html
+                // for full rationale.
+                addBTimer(setTimeout(() => {
+                  if (segIdx !== idx) return;
+                  advance();
+                }, FOCAL_PRE_PAUSE_MS));
               } else {
                 addBTimer(setTimeout(poll, 30));
               }
@@ -46819,8 +46921,11 @@ body.ticker-active .gTickerLabel {
       sa.addEventListener('error', onError, { once: true });
     });
   }
+  // Plain setTimeout — NOT addBTimer — so clearBTimers can't cancel
+  // this wait mid-flight (which used to wedge the narrator-start path).
+  // See www/index.html for the long-form rationale.
   function _briefingWait(ms) {
-    return new Promise(resolve => addBTimer(setTimeout(() => resolve(true), ms)));
+    return new Promise(resolve => setTimeout(() => resolve(true), ms));
   }
 
   // ── Go to segment ─────────────────────────────────────────────────────────
@@ -46956,7 +47061,9 @@ body.ticker-active .gTickerLabel {
         started = true;
 
         try {
-          await _waitForCanPlay(sa, 6000);
+          // 12000ms (was 6000) — cold Render dyno + TLS handshake can
+          // take 8-10s for the first audio request; 6s was clipping it.
+          await _waitForCanPlay(sa, 12000);
           if (segIdx !== curIdx || !playing) return;
 
           const realDur = isFinite(sa.duration) && sa.duration > 1 ? sa.duration : estDur;
@@ -47772,21 +47879,27 @@ body.ticker-active .gTickerLabel {
       const iframe = document.getElementById('bVideoIframe');
       if (iframe) {
         const vol = _volumeLevels[volumeLevel] || 50;
-        const sendCmds = () => {
-          _postYTCommand(iframe, 'seekTo', [startSec, true]);
+        // seekTo is DESTRUCTIVE — repeated calls reset playback to
+        // startSec, causing the "video loops first ~1s on repeat"
+        // symptom. Split into seekOnce (fires twice max) + playCmds
+        // (idempotent — fires on every retry). See www/index.html.
+        const seekOnce = () => _postYTCommand(iframe, 'seekTo', [startSec, true]);
+        const playCmds = () => {
           _postYTCommand(iframe, 'unMute');
           _postYTCommand(iframe, 'setVolume', [vol]);
           _postYTCommand(iframe, 'playVideo');
         };
-        sendCmds();
-        // Staggered retries — see www/index.html. Single 250ms wasn't
-        // enough on cold proxy loads where YT player bootstrap can
-        // take 1.5s+.
+        seekOnce();
+        playCmds();
+        // Staggered retries — single seek retry only; idempotent
+        // commands retry at multiple intervals to defeat the
+        // YT-player-not-ready timing race.
         const onIframeLoad = () => {
-          setTimeout(sendCmds, 250);
-          setTimeout(sendCmds, 750);
-          setTimeout(sendCmds, 1500);
-          setTimeout(sendCmds, 2500);
+          setTimeout(seekOnce, 250);
+          setTimeout(playCmds, 250);
+          setTimeout(playCmds, 750);
+          setTimeout(playCmds, 1500);
+          setTimeout(playCmds, 2500);
         };
         try {
           const doc = iframe.contentDocument || iframe.contentWindow?.document;
@@ -48164,6 +48277,32 @@ body.ticker-active .gTickerLabel {
     // True end-of-briefing boundary — clear labels here.
     if (window.clearBriefingFlowArcLabels) window.clearBriefingFlowArcLabels();
     if (window.clearBriefingPulses) window.clearBriefingPulses();
+
+    // Hide the per-segment scaffolding (title, flag chips, source-pie,
+    // article roll) so the LAST segment's pie graph + article cards
+    // don't bleed onto the summary screen. Mirrors closeBriefing's
+    // 480ms classList-remove + innerHTML clear pattern. See
+    // www/index.html for the full rationale.
+    const _stitle = document.getElementById('bSegmentTitle');
+    if (_stitle) {
+      _stitle.classList.remove('visible');
+      setTimeout(() => { _stitle.textContent = ''; }, 480);
+    }
+    const _scountries = document.getElementById('bSegmentCountries');
+    if (_scountries) {
+      _scountries.classList.remove('visible');
+      setTimeout(() => { _scountries.innerHTML = ''; }, 480);
+    }
+    const _ssourcePie = document.getElementById('bSegmentSourcePie');
+    if (_ssourcePie) {
+      _ssourcePie.classList.remove('visible');
+      setTimeout(() => { _ssourcePie.innerHTML = ''; }, 480);
+    }
+    const _sarticleRoll = document.getElementById('bSegmentArticleRoll');
+    if (_sarticleRoll) {
+      _sarticleRoll.classList.remove('visible');
+      setTimeout(() => { _sarticleRoll.innerHTML = ''; }, 480);
+    }
 
     const grid = document.getElementById('bRecapGrid');
     const storySegs = episode.segments.filter(s => s.type === 'story');

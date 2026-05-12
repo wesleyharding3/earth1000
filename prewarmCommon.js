@@ -20,7 +20,7 @@
  *   doesn't break the entire run; it just doesn't refresh.
  */
 
-async function forceRefreshCaches({ apiUrl, prefixes = [], keys = [], tag = '[prewarm]', timeoutMs = 30000 }) {
+async function forceRefreshCaches({ apiUrl, prefixes = [], keys = [], mode = 'hard', tag = '[prewarm]', timeoutMs = 30000 }) {
   if (!apiUrl) {
     console.warn(`${tag} forceRefreshCaches: no apiUrl, skipping eviction`);
     return { evicted: 0, skipped: true, reason: 'no-apiUrl' };
@@ -40,7 +40,13 @@ async function forceRefreshCaches({ apiUrl, prefixes = [], keys = [], tag = '[pr
         'content-type': 'application/json',
         'x-cache-secret': secret,
       },
-      body: JSON.stringify({ prefixes, keys }),
+      // mode: 'soft' marks entries as expired but KEEPS the value, so
+      // ttlCached's SWR serves the stale value to user requests while
+      // the warmer's force-refresh GETs (sent via fetchPrewarm below)
+      // run the producer for real. Result: cache never goes cold during
+      // the warmer's run. Use 'hard' only when the value must NOT be
+      // served any longer (security, correctness fix).
+      body: JSON.stringify({ prefixes, keys, mode }),
     });
     if (!res.ok) {
       const text = await res.text().catch(() => '');
@@ -48,14 +54,42 @@ async function forceRefreshCaches({ apiUrl, prefixes = [], keys = [], tag = '[pr
       return { evicted: 0, skipped: false, status: res.status };
     }
     const j = await res.json();
-    console.log(`${tag} forceRefreshCaches: evicted ${j.evicted} key(s) (cache size ${j.before} → ${j.after})`);
-    return { evicted: j.evicted, skipped: false };
+    console.log(`${tag} forceRefreshCaches[${j.mode || mode}]: evicted ${j.evicted} key(s) (cache size ${j.before} → ${j.after})`);
+    return { evicted: j.evicted, skipped: false, mode: j.mode || mode };
   } catch (err) {
     console.warn(`${tag} forceRefreshCaches: ${err.message}`);
     return { evicted: 0, skipped: false, error: err.message };
   } finally {
     clearTimeout(t);
   }
+}
+
+/**
+ * fetchPrewarm(url, opts):
+ *   Like `fetch`, but adds the prewarm force-refresh headers so the API's
+ *   ttlCached bypasses SWR-stale return and actually runs the producer.
+ *
+ *   Why this pairs with soft eviction: after `forceRefreshCaches({ mode:'soft' })`
+ *   marks entries as expired-but-keep-value, a normal GET would hit SWR
+ *   (return stale + background refresh). For a WARMER, that's wrong — the
+ *   warmer's job is to refresh on the calling thread so it paces itself
+ *   country-by-country instead of spawning all producers in parallel and
+ *   overloading the pool. These headers flip ttlCached into "run/await
+ *   producer" mode for this request only; concurrent user requests still
+ *   get the stale value via SWR.
+ *
+ *   Falls back to plain fetch if CACHE_EVICT_SECRET isn't set (matches
+ *   the fail-closed posture of the server's prewarm middleware).
+ */
+function fetchPrewarm(url, opts = {}) {
+  const secret = process.env.CACHE_EVICT_SECRET;
+  if (!secret) return fetch(url, opts);
+  const headers = {
+    ...(opts.headers || {}),
+    'x-cache-secret': secret,
+    'x-cache-mode':   'refresh',
+  };
+  return fetch(url, { ...opts, headers });
 }
 
 /**
@@ -142,4 +176,4 @@ async function purgeCloudflareUrls({ urls, tag = '[prewarm]', timeoutMs = 8000 }
   return { purged, skipped: false };
 }
 
-module.exports = { forceRefreshCaches, cacheBust, purgeCloudflareUrls };
+module.exports = { forceRefreshCaches, cacheBust, purgeCloudflareUrls, fetchPrewarm };

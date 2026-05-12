@@ -650,10 +650,32 @@
       background: #444;
       color: #fff;
       border: none;
-      padding: 4px 8px;
       cursor: pointer;
-      font-size: 12px;
+      font-size: 14px;
       border-radius: 4px;
+      /* ── iOS WKWebView square hardening ────────────────────────
+         Without explicit dimensions the button rendered as a
+         stretched rectangle on iOS — the default UA appearance
+         + asymmetric `4px 8px` padding + the inline `top:6px;
+         right:0` on each panel instance combined into the
+         "horizontally smushed pill" the user reported.
+         Lock width/height to the same value, kill UA styling,
+         and center the glyph via flex so the ✕ sits dead-center
+         regardless of font metrics. */
+      -webkit-appearance: none;
+      appearance: none;
+      box-sizing: border-box;
+      width: 26px;
+      height: 26px;
+      min-width: 26px;
+      min-height: 26px;
+      padding: 0;
+      line-height: 1;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex: 0 0 26px;     /* don't let any flex parent stretch us */
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
     }
     #infoPanel button.closePanel:hover { background: #666; }
     .panelHeaderBtnGroup {
@@ -49191,7 +49213,112 @@ body.ticker-active .gTickerLabel {
   }
 
   // ── Open ─────────────────────────────────────────────────────────────────
-  function openBriefing() {
+  // ── Cold-start warmup ────────────────────────────────────────────────
+  // Set after the FIRST briefing is opened in a given app session. Used
+  // by _warmupBriefing to skip the audio-preload step on subsequent
+  // opens — the dyno is hot, TLS is established, the AudioContext is
+  // unlocked, so the extra ~1-2s wait isn't needed.
+  let _briefingFirstLaunch = true;
+
+  // _warmupBriefing — absorbs cold-start latency BEFORE goToSegment(0)
+  // fires, so the first briefing of an app session doesn't cascade
+  // into the user-reported "music continues, narrator never starts"
+  // failure mode.
+  //
+  // Three things settle here in series:
+  //   1. Auth token (Supabase getSession). On fresh-install cold launch
+  //      the iOS Keychain restore is async — if a user taps "Start
+  //      briefing" in the first ~500ms, window.__authToken is still
+  //      undefined and the first /api/briefing/audio 401s. We force-pull
+  //      the session with a 3s budget so the audio request goes out
+  //      authed.
+  //   2. AudioContext.resume(). iOS WKWebView opens the context in
+  //      `suspended` state; gain-ramp scheduling (used by music ducking)
+  //      doesn't apply correctly until resume() resolves. The existing
+  //      startBgMusic call fires resume() fire-and-forget, so the
+  //      first segment's bgMusicNarratorStart duck-down ramp could be
+  //      lost — that's the "music cuts off too late" symptom. Awaiting
+  //      resume() guarantees the ramp lands.
+  //   3. Segment-0 audio preload. The first /api/briefing/audio request
+  //      pays Render dyno wake (~5-10s if cold) + TLS handshake to
+  //      earth-wjr6.onrender.com. Pre-fetching it during the warmup
+  //      window means goToSegment(0)'s onReady gets a hot canplaythrough
+  //      instead of timing out at the 12s ceiling. Stashed in audioNext
+  //      so goToSegment(0)'s existing preload-reuse path picks it up.
+  //      First-launch only — subsequent briefings skip this since
+  //      everything's already warm.
+  //
+  // Total budget: ~1-2s warm path, up to ~6s cold path. Far cheaper
+  // than the cascade of segment-skip retries that cold start otherwise
+  // triggers (each retry: 12s canplay timeout + 4s playing timeout =
+  // 16s of dead air per failed segment).
+  async function _warmupBriefing() {
+    // Step 1: refresh auth if missing.
+    if (!window.__authToken) {
+      try {
+        const supa = window.sb || window.__supabase || null;
+        if (supa?.auth?.getSession) {
+          const session = await Promise.race([
+            supa.auth.getSession(),
+            new Promise(r => setTimeout(() => r(null), 3000)),
+          ]);
+          const tok = session?.data?.session?.access_token || '';
+          if (tok) window.__authToken = tok;
+        }
+      } catch (_) {}
+    }
+
+    // Step 2: explicitly await AudioContext.resume() so gain ramps
+    // applied immediately after this point (music duck-down) take
+    // effect on the first segment instead of getting lost in the
+    // suspended-state scheduler.
+    if (_bgMusicCtx && _bgMusicCtx.state === 'suspended') {
+      try {
+        await Promise.race([
+          _bgMusicCtx.resume(),
+          new Promise(r => setTimeout(r, 1500)),
+        ]);
+      } catch (_) {}
+    }
+
+    // Step 3: first-launch only — pre-load segment 0's audio so the
+    // first goToSegment doesn't pay TLS + dyno cold start.
+    if (_briefingFirstLaunch) {
+      _briefingFirstLaunch = false;
+      try {
+        if (episode?.has_audio &&
+            Array.isArray(episode.segments) &&
+            episode.segments[0]?.start_ms != null) {
+          const sa = new Audio(
+            `${API}/api/briefing/audio/${episode.id}/0?at=${encodeURIComponent(window.__authToken || '')}`
+          );
+          sa.preload = 'auto';
+          sa._segIdx = 0;
+          _bgRegisterNarration(sa);
+          // Stash for goToSegment(0)'s `audioNext && audioNext._segIdx === idx`
+          // reuse path. If goToSegment fires before canplaythrough lands
+          // here, that path still wins — onReady inside it will await
+          // canplaythrough via _waitForCanPlay.
+          audioNext = sa;
+          // Wait up to 3s for the audio to reach canplaythrough so the
+          // user gets a smooth start. If it takes longer, we proceed
+          // anyway — goToSegment(0)'s onReady will continue waiting up
+          // to 12s on its own timeout.
+          await Promise.race([
+            new Promise(resolve => {
+              sa.addEventListener('canplaythrough', resolve, { once: true });
+              sa.addEventListener('error',          resolve, { once: true });
+            }),
+            new Promise(r => setTimeout(r, 3000)),
+          ]);
+        }
+      } catch (e) {
+        console.warn('[briefing] warmup seg-0 preload failed:', e.message);
+      }
+    }
+  }
+
+  async function openBriefing() {
     if (!episode) return;
     // ── Access gate ─ see index.html for full rationale.
     if (window.__briefingAccess && !window.__briefingAccess.canListen(episode.id)) {
@@ -49269,10 +49396,30 @@ body.ticker-active .gTickerLabel {
     // blank ("videos aren't playing"); showing the intro overlay
     // separately keeps something on screen during the lead-in.
     // Non-intro first segments render immediately as before.
+    //
+    // CRITICAL: startBgMusic() fires synchronously here, BEFORE the
+    // await below. iOS WKWebView's autoplay policy keys off the
+    // user gesture (the briefing-launcher tap that called us). If
+    // we awaited before this play(), iOS would consider the gesture
+    // expired and block the music. Once music is playing, the audio
+    // session is unlocked for the narrator audio fired later from
+    // inside goToSegment.
     startBgMusic();
     const _firstSeg = episode?.segments?.[0];
+    // Intro segments: show the chrome overlay immediately so the user
+    // sees logo+date right after tapping, then run warmup IN PARALLEL
+    // with the 4s lead-in. Warmup typically finishes in <2s, so the
+    // lead-in absorbs it for free.
     if (_firstSeg?.type === 'intro') {
       showIntroOverlay();
+    }
+    // Cold-start warmup — absorbs auth + AudioContext + dyno-wake
+    // latency BEFORE goToSegment(0). See _warmupBriefing for the
+    // per-step rationale. Cheap (skips most steps) on subsequent
+    // briefings within the same app session.
+    await _warmupBriefing();
+    if (!window.briefingActive) return; // user closed during warmup
+    if (_firstSeg?.type === 'intro') {
       addBTimer(setTimeout(() => {
         if (!window.briefingActive) return; // user closed during lead-in
         goToSegment(0);
@@ -50624,18 +50771,14 @@ body.ticker-active .gTickerLabel {
           // voiceover, generated as its own MP3 piece). Fall back to the
           // approximate triggerPct fraction for legacy episodes.
           //
-          // FOCAL_PRE_PAUSE_MS buffer: the generator's reported
-          // beforePiece.durationMs is the duration the TTS engine
-          // synthesised — but actual playback typically runs a hair
-          // longer because (a) the audio includes a few ms of trailing
-          // tail before the silence, and (b) the JS event loop can
-          // schedule setTimeout up to a frame early. Without this buffer
-          // the audio.pause() inside the trigger handler would clip the
-          // last syllable of the narrator's transition phrase. The
-          // FOCAL_PRE_PAUSE_MS constant was already declared with a
-          // comment about this purpose ("breath after last narrator
-          // word, before media UI starts") but was never actually
-          // applied — wiring it in here finally honors its definition.
+          // FOCAL_PRE_PAUSE_MS used to be ADDED to triggerDelayMs so
+          // the whole trigger fired late by the breath duration — but
+          // that meant `audio.pause()` ran 350ms PAST the before/after
+          // boundary, i.e. 350ms into the after-piece's first syllable,
+          // cutting the narrator off mid-word. Now FOCAL_PRE_PAUSE_MS
+          // is inserted BETWEEN pause and advance (see poll() below),
+          // so the narrator stops AT the boundary and the breath
+          // happens during silence before the video card appears.
           const focalAbsMs    = Number.isFinite(seg.focal_trigger_ms) ? seg.focal_trigger_ms : null;
           let   focalOffsetMs = (focalAbsMs != null && Number.isFinite(seg.start_ms))
             ? Math.max(0, focalAbsMs - seg.start_ms)
@@ -50666,8 +50809,13 @@ body.ticker-active .gTickerLabel {
             console.warn(`[briefing/focal] seg ${idx} missing focal_trigger_ms — deferring takeover to end-of-voiceover (${seg.voiceover_ms}ms) so narrator isn't interrupted.`);
           }
 
+          // triggerDelayMs is the WALL-CLOCK ms from segment start at
+          // which the trigger handler fires. We aim it at the
+          // BEFORE/AFTER audio boundary (focalOffsetMs); the breath
+          // happens after audio.pause() lands, via the post-pause
+          // FOCAL_PRE_PAUSE_MS delay in poll() below.
           const triggerDelayMs = (focalOffsetMs != null)
-            ? (focalOffsetMs + FOCAL_PRE_PAUSE_MS)
+            ? focalOffsetMs
             : ms(triggerPct);
 
           if (isHeatmap) {
@@ -50759,7 +50907,18 @@ body.ticker-active .gTickerLabel {
               const ct = audio?.currentTime || 0;
               if (!audio || audio.ended || ct >= targetSec || now() > deadline) {
                 try { audio?.pause(); } catch (_) {}
-                advance();
+                // Insert the FOCAL_PRE_PAUSE_MS breath BETWEEN the
+                // narrator pause and the video card animation. This
+                // used to be folded into triggerDelayMs (added to
+                // focalOffsetMs), which caused audio.pause() to fire
+                // 350ms PAST the boundary — well into the after-piece
+                // — cutting the narrator's resume sentence mid-word.
+                // Now narrator stops AT the boundary, the breath
+                // happens in silence, then the video appears.
+                addBTimer(setTimeout(() => {
+                  if (segIdx !== idx) return;
+                  advance();
+                }, FOCAL_PRE_PAUSE_MS));
               } else {
                 addBTimer(setTimeout(poll, 30));
               }
@@ -50909,11 +51068,21 @@ body.ticker-active .gTickerLabel {
     });
   }
 
-  // Promise-based sleep, but uses addBTimer so it cancels with the
-  // segment if the user pauses/skips. Resolves false if the timer
-  // was cleared (segment changed), true on natural elapse.
+  // Promise-based sleep. Uses a plain setTimeout (NOT addBTimer)
+  // because clearBTimers would otherwise `clearTimeout` it — leaving
+  // the awaiting code stuck on a Promise that never resolves. The
+  // narrator-start path used to do `await _briefingWait(BG_FADE_OUT
+  // + 500ms)` after the music-duck schedule; on cold launches where
+  // clearBTimers fired between segment transitions, that await hung
+  // forever and the narrator never began.
+  //
+  // Safety: callers ALWAYS post-check `segIdx !== curIdx || !playing`
+  // after the await, so a delayed resolution after a segment change
+  // is a clean no-op. The cost of letting the timer fire naturally
+  // (one resolved Promise discarded) is far less than the cost of a
+  // wedged narrator pipeline.
   function _briefingWait(ms) {
-    return new Promise(resolve => addBTimer(setTimeout(() => resolve(true), ms)));
+    return new Promise(resolve => setTimeout(() => resolve(true), ms));
   }
 
   // ── Go to segment ─────────────────────────────────────────────────────────
@@ -51104,7 +51273,15 @@ body.ticker-active .gTickerLabel {
         try {
           // Wait for the element to be truly buffered. If it already
           // is (preloaded audioNext), this resolves immediately.
-          await _waitForCanPlay(sa, 6000);
+          // Timeout was 6000ms — bumped to 12000ms after the user
+          // reported "narrator never starts" symptoms on fresh-install
+          // cold launches. On a stone-cold Render dyno + TLS handshake
+          // to earth-wjr6.onrender.com, the first audio request can
+          // take 8-10s; 6s was chopping the segment off before audio
+          // even reached readyState 4. The warmup phase in openBriefing
+          // preloads seg-0 to reduce this risk, but seg-1+ on a slow
+          // network still benefits from the longer ceiling.
+          await _waitForCanPlay(sa, 12000);
           if (segIdx !== curIdx || !playing) return;
 
           const realDur = isFinite(sa.duration) && sa.duration > 1 ? sa.duration : estDur;
@@ -52213,31 +52390,40 @@ body.ticker-active .gTickerLabel {
       const iframe = document.getElementById('bVideoIframe');
       if (iframe) {
         const vol = _volumeLevels[volumeLevel] || 50;
-        const sendCmds = () => {
-          _postYTCommand(iframe, 'seekTo', [startSec, true]);
+        // seekTo is DESTRUCTIVE — it resets playback to startSec every
+        // time it lands. Calling it on every retry caused the
+        // "video loops the first ~1s on repeat" symptom: the player
+        // would play from second N to ~N+1, then a stale seekTo would
+        // land and snap back to N, then the next one, then the next.
+        // unMute / setVolume / playVideo are idempotent (no-op if the
+        // state already matches), so retrying THEM is safe.
+        //
+        // Strategy: fire seekTo TWICE — once immediately (defensive,
+        // for an already-loaded iframe) and once at +250ms (after the
+        // YT.Player inside the proxy iframe has had a chance to
+        // bootstrap). After that, ONLY the idempotent commands retry.
+        const seekOnce = () => _postYTCommand(iframe, 'seekTo', [startSec, true]);
+        const playCmds = () => {
           _postYTCommand(iframe, 'unMute');
           _postYTCommand(iframe, 'setVolume', [vol]);
           _postYTCommand(iframe, 'playVideo');
         };
         // Defensive immediate send (works if iframe was already loaded).
-        sendCmds();
+        seekOnce();
+        playCmds();
         // Staggered retries with backoff so we defeat the YT-player-
         // not-ready-yet timing race. The iframe's `load` event fires
         // when the proxy document parses; the YT.Player JS inside that
         // proxy needs additional time to bootstrap + register its
         // postMessage listener. Empirically this can take 100-1500ms
-        // depending on cold/warm cache. We fire commands at multiple
-        // intervals after load — any one that lands post-ready does
-        // the job; the others are idempotent no-ops.
-        //
-        // This is the "video plays from the beginning + muted" failure
-        // mode the user reported regressing. The previous single
-        // 250ms retry wasn't enough on cold proxy loads.
+        // depending on cold/warm cache. seekTo only retries ONCE; the
+        // idempotent commands retry at multiple intervals.
         const onIframeLoad = () => {
-          setTimeout(sendCmds, 250);
-          setTimeout(sendCmds, 750);
-          setTimeout(sendCmds, 1500);
-          setTimeout(sendCmds, 2500);
+          setTimeout(seekOnce, 250);   // single seek retry only
+          setTimeout(playCmds, 250);
+          setTimeout(playCmds, 750);
+          setTimeout(playCmds, 1500);
+          setTimeout(playCmds, 2500);
         };
         // If the iframe is already complete, fire onIframeLoad now;
         // otherwise wait for the `load` event.
@@ -52722,6 +52908,39 @@ body.ticker-active .gTickerLabel {
     // point destroyBgMusic in closeBriefing tears it down with a fade.
     bgMusicResumeForRecap();
     if (window.clearBriefingPulses) window.clearBriefingPulses();
+
+    // Tear down the per-segment UI scaffolding (title chip, flag chips,
+    // source-country pie, article roll). Without this, the LAST segment's
+    // pie graph + article cards stay rendered on top of the summary
+    // screen — same artifact the user reported on the recap transition.
+    //
+    // setSegmentSourcePie/setSegmentArticleRoll were INTENTIONALLY made
+    // sticky across segments (each pie returns early on missing data so
+    // the panel doesn't blank-and-flash between consecutive segments),
+    // which is the right behaviour mid-briefing but the wrong behaviour
+    // at the recap boundary. We have to hide them explicitly here.
+    // Mirrors the cleanup block in closeBriefing — see that function
+    // for the 480ms transition pattern.
+    const _stitle = document.getElementById('bSegmentTitle');
+    if (_stitle) {
+      _stitle.classList.remove('visible');
+      setTimeout(() => { _stitle.textContent = ''; }, 480);
+    }
+    const _scountries = document.getElementById('bSegmentCountries');
+    if (_scountries) {
+      _scountries.classList.remove('visible');
+      setTimeout(() => { _scountries.innerHTML = ''; }, 480);
+    }
+    const _ssourcePie = document.getElementById('bSegmentSourcePie');
+    if (_ssourcePie) {
+      _ssourcePie.classList.remove('visible');
+      setTimeout(() => { _ssourcePie.innerHTML = ''; }, 480);
+    }
+    const _sarticleRoll = document.getElementById('bSegmentArticleRoll');
+    if (_sarticleRoll) {
+      _sarticleRoll.classList.remove('visible');
+      setTimeout(() => { _sarticleRoll.innerHTML = ''; }, 480);
+    }
 
     const grid = document.getElementById('bRecapGrid');
     const storySegs = episode.segments.filter(s => s.type === 'story');

@@ -2663,8 +2663,20 @@ async function getRisingKeywordsForSegment(limit = 3) {
   `);
   if (!rows.length) return [];
 
+  // The keyword cache shape moved from a top-level array to
+  // `{ keywords: [...] }` (so prewarm-keywords can also stamp
+  // computed_at, source, etc. alongside the list). The old code
+  // assumed an array directly and crashed with
+  //   "(intermediate value).slice is not a function"
+  // whenever rising-keywords ran. Accept both shapes so older cache
+  // rows (if any survive) still work.
   const raw = rows[0].results;
-  const topKeywords = (typeof raw === 'string' ? JSON.parse(raw) : raw).slice(0, limit);
+  const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
+  const arr = Array.isArray(parsed)
+    ? parsed
+    : (Array.isArray(parsed?.keywords) ? parsed.keywords : []);
+  const topKeywords = arr.slice(0, limit);
+  if (!topKeywords.length) return [];
 
   return Promise.all(topKeywords.map(async kw => {
     const { rows: arts } = await pool.query(`

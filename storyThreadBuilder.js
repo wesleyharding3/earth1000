@@ -32,6 +32,60 @@ const Anthropic = require("@anthropic-ai/sdk");
 const { normalizeRecentKeywordsBudgeted } = require("./keywordNormalizer");
 const { computeNationsForItem, enforceDisjointAndCapped } = require("./nationDesignations");
 
+// ── Pool query retry wrapper ───────────────────────────────────────────────
+//
+// Wraps pool.query so that transient Postgres "too many connections"
+// errors (code 53300, message "remaining connection slots are reserved
+// for roles with the SUPERUSER attribute") and similar bookkeeping
+// failures get retried with exponential backoff instead of crashing
+// the whole cron run.
+//
+// Why this exists: Render Cron schedules tend to cluster at the top of
+// each hour. At 04:00 UTC the article fetcher, prewarmers, builder, and
+// audit jobs may all fire simultaneously, each holding 4-6 pool slots
+// against Postgres' 100-slot ceiling. The web server's pool can be
+// holding 30-60 slots under load. When the total briefly exceeds the
+// ceiling, NEW connection acquires fail FATAL 53300 — but the
+// contention is usually transient (≤30s as siblings finish their
+// short queries). Retrying with backoff lets us ride out those bursts
+// instead of losing 9 freshly-Claude-generated thread defs and then
+// crashing in coolDownInactiveThreads.
+//
+// Backoff schedule: 1.5s → 3.8s → 9.4s → 23.4s (≈38s max total wait).
+// Jitter spreads competing crons so we don't all retry on the same
+// half-second tick.
+//
+// Non-transient errors (syntax, constraint violation, real query
+// failure) bypass retry and surface immediately — same behaviour as
+// before, so existing error handlers still trigger.
+const _origQuery = pool.query.bind(pool);
+pool.query = async function(...args) {
+  const MAX_ATTEMPTS = 4;
+  for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+    try {
+      return await _origQuery(...args);
+    } catch (err) {
+      const msg = (err && err.message) || '';
+      const isTransient =
+        err && (
+          err.code === '53300' ||                      // too_many_connections
+          err.code === '57P03' ||                      // cannot_connect_now
+          err.code === '08006' ||                      // connection_failure
+          err.code === '08001' ||                      // sqlclient_unable_to_establish_sqlconnection
+          /connection slots/i.test(msg) ||
+          /Connection terminated/i.test(msg) ||
+          /timeout exceeded when trying to connect/i.test(msg)
+        );
+      if (!isTransient || attempt === MAX_ATTEMPTS - 1) throw err;
+      const baseMs   = 1500 * Math.pow(2.5, attempt);
+      const jitterMs = Math.random() * 1000;
+      const backoff  = Math.round(baseMs + jitterMs);
+      console.warn(`[pool] transient error (code=${err.code || '?'}), retrying in ${backoff}ms (attempt ${attempt + 1}/${MAX_ATTEMPTS})`);
+      await new Promise(r => setTimeout(r, backoff));
+    }
+  }
+};
+
 // Recompute primary/secondary nations from the thread's full article corpus
 // via article_locations. Called after every INSERT/UPDATE so the arrays
 // stay in sync with what the articles actually mention. Bails on empty
@@ -328,6 +382,27 @@ async function run() {
 
   console.log(`\n🧵 Story Thread Builder — ${new Date().toISOString()}`);
   console.log(`   Lookback: ${LOOKBACK_HOURS}h | Article limit: none`);
+
+  // Startup jitter — sleep a randomized 0-90s before doing any DB work.
+  // Render Cron tends to fire multiple top-of-hour jobs (article
+  // fetcher, prewarmers, this builder, audit jobs) within the same
+  // ~5-second window, and the resulting Postgres connection-slot
+  // contention manifests as transient FATAL 53300 errors. The retry
+  // wrapper above absorbs individual query failures; this jitter
+  // probabilistically spreads the whole cron's startup so we don't
+  // all hammer max_connections at exactly the same second.
+  //
+  // 90s upper bound is safely under the typical 15-min budget for
+  // this cron — even at p99 sleep we still have 13+ minutes of
+  // actual work time. Set THREAD_BUILDER_NO_JITTER=1 to disable for
+  // local dev / one-off backfills where deterministic timing matters.
+  if (!process.env.THREAD_BUILDER_NO_JITTER) {
+    const jitterMs = Math.floor(Math.random() * 90_000);
+    if (jitterMs > 0) {
+      console.log(`   [startup-jitter] sleeping ${(jitterMs / 1000).toFixed(1)}s to reduce concurrent-cron contention`);
+      await new Promise(r => setTimeout(r, jitterMs));
+    }
+  }
 
   console.log(`   [${elapsed()}] Normalizing recent multilingual keywords (budget=${NORMALIZATION_BUDGET_MS / 1000}s, chunk=${NORMALIZATION_CHUNK_HOURS}h, max_lookback=${NORMALIZATION_MAX_LOOKBACK_HOURS}h)...`);
   const normalization = await normalizeRecentKeywordsBudgeted({

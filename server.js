@@ -237,6 +237,28 @@ app.get(['/auth/verify', '/auth/callback'], (req, res) => {
 
 app.use(express.json());
 
+// Prewarm force-refresh middleware. Pairs with the soft-eviction mode
+// in /internal/cache/evict so warmer crons can refresh cache entries
+// without ever taking the cache cold for end users.
+//
+// Activation: request carries header `x-cache-mode: refresh` AND
+// `x-cache-secret: <CACHE_EVICT_SECRET>`. Same secret that gates the
+// evict endpoint — if it isn't set, the middleware is a no-op (matches
+// fail-closed posture of the evict route).
+//
+// Effect: `ttlCached` reads `_cacheCtx.getStore()?.forceFresh` and,
+// when true, bypasses the fresh-hit and SWR-stale shortcuts so the
+// warmer's request actually runs (or joins) the producer and awaits
+// it. Other concurrent user requests are unaffected — they keep
+// getting the stale value via SWR while the producer runs.
+app.use((req, res, next) => {
+  const secret = process.env.CACHE_EVICT_SECRET;
+  if (!secret) return next();
+  if (req.get('x-cache-mode') !== 'refresh') return next();
+  if (req.get('x-cache-secret') !== secret) return next();
+  _cacheCtx.run({ forceFresh: true }, next);
+});
+
 // ── Browser caching headers for read-heavy GET endpoints ──
 // Sets Cache-Control with stale-while-revalidate + stale-if-error so
 // Cloudflare serves cached responses instantly, refreshes in background,
@@ -403,6 +425,23 @@ async function resolveHeroIsoFromText(items, idKey) {
 const _ttlCache = new Map();        // key → { expires, value }
 const _ttlInflight = new Map();     // key → Promise
 
+// Per-request cache flags via AsyncLocalStorage. Lets a prewarm cron
+// signal "I want to actually wait for the producer, not get a SWR-stale
+// shortcut" without threading a boolean through every ttlCached call
+// site (100+ routes). A middleware below sets `forceFresh: true` when
+// a request carries `x-cache-mode: refresh` + the cache secret;
+// ttlCached reads this flag on every call.
+//
+// Why this exists: the country/flows warmer used to evict cache entries
+// HARD (delete) before refilling them. That left a 10-20 minute window
+// where any user request between eviction and the warmer reaching that
+// country saw a cold-DB miss, often blowing past the 30s user timeout.
+// Soft eviction (mark stale, keep value) + forceFresh-aware ttlCached
+// closes the gap: users hit the stale value through SWR while the
+// warmer's GETs do the actual refresh work, country-by-country.
+const { AsyncLocalStorage } = require('node:async_hooks');
+const _cacheCtx = new AsyncLocalStorage();
+
 // ── Disk-persisted snapshot of the default news feed ─────────────────────
 // So a cold server boot (deploy, restart, crash) never serves an empty page
 // while the cache warms up. We load whatever was last-good into _ttlCache
@@ -505,11 +544,23 @@ async function _withStatementTimeout(timeoutMs) {
 async function ttlCached(key, ttlMs, producer) {
   const now = Date.now();
   const hit = _ttlCache.get(key);
-  if (hit && hit.expires > now) return hit.value;
+  // forceFresh: warmer crons set this via the `x-cache-mode: refresh`
+  // header. It bypasses both the fresh-hit shortcut AND the SWR-stale
+  // return — we ALWAYS run (or join) the producer and await its real
+  // value. Without this, the warmer would just be handed back the stale
+  // value via SWR, the producer would run in the background, and the
+  // warmer would finish in seconds while the actual refresh work stacked
+  // up unbounded against the pool. With it, the warmer paces itself
+  // naturally (one country at a time, awaiting each producer), and
+  // concurrent user requests still get the stale value via SWR below.
+  const forceFresh = _cacheCtx.getStore()?.forceFresh === true;
+  if (!forceFresh && hit && hit.expires > now) return hit.value;
   // Stale-while-revalidate: serve stale data while refreshing in background.
   // If the cache expired within the last 2× TTL, return stale immediately
   // and kick off a background refresh so the next request gets fresh data.
-  if (hit && hit.expires > now - ttlMs * 2) {
+  // Skipped for forceFresh requests — those want the producer's real
+  // value, not a stale shortcut.
+  if (!forceFresh && hit && hit.expires > now - ttlMs * 2) {
     if (!_ttlInflight.has(key)) {
       const bg = (async () => {
         try {
@@ -577,21 +628,41 @@ setInterval(() => {
 // `x-cache-secret` header. If the env var isn't set, the endpoint refuses
 // all calls (fail-closed) — operator must explicitly opt in by setting it
 // in the API service AND each cron service.
-function _evictCacheKeys({ keys = [], prefixes = [] }) {
+// Two eviction modes:
+//   'hard' (default) — actually DELETE the entry. Next request hits a
+//     cold cache and pays full producer latency. Use when the entry's
+//     value is wrong/dangerous and we'd rather serve nothing than
+//     stale (e.g. /api/internal/cache/invalidate-hero after a thread
+//     image fix).
+//   'soft' — mark `expires = Date.now() - 1` and KEEP the value.
+//     ttlCached's stale-while-revalidate path now serves the stale
+//     value to all callers while a background refresh runs, so the
+//     cache never goes cold from the user's perspective. Use when the
+//     entry is just AGE-stale (a builder ran and the cron wants the
+//     warmer's GETs to pick up new DB state).
+function _evictCacheKeys({ keys = [], prefixes = [], mode = 'hard' }) {
   let n = 0;
-  // Exact keys
-  for (const k of keys) {
+  const softMark = (k) => {
+    const entry = _ttlCache.get(k);
+    if (entry) {
+      // 1ms in the past: definitively expired but still inside the
+      // SWR window (2× ttlMs), so ttlCached returns stale + refreshes.
+      entry.expires = Date.now() - 1;
+      n++;
+    }
+    // Do NOT touch _ttlInflight — let any in-flight producer finish.
+  };
+  const hardDelete = (k) => {
     if (_ttlCache.delete(k)) n++;
     _ttlInflight.delete(k);
-  }
+  };
+  const apply = mode === 'soft' ? softMark : hardDelete;
+  // Exact keys
+  for (const k of keys) apply(k);
   // Prefix matches
   if (prefixes.length) {
     for (const k of [..._ttlCache.keys()]) {
-      if (prefixes.some(p => k.startsWith(p))) {
-        _ttlCache.delete(k);
-        _ttlInflight.delete(k);
-        n++;
-      }
+      if (prefixes.some(p => k.startsWith(p))) apply(k);
     }
   }
   return n;
@@ -605,9 +676,15 @@ app.post('/internal/cache/evict', express.json({ limit: '64kb' }), (req, res) =>
   const keys     = Array.isArray(req.body?.keys)     ? req.body.keys.slice(0, 200)     : [];
   const prefixes = Array.isArray(req.body?.prefixes) ? req.body.prefixes.slice(0, 50)  : [];
   if (!keys.length && !prefixes.length) return res.status(400).json({ error: 'keys or prefixes required' });
-  const evicted = _evictCacheKeys({ keys, prefixes });
+  // mode='soft' marks entries as expired but keeps the value, so
+  // ttlCached's SWR keeps serving stale until the warmer's GETs
+  // (carrying x-cache-mode: refresh) actually re-run the producers.
+  // Default stays 'hard' for backward compat with callers (e.g. the
+  // hero-image invalidator) that explicitly want the value gone.
+  const mode = req.body?.mode === 'soft' ? 'soft' : 'hard';
+  const evicted = _evictCacheKeys({ keys, prefixes, mode });
   res.set('Cache-Control', 'no-store');
-  res.json({ evicted, before: _ttlCache.size + evicted, after: _ttlCache.size });
+  res.json({ evicted, mode, before: _ttlCache.size + (mode === 'hard' ? evicted : 0), after: _ttlCache.size });
 });
 
 // ── Country-name regex, built once at boot ─────────────────────────────────

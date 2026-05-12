@@ -36,7 +36,7 @@
  */
 
 require('dotenv').config({ override: true });
-const { forceRefreshCaches, cacheBust, purgeCloudflareUrls } = require('./prewarmCommon');
+const { forceRefreshCaches, cacheBust, purgeCloudflareUrls, fetchPrewarm } = require('./prewarmCommon');
 
 const API_URL     = (process.env.API_URL || 'http://localhost:3000').replace(/\/$/, '');
 // 130s — must be > server's prewarm SQL ceiling (120s) so the cron's
@@ -103,6 +103,17 @@ function fetchWithTimeout(url) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   return fetch(url, { signal: ctrl.signal }).finally(() => clearTimeout(t));
+}
+
+// fetchPrewarm + abort-on-timeout. Used by warmFlow so its GETs carry
+// the x-cache-mode: refresh header, telling the API to actually run
+// the producer instead of taking the SWR-stale shortcut. The cron
+// paces itself country-by-country this way; users hitting /api/flows
+// during the run get the stale value via SWR, never a cold miss.
+function fetchPrewarmWithTimeout(url) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+  return fetchPrewarm(url, { signal: ctrl.signal }).finally(() => clearTimeout(t));
 }
 
 async function fetchJSON(url) {
@@ -183,8 +194,11 @@ async function warmFlow(direction, country, mode) {
     try {
       // Cache-bust so Cloudflare passes through to origin instead of
       // serving a stale cached response. CF purge for the canonical
-      // URL happens at end-of-run.
-      res = await fetchWithTimeout(cacheBust(url));
+      // URL happens at end-of-run. fetchPrewarmWithTimeout also adds
+      // the x-cache-mode: refresh header so the origin's ttlCached
+      // bypasses SWR-stale return and actually runs the producer for
+      // this request (concurrent user requests still get SWR-stale).
+      res = await fetchPrewarmWithTimeout(cacheBust(url));
     } catch (e) {
       return { ms: Date.now() - t0, err: e.message, status: null };
     }
@@ -244,14 +258,27 @@ async function main() {
   const t0 = Date.now();
   console.log(`${TAG} start ${new Date().toISOString()} api=${API_URL} top=${TOP_N} concurrency=${CONCURRENCY} timeout=${TIMEOUT_MS}ms`);
 
-  // Force-evict the /api/flows aggregate cache (key prefix `flows:`)
-  // so the warmer's GETs below cache-miss and repopulate from current
-  // DB state. The country-only aggregate variant has a 13h TTL —
-  // without eviction the warmer is a no-op for half a day after a
-  // builder pushes new data.
+  // SOFT-evict the /api/flows aggregate cache (key prefix `flows:`).
+  //
+  // 'soft' mode marks entries as expired BUT keeps the value, so
+  // ttlCached's SWR path serves the existing stale value to user
+  // requests throughout this warmer's run — no cold-miss window
+  // between eviction (t=0) and the warmer reaching that country
+  // (t=10-20 min later). The warmer's own GETs carry the
+  // x-cache-mode: refresh header (via fetchPrewarm in warmFlow) so
+  // they bypass SWR and actually run the producer, pacing the cron
+  // country-by-country instead of overloading the pool.
+  //
+  // Earlier 'hard' mode DELETED entries, which left a long cold
+  // window where any user request to /api/flows for a not-yet-reached
+  // country paid full 30-120s cold-DB latency, often blowing past the
+  // 30s user statement_timeout → 500. This was the user-reported
+  // "cache stays active for about an hour, then dies during the
+  // warmer's 10-20 min run" symptom.
   await forceRefreshCaches({
     apiUrl: API_URL,
     prefixes: ['flows:'],
+    mode: 'soft',
     tag: TAG,
   });
 
