@@ -33,7 +33,7 @@
  */
 
 require('dotenv').config({ override: true });
-const { forceRefreshCaches, cacheBust, purgeCloudflareUrls } = require('./prewarmCommon');
+const { forceRefreshCaches, cacheBust, purgeCloudflareUrls, fetchPrewarm } = require('./prewarmCommon');
 
 const API_URL     = (process.env.API_URL || 'http://localhost:3000').replace(/\/$/, '');
 // 130s — must outlive the server's prewarm SQL ceiling (120s on
@@ -74,6 +74,17 @@ function fetchWithTimeout(url) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   return fetch(url, { signal: ctrl.signal }).finally(() => clearTimeout(t));
+}
+
+// Same shape as fetchWithTimeout but adds the x-cache-mode: refresh
+// header (via fetchPrewarm) so the API's ttlCached bypasses SWR-stale
+// and actually runs the producer. Pairs with the soft-eviction call
+// in main() — together they keep user requests served from stale
+// cache while the warmer does the real work in the background.
+function fetchPrewarmWithTimeout(url) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+  return fetchPrewarm(url, { signal: ctrl.signal }).finally(() => clearTimeout(t));
 }
 
 async function fetchJSON(url) {
@@ -156,7 +167,11 @@ async function warm(label, url) {
       // Cache-bust so Cloudflare doesn't intercept the warmer's GET
       // with a stale cached value. CF purge for the canonical URL
       // happens at end-of-run via purgeCloudflareUrls.
-      const r = await fetchWithTimeout(cacheBust(url));
+      // fetchPrewarmWithTimeout adds x-cache-mode: refresh so the
+      // server's ttlCached bypasses the SWR-stale shortcut and
+      // actually runs the producer for this request — concurrent
+      // user requests still get the stale value via SWR.
+      const r = await fetchPrewarmWithTimeout(cacheBust(url));
       const ms = Date.now() - t0;
       // Cancel body stream — the server's ttlCached() populates the cache
       // INSIDE the callback before res.json() runs, so by the time we get
@@ -170,7 +185,12 @@ async function warm(label, url) {
   };
 
   let r = await _attempt();
-  if (r.err && r.status >= 500 && r.status < 600) {
+  // Retry on HTTP 5xx OR network failure (status null — abort, reset,
+  // connect timeout). The "US global=ERR HTTP 500" failure pattern is
+  // transient API/DB contention; one retry with a small backoff
+  // catches it. 4xx skips retry (auth/malformed don't change).
+  const isTransient = r.err && (r.status === null || (r.status >= 500 && r.status < 600));
+  if (isTransient) {
     await new Promise(rs => setTimeout(rs, 3000));
     const r2 = await _attempt();
     if (!r2.err) return { label, url, ms: r.ms + 3000 + r2.ms, retried: true };
@@ -184,9 +204,30 @@ async function main() {
   const t0 = Date.now();
   console.log(`${TAG} start ${new Date().toISOString()} api=${API_URL} countries=${COUNTRY_LIMIT} cities=${CITY_LIMIT} concurrency=${CONCURRENCY} timeout=${TIMEOUT_MS}ms`);
 
-  // Force-evict the feed caches (city + country + global feeds, news
-  // search, cities/countries/tags lookup tables) so the warmer's GETs
-  // below cache-miss and repopulate from current DB state.
+  // Startup jitter — sleep a randomized 0-60s before any work. The
+  // "15 past every hour" cron schedule lands close to the article
+  // fetcher (hourly at :00 or :05); jittering smears the start so
+  // the Postgres connection-slot ceiling isn't hit at the same exact
+  // second. Set PREWARM_NO_JITTER=1 to disable for local debugging.
+  if (!process.env.PREWARM_NO_JITTER) {
+    const jitterMs = Math.floor(Math.random() * 60_000);
+    if (jitterMs > 1000) {
+      console.log(`${TAG} startup jitter: sleeping ${(jitterMs / 1000).toFixed(1)}s`);
+      await new Promise(r => setTimeout(r, jitterMs));
+    }
+  }
+
+  // SOFT-evict the feed caches so user requests during the cron's
+  // run see the stale-but-valid cached values via SWR instead of
+  // cold-miss 500s. The warmer's own GETs carry the x-cache-mode:
+  // refresh header (via fetchPrewarm) so they bypass SWR and run
+  // the producers for real.
+  //
+  // Was 'hard' mode (delete entries), which left a window where
+  // any user hitting a freshly-evicted feed paid full cold-DB cost
+  // — exactly the "US global=ERR HTTP 500" pattern. Soft eviction +
+  // retry in warm() means users see continuous service throughout
+  // the cron's run.
   await forceRefreshCaches({
     apiUrl: API_URL,
     prefixes: [
@@ -195,6 +236,7 @@ async function main() {
       'country-feed:', 'country-feed-global:',
       'city-feed:',    'city-feed-global:',
     ],
+    mode: 'soft',
     tag: TAG,
   });
 
