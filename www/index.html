@@ -29317,6 +29317,23 @@ const settingsToggle     = document.getElementById("settingsToggle");
     const chip  = document.getElementById(chipId);
     let acIndex = -1;
 
+    // Move the dropdown OUT of #flowControls so position:fixed actually
+    // anchors to the viewport. CSS spec: any non-`none` transform on an
+    // ancestor (#flowControls uses `transform: translateX(-50%)` for its
+    // horizontal centering) makes that ancestor the containing block for
+    // position:fixed descendants — overriding the viewport. Result: our
+    // `top: ${r.bottom + 4}px` was interpreted as "offset from #flowControls"
+    // instead of "offset from viewport," so when the panel shifted up
+    // above the iOS keyboard, the dropdown stayed at the panel's
+    // ORIGINAL screen position (because flowControls.top + 354px hadn't
+    // moved relative to flowControls itself). Re-parenting to <body>
+    // removes the transformed ancestor from the chain and position:fixed
+    // works as expected. Done once at setup; click handlers still fire
+    // regardless of DOM location.
+    if (ac.parentElement !== document.body) {
+      document.body.appendChild(ac);
+    }
+
     // Position the fixed-position dropdown directly under the input,
     // matching its width. Recomputed at open time and whenever the
     // viewport changes (keyboard slide, scroll, rotation). Without
