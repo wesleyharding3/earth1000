@@ -47086,6 +47086,17 @@ body.ticker-active .gTickerLabel {
           const p = sa.play();
           if (p && typeof p.then === 'function') p.catch(() => {});
           await _waitForPlaying(sa, 4000);
+          // Post-play progression check — see www/index.html for the
+          // full rationale. iOS WKWebView can fire `playing` while the
+          // element stays wedged at currentTime=0; without this we'd
+          // wait out the 60s wall-clock fallback as dead air.
+          const _startCt = sa.currentTime;
+          await _briefingWait(1200);
+          if (segIdx !== curIdx || !playing) return;
+          const _afterCt = sa.currentTime;
+          if (_afterCt - _startCt < 0.1 && _afterCt < 0.5) {
+            throw new Error(`stuck-at-currentTime=${_afterCt.toFixed(2)}`);
+          }
           console.log(`[briefing] seg ${curIdx} playing — currentTime=${sa.currentTime.toFixed(2)} duration=${sa.duration.toFixed(2)}`);
         } catch (err) {
           console.warn(`[briefing] seg ${curIdx} start sequence failed: ${err.message}`);
@@ -47108,7 +47119,17 @@ body.ticker-active .gTickerLabel {
               const p2 = fresh.play();
               if (p2 && typeof p2.then === 'function') p2.catch(() => {});
               await _waitForPlaying(fresh, 4000);
-              console.log(`[briefing] seg ${curIdx} recovered on retry`);
+              // Post-play progression check — if the fresh element
+              // also wedges, skip the segment rather than wait out the
+              // 60s wall-clock fallback. See www/index.html.
+              const _fcStart = fresh.currentTime;
+              await _briefingWait(1200);
+              if (segIdx !== curIdx || !playing) return;
+              const _fcAfter = fresh.currentTime;
+              if (_fcAfter - _fcStart < 0.1 && _fcAfter < 0.5) {
+                throw new Error(`recovery-stuck-at-currentTime=${_fcAfter.toFixed(2)}`);
+              }
+              console.log(`[briefing] seg ${curIdx} recovered on retry — currentTime=${fresh.currentTime.toFixed(2)}`);
               fresh.addEventListener('ended', _onSegmentEnded, { once: true });
             } catch (err2) {
               console.error(`[briefing] seg ${curIdx} recovery also failed (${err2.message}) — skipping segment`);

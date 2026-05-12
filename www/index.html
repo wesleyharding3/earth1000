@@ -45061,6 +45061,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
   }
 
   function showOnboarding(startStep) {
+    // Never auto-launch the onboarding overlay while a briefing is
+    // active — it would take over the screen and silently overlap
+    // the briefing's chrome. Deferring is safe: the caller (sign-in
+    // flow) checks preferences each time, so the next sign-in or
+    // re-entry into the app will surface onboarding again if it's
+    // still incomplete.
+    if (window.briefingActive) {
+      console.warn('[onboarding] suppressed — briefing active');
+      return;
+    }
     _obStep = startStep || 0;
     _obData = { home_country: null, _homeObj: null, interest_regions: [], excluded_countries: [], interest_topics: [], interest_sectors: [], languages: [], diversity_pref: 100, depth_pref: 'both' };
     document.getElementById('onboardOverlay').classList.add('open');
@@ -45343,6 +45353,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
   const pricingClose   = document.getElementById('pricingClose');
 
   window.__openPricing = function (nudgeMsg) {
+    // Block the pricing modal from popping during a briefing. Most
+    // callers are auto-triggered upsell prompts (out-of-credits,
+    // gated feature taps from background panels, etc.), and slamming
+    // the full-screen pricing overlay over an in-flight briefing
+    // is the worst possible UX. The pricing CTA from the account
+    // dropdown is technically also blocked here, but the dropdown
+    // itself isn't reachable from inside the briefing overlay, so
+    // in practice no user-initiated path is harmed.
+    if (window.briefingActive) {
+      console.warn('[pricing] suppressed — briefing active');
+      return;
+    }
     document.getElementById('pricingSubtitle').textContent =
       nudgeMsg || 'Unlock the full Earth intelligence platform.';
     if (window.__currentUser && typeof window.__refreshSubscriptionState === 'function') {
@@ -46120,6 +46142,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
   // ── Toast helper ────────────────────────────────────────────────
   function _showToast(msg) {
+    // Suppress toast popups during a briefing — the bottom strip is
+    // reserved for briefing controls + caption overlay, and the
+    // briefing chrome puts itself at z-index well above the toast's
+    // 99999 in some layouts. Toasts are transient feedback ("Saved!",
+    // "Restored", etc.); dropping them mid-briefing is preferable to
+    // overlapping the user's listening experience. The triggering
+    // action (purchase restore, saved view, etc.) has already
+    // succeeded — only the feedback is suppressed.
+    if (window.briefingActive) {
+      console.log('[toast] suppressed during briefing:', msg);
+      return;
+    }
     const t = document.createElement('div');
     t.style.cssText = `position:fixed;bottom:80px;left:50%;transform:translateX(-50%);
       background:rgba(20,28,45,0.97);border:1px solid rgba(212,168,67,0.4);
@@ -49340,6 +49374,26 @@ body.ticker-active .gTickerLabel {
     // Set briefingActive FIRST — closeBriefingLauncher checks this
     // synchronously to decide whether to restore the procedural music.
     window.briefingActive = true;
+    // Retract any ephemeral overlays/nudges that may have popped up
+    // just before the user tapped Start Briefing. Without this, the
+    // "Stay briefed" nudge, an active toast, or the briefing-ready
+    // banner could linger over the briefing chrome. Each show-path
+    // also has its own `window.briefingActive` early-return so new
+    // ones never spawn while the briefing is running — this handles
+    // the BEFORE case (already visible at the moment of opening).
+    try {
+      document.getElementById('notifNudge')?.classList.remove('open');
+      document.getElementById('briefingNudge')?.classList.remove('open');
+      // Onboarding overlay shouldn't normally be open here (the
+      // briefing button isn't reachable until onboarding finishes),
+      // but defensively close it too.
+      document.getElementById('onboardOverlay')?.classList.remove('open');
+      // Toasts use a transient .toast or inline div — remove any
+      // lingering ones at the bottom of <body> with the toast styling.
+      document.querySelectorAll('body > div[style*="position:fixed"][style*="bottom:80px"]').forEach(el => {
+        try { el.remove(); } catch (_) {}
+      });
+    } catch (_) {}
     // Tear down procedural layers + heavy duck. Was also calling
     // ctx.suspend() — that turned out to leave the iOS audio session
     // in a state where the narrator HTMLAudio couldn't claim it
@@ -51317,6 +51371,32 @@ body.ticker-active .gTickerLabel {
           const p = sa.play();
           if (p && typeof p.then === 'function') p.catch(() => {});
           await _waitForPlaying(sa, 4000);
+
+          // Post-play progression check. iOS WKWebView sometimes fires
+          // the `playing` event while the element stays wedged at
+          // currentTime=0 — typically after a transient network blip
+          // (NSURLErrorCancelled code -999 / didFailProvisionalLoad)
+          // interrupts the segment fetch mid-buffer. The audio session
+          // activates so `playing` fires, but no audio frames decode
+          // and currentTime never advances. Without this check we'd
+          // rely on the 60s wall-clock fallback timer (line ~51298) to
+          // bail out — user-visible as "voiceover failed, music kept
+          // playing, play-pause bar stuck at 0:00 for the whole
+          // segment" before silently advancing.
+          //
+          // Sample currentTime 1200ms after `playing`. If it hasn't
+          // progressed at least 0.1s AND is still under 0.5s, the
+          // element is stuck. Throw so the catch block re-creates a
+          // fresh Audio element with a cache-bust URL and re-attempts.
+          // Total stuck-detection latency: ~1.2s. Recovery latency:
+          // ~5-6s vs. the 60s of dead air before.
+          const _startCt = sa.currentTime;
+          await _briefingWait(1200);
+          if (segIdx !== curIdx || !playing) return;
+          const _afterCt = sa.currentTime;
+          if (_afterCt - _startCt < 0.1 && _afterCt < 0.5) {
+            throw new Error(`stuck-at-currentTime=${_afterCt.toFixed(2)}`);
+          }
           console.log(`[briefing] seg ${curIdx} playing — currentTime=${sa.currentTime.toFixed(2)} duration=${sa.duration.toFixed(2)}`);
         } catch (err) {
           console.warn(`[briefing] seg ${curIdx} start sequence failed: ${err.message}`);
@@ -51343,7 +51423,18 @@ body.ticker-active .gTickerLabel {
               const p2 = fresh.play();
               if (p2 && typeof p2.then === 'function') p2.catch(() => {});
               await _waitForPlaying(fresh, 4000);
-              console.log(`[briefing] seg ${curIdx} recovered on retry`);
+              // Same post-play progression check as the initial path.
+              // If the FRESH element ALSO wedges at currentTime=0, we
+              // skip the segment instead of pretending recovery worked
+              // — far better to advance than stare at silence for 60s.
+              const _fcStart = fresh.currentTime;
+              await _briefingWait(1200);
+              if (segIdx !== curIdx || !playing) return;
+              const _fcAfter = fresh.currentTime;
+              if (_fcAfter - _fcStart < 0.1 && _fcAfter < 0.5) {
+                throw new Error(`recovery-stuck-at-currentTime=${_fcAfter.toFixed(2)}`);
+              }
+              console.log(`[briefing] seg ${curIdx} recovered on retry — currentTime=${fresh.currentTime.toFixed(2)}`);
               // Re-wire the `ended` listener on the fresh element so
               // segment advancement still works. The original `sa.ended`
               // is on the dead element. We swap the handler to `fresh`
@@ -59932,32 +60023,47 @@ body.ticker-active .gTickerLabel {
     color: #fff; padding: 5px 8px; border-radius: 6px;
     font-size: 12px; font-family: inherit;
   }
-  /* Onboarding nudge banner ------------------------------------- */
+  /* Onboarding nudge banner. Shrunk from the original 420px / 12-13px
+     stack — at the old size it overpowered the bottom of the screen,
+     especially on iPhone-mini class widths. The user reported it
+     felt "too big." New dimensions:
+       - max-width 320px (was 420)
+       - padding 10/12 (was 12/14)
+       - title 12px (was 13), body 11px (was 12), buttons 11px (was 12)
+       - smaller corner radius and gap for a tighter footprint.
+     Functionally identical — just less visual weight. */
   #notifNudge {
     position: fixed;
     left: 50%; transform: translateX(-50%) translateY(120%);
-    bottom: calc(env(safe-area-inset-bottom, 0px) + var(--page-nav-height, 0px) + 16px);
-    width: min(420px, calc(100vw - 24px));
+    bottom: calc(env(safe-area-inset-bottom, 0px) + var(--page-nav-height, 0px) + 14px);
+    width: min(320px, calc(100vw - 24px));
     z-index: 100100;
-    padding: 12px 14px;
+    padding: 10px 12px;
     background: rgba(8, 12, 22, 0.96);
     border: 1px solid rgba(255, 200, 130, 0.32);
-    border-radius: 14px;
-    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55);
+    border-radius: 11px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
     color: #fff; font-family: inherit;
     transition: transform 0.42s cubic-bezier(0.32, 0.72, 0, 1),
                 opacity 0.3s ease;
     opacity: 0; pointer-events: none;
   }
   #notifNudge.open { transform: translateX(-50%) translateY(0); opacity: 1; pointer-events: all; }
-  #notifNudge .nnTitle { font-size: 13px; font-weight: 700; color: rgba(255, 200, 130, 0.95); margin-bottom: 4px; }
-  #notifNudge .nnBody { font-size: 12px; line-height: 1.45; color: rgba(255, 255, 255, 0.72); margin-bottom: 10px; }
-  #notifNudge .nnBtnRow { display: flex; gap: 8px; }
+  #notifNudge .nnTitle { font-size: 12px; font-weight: 700; color: rgba(255, 200, 130, 0.95); margin-bottom: 3px; }
+  #notifNudge .nnBody { font-size: 11px; line-height: 1.4; color: rgba(255, 255, 255, 0.7); margin-bottom: 8px; }
+  #notifNudge .nnBtnRow { display: flex; gap: 6px; }
   #notifNudge button {
-    flex: 1; padding: 8px 12px; border-radius: 8px; font-size: 12px;
+    flex: 1; padding: 6px 10px; border-radius: 7px; font-size: 11px;
     font-weight: 600; font-family: inherit; cursor: pointer;
     transition: background 0.15s;
   }
+  /* Hard-suppress the nudge while a briefing is playing — the bottom
+     of the screen is reserved for briefing chrome (controls + nav
+     dots + caption overlay). Belt-and-suspenders alongside the JS
+     guard in __notifMaybeShowNudge: even if the nudge was already
+     `.open` when the briefing started, it stays invisible until the
+     briefing closes. */
+  body.briefing-active #notifNudge { opacity: 0 !important; pointer-events: none !important; transform: translateX(-50%) translateY(120%) !important; }
   #notifNudge .nnPrimary {
     background: rgba(255, 200, 130, 0.32);
     border: 1px solid rgba(255, 200, 130, 0.50);
@@ -60829,6 +60935,14 @@ body.ticker-active .gTickerLabel {
   window.__notifMaybeShowNudge = async function() {
     if (!window.__authToken) return;
     if (!_isCapacitorIOS()) return;       // Phase 1 iOS-first
+    // Hard gate: never show the "Stay briefed" prompt while a briefing
+    // is playing. The bottom of the screen is reserved for briefing
+    // controls + caption overlay; popping this nudge there would
+    // overlap the chrome the user is currently using. The nudge has
+    // an internal cooldown (24h between attempts), so deferring it
+    // this way doesn't lose the nudge — it just re-tries after the
+    // briefing closes and the next cooldown window opens.
+    if (window.briefingActive) return;
     const s = _getNudgeState();
     if (s.dismissed) return;
     if (s.shows >= 3) return;             // Stop nagging after 3 attempts
