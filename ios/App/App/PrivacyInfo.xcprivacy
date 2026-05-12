@@ -1,0 +1,176 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Privacy Manifest — required by Apple for App Store uploads since
+  May 1, 2024. Declares (a) whether the app does cross-app tracking,
+  (b) which Required Reason APIs the app's own code touches, and
+  (c) which categories of user data the app collects.
+
+  Notes for future maintainers:
+  - Third-party SDKs (Capacitor, RevenueCat, Cordova) ship their own
+    PrivacyInfo.xcprivacy files inside their frameworks. THIS file
+    only covers Earth00's first-party code + Capacitor plugins whose
+    privacy use isn't already declared by the framework manifest.
+  - If App Store Connect's upload validator emails you about an
+    undeclared Required Reason API, add it to NSPrivacyAccessedAPITypes
+    below with the matching reason code from
+    https://developer.apple.com/documentation/bundleresources/privacy_manifest_files/describing_use_of_required_reason_api
+  - The "linked to identity" flag (NSPrivacyCollectedDataTypeLinked)
+    means "tied to a user account that you control" — every entry below
+    is true because Earth00 stores all of these against the Supabase
+    user UUID after sign-in. Anonymous-tier data (free briefings before
+    sign-in) is technically not linked, but Apple is fine with the
+    stricter declaration and gets nervous about under-declarations.
+  - NSPrivacyTracking is FALSE: Earth00 does not use any data for
+    tracking (no advertising IDs, no cross-app linking, no data
+    brokers). If we ever add advertising attribution or share user
+    data with a third-party broker, flip to true AND add the relevant
+    tracking domains to NSPrivacyTrackingDomains.
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- ── Tracking declarations ──────────────────────────────────── -->
+    <key>NSPrivacyTracking</key>
+    <false/>
+    <key>NSPrivacyTrackingDomains</key>
+    <array/>
+
+    <!-- ── Required Reason APIs ───────────────────────────────────── -->
+    <key>NSPrivacyAccessedAPITypes</key>
+    <array>
+        <!-- UserDefaults — used by Capacitor's Preferences/Storage layer
+             and by the app's own localStorage shims that backstop to
+             UserDefaults on WKWebView. Reason CA92.1: "Access info from
+             same app, per documentation." -->
+        <dict>
+            <key>NSPrivacyAccessedAPIType</key>
+            <string>NSPrivacyAccessedAPICategoryUserDefaults</string>
+            <key>NSPrivacyAccessedAPITypeReasons</key>
+            <array>
+                <string>CA92.1</string>
+            </array>
+        </dict>
+        <!-- File timestamp APIs — used by @capacitor/filesystem and by
+             any cache layer that checks file mod-times. Reason C617.1:
+             "Inside app container, app group container, or the app's
+             CloudKit container." -->
+        <dict>
+            <key>NSPrivacyAccessedAPIType</key>
+            <string>NSPrivacyAccessedAPICategoryFileTimestamp</string>
+            <key>NSPrivacyAccessedAPITypeReasons</key>
+            <array>
+                <string>C617.1</string>
+            </array>
+        </dict>
+    </array>
+
+    <!-- ── Collected data types ───────────────────────────────────── -->
+    <key>NSPrivacyCollectedDataTypes</key>
+    <array>
+        <!-- Email address — from Sign in with Apple or Google Sign-in. -->
+        <dict>
+            <key>NSPrivacyCollectedDataType</key>
+            <string>NSPrivacyCollectedDataTypeEmailAddress</string>
+            <key>NSPrivacyCollectedDataTypeLinked</key>
+            <true/>
+            <key>NSPrivacyCollectedDataTypeTracking</key>
+            <false/>
+            <key>NSPrivacyCollectedDataTypePurposes</key>
+            <array>
+                <string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+            </array>
+        </dict>
+        <!-- Name — from the same sign-in providers. May be absent for
+             Apple-Hide-My-Email users; declared anyway because we
+             accept it when offered. -->
+        <dict>
+            <key>NSPrivacyCollectedDataType</key>
+            <string>NSPrivacyCollectedDataTypeName</string>
+            <key>NSPrivacyCollectedDataTypeLinked</key>
+            <true/>
+            <key>NSPrivacyCollectedDataTypeTracking</key>
+            <false/>
+            <key>NSPrivacyCollectedDataTypePurposes</key>
+            <array>
+                <string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+            </array>
+        </dict>
+        <!-- User ID — the Supabase user UUID assigned at sign-in. Used
+             to scope every server-side request to the signed-in user. -->
+        <dict>
+            <key>NSPrivacyCollectedDataType</key>
+            <string>NSPrivacyCollectedDataTypeUserID</string>
+            <key>NSPrivacyCollectedDataTypeLinked</key>
+            <true/>
+            <key>NSPrivacyCollectedDataTypeTracking</key>
+            <false/>
+            <key>NSPrivacyCollectedDataTypePurposes</key>
+            <array>
+                <string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+            </array>
+        </dict>
+        <!-- Device ID — the APNs push token registered for the device.
+             Linked to the user record so we route briefing-ready /
+             follow-country pushes to the right account. -->
+        <dict>
+            <key>NSPrivacyCollectedDataType</key>
+            <string>NSPrivacyCollectedDataTypeDeviceID</string>
+            <key>NSPrivacyCollectedDataTypeLinked</key>
+            <true/>
+            <key>NSPrivacyCollectedDataTypeTracking</key>
+            <false/>
+            <key>NSPrivacyCollectedDataTypePurposes</key>
+            <array>
+                <string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+            </array>
+        </dict>
+        <!-- Purchase History — IAP transactions via RevenueCat. Used to
+             gate Pro / Enterprise features and surface the current
+             entitlement state in the account UI. -->
+        <dict>
+            <key>NSPrivacyCollectedDataType</key>
+            <string>NSPrivacyCollectedDataTypePurchaseHistory</string>
+            <key>NSPrivacyCollectedDataTypeLinked</key>
+            <true/>
+            <key>NSPrivacyCollectedDataTypeTracking</key>
+            <false/>
+            <key>NSPrivacyCollectedDataTypePurposes</key>
+            <array>
+                <string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+            </array>
+        </dict>
+        <!-- Search History — keyword searches in the kwi widget and
+             free-form prompts to the Heatmap "Ask AI" endpoint. -->
+        <dict>
+            <key>NSPrivacyCollectedDataType</key>
+            <string>NSPrivacyCollectedDataTypeSearchHistory</string>
+            <key>NSPrivacyCollectedDataTypeLinked</key>
+            <true/>
+            <key>NSPrivacyCollectedDataTypeTracking</key>
+            <false/>
+            <key>NSPrivacyCollectedDataTypePurposes</key>
+            <array>
+                <string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+                <string>NSPrivacyCollectedDataTypePurposeProductPersonalization</string>
+            </array>
+        </dict>
+        <!-- Product Interaction — briefings consumed, countries
+             followed, threads/timelines opened, saved views. Used both
+             for app functionality (resume state, "your countries"
+             surfaces) and personalization (recommended threads). -->
+        <dict>
+            <key>NSPrivacyCollectedDataType</key>
+            <string>NSPrivacyCollectedDataTypeProductInteraction</string>
+            <key>NSPrivacyCollectedDataTypeLinked</key>
+            <true/>
+            <key>NSPrivacyCollectedDataTypeTracking</key>
+            <false/>
+            <key>NSPrivacyCollectedDataTypePurposes</key>
+            <array>
+                <string>NSPrivacyCollectedDataTypePurposeAppFunctionality</string>
+                <string>NSPrivacyCollectedDataTypePurposeProductPersonalization</string>
+            </array>
+        </dict>
+    </array>
+</dict>
+</plist>

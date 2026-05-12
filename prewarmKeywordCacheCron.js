@@ -40,7 +40,7 @@
  *   PREWARM_KEYWORDS        comma-separated keyword list (manual override)
  *   PREWARM_TRENDING_LIMIT  how many trending keywords to warm (default: 15)
  *   PREWARM_RISING_LIMIT    how many rising keywords to warm (default: 25)
- *   PREWARM_TIMEOUT_MS      per-request timeout (default: 95000)
+ *   PREWARM_TIMEOUT_MS      per-request timeout (default: 130000)
  *   PREWARM_PAUSE_MS        pause between keyword batches (default: 250)
  *
  * Run:  node prewarmKeywordCacheCron.js
@@ -53,17 +53,13 @@ require('dotenv').config({ override: true });
 const { forceRefreshCaches, cacheBust, purgeCloudflareUrls, fetchPrewarm } = require('./prewarmCommon');
 
 const API_URL     = (process.env.API_URL || 'http://localhost:3000').replace(/\/$/, '');
-// 60s — cold-buffer flows queries on a hot keyword can take 8–10s, plus
-// network RTT. Anything shorter just kills our own in-flight requests
-// and looks like a fetch error in the logs.
-//
-// Bumped 60s → 95s after observing every heatmap call abort at 60s.
-// Reason: the heatmap endpoint sets ITS OWN server-side SQL timeout of
-// 90s (see server.js _heatmapQuery → SET statement_timeout = 90000),
-// which is longer than our previous 60s. We need to wait longer than
-// the server is willing to spend, otherwise we cancel its work for it.
-// 95s = 90s server cap + 5s network/serialize buffer.
-const TIMEOUT_MS  = parseInt(process.env.PREWARM_TIMEOUT_MS || '95000', 10);
+// Bumped 95s → 130s in lockstep with the server's /api/heatmap prewarm
+// SQL cap going 60s → 120s. Heavy keywords (trump, un, eu, iran, ai)
+// were landing right at 60s and being silently emptied by the server's
+// query-error path. Wider server budget + wider client budget here gives
+// the slowest live queries headroom to finish on cold buffer. 130s leaves
+// 10s for network / serialization / Render proxy.
+const TIMEOUT_MS  = parseInt(process.env.PREWARM_TIMEOUT_MS || '130000', 10);
 // Serialize by default. Concurrency >1 saturates the API's small pg pool
 // (each flows query holds a connection for up to 10s under
 // SET LOCAL statement_timeout = 10000); follow-on requests then queue

@@ -49,6 +49,17 @@
 	<true/>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<!--
+	  Permission rationale shown when the user picks "Save Image" or
+	  "Save Video" from the iOS share sheet for a globe screenshot or
+	  rendered briefing video. Add-only access (NSPhotoLibraryAdd…)
+	  rather than full access (NSPhotoLibrary…) because Earth00 never
+	  reads existing photos — it only writes new ones. Without this
+	  string, the share-to-photos path silently crashes the UIActivity
+	  ViewController on iOS 14+.
+	-->
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Earth00 saves the globe images and briefing videos you choose to share to your photo library.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>remote-notification</string>

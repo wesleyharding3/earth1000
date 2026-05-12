@@ -1923,7 +1923,15 @@ body.ticker-active #flowControls {
   box-sizing: border-box;
   box-shadow: 0 8px 40px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.07);
   position: relative;
-  overflow: hidden;
+  /* overflow: visible — was 'hidden', which clipped the From/About
+     country autocomplete dropdown (.flowAC) on mobile. The keyword
+     field's .kwAutoList drops upward (bottom:100%) so it fits within
+     the panel; From/About drop downward (top:100%) and were getting
+     clipped at the panel boundary, especially when the kbd-open cap
+     shortens the panel to 320px. Background gradients still clip to
+     border-radius via the default background-clip: border-box, and
+     box-shadow renders outside any way — no visual regression. */
+  overflow: visible;
   animation: flowBorderPulse 2.9s ease-in-out infinite;
   /* Animate collapse/expand so the arc list can glide into the freed space
      instead of the panel snapping away via display:none. */
@@ -2264,25 +2272,28 @@ body.ticker-active #flowControls {
 }
 
 /* Autocomplete dropdown
-   Mobile: drops DOWN (top:100%) but max-height is capped by JS via
-   visualViewport so it always stops ABOVE the iOS on-screen keyboard
-   instead of disappearing behind it. The cap is set when the input
-   is focused and updated as the keyboard animates in (visualViewport
-   resize event). Default max-height is a conservative 180px in case
-   the JS hasn't computed yet — small enough to fit on most screens
-   even before keyboard adjustment lands. */
+   POSITION: FIXED — escapes all ancestor overflow:hidden / overflow:auto
+   clipping. The From/About row sits mid-panel; with the kbd-open state
+   applying overflow-y:auto to #flowControls and the base .flowPanel
+   originally using overflow:hidden, position:absolute dropdowns were
+   being clipped to the panel boundary (the user saw "nothing on mobile
+   while typing"). JS computes top/left/width from the input's
+   getBoundingClientRect() at open time and re-computes on visualViewport
+   resize so the dropdown tracks the input through keyboard animations.
+   Default top/left of 0 is a fallback for the brief moment before JS
+   positions; max-height 180px is still capped by JS to clear the
+   keyboard. */
 .flowAC {
-  position: absolute;
-  top: 100%;
+  position: fixed;
+  top: 0;
   left: 0;
-  right: 0;
-  margin-top: 4px;
+  width: 0;
   background: rgba(5,7,10,0.98);
   border: 1px solid rgba(0,220,130,0.25);
   border-radius: 10px;
   max-height: 180px;
   overflow-y: auto;
-  z-index: 300;
+  z-index: 9999;
   display: none;
   box-shadow: 0 8px 32px rgba(0,0,0,0.5);
 }
@@ -12199,7 +12210,11 @@ body.cb-safe .semHeatLegendBar:not(.coverage) {
       .flowPanel {
         padding: 30px 10px 12px 10px;
         max-width: 100%;
-        overflow: hidden;
+        /* overflow stays visible on mobile — same reason as the base
+           rule. Was 'hidden' here, clipping the From/About .flowAC
+           dropdown on small screens. See base .flowPanel rule for
+           the full rationale. */
+        overflow: visible;
       }
       .flowPanelRow {
         flex-wrap: wrap;
@@ -14218,6 +14233,28 @@ window.fmtDate = function(d) {
   const dt = d instanceof Date ? d : new Date(d);
   if (isNaN(dt)) return '';
   return dt.toISOString().slice(0, 10);
+};
+
+/* ── Boot-loader visibility helper ──
+   Returns true if the site loading splash is still on screen. Used by
+   popup show functions to defer (or drop) until the app is interactive
+   so a notification nudge / welcome card / onboarding wizard / pricing
+   modal never lands on top of the loader. The loader gets `.el-fade`
+   added (then `display:none` 650ms later) by dismissSiteLoader once
+   the globe is running and the feed preload resolved.
+
+   __deferUntilLoaded wraps a thunk so it auto-retries every 1.5s while
+   the loader is up, then invokes the thunk once the loader is gone.
+   Callers that prefer drop-on-boot (e.g. toasts, where a delayed
+   confirmation is worse than no confirmation) should call
+   __bootLoaderVisible() directly and early-return. */
+window.__bootLoaderVisible = function() {
+  const loader = document.getElementById('siteLoader');
+  return !!(loader && !loader.classList.contains('el-fade') && loader.style.display !== 'none');
+};
+window.__deferUntilLoaded = function(fn) {
+  if (!window.__bootLoaderVisible()) { try { return fn(); } catch (_) { return; } }
+  setTimeout(() => window.__deferUntilLoaded(fn), 1500);
 };
 
 /* ── Global fetch wrapper: default 20s timeout on all requests ── */
@@ -17580,6 +17617,14 @@ window.__arcCtxSegmented = (function() {
             <span class="semHeatAskStatusText" id="semHeatAskStatusText"></span>
           </div>
           <div id="semHeatAskNote" style="font-size:9px;color:rgba(255,200,140,0.75);font-style:italic;line-height:1.4;display:none;"></div>
+          <!-- Report-this-AI-response button for the Heatmap Ask-AI surface.
+               Hidden by default; the wireAskAi result handler reveals it
+               once a question has been answered. Click reads the question
+               + active mode + result note as content for the report. -->
+          <div id="semHeatAskReportWrap" style="display:none;margin-top:6px;">
+            <button type="button" class="aiReportLaunch" id="semHeatAskReportBtn"
+                    aria-label="Report this AI response">Report</button>
+          </div>
         </div>
       </div>
 
@@ -29272,17 +29317,35 @@ const settingsToggle     = document.getElementById("settingsToggle");
     const chip  = document.getElementById(chipId);
     let acIndex = -1;
 
+    // Position the fixed-position dropdown directly under the input,
+    // matching its width. Recomputed at open time and whenever the
+    // viewport changes (keyboard slide, scroll, rotation). Without
+    // this, the dropdown stays at top:0/left:0 — invisible in the
+    // upper-left corner instead of below the field.
+    function _positionFlowAC() {
+      const r = input.getBoundingClientRect();
+      ac.style.top   = `${Math.round(r.bottom + 4)}px`;
+      ac.style.left  = `${Math.round(r.left)}px`;
+      ac.style.width = `${Math.round(r.width)}px`;
+    }
+
     input.addEventListener("focus", loadCountries);
 
     // visualViewport.resize fires when the iOS keyboard animates
-    // in/out (and on rotation). Recompute the dropdown cap so it
-    // tracks the keyboard height — when the keyboard slides up the
-    // dropdown shrinks; when it dismisses the dropdown can grow
-    // back. Guarded on `ac.open` so the math doesn't run when the
-    // dropdown isn't even visible.
+    // in/out (and on rotation). Recompute the dropdown cap AND its
+    // position so it tracks the keyboard height — when the keyboard
+    // slides up the dropdown shrinks AND the input moves; both must
+    // be re-anchored. Guarded on `ac.open` so the math doesn't run
+    // when the dropdown isn't visible.
     if (window.visualViewport) {
       window.visualViewport.addEventListener('resize', () => {
-        if (ac.classList.contains('open')) _capDropdownToViewport(input, ac);
+        if (ac.classList.contains('open')) {
+          _positionFlowAC();
+          _capDropdownToViewport(input, ac);
+        }
+      });
+      window.visualViewport.addEventListener('scroll', () => {
+        if (ac.classList.contains('open')) _positionFlowAC();
       });
     }
 
@@ -29310,10 +29373,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
       });
 
       ac.classList.add("open");
-      // Compute cap on every show — handles the case where the
-      // user opened the dropdown, dismissed the keyboard, and
-      // reopened it. visualViewport.resize covers transitions
-      // mid-typing.
+      // Position first (so the dropdown renders at the right place on
+      // the very first paint), then cap height to clear the keyboard.
+      _positionFlowAC();
       _capDropdownToViewport(input, ac);
     });
 
@@ -34433,6 +34495,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
       });
     }
     function showWelcome() {
+      // Defer the tutorial welcome card while the boot loader is still
+      // up — the card would render on top of the splash. __deferUntilLoaded
+      // auto-retries until the loader fades.
+      if (window.__bootLoaderVisible?.()) {
+        window.__deferUntilLoaded(showWelcome);
+        return;
+      }
       ensureWelcome();
       const w = document.getElementById('tutWelcome');
       requestAnimationFrame(() => w.classList.add('show'));
@@ -41744,6 +41813,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
          <span class="kwi-ctx-bar-pct">${(c.pct || 0).toFixed(1)}%</span>
        </div>`
     ).join('');
+    // Report-content payload: combine the AI-generated "About" + "Why
+    // it's surging" text so a reviewer has the full context of what
+    // the user flagged. Escape via JSON.stringify so any quotes in the
+    // text don't break the inline onclick handler.
+    const _kw = _kwiEscText(payload.keyword || '');
+    const _reportContent = [payload.about, payload.surge_reason]
+      .filter(Boolean).join(' — ').slice(0, 4000);
+    const _onclick = `window.__openAiReport?.({source:'keyword_explainer',contextId:${JSON.stringify(payload.keyword || '')},content:${JSON.stringify(_reportContent)}})`;
     return `
       <div class="kwi-ctx-section">
         <div class="kwi-ctx-label">About</div>
@@ -41757,6 +41834,9 @@ const settingsToggle     = document.getElementById("settingsToggle");
         <div class="kwi-ctx-label where">Where · ${payload.country_breakdown?.length || 0} countries · ${payload.recent_mentions || 0} articles/7d</div>
         <div class="kwi-ctx-bars">${bars}</div>
       </div>` : ''}
+      <div class="kwi-ctx-section" style="display:flex;justify-content:flex-end;margin-top:4px;">
+        <button type="button" class="aiReportLaunch" onclick="${_onclick}" aria-label="Report this AI response">Report</button>
+      </div>
     `;
   }
 
@@ -45402,6 +45482,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
   }
 
   function showOnboarding(startStep) {
+    // Defer while the boot loader is still up — onboarding is a
+    // full-screen overlay, would render on top of the splash and
+    // feel jarring. Auto-retry after the loader fades.
+    if (window.__bootLoaderVisible?.()) {
+      window.__deferUntilLoaded(() => showOnboarding(startStep));
+      return;
+    }
     // Never auto-launch the onboarding overlay while a briefing is
     // active — it would take over the screen and silently overlap
     // the briefing's chrome. Deferring is safe: the caller (sign-in
@@ -45694,6 +45781,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
   const pricingClose   = document.getElementById('pricingClose');
 
   window.__openPricing = function (nudgeMsg) {
+    // Defer while the boot loader is still up — full-screen pricing
+    // overlay on top of the splash is a glitch-tier first impression.
+    // User-clicked paths can't actually fire during boot (loader has
+    // pointer-events:none + z-index 100000); this guard catches the
+    // auto-triggered upsell paths (subscription-restore status syncs,
+    // gated-feature taps from background panels). Defer with retry
+    // so the prompt still surfaces once the app is interactive.
+    if (window.__bootLoaderVisible?.()) {
+      window.__deferUntilLoaded(() => window.__openPricing(nudgeMsg));
+      return;
+    }
     // Block the pricing modal from popping during a briefing. Most
     // callers are auto-triggered upsell prompts (out-of-credits,
     // gated feature taps from background panels, etc.), and slamming
@@ -46483,6 +46581,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
 
   // ── Toast helper ────────────────────────────────────────────────
   function _showToast(msg) {
+    // Suppress toast popups during boot — a "Subscription updated" or
+    // "Saved view" landing on top of the loading splash looks like a
+    // glitch. Toasts are transient feedback by design; the triggering
+    // action already succeeded, only the visible confirmation is
+    // dropped. Drop-not-defer matches existing briefing-suppress
+    // behavior below and avoids late-firing toasts disconnected from
+    // their originating event.
+    if (window.__bootLoaderVisible?.()) {
+      console.log('[toast] suppressed during boot:', msg);
+      return;
+    }
     // Suppress toast popups during a briefing — the bottom strip is
     // reserved for briefing controls + caption overlay, and the
     // briefing chrome puts itself at z-index well above the toast's
@@ -48932,6 +49041,18 @@ body.ticker-active .gTickerLabel {
           <input type="range" class="bVolSlider" id="bVolSlider" min="0" max="100" value="100" step="1" orient="vertical" aria-label="Briefing volume" />
         </div>
       </div>
+      <!-- AI content report — required by Apple's 2024-2025 review for
+           AI-generated content. Opens the shared #aiReportModal scoped
+           to this briefing episode + the current segment title for
+           reviewer context. The bControlBtn.report variant in the CSS
+           de-emphasizes it relative to playback controls. -->
+      <button class="bControlBtn report" id="bReport" type="button"
+              title="Report content" aria-label="Report content"
+              onclick="window.__openAiReport?.({
+                source: 'briefing',
+                contextId: window.__currentBriefingEpisodeId || '',
+                content: (document.getElementById('bSegmentTitle')?.textContent || '').trim()
+              })">&#9888;</button>
       <button class="bControlBtn close" id="bClose" title="Close briefing">✕</button>
     </div>
     <div class="bSeekWrap">
@@ -49726,6 +49847,9 @@ body.ticker-active .gTickerLabel {
     // Set briefingActive FIRST — closeBriefingLauncher checks this
     // synchronously to decide whether to restore the procedural music.
     window.briefingActive = true;
+    // Expose the current episode id for the in-chrome Report button.
+    // Cleared in closeBriefing.
+    try { window.__currentBriefingEpisodeId = episode.id; } catch (_) {}
     // Retract any ephemeral overlays/nudges that may have popped up
     // just before the user tapped Start Briefing. Without this, the
     // "Stay briefed" nudge, an active toast, or the briefing-ready
@@ -50354,6 +50478,7 @@ body.ticker-active .gTickerLabel {
   window.__closeBriefing = closeBriefing;
   function closeBriefing() {
     window.briefingActive = false;
+    try { window.__currentBriefingEpisodeId = null; } catch (_) {}
     document.body.classList.remove('briefing-active');
     // Procedural engine was ducked + layers torn down when the
     // briefing opened. Restore: unduck + re-layer the page-appropriate
@@ -57270,6 +57395,10 @@ body.ticker-active .gTickerLabel {
         if (textEl) textEl.textContent = '⚠ ' + refusal;
         const note = document.getElementById('semHeatAskNote');
         if (note) { note.textContent = ''; note.style.display = 'none'; }
+        // Hide the Report button on refusal — there's no AI response
+        // to report (model declined to answer).
+        const reportWrap = document.getElementById('semHeatAskReportWrap');
+        if (reportWrap) reportWrap.style.display = 'none';
       }
       return;
     }
@@ -57309,6 +57438,29 @@ body.ticker-active .gTickerLabel {
           note.classList.remove('is-estimate');
         }
       }
+      // Reveal the Report button now that the AI has answered. The
+      // content payload combines the user's question + the legend
+      // (which encodes how the model interpreted it) + source note so
+      // a reviewer sees what was on screen. Hidden again on refusal /
+      // _newQaSession / panel close (see _newQaSession + showRefusal).
+      const reportWrap = document.getElementById('semHeatAskReportWrap');
+      const reportBtn  = document.getElementById('semHeatAskReportBtn');
+      if (reportWrap && reportBtn) {
+        const ctxQ = String(question || '').slice(0, 200);
+        const ctx = `${ctxQ} [mode=${mode || 'percent'}]`;
+        const content = [
+          `Q: ${question || ''}`,
+          `Mode: ${mode || 'percent'}`,
+          `Legend: ${state.qaLegend || ''}`,
+          state.qaSourceNote ? `Source note: ${state.qaSourceNote}` : '',
+        ].filter(Boolean).join('\n').slice(0, 4000);
+        reportBtn.onclick = () => window.__openAiReport?.({
+          source: 'heatmap_ask',
+          contextId: ctx,
+          content,
+        });
+        reportWrap.style.display = '';
+      }
     }
   };
 
@@ -57328,6 +57480,13 @@ body.ticker-active .gTickerLabel {
       try { _qaActiveAbort.abort(); } catch (_) {}
       _qaActiveAbort = null;
     }
+    // Cancel-on-new-session also clears the Report button — the
+    // previous response is no longer on screen, so reporting it would
+    // be ambiguous to the reviewer.
+    try {
+      const reportWrap = document.getElementById('semHeatAskReportWrap');
+      if (reportWrap) reportWrap.style.display = 'none';
+    } catch (_) {}
     return _qaSession;
   }
   function _isQaSessionStale(token) { return token !== _qaSession; }
@@ -60434,7 +60593,288 @@ body.ticker-active .gTickerLabel {
     border: 1px solid rgba(255, 255, 255, 0.15);
     color: rgba(255, 255, 255, 0.65);
   }
+
+  /* ── AI content report modal ────────────────────────────────────────
+     Opens from a "Report" affordance on any AI-generated surface
+     (briefing, kwi context, heatmap Ask-AI). Required by Apple's
+     2024-2025 App Store review for AI features. z-index 100200 sits
+     above the briefing overlay so a reporter can flag content while
+     the briefing is still playing. */
+  #aiReportModal {
+    position: fixed; inset: 0;
+    background: rgba(0, 0, 0, 0.62);
+    -webkit-backdrop-filter: blur(4px);
+            backdrop-filter: blur(4px);
+    z-index: 100200;
+    display: none;
+    align-items: center; justify-content: center;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+    padding: 16px;
+  }
+  #aiReportModal.open { display: flex; opacity: 1; }
+  #aiReportModal .aiReportSheet {
+    width: min(380px, 100%);
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
+    background: rgba(10, 16, 28, 0.98);
+    border: 1px solid rgba(255, 180, 100, 0.32);
+    border-radius: 14px;
+    padding: 18px;
+    color: #fff;
+    font-family: inherit;
+    box-shadow: 0 12px 36px rgba(0, 0, 0, 0.6);
+    box-sizing: border-box;
+  }
+  #aiReportModal .aiReportHdr {
+    font-size: 14px; font-weight: 700;
+    color: rgba(255, 200, 130, 0.98);
+    margin-bottom: 4px;
+  }
+  #aiReportModal .aiReportDesc {
+    font-size: 12px; line-height: 1.45;
+    color: rgba(255, 255, 255, 0.65);
+    margin-bottom: 12px;
+  }
+  #aiReportModal .aiReportReasons {
+    display: flex; flex-wrap: wrap; gap: 6px;
+    margin-bottom: 12px;
+  }
+  #aiReportModal .aiReportChip {
+    padding: 6px 12px;
+    border-radius: 16px;
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    color: rgba(255, 255, 255, 0.65);
+    font-size: 11px; font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.15s;
+    -webkit-appearance: none;
+            appearance: none;
+  }
+  #aiReportModal .aiReportChip:hover {
+    border-color: rgba(255, 200, 130, 0.55);
+    color: #fff;
+  }
+  #aiReportModal .aiReportChip.selected {
+    background: rgba(255, 200, 130, 0.18);
+    border-color: rgba(255, 200, 130, 0.70);
+    color: rgba(255, 220, 170, 1);
+  }
+  #aiReportModal textarea {
+    width: 100%;
+    min-height: 64px; max-height: 160px;
+    padding: 8px 10px;
+    resize: vertical;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 8px;
+    color: #fff;
+    font-size: 12px; font-family: inherit;
+    margin-bottom: 14px;
+    box-sizing: border-box;
+  }
+  #aiReportModal textarea:focus {
+    outline: none;
+    border-color: rgba(255, 200, 130, 0.55);
+  }
+  #aiReportModal .aiReportActions {
+    display: flex; gap: 8px;
+  }
+  #aiReportModal .aiReportActions button {
+    flex: 1;
+    padding: 9px 14px;
+    border-radius: 9px;
+    font-size: 12px; font-weight: 700;
+    font-family: inherit;
+    cursor: pointer;
+    -webkit-appearance: none;
+            appearance: none;
+    transition: all 0.15s;
+  }
+  #aiReportModal .aiReportCancel {
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    color: rgba(255, 255, 255, 0.65);
+  }
+  #aiReportModal .aiReportCancel:hover {
+    border-color: rgba(255, 255, 255, 0.35);
+    color: #fff;
+  }
+  #aiReportModal .aiReportSubmit {
+    background: rgba(255, 200, 130, 0.85);
+    border: 1px solid rgba(255, 200, 130, 0.95);
+    color: rgba(20, 14, 6, 0.95);
+  }
+  #aiReportModal .aiReportSubmit:hover {
+    background: rgba(255, 210, 150, 1);
+  }
+  #aiReportModal .aiReportSubmit:disabled {
+    opacity: 0.5; cursor: default;
+  }
+
+  /* Per-surface "Report" launcher pill — small text button placed near
+     AI-generated content. Shared style across kwi context cards and
+     heatmap Ask-AI; briefing uses its own bControlBtn variant defined
+     elsewhere so it matches the briefing chrome. */
+  .aiReportLaunch {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 3px 9px;
+    background: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 12px;
+    color: rgba(255, 255, 255, 0.45);
+    font-size: 10px; font-weight: 600;
+    font-family: inherit;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    cursor: pointer;
+    -webkit-appearance: none;
+            appearance: none;
+    transition: all 0.15s;
+  }
+  .aiReportLaunch:hover {
+    border-color: rgba(255, 200, 130, 0.45);
+    color: rgba(255, 200, 130, 0.92);
+  }
+  /* Briefing-row variant — matches .bControlBtn dimensions but is
+     visually de-emphasized so it doesn't compete with play controls. */
+  .bControlBtn.report {
+    color: rgba(255, 255, 255, 0.45);
+    font-size: 13px;
+    letter-spacing: 0;
+  }
+  .bControlBtn.report:hover {
+    color: rgba(255, 200, 130, 0.92);
+  }
 </style>
+
+<!-- AI content report modal — opened by .aiReportLaunch / .bControlBtn.report
+     buttons across briefing, kwi context cards, and heatmap Ask-AI. Wired
+     up below by the `wireAiReport` IIFE. Apple-required (2024-2025 AI
+     content moderation guideline). -->
+<div id="aiReportModal" role="dialog" aria-modal="true" aria-labelledby="aiReportHdr">
+  <div class="aiReportSheet" role="document">
+    <div class="aiReportHdr" id="aiReportHdr">Report AI response</div>
+    <div class="aiReportDesc">Tell us what's wrong with this AI-generated content. Your report helps us tune the model and remove harmful or inaccurate output.</div>
+    <div class="aiReportReasons" role="radiogroup" aria-label="Reason">
+      <button type="button" class="aiReportChip" data-reason="inaccurate"   role="radio" aria-checked="false">Inaccurate</button>
+      <button type="button" class="aiReportChip" data-reason="misleading"   role="radio" aria-checked="false">Misleading</button>
+      <button type="button" class="aiReportChip" data-reason="harmful"      role="radio" aria-checked="false">Harmful</button>
+      <button type="button" class="aiReportChip" data-reason="other"        role="radio" aria-checked="false">Other</button>
+    </div>
+    <textarea id="aiReportNote" placeholder="Add a note (optional)" maxlength="1000" aria-label="Optional note"></textarea>
+    <div class="aiReportActions">
+      <button type="button" class="aiReportCancel" id="aiReportCancelBtn">Cancel</button>
+      <button type="button" class="aiReportSubmit" id="aiReportSubmitBtn">Submit</button>
+    </div>
+  </div>
+</div>
+
+<script>
+/* ── AI content report modal — wiring ──────────────────────────────────
+   Single shared modal. Surfaces (briefing, kwi context, heatmap Ask-AI)
+   open it via window.__openAiReport({ source, contextId, content }).
+   On submit, POSTs to /api/ai/report with the user's selected reason +
+   optional note. Anonymous users can report too — the server accepts
+   missing auth and stores user_id = NULL. */
+(function wireAiReport() {
+  const API_BASE = window.__API_BASE || window.__API || 'https://earth-wjr6.onrender.com';
+  const modal  = document.getElementById('aiReportModal');
+  if (!modal) return;
+  const chips  = modal.querySelectorAll('.aiReportChip');
+  const noteEl = document.getElementById('aiReportNote');
+  const submit = document.getElementById('aiReportSubmitBtn');
+  const cancel = document.getElementById('aiReportCancelBtn');
+  let _selectedReason = null;
+  let _payload = null;
+
+  function _reset() {
+    chips.forEach(c => {
+      c.classList.remove('selected');
+      c.setAttribute('aria-checked', 'false');
+    });
+    noteEl.value = '';
+    _selectedReason = null;
+    submit.disabled = false;
+    submit.textContent = 'Submit';
+  }
+  function _close() {
+    modal.classList.remove('open');
+    _payload = null;
+  }
+
+  // Public entry — opts: { source, contextId, content }
+  window.__openAiReport = function(opts) {
+    if (!opts || !opts.source) return;
+    _reset();
+    _payload = {
+      source: String(opts.source),
+      context_id: String(opts.contextId || '').slice(0, 200),
+      content: String(opts.content || '').slice(0, 4000),
+    };
+    modal.classList.add('open');
+    // Defer focus by a tick so the screen-reader announcement isn't
+    // raced by the show transition.
+    setTimeout(() => { try { chips[0]?.focus(); } catch (_) {} }, 60);
+  };
+
+  chips.forEach(chip => {
+    chip.addEventListener('click', () => {
+      chips.forEach(c => {
+        c.classList.remove('selected');
+        c.setAttribute('aria-checked', 'false');
+      });
+      chip.classList.add('selected');
+      chip.setAttribute('aria-checked', 'true');
+      _selectedReason = chip.dataset.reason;
+    });
+  });
+
+  cancel.addEventListener('click', _close);
+  // Backdrop click — only when the click is the modal itself, not a
+  // descendant (the sheet).
+  modal.addEventListener('click', (e) => { if (e.target === modal) _close(); });
+  // ESC to close.
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape' && modal.classList.contains('open')) _close();
+  });
+
+  submit.addEventListener('click', async () => {
+    if (!_payload) return;
+    submit.disabled = true;
+    submit.textContent = 'Sending…';
+    const body = {
+      ..._payload,
+      reason: _selectedReason || 'other',
+      note: noteEl.value.trim(),
+    };
+    try {
+      const headers = { 'Content-Type': 'application/json' };
+      if (window.__authToken) headers['Authorization'] = 'Bearer ' + window.__authToken;
+      const res = await fetch(`${API_BASE}/api/ai/report`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      _close();
+      // Toast is gated by briefingActive/bootLoaderVisible inside
+      // __showToast — that's fine here because the user is by definition
+      // post-boot when they tap Report, and during a briefing the toast
+      // suppression matches the existing pattern (the form already
+      // succeeded; UI confirmation is best-effort).
+      try { window.__showToast?.('Thanks — we’ll review this.'); } catch (_) {}
+    } catch (err) {
+      submit.disabled = false;
+      submit.textContent = 'Submit';
+      try { window.__showToast?.('Could not send report. Try again later.'); } catch (_) {}
+      console.error('[ai-report] submit failed:', err);
+    }
+  });
+})();
+</script>
 
 <div id="notifPanelBackdrop">
   <div id="notifPanel">
@@ -61294,6 +61734,16 @@ body.ticker-active .gTickerLabel {
   window.__notifMaybeShowNudge = async function() {
     if (!window.__authToken) return;
     if (!_isCapacitorIOS()) return;       // Phase 1 iOS-first
+    // Hard gate: never show the "Stay briefed" prompt while the boot
+    // loader is still up. Shared __bootLoaderVisible helper checks for
+    // #siteLoader without .el-fade. We re-poll every 1.5s; once the
+    // loader fades (or is absent), the rest of the gates run as normal.
+    // Safety net for a previously-signed-in user landing on a slow boot
+    // where T+5min schedule would otherwise fire pre-interactive.
+    if (window.__bootLoaderVisible?.()) {
+      setTimeout(() => window.__notifMaybeShowNudge(), 1500);
+      return;
+    }
     // Hard gate: never show the "Stay briefed" prompt while a briefing
     // is playing. The bottom of the screen is reserved for briefing
     // controls + caption overlay; popping this nudge there would
@@ -63679,6 +64129,11 @@ body.ticker-active .gTickerLabel {
     // the field stayed behind the keyboard.
     { input: '#semHeatAskInput', panel: '#semHeatPanel' },
     { input: '#flowKeyword',     panel: '#flowControls'  },
+    // News-flows location filters — without these, focusing From or
+    // About left the input behind the iOS keyboard and the user
+    // couldn't see what they were typing.
+    { input: '#flowFromLoc',     panel: '#flowControls'  },
+    { input: '#flowAboutLoc',    panel: '#flowControls'  },
     // Auth modal inputs — sign-in + sign-up email/password fields.
     { input: '#siEmail',         panel: '#authCard'      },
     { input: '#siPassword',      panel: '#authCard'      },
@@ -64405,6 +64860,13 @@ body.ticker-active .gTickerLabel {
   // Begin is the gesture that lets the voiceover audio play with sound
   // on iOS Safari / Capacitor (autoplay-with-sound is otherwise blocked).
   function showWelcome() {
+    // Defer the Earth welcome card while the boot loader is still up —
+    // this card is an opt-in onboarding surface for fresh installs and
+    // shouldn't render on top of the splash. Auto-retry after fade.
+    if (window.__bootLoaderVisible?.()) {
+      window.__deferUntilLoaded(showWelcome);
+      return;
+    }
     if (document.getElementById('earthWelcome')) return;
     const w = document.createElement('div');
     w.id = 'earthWelcome';

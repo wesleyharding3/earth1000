@@ -1516,6 +1516,47 @@ app.post('/api/badges/seen', async (req, res) => {
 });
 
 /* =========================================
+   AI content reports
+   Apple's App Store review (2024-2025) requires a user-facing report
+   path for AI-generated content. Three surfaces qualify in Earth00:
+   • briefing transcripts (AI-narrated daily news)
+   • /api/keywords/explain inline cards (kwi widget)
+   • /api/heatmap/ask Q&A results (map-this prompts)
+   Reports are accepted from both authenticated and anonymous users.
+   Body shape: { source, context_id?, content?, reason?, note? }
+========================================= */
+const _AI_REPORT_SOURCES = new Set(['briefing', 'keyword_explainer', 'heatmap_ask']);
+const _AI_REPORT_REASONS = new Set(['inaccurate', 'harmful', 'misleading', 'other']);
+
+app.post('/api/ai/report', express.json({ limit: '8kb' }), async (req, res) => {
+  try {
+    const source = String(req.body?.source || '').trim();
+    if (!_AI_REPORT_SOURCES.has(source)) {
+      return res.status(400).json({ error: 'Invalid source' });
+    }
+    const reasonRaw = String(req.body?.reason || 'other').trim();
+    const reason = _AI_REPORT_REASONS.has(reasonRaw) ? reasonRaw : 'other';
+    // Hard caps mirror the column comments on ai_reports — keep the row
+    // small so abuse / accidental dumps can't blow up storage.
+    const contextId = String(req.body?.context_id || '').slice(0, 200) || null;
+    const content   = String(req.body?.content    || '').slice(0, 4000) || null;
+    const note      = String(req.body?.note       || '').slice(0, 1000) || null;
+    const userAgent = (req.headers['user-agent'] || '').slice(0, 500) || null;
+    const userId    = req.user?.id || null;
+
+    await pool.query(
+      `INSERT INTO ai_reports (user_id, source, context_id, content, reason, note, user_agent)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [userId, source, contextId, content, reason, note, userAgent]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[ai/report]', err.message);
+    res.status(500).json({ error: 'Failed to record report' });
+  }
+});
+
+/* =========================================
    Cities
 ========================================= */
 app.get("/api/cities", async (req, res) => {
@@ -7611,8 +7652,16 @@ app.get("/api/heatmap", heavyLimiter, async (req, res) => {
     // prewarm flag — same pattern as /api/flows. Cron passes ?prewarm=1
     // to get a longer SQL timeout. User-facing requests stay capped at
     // 30s so a slow cold-cache miss doesn't make a user wait indefinitely.
+    //
+    // Prewarm bumped 60s → 120s in lockstep with /api/flows after the
+    // "trump shows 0 articles" investigation: heavy keywords (trump, un,
+    // eu, iran, ai) regularly land between 50-65s on cold buffer, and a
+    // 60s cap was throwing into the `_heatmapQuery` catch — which used
+    // to silently cache empty arrays. 120s gives those queries real
+    // headroom; the cron's own fetch timeout (130s in prewarmKeywordCacheCron)
+    // is already past this so it won't kill an in-flight producer.
     const _isPrewarm = req.query.prewarm === '1';
-    const _heatmapStatementTimeoutMs = _isPrewarm ? 60_000 : 30_000;
+    const _heatmapStatementTimeoutMs = _isPrewarm ? 120_000 : 30_000;
 
     const bucketExpr =
       bucket === "hour" ? `date_trunc('hour', a.published_at)` :
@@ -7927,19 +7976,24 @@ app.get("/api/heatmap", heavyLimiter, async (req, res) => {
       async function _heatmapQuery(sql) {
         const c = await pool.connect();
         try {
-          // Bumped down from 90s default to 30s for users (60s for
-          // prewarm). The 90s ceiling was masking the underlying
-          // correlated-EXISTS bug — every cold-cache request waited
-          // the full 90s. With the uncorrelated subquery rewrite above,
-          // typical cold-cache queries now finish in 1–10s and 30s is
-          // ample headroom; user-facing requests no longer face minute-
-          // scale waits even on a worst-case miss.
+          // Prewarm gets 120s (matching /api/flows) — heavy keywords like
+          // "trump", "un", "eu", "iran" need this on cold buffer. Users
+          // stay at 30s so a slow miss doesn't make them stare at a
+          // spinner forever; ttlCached's stale-while-revalidate covers
+          // the gap for the next user after the prewarm completes.
           await c.query(`SET statement_timeout = ${_heatmapStatementTimeoutMs}`);
           const r = await c.query(sql, params);
           return r.rows;
         } catch (e) {
+          // CRITICAL: rethrow so ttlCached's stale-if-error path runs and
+          // we DON'T cache an empty result as a valid answer for 65 min.
+          // The previous `return []` swallowed query timeouts (and pool
+          // errors) and silently froze the heatmap at "0 articles" until
+          // the TTL expired — that was the "trump shows 0 on heatmap"
+          // bug: trump's live query hit the 60s prewarm cap, threw,
+          // returned [], and ttlCached preserved the empty payload.
           console.error("[heatmap] query failed:", e.message);
-          return [];
+          throw e;
         } finally {
           c.release();
         }
