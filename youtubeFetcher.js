@@ -59,25 +59,59 @@ function _rewriteToProxy(rssUrl) {
   return `${RSS_PROXY_BASE}/?${m[1]}`;
 }
 
-// Single-retry wrapper. YouTube's RSS edge servers occasionally flap
-// 200 → 404 → 200 across consecutive requests; a brief retry catches
-// the majority of those. 5xx is also worth retrying (transient by
-// definition). Other errors (DNS, channel-terminated text) skip retry
-// since they won't change in 1 second. Returns the parsed feed or
-// throws the LAST error.
+// Helper: extract HTTP status from rss-parser's "Status code <N>" message.
+function _httpStatusFromError(err) {
+  const m = String(err?.message || '').match(/status code[: ]+(\d{3})/i);
+  return m ? parseInt(m[1], 10) : null;
+}
+
+// Multi-attempt fetch with exponential backoff. YouTube's RSS edge
+// servers flap 200 → 404 → 200 even with the CF Worker proxy in
+// front, and certain rate-limit-induced 404 windows last 5-30s.
+// Single-retry-after-1s caught roughly half; three attempts with
+// 1s → 5s → 15s spans most cooldown windows. Total worst-case
+// wait per source: ~21s — still well inside the 1500ms+ inter-source
+// delay budget for a 250-source run (~6-8 min).
+//
+// Retryable: 404, 408, 425, 429, 500, 502, 503, 504. Non-retryable
+// (4xx that won't change with another try): 401, 403, 410, 451.
+// Non-HTTP errors (DNS, parse failures, connection resets) are
+// retried — they're almost always transient too.
+//
+// Returns an object: { feed, lastStatus, attempts } on success,
+// throws { error, lastStatus, attempts } on final failure (status
+// is exposed so the main loop can adapt pacing on rate-limit bursts).
 async function fetchFeedWithRetry(rssUrl) {
   const url = _rewriteToProxy(rssUrl);
-  try {
-    return await parser.parseURL(url);
-  } catch (err) {
-    const msg = String(err?.message || '');
-    const m = msg.match(/status code[: ]+(\d{3})/i);
-    const status = m ? parseInt(m[1], 10) : null;
-    const retryable = status === 404 || status === 500 || status === 502 || status === 503 || status === 504;
-    if (!retryable) throw err;
-    await new Promise(r => setTimeout(r, 1000));
-    return await parser.parseURL(url);
+  const BACKOFFS_MS = [1000, 5000, 15000];   // wait BEFORE attempts 2,3,4
+  const NON_RETRYABLE_HTTP = new Set([401, 403, 410, 451]);
+  let lastErr = null;
+  let lastStatus = null;
+  for (let attempt = 0; attempt <= BACKOFFS_MS.length; attempt++) {
+    if (attempt > 0) {
+      // Jitter the backoff ±30% so a fleet of cron-coincident sources
+      // doesn't synchronize their retries into a thundering herd.
+      const base = BACKOFFS_MS[attempt - 1];
+      const jitter = (Math.random() * 0.6 - 0.3) * base;
+      await new Promise(r => setTimeout(r, Math.max(100, Math.round(base + jitter))));
+    }
+    try {
+      const feed = await parser.parseURL(url);
+      return { feed, lastStatus, attempts: attempt + 1 };
+    } catch (err) {
+      lastErr = err;
+      lastStatus = _httpStatusFromError(err);
+      // Stop early if HTTP says "this won't change on retry."
+      if (lastStatus != null && NON_RETRYABLE_HTTP.has(lastStatus)) break;
+    }
   }
+  // Annotate the error so callers can read the final HTTP status
+  // without re-parsing the message string.
+  if (lastErr) {
+    try { lastErr.lastHttpStatus = lastStatus; } catch (_) {}
+    try { lastErr.attempts = BACKOFFS_MS.length + 1; } catch (_) {}
+  }
+  throw lastErr;
 }
 
 const INITIAL_YOUTUBE_BASE_PRIORITY = 1.15;
@@ -237,10 +271,19 @@ async function fetchChannel(source, stopwordCache) {
 
   let feed;
   try {
-    feed = await fetchFeedWithRetry(source.rss_url);
+    const result = await fetchFeedWithRetry(source.rss_url);
+    feed = result.feed;
   } catch (err) {
     await logError(source, err, "RSS_PARSE_ERROR");
-    return { inserted: 0, skipped: 0, error: err.message };
+    return {
+      inserted: 0,
+      skipped: 0,
+      error: err.message,
+      // Surface the final HTTP status so the main loop can detect
+      // consecutive 404-cluster bursts and pause to let YouTube's
+      // rate-limit window cool down.
+      httpStatus: err.lastHttpStatus ?? null,
+    };
   }
 
   const items = feed.items || [];
@@ -404,26 +447,84 @@ async function fetchYouTube() {
 
   console.log(`📺 Found ${sources.length} active YouTube sources`);
 
+  // Proxy URL-shape diagnostic. If YOUTUBE_RSS_PROXY is set, verify
+  // the rewrite regex actually matches the first source's rss_url —
+  // a silent regex miss is the #1 reason an env-var-set proxy still
+  // fails: the proxy is configured, but every URL goes direct to
+  // youtube.com because rss_url doesn't match
+  // `^https?://www.youtube.com/feeds/videos.xml?…`. Common gotchas:
+  // `m.youtube.com` (mobile), missing `www.`, RSS hosted under
+  // `youtubei.googleapis.com`, or a custom YT-equivalent feed URL
+  // that the source onboarding stored verbatim.
+  if (RSS_PROXY_BASE && sources.length > 0) {
+    const sample = sources[0].rss_url || '';
+    const rewritten = _rewriteToProxy(sample);
+    const proxyApplied = rewritten !== sample;
+    console.log(`📺 Proxy: ${RSS_PROXY_BASE} | sample url rewritten: ${proxyApplied ? 'YES' : 'NO'}`);
+    if (!proxyApplied) {
+      console.warn(`📺 ⚠ Sample URL did NOT match the proxy rewrite regex — proxy is bypassed for this source. Sample: ${sample.slice(0, 120)}`);
+    }
+  } else if (!RSS_PROXY_BASE) {
+    console.warn('📺 ⚠ YOUTUBE_RSS_PROXY not set — every request goes direct to youtube.com (high 404/500 failure rate expected from Render IP throttling).');
+  }
+
   let totalInserted = 0;
   let totalSkipped = 0;
   let errors = 0;
+
+  // Adaptive cooldown — when we see CONSECUTIVE_FAIL_THRESHOLD 404/5xx
+  // in a row, pause for COOLDOWN_MS to let YouTube's rate-limit window
+  // expire. Empirically, those bursts last 30-60s; a 60s pause spans
+  // most of them. Resets on the next successful fetch.
+  //
+  // Without this, a run that hits a rate-limit window keeps pounding
+  // at 1500ms intervals through 50-80 sources, all 404ing, before
+  // YouTube cools off naturally — losing the entire bottom half of
+  // the source list to artifacts of one bad cluster.
+  const CONSECUTIVE_FAIL_THRESHOLD = 10;
+  const COOLDOWN_MS = 60_000;
+  let consecutiveFails = 0;
 
   for (const source of sources) {
     try {
       const result = await fetchChannel(source, stopwordCache);
       totalInserted += result.inserted;
       totalSkipped += result.skipped;
-      if (result.error) errors++;
-      
-      // Inter-channel delay. Bumped 500ms → 1500ms after Render's IP got
-      // throttled by YouTube's RSS edge (250 hits at 0.5s = 500ms+ burst
-      // pace looked like scraping). 1500ms = ~0.67 req/sec, well below
-      // YouTube's per-IP rate limit. With LIMIT 250 the run still
-      // finishes in ~6-8 minutes including parse time.
-      await new Promise(r => setTimeout(r, 1500));
+      if (result.error) {
+        errors++;
+        // Count this as a consecutive failure only if it looks like
+        // rate-limiting (HTTP 404 or 5xx). Treat non-HTTP errors (DNS,
+        // parse failures) as failures too — they often co-occur with
+        // network-level throttling.
+        const s = result.httpStatus;
+        if (s === null || s === 404 || (s >= 500 && s < 600)) {
+          consecutiveFails++;
+        } else {
+          consecutiveFails = 0;
+        }
+      } else {
+        consecutiveFails = 0;
+      }
+
+      // Adaptive cooldown trigger.
+      if (consecutiveFails >= CONSECUTIVE_FAIL_THRESHOLD) {
+        console.warn(`📺 ⏸  ${consecutiveFails} consecutive failures — cooling down ${COOLDOWN_MS/1000}s to let YouTube rate-limit window expire`);
+        await new Promise(r => setTimeout(r, COOLDOWN_MS));
+        consecutiveFails = 0;
+      }
+
+      // Inter-channel delay. Bumped 500ms → 1500ms originally to defeat
+      // YouTube's per-IP throttling. Now JITTERED 1500-3500ms so the
+      // request cadence isn't perfectly periodic — periodic requests
+      // are a strong bot-detection signal, even at slow rates. 0.4-0.7
+      // req/sec average is well under YouTube's per-IP rate limit but
+      // looks more like organic traffic.
+      const delayMs = 1500 + Math.floor(Math.random() * 2000);
+      await new Promise(r => setTimeout(r, delayMs));
     } catch (err) {
       console.error(`[YT:${source.channel_handle || source.channel_id}] Unexpected error:`, err.message);
       errors++;
+      consecutiveFails++;
       // Unexpected errors at the top level bypass fetchChannel's internal
       // logError call. Route them through the same classifier so a
       // permanently-broken channel still gets auto-deactivated instead of
