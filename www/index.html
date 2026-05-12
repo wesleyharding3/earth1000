@@ -4257,13 +4257,33 @@ button.arcCtxSegDot,
     }
     .panelSearchPillIcon {
       position: absolute;
-      right: 11px;
+      right: 4px;
       top: 50%;
       transform: translateY(-50%);
       color: rgba(255,255,255,0.30);
-      pointer-events: none;
+      /* Was pointer-events: none (decoration only). Now it's an
+         interactive "confirm / dismiss keyboard" button — tap it after
+         typing to close the iOS keyboard and commit the filter. The
+         input still live-filters as you type; this button just gives
+         users a clear way to "be done" without tapping outside. */
+      pointer-events: auto;
+      cursor: pointer;
       display: flex;
       align-items: center;
+      justify-content: center;
+      /* Generous tap target (≥30×30) so thumbs can hit it without
+         missing — the visible glyph stays small via the svg dimensions
+         below. */
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      transition: color 0.15s, background 0.15s;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .panelSearchPillIcon:hover,
+    .panelSearchPillIcon:active {
+      color: rgba(255,255,255,0.85);
+      background: rgba(255,255,255,0.06);
     }
     .panelSearchPillIcon svg { width: 13px; height: 13px; }
 
@@ -22769,8 +22789,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
           </div>
           <div class="panelSearchRow">
             <div class="panelSearchPill">
-              <input class="panelSearchPillInput" id="panelSearchInput" type="text" placeholder="Filter articles…" autocomplete="off" />
-              <span class="panelSearchPillIcon">
+              <input class="panelSearchPillInput" id="panelSearchInput" type="text" placeholder="Filter articles…" autocomplete="off" enterkeyhint="search" />
+              <span class="panelSearchPillIcon" role="button" tabindex="0" aria-label="Submit search and close keyboard">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
                   <circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/>
                 </svg>
@@ -22836,6 +22856,32 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const panelSearchInput = panel.querySelector("#panelSearchInput");
         let filterQuery = "";
         panelSearchInput.addEventListener("input", () => { filterQuery = panelSearchInput.value.trim().toLowerCase(); renderCards(); });
+        // Enter / Return on the keyboard dismisses it. `enterkeyhint=
+        // "search"` makes iOS show a "Search" return key, but iOS doesn't
+        // auto-blur the input on press — we have to do it ourselves.
+        // Filter is already live-updating via the input listener above,
+        // so blurring is purely "I'm done typing, close the keyboard."
+        panelSearchInput.addEventListener("keydown", (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            panelSearchInput.blur();
+          }
+        });
+        // Magnifying-glass icon is now a "submit/dismiss" button. Tap
+        // it after typing to commit the filter and close the keyboard.
+        // Works equivalently to pressing Return.
+        const panelSearchIcon = panel.querySelector(".panelSearchPillIcon");
+        if (panelSearchIcon) {
+          const _dismiss = (e) => {
+            e.preventDefault();
+            panelSearchInput.blur();
+          };
+          panelSearchIcon.addEventListener("click", _dismiss);
+          // Keyboard activation for the role="button" — Enter/Space.
+          panelSearchIcon.addEventListener("keydown", (e) => {
+            if (e.key === 'Enter' || e.key === ' ') _dismiss(e);
+          });
+        }
         const mediaFilter = { article: true, video: true };
         bindPanelMediaFilter(panel, mediaFilter, renderCards);
 
@@ -24932,8 +24978,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
             <div class="panelControlsRow2">
               <div class="panelSearchRow">
                 <div class="panelSearchPill">
-                  <input class="panelSearchPillInput" id="panelSearchInput" type="text" placeholder="Filter articles…" autocomplete="off" />
-                  <span class="panelSearchPillIcon">
+                  <input class="panelSearchPillInput" id="panelSearchInput" type="text" placeholder="Filter articles…" autocomplete="off" enterkeyhint="search" />
+                  <span class="panelSearchPillIcon" role="button" tabindex="0" aria-label="Submit search and close keyboard">
                     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
                       <circle cx="11" cy="11" r="7"/><line x1="16.5" y1="16.5" x2="22" y2="22"/>
                     </svg>
@@ -25006,6 +25052,24 @@ const settingsToggle     = document.getElementById("settingsToggle");
         });
 
         searchInput.addEventListener("input", () => { filterQuery = searchInput.value.trim().toLowerCase(); renderCards(); });
+        // Enter / Return on the keyboard → dismiss keyboard. The
+        // filter is already live; this is just a clean "commit + close"
+        // gesture. Mirrors the country-panel wiring above.
+        searchInput.addEventListener("keydown", (e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault();
+            searchInput.blur();
+          }
+        });
+        // Magnifying-glass icon acts as submit/dismiss button.
+        const _citySearchIcon = panel.querySelector(".panelSearchPillIcon");
+        if (_citySearchIcon) {
+          const _dismiss = (e) => { e.preventDefault(); searchInput.blur(); };
+          _citySearchIcon.addEventListener("click", _dismiss);
+          _citySearchIcon.addEventListener("keydown", (e) => {
+            if (e.key === 'Enter' || e.key === ' ') _dismiss(e);
+          });
+        }
 
         function skeletonCards(n) {
           return `<div class="el-panel-loader el-node-loader"><div class="el-panel-inner">
