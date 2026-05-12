@@ -29328,24 +29328,38 @@ const settingsToggle     = document.getElementById("settingsToggle");
       ac.style.left  = `${Math.round(r.left)}px`;
       ac.style.width = `${Math.round(r.width)}px`;
     }
+    // Defer the read to the next frame after layout. CRITICAL on iOS:
+    // the keyboard-avoidance applyShift (also listens to visualViewport
+    // 'resize' + 'focusin') sets the panel's inline `bottom` to lift
+    // it above the keyboard. If we read getBoundingClientRect on the
+    // same tick as applyShift — and setupAutocomplete's listeners
+    // register FIRST, so we run BEFORE applyShift in event order — we
+    // read the input's PRE-shift coordinates and anchor the dropdown
+    // to where the panel would be WITHOUT the keyboard bump-up. rAF
+    // runs after the current event-loop tick's sync handlers and after
+    // layout flush, so by the time we read the rect, applyShift has
+    // committed its bottom-shift and the input rect reflects the new
+    // panel position.
+    function _positionFlowACDeferred() {
+      requestAnimationFrame(() => {
+        if (!ac.classList.contains('open')) return;
+        _positionFlowAC();
+        _capDropdownToViewport(input, ac);
+      });
+    }
 
     input.addEventListener("focus", loadCountries);
 
     // visualViewport.resize fires when the iOS keyboard animates
     // in/out (and on rotation). Recompute the dropdown cap AND its
-    // position so it tracks the keyboard height — when the keyboard
-    // slides up the dropdown shrinks AND the input moves; both must
-    // be re-anchored. Guarded on `ac.open` so the math doesn't run
-    // when the dropdown isn't visible.
+    // position so it tracks the keyboard height. Use the deferred
+    // path so applyShift wins the race.
     if (window.visualViewport) {
       window.visualViewport.addEventListener('resize', () => {
-        if (ac.classList.contains('open')) {
-          _positionFlowAC();
-          _capDropdownToViewport(input, ac);
-        }
+        if (ac.classList.contains('open')) _positionFlowACDeferred();
       });
       window.visualViewport.addEventListener('scroll', () => {
-        if (ac.classList.contains('open')) _positionFlowAC();
+        if (ac.classList.contains('open')) _positionFlowACDeferred();
       });
     }
 
@@ -29373,10 +29387,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
       });
 
       ac.classList.add("open");
-      // Position first (so the dropdown renders at the right place on
-      // the very first paint), then cap height to clear the keyboard.
+      // Position immediately for the first paint, then re-position on
+      // the next frame to catch any applyShift (focusin handler) that
+      // ran alongside this typing event. The immediate call covers
+      // the steady-state case (keyboard already up, panel already
+      // shifted); the deferred call covers the edge case where the
+      // user types within the same tick that the panel shifts.
       _positionFlowAC();
       _capDropdownToViewport(input, ac);
+      _positionFlowACDeferred();
     });
 
     input.addEventListener("keydown", (e) => {
@@ -49869,6 +49888,43 @@ body.ticker-active .gTickerLabel {
       document.querySelectorAll('body > div[style*="position:fixed"][style*="bottom:80px"]').forEach(el => {
         try { el.remove(); } catch (_) {}
       });
+    } catch (_) {}
+
+    // ── Tear down heavy panels that consume real GPU/CPU before the
+    // briefing starts. Without this, leaving News Flows or the
+    // Heatmap open and then tapping the briefing button means TWO
+    // expensive renderers run concurrently: the flow-arc animation
+    // (hundreds of tube meshes + per-frame color buffer updates) +
+    // the briefing's own globe choreography + audio engine. The
+    // resulting frame drops nearly crashed mid-tier iPhones in
+    // testing. Each close function below is a no-op if its panel
+    // isn't open, so this block is safe to run unconditionally.
+    try {
+      // News Flows panel + arcs. closeFlowPanel does the full teardown
+      // (clearArcs, flowPlaying=false, persistent labels cleared,
+      // body.news-flows-active removed, etc.). We also call
+      // __flowClearArcs explicitly as belt-and-suspenders for the
+      // edge case where the panel is in minimized state — closeFlowPanel
+      // does handle that, but the extra arc-clear is cheap insurance.
+      window.__flowClearArcs?.();
+      window.__flowClosePanel?.();
+      window.__flowSetOpen?.(false);
+      window.hideFlowCtxCard?.();
+      window.hideFlowArcBackBtn?.();
+      if (typeof window.__hideFlowArticleCard === 'function') {
+        window.__hideFlowArticleCard();
+      }
+    } catch (_) {}
+    try {
+      // Heatmap panel + heat sphere. __semHeatClose tears down the
+      // heat sphere mesh, cancels any in-flight Ask-AI Claude calls,
+      // disables the click inspector, restores node markers.
+      if (window.__semHeatActive) window.__semHeatClose?.();
+    } catch (_) {}
+    try {
+      // Country / city / region node panel. closeNodePanel stops the
+      // per-panel article/thread fetches and clears the side scroller.
+      window.__clusterCloseNodePanel?.();
     } catch (_) {}
     // Tear down procedural layers + heavy duck. Was also calling
     // ctx.suspend() — that turned out to leave the iOS audio session
