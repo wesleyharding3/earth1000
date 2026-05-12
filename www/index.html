@@ -11324,6 +11324,30 @@ body.cb-safe .semHeatLegendBar:not(.coverage) {
              + 24px);
       scrollbar-width: thin;
       scrollbar-color: rgba(255,255,255,0.08) transparent;
+      /* Top-fade mask so scrolled content visually vanishes UNDER
+         the floating top-nav buttons (#topLeftCluster, top:20px,
+         z-index:40) instead of peeking through the gaps between
+         buttons. The navbar has no continuous background bar —
+         it's a row of pill buttons, so sidebar content scrolling
+         into the y=0..78px range would otherwise be visible to
+         either side of and between those buttons. Mask fades the
+         scrollable content from fully transparent at y=0 to fully
+         opaque by y=78px, which lines up with the existing 80px
+         padding-top — first item is initially below the fade, and
+         on scroll it gradually disappears as it crosses the fade
+         band, looking like it slides behind the navbar. */
+      mask-image: linear-gradient(
+        to bottom,
+        transparent 0,
+        transparent 60px,
+        rgba(0,0,0,1) 78px
+      );
+      -webkit-mask-image: linear-gradient(
+        to bottom,
+        transparent 0,
+        transparent 60px,
+        rgba(0,0,0,1) 78px
+      );
     }
     .sidebarInner::-webkit-scrollbar { width: 3px; }
     .sidebarInner::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.10); border-radius: 4px; }

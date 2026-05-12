@@ -176,6 +176,16 @@ const W_KEYWORD_OVERLAP   = 1.0;   // per shared normalized keyword
 const W_TITLE_TOKEN       = 0.4;   // per shared title token, amplifier only
 const ENTITY_CAP          = 6;
 const KEYWORD_CAP         = 8;
+// NATION_CAP: was uncapped, which produced the user-audit failure where
+// a Mali / CIA / Pakistan thread carrying IR+US ISOs could clear the
+// 6.0 ATTACH_THRESHOLD on nation overlap alone (3 nations × 2.5 = 7.5)
+// against the Iran-US-Israel timeline. With cap=2, max from nations is
+// 5.0 — strictly insufficient for attach. A thread must now ALSO share
+// either an entity or a keyword to land on a timeline. See
+// reevaluateTimelineAttachments.js for the self-healing cron pass
+// that catches future drift the same way today's manual audit caught
+// the pre-Apr-20 loose-threshold artifacts (~176 bad attachments).
+const NATION_CAP          = 2;
 
 const ATTACH_THRESHOLD    = 6.0;   // thread links to this timeline
 // 7.0 was 9.0 — that bar was essentially "perfect match" and almost no
@@ -735,7 +745,9 @@ async function decideAttachOrCreate(cand, timelines, timelineFeatures) {
     if (!feat) continue;
 
     const entShared  = Math.min(ENTITY_CAP,  intersectCount(candEntities,  feat.entities));
-    const natShared  = intersectCount(candNations,  feat.nations);
+    // Cap nation overlap at NATION_CAP (was uncapped) — see comment at
+    // NATION_CAP declaration for the audit-driven rationale.
+    const natShared  = Math.min(NATION_CAP, intersectCount(candNations,  feat.nations));
     const kwShared   = Math.min(KEYWORD_CAP, intersectCount(candKeywords,  feat.keywords));
     const ttkShared  = intersectCount(candTitleTokens, feat.titleTokens);
 
@@ -755,6 +767,42 @@ async function decideAttachOrCreate(cand, timelines, timelineFeatures) {
 
   // Decide.
   if (bestTimeline && bestScore >= ATTACH_THRESHOLD) {
+    // ENTITY/CORE-PHRASE GATE — the must-have semantic check.
+    //
+    // A high score is not sufficient. We additionally require either
+    //   (a) at least one shared entity (proper noun from articles), OR
+    //   (b) a core_phrase from the timeline appears in the thread title.
+    //
+    // Without this gate, threads with shared geography (e.g. ML+IR+US
+    // shared with the Iran-US-Israel War timeline) could clear 6.0 on
+    // nation overlap alone even when the thread's actual subject is
+    // unrelated. The audit on 2026-05-12 detached 176 such threads
+    // accumulated under the pre-Apr-20 loose threshold; this gate
+    // prevents the same class of error going forward.
+    //
+    // Falsy-default of core_phrases is handled — older timelines may
+    // not have them populated yet, in which case the gate falls
+    // through to entity overlap, which remains a strong signal.
+    const feat = timelineFeatures.get(bestTimeline.id);
+    const entShared = feat ? intersectCount(candEntities, feat.entities) : 0;
+    const corePhrases = Array.isArray(bestTimeline.core_phrases) ? bestTimeline.core_phrases : [];
+    const candTitleLower = String(cand.title || '').toLowerCase();
+    const hasCorePhrase = corePhrases.some(p =>
+      p && candTitleLower.includes(String(p).toLowerCase())
+    );
+    if (entShared === 0 && !hasCorePhrase) {
+      // Score crossed the bar but no specific named-subject overlap —
+      // probably geographic/keyword coincidence. Reject the attach and
+      // fall through to creating a new line (or being unattached).
+      return {
+        action:        'create',
+        score:         bestScore,
+        breakdown:     breakdown[0],
+        _claudeCalls:  0,
+        _rejected_by:  'no_entity_or_core_phrase_overlap',
+      };
+    }
+
     const isDormant = (bestTimeline.status === 'dormant');
     const action = (isDormant && bestScore >= REAWAKEN_THRESHOLD) ? 'reawaken' : 'attach';
     return {
@@ -1400,7 +1448,9 @@ async function runDormantRescanPhase(metrics, elapsed) {
         const feat = dormantFeatures.get(line.id);
         if (!feat) continue;
 
-        const natShared  = intersectCount(candNations,  feat.nations);
+        // Cap nation overlap (was uncapped) — see NATION_CAP declaration
+        // for the audit-driven rationale.
+        const natShared  = Math.min(NATION_CAP, intersectCount(candNations,  feat.nations));
         const kwShared   = Math.min(KEYWORD_CAP, intersectCount(candKeywords,  feat.keywords));
         const ttkShared  = intersectCount(candTitleTokens, feat.titleTokens);
         // Entities skipped — see comment above.
@@ -1414,13 +1464,37 @@ async function runDormantRescanPhase(metrics, elapsed) {
         }
       }
 
-      if (bestLine && bestScore >= ATTACH_THRESHOLD) {
+      // CORE-PHRASE GATE for the dormant-rescan path. Entities are
+      // intentionally not loaded here (see the heavy-DB-op comment
+      // above), so we can't use the entity-overlap arm of the
+      // standard gate. Falling back to core_phrase title-substring
+      // overlap is the next strongest semantic signal — a dormant
+      // Line shouldn't get REACTIVATED just because a thread shares
+      // 2 nations + a generic keyword with it; the thread's title
+      // should at least name the Line's distinctive subject.
+      // Reactivation is a louder action than fresh attach (it flips
+      // status back to active), so the gate here is symmetric in
+      // strictness with the fresh-attach gate.
+      let dormantGatePass = false;
+      if (bestLine) {
+        const corePhrases = Array.isArray(bestLine.core_phrases) ? bestLine.core_phrases : [];
+        const titleLower = String(thread.title || '').toLowerCase();
+        dormantGatePass = corePhrases.some(p =>
+          p && titleLower.includes(String(p).toLowerCase())
+        );
+      }
+
+      if (bestLine && bestScore >= ATTACH_THRESHOLD && dormantGatePass) {
         const shouldRelink = !thread.timeline_id;
         await reactivateDormantFromThread(thread, bestLine.id, shouldRelink);
         reactivatedIds.add(bestLine.id);
         reactivated++;
         if (shouldRelink) relinked++;
         console.log(`   ↳ REACTIVATED dormant Line "${(bestLine.title||'').slice(0,50)}" via thread "${(thread.title||'').slice(0,50)}" (score=${bestScore.toFixed(1)}${shouldRelink ? ', relinked' : ''})`);
+      } else if (bestLine && bestScore >= ATTACH_THRESHOLD && !dormantGatePass) {
+        // Surface the rejection — useful telemetry when tuning the
+        // gate vs. dormant-rescan thresholds.
+        console.log(`   ⊘ skipped dormant Line "${(bestLine.title||'').slice(0,50)}" rescan for thread "${(thread.title||'').slice(0,50)}" (score=${bestScore.toFixed(1)}, failed core_phrase gate)`);
       }
     } catch (err) {
       console.warn(`   ⚠ rescan failed for thread ${thread.id}: ${err.message}`);
@@ -1878,7 +1952,12 @@ async function runArticleUmbrellaPhase(metrics, elapsed) {
         const artTitleTok  = tokenizeTitle(c.title);
 
         const entShared = Math.min(ENTITY_CAP,  intersectCount(artEntities,  feat.entities));
-        const natShared = intersectCount(artNations,  feat.nations);
+        // Cap nation overlap (was uncapped) — see NATION_CAP at top
+        // of file for rationale. An article carries at most 1 ISO
+        // anyway via its country_id, so this cap is rarely binding
+        // here in practice but the defensive cap keeps the umbrella
+        // scoring symmetric with the thread-attach path.
+        const natShared = Math.min(NATION_CAP, intersectCount(artNations,  feat.nations));
         const kwShared  = Math.min(KEYWORD_CAP, intersectCount(artKeywords,  feat.keywords));
         const ttkShared = intersectCount(artTitleTok, feat.titleTokens);
 
