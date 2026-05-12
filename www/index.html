@@ -9393,6 +9393,35 @@ body.cb-safe .semHeatLegendBar:not(.coverage) {
       color: rgba(255,255,255,0.4);
       flex-shrink: 0;
     }
+    /* Per-row heatmap launcher — mirrors the nav-bar #semHeatToggleBtn 3×3
+       gradient grid so users recognize the symbol from the globe overlay.
+       Stops click propagation in the inline handler so tapping the icon
+       doesn't also fire kwiBarClick on the row. */
+    .kwi-heatmap-btn {
+      flex-shrink: 0;
+      width: 22px;
+      height: 22px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: transparent;
+      border: 1px solid rgba(255,200,80,0.25);
+      border-radius: 5px;
+      cursor: pointer;
+      padding: 0;
+      margin-left: 2px;
+      opacity: 0.55;
+      transition: opacity 0.15s, border-color 0.15s, background 0.15s;
+      -webkit-appearance: none;
+      appearance: none;
+    }
+    .kwi-bar-row:hover .kwi-heatmap-btn { opacity: 0.85; }
+    .kwi-heatmap-btn:hover {
+      opacity: 1;
+      border-color: rgba(255,200,80,0.65);
+      background: rgba(255,200,80,0.10);
+    }
+    .kwi-heatmap-btn svg { width: 12px; height: 12px; display: block; }
     /* Active keyword chip */
     .kwi-active-chip {
       display: none;
@@ -41463,12 +41492,32 @@ const settingsToggle     = document.getElementById("settingsToggle");
     container.innerHTML = rows.map(row => {
       const pct = Math.round((row.count / maxCount) * 100);
       const col = row.isPrimary ? 'linear-gradient(90deg,#4a9eff,#7bc8ff)' : 'linear-gradient(90deg,rgba(74,158,255,0.5),rgba(123,200,255,0.5))';
-      return `<div class="kwi-bar-row" onclick="kwiBarClick('${escapeForSingleQuotedJs(row.label)}')">
+      // Per-row heatmap launcher uses the same 3×3 gradient-grid icon as
+      // #semHeatToggleBtn so the symbol is recognizable. event.stopPropagation
+      // prevents the row's kwiBarClick from also firing.
+      const escLabel = escapeForSingleQuotedJs(row.label);
+      return `<div class="kwi-bar-row" onclick="kwiBarClick('${escLabel}')">
         <div class="kwi-bar-label" title="${row.label}">${row.label}</div>
         <div class="kwi-bar-track">
           <div class="kwi-bar-fill" style="width:${pct}%;background:${col};"></div>
         </div>
         <div class="kwi-bar-count">${row.count.toLocaleString()}</div>
+        <button type="button" class="kwi-heatmap-btn"
+                aria-label="Show ${row.label} on globe heatmap"
+                title="Show on globe heatmap"
+                onclick="event.stopPropagation(); window.__kwiOpenHeatmap?.('${escLabel}');">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="3"  y="3"  width="5" height="5" rx="1" fill="rgba(255,200,80,0.95)"/>
+            <rect x="9"  y="3"  width="5" height="5" rx="1" fill="rgba(220,140,60,0.85)"/>
+            <rect x="15" y="3"  width="5" height="5" rx="1" fill="rgba(120,90,80,0.6)"/>
+            <rect x="3"  y="9"  width="5" height="5" rx="1" fill="rgba(220,140,60,0.85)"/>
+            <rect x="9"  y="9"  width="5" height="5" rx="1" fill="rgba(255,210,90,1)"/>
+            <rect x="15" y="9"  width="5" height="5" rx="1" fill="rgba(180,120,70,0.75)"/>
+            <rect x="3"  y="15" width="5" height="5" rx="1" fill="rgba(120,90,80,0.6)"/>
+            <rect x="9"  y="15" width="5" height="5" rx="1" fill="rgba(180,120,70,0.75)"/>
+            <rect x="15" y="15" width="5" height="5" rx="1" fill="rgba(80,80,90,0.45)"/>
+          </svg>
+        </button>
       </div>`;
     }).join('');
   }
@@ -41477,6 +41526,47 @@ const settingsToggle     = document.getElementById("settingsToggle");
     if (word === kwiKeyword) return;
     document.getElementById('kwiInput').value = word;
     kwiDoSearch(word);
+  };
+
+  // Launch the globe heatmap pre-loaded with a specific keyword from a kwi
+  // bar row. Data path: rising/trending crons precompute the per-country
+  // article counts, so the heatmap renders from warm cache (no cold-DB
+  // wait on landing). The data-pre-routed attribute is defensive insurance
+  // against any future code path that might reset the panel to Ask-AI
+  // mid-open — if it's set, the keyword tab stays active.
+  window.__kwiOpenHeatmap = function(word) {
+    const kw = String(word || kwiKeyword || '').trim();
+    if (!kw) return;
+    const panel = document.getElementById('semHeatPanel');
+    if (panel) panel.dataset.preRouted = 'keyword';
+    try {
+      if (typeof window.__restoreHeatmapView === 'function') {
+        window.__restoreHeatmapView({
+          type:    'heatmap',
+          ctl:     'keyword',
+          mode:    'coverage',
+          keyword: kw,
+          days:    String(kwiDays || activeDays || 7),
+        });
+      } else if (typeof window.__semHeatOpen === 'function') {
+        // Fallback path if restore helper isn't available yet — set the
+        // input by hand and open the panel.
+        const tab = document.querySelector('#semHeatCtlTabs [data-ctl="keyword"]');
+        if (tab) tab.click();
+        const input = document.getElementById('semHeatKw');
+        if (input) {
+          input.value = kw;
+          input.dispatchEvent(new Event('input',  { bubbles: true }));
+          input.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+        window.__semHeatOpen();
+      }
+    } finally {
+      // Clear the routing flag once the open animation settles (~400ms
+      // matches the panel's CSS fade-in). Any later open that bypasses
+      // kwi falls back to the panel's default tab.
+      setTimeout(() => { if (panel) delete panel.dataset.preRouted; }, 500);
+    }
   };
 
   // ── Trend line chart renderer (native canvas) ──────────────────────────────
