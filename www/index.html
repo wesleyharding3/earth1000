@@ -1249,12 +1249,14 @@
     .searchItem:active { background: rgba(255,190,80,0.18); }
 
     .searchItemMain {
+      /* Typography matches .articleCardTitle on the country/city
+         panels — 13px / weight 600 / line-height 1.4, no glow, no
+         letter-spacing — so the search dropdown reads like panel
+         text. Color stays amber per the globe's visual palette. */
       font-size: 13px;
       font-weight: 600;
       color: #ffbe50;
-      text-shadow: 0 0 8px rgba(255,180,60,0.45);
-      letter-spacing: 0.02em;
-      line-height: 1.15;
+      line-height: 1.4;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -1262,11 +1264,14 @@
       min-width: 0;
     }
     .searchItemSub {
-      font-size: 10px;
-      font-weight: 500;
+      /* Mirrors .articleCardSummary on the panels — 11px / weight
+         normal / line-height 1.5 / no letter-spacing. Color stays
+         amber-tinted so the dropdown stays visually consistent
+         with the globe's amber chrome. */
+      font-size: 11px;
+      font-weight: 400;
       color: rgba(255,190,80,0.55);
-      letter-spacing: 0.03em;
-      line-height: 1.15;
+      line-height: 1.5;
       margin-top: 2px;
       white-space: nowrap;
       overflow: hidden;
@@ -24064,6 +24069,19 @@ const settingsToggle     = document.getElementById("settingsToggle");
               preFocusZoom = camera.position.z;
               focusCountry(country);
               try { openNodePanel(country, "country"); targetZoom = 2.3; } catch (_) {}
+              // Illuminate the country polygon on the globe — same
+              // selection glow that a direct globe-tap produces.
+              // selectCountry takes the polygon-layer's `key` value,
+              // which for countries with a real ISO is the uppercase
+              // ISO-2 (e.g. "US"). The handful of no-ISO polygons
+              // (Kosovo, Western Sahara, Somaliland) key on
+              // name.toLowerCase() instead — fall back to that when
+              // iso_code is missing so those countries still glow.
+              try {
+                const polyKey = (country.iso_code || '').toUpperCase()
+                              || (country.name || '').toLowerCase();
+                window.__polygonLayer?.selectCountry?.(polyKey);
+              } catch (_) {}
               resultsContainer.style.display = "none";
               searchInput.value = country.name;
             });
@@ -24092,6 +24110,23 @@ const settingsToggle     = document.getElementById("settingsToggle");
               e.preventDefault();
               lockAmbientRotation();
               preFocusZoom = camera.position.z;
+              // Switch the view-mode toggle to "City" FIRST so the
+              // globe swaps in city dots before the camera pans —
+              // user sees the destination city as a visible node
+              // when it arrives, not as an empty patch of land.
+              // Calls .click() rather than mutating state directly
+              // because the toggle's click handler is the canonical
+              // entry point that updates BOTH the internal
+              // currentViewMode AND the visible `.active` chip in
+              // the dropdown. Idempotent — no-op if city mode is
+              // already active. Same pattern used by tutorial
+              // chapter 2 and the briefing player's mode reset.
+              try {
+                const cityOpt = document.querySelector('.viewOption[data-mode="city"]');
+                if (cityOpt && !cityOpt.classList.contains('active')) cityOpt.click();
+              } catch (_) {}
+              // Pan camera + fire concentric ring pulse on the city
+              // (ringStates animation in focusCity).
               focusCity(city);
               try { openNodePanel(city, "city"); targetZoom = 2.3; } catch (_) {}
               resultsContainer.style.display = "none";
