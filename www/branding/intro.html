@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Earth00 — App Preview Intro</title>
+<style>
+  /* ─────────────────────────────────────────────────────────────────────
+     App Preview intro — designed for iPhone 6.9" portrait (1290 × 2796).
+     Open this page, then either:
+       1. macOS: Cmd+Shift+5 → "Record Selected Portion" → drag a 1290×2796
+          region matching the #stage box → press Record. The 5-second
+          animation auto-plays on load.
+       2. Puppeteer / Playwright / Chrome's `--screenshot --window-size`
+          for a frame-perfect capture.
+     The stage is intrinsically sized; the surrounding viewport is just
+     padding. The animation auto-resets on page load so re-recording is
+     a simple browser refresh.
+  ─────────────────────────────────────────────────────────────────────── */
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 100%; height: 100%;
+    background: #000;
+    overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+
+  body {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+  }
+
+  /* Outer wrapper centers the (possibly scaled) stage and gives the
+     JS scaler something stable to measure against. */
+  #wrap {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 1290px;
+    height: 2796px;
+    transform: translate(-50%, -50%);
+    transform-origin: center center;
+  }
+
+  /* ── The recording target ─────────────────────────────────────────── */
+  #stage {
+    position: relative;
+    width: 1290px;
+    height: 2796px;
+    background: radial-gradient(ellipse at center, #0a0d14 0%, #000 70%);
+    overflow: hidden;
+  }
+
+  /* ── Starfield (static, drawn once into canvas) ──────────────────── */
+  #stars {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0;
+    animation: starsFadeIn 0.8s ease-out 0.1s forwards;
+  }
+  @keyframes starsFadeIn {
+    from { opacity: 0; }
+    to   { opacity: 1; }
+  }
+
+  /* ── Centered logo composition ────────────────────────────────────── */
+  .composition {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 80px;
+  }
+
+  /* ── Globe wrap ───────────────────────────────────────────────────── */
+  .globe-wrap {
+    position: relative;
+    width: 900px;
+    height: 900px;
+    display: inline-block;
+    line-height: 0;
+    opacity: 0;
+    transform: scale(0.6);
+    animation: globeIn 1.2s cubic-bezier(0.16, 1, 0.3, 1) 0.4s forwards;
+  }
+  @keyframes globeIn {
+    0%   { opacity: 0; transform: scale(0.6); }
+    60%  { opacity: 1; transform: scale(1.04); }
+    100% { opacity: 1; transform: scale(1.0); }
+  }
+
+  .globe {
+    width: 900px;
+    height: 900px;
+    display: block;
+    overflow: visible;
+  }
+
+  /* Globe grid — stroke-dashoffset draw-on */
+  .el-grid ellipse,
+  .el-grid path {
+    fill: none;
+    stroke: rgba(255, 160, 40, 0.32);
+    stroke-width: 0.8;
+    stroke-dasharray: 1000;
+    stroke-dashoffset: 1000;
+    animation: drawLine 1.6s cubic-bezier(0.4, 0, 0.2, 1) 0.5s forwards;
+  }
+  .el-grid ellipse:first-child {
+    stroke: rgba(255, 160, 40, 0.65);
+    stroke-width: 1.1;
+  }
+  /* Stagger the lines slightly */
+  .el-grid > *:nth-child(1)  { animation-delay: 0.50s; }
+  .el-grid > *:nth-child(2)  { animation-delay: 0.55s; }
+  .el-grid > *:nth-child(3)  { animation-delay: 0.60s; }
+  .el-grid > *:nth-child(4)  { animation-delay: 0.65s; }
+  .el-grid > *:nth-child(5)  { animation-delay: 0.70s; }
+  .el-grid > *:nth-child(6)  { animation-delay: 0.75s; }
+  .el-grid > *:nth-child(7)  { animation-delay: 0.80s; }
+  .el-grid > *:nth-child(8)  { animation-delay: 0.85s; }
+  .el-grid > *:nth-child(9)  { animation-delay: 0.90s; }
+  .el-grid > *:nth-child(10) { animation-delay: 0.95s; }
+  .el-grid > *:nth-child(11) { animation-delay: 1.00s; }
+  .el-grid > *:nth-child(12) { animation-delay: 1.05s; }
+  .el-grid > *:nth-child(13) { animation-delay: 1.10s; }
+  .el-grid > *:nth-child(14) { animation-delay: 1.15s; }
+  @keyframes drawLine {
+    to { stroke-dashoffset: 0; }
+  }
+
+  /* ── Italic serif "e" — the wordmark glyph ───────────────────────── */
+  .e-mark {
+    position: absolute;
+    bottom: 50px;
+    left: 35px;
+    z-index: 2;
+    pointer-events: none;
+    font-family: "Georgia", "Times New Roman", serif;
+    font-style: italic;
+    font-weight: 900;
+    font-size: 500px;
+    line-height: 1;
+    color: rgba(255, 175, 50, 1);
+    letter-spacing: -0.04em;
+    text-shadow:
+      0 0 80px rgba(255, 140, 30, 0.8),
+      0 0 160px rgba(255, 100, 20, 0.5);
+    opacity: 0;
+    transform: translateY(40px) scale(0.85);
+    animation: eIn 0.9s cubic-bezier(0.16, 1, 0.3, 1) 1.6s forwards;
+  }
+  @keyframes eIn {
+    0%   { opacity: 0; transform: translateY(40px) scale(0.85); }
+    60%  { opacity: 1; transform: translateY(0)   scale(1.05); }
+    100% { opacity: 1; transform: translateY(0)   scale(1.0); }
+  }
+
+  /* ── Orbiting star + trail ───────────────────────────────────────── */
+  #starGroup {
+    opacity: 0;
+    animation: starFadeIn 0.4s ease-out 1.4s forwards;
+  }
+  @keyframes starFadeIn {
+    to { opacity: 1; }
+  }
+
+  .el-trail-blur {
+    fill: none;
+    stroke: rgba(255, 180, 60, 0.5);
+    stroke-width: 1.2;
+    stroke-linecap: round;
+    filter: url(#trailBlur);
+  }
+  .el-trail-seg {
+    fill: none;
+    stroke-linecap: round;
+    filter: url(#trailBlur);
+  }
+  .el-star {
+    fill: rgba(255, 222, 75, 1);
+    filter:
+      drop-shadow(0 0 18px rgba(255, 210, 60, 0.95))
+      drop-shadow(0 0 42px rgba(255, 135, 22, 0.75));
+  }
+
+  /* ── Wordmark line below the globe ───────────────────────────────── */
+  .wordmark {
+    font-family: "Georgia", "Times New Roman", serif;
+    font-style: italic;
+    font-weight: 900;
+    font-size: 140px;
+    letter-spacing: -0.02em;
+    color: rgba(255, 175, 50, 1);
+    text-shadow:
+      0 0 30px rgba(255, 140, 30, 0.5),
+      0 0 80px rgba(255, 100, 20, 0.25);
+    line-height: 1;
+    opacity: 0;
+    transform: translateY(30px);
+    animation: wordmarkIn 0.8s cubic-bezier(0.16, 1, 0.3, 1) 2.0s forwards;
+    white-space: nowrap;
+  }
+  @keyframes wordmarkIn {
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  /* Tagline beneath wordmark — system sans, white, subdued */
+  .tagline {
+    margin-top: 36px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-weight: 400;
+    font-size: 56px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.7);
+    opacity: 0;
+    transform: translateY(20px);
+    animation: taglineIn 0.7s ease-out 2.45s forwards;
+  }
+  @keyframes taglineIn {
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  /* ── Final hold + cinematic dim before cut to app ─────────────────── */
+  /* The fade-to-black is the bridge into app footage during recording.
+     Suppressed in the URL ?loop preview mode so the bright frame holds
+     and you can inspect / re-record without reloading. */
+  #stage::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: #000;
+    opacity: 0;
+    pointer-events: none;
+    animation: stageDim 0.6s ease-in 4.4s forwards;
+  }
+  body.loop #stage::after { animation: none; }
+  @keyframes stageDim {
+    to { opacity: 1; }
+  }
+
+  /* Loop mode — keeps the full composition on screen indefinitely.
+     Triggered by ?loop in the URL; the JS sets body.loop and replays
+     the timed entrance animations on a 6-second cadence. */
+  body.loop .replay-pulse {
+    animation: replayPulse 6s linear infinite;
+  }
+  @keyframes replayPulse { /* placeholder so animation events fire */
+    from { opacity: 1; }
+    to   { opacity: 1; }
+  }
+
+  /* Re-runner — clicking the stage restarts the animation. Useful while
+     iterating on timing without manually reloading. */
+  .restart-hint {
+    position: fixed;
+    bottom: 16px;
+    right: 16px;
+    color: rgba(255, 255, 255, 0.4);
+    font-size: 11px;
+    font-family: ui-monospace, Menlo, monospace;
+    pointer-events: none;
+  }
+</style>
+</head>
+<body>
+
+<div id="wrap">
+<div id="stage" onclick="location.reload()">
+  <canvas id="stars" width="1290" height="2796"></canvas>
+
+  <div class="composition">
+    <div class="globe-wrap">
+      <svg class="globe" viewBox="-110 -110 220 220" xmlns="http://www.w3.org/2000/svg">
+        <g class="el-grid">
+          <ellipse cx="0" cy="0"   rx="100"  ry="100"/>
+          <ellipse cx="0" cy="-50" rx="86.6" ry="15"/>
+          <ellipse cx="0" cy="-25" rx="96.8" ry="8"/>
+          <ellipse cx="0" cy="0"   rx="100"  ry="20"/>
+          <ellipse cx="0" cy="25"  rx="96.8" ry="8"/>
+          <ellipse cx="0" cy="50"  rx="86.6" ry="15"/>
+          <path d="M0,-100 Q38,-85 55,0 Q38,85 0,100"/>
+          <path d="M0,-100 Q-38,-85 -55,0 Q-38,85 0,100"/>
+          <path d="M0,-100 Q70,-50 70,0 Q70,50 0,100"/>
+          <path d="M0,-100 Q-70,-50 -70,0 Q-70,50 0,100"/>
+          <path d="M0,-100 Q20,-80 100,0 Q20,80 0,100"/>
+          <path d="M0,-100 Q-20,-80 -100,0 Q-20,80 0,100"/>
+          <path d="M0,-100 Q8,-60 0,100"/>
+          <path d="M0,-100 Q-8,-60 0,100"/>
+        </g>
+
+        <!-- Shooting star with tapered trail — tilted -32° to give it
+             motion energy across the upper hemisphere. The JS below
+             animates it around the orbit ring once the logo settles. -->
+        <g id="starGroup" transform="rotate(-32)">
+          <path class="el-trail-blur" d=""/>
+          <path class="el-trail-seg" d=""/>
+          <path class="el-trail-seg" d=""/>
+          <path class="el-trail-seg" d=""/>
+          <path class="el-trail-seg" d=""/>
+          <path class="el-trail-seg" d=""/>
+          <path class="el-trail-seg" d=""/>
+          <polygon class="el-star"
+            points="0,-6.5 1.5,-2.1 6.2,-2.1 2.6,0.8 3.8,5.4 0,3.0 -3.8,5.4 -2.6,0.8 -6.2,-2.1 -1.5,-2.1"/>
+        </g>
+      </svg>
+
+      <!-- The italic-serif "e" — same glyph treatment as the app icon -->
+      <div class="e-mark">e</div>
+    </div>
+
+    <div>
+      <div class="wordmark">earth00</div>
+      <div class="tagline">Track world events</div>
+    </div>
+  </div>
+
+  <!-- SVG defs: blur filter for the star's trailing tail -->
+  <svg width="0" height="0" style="position:absolute;pointer-events:none">
+    <defs>
+      <filter id="trailBlur" x="-50%" y="-100%" width="200%" height="300%">
+        <feGaussianBlur in="SourceGraphic" stdDeviation="3" result="blur1"/>
+        <feGaussianBlur in="SourceGraphic" stdDeviation="6" result="blur2"/>
+        <feMerge>
+          <feMergeNode in="blur2"/>
+          <feMergeNode in="blur1"/>
+          <feMergeNode in="SourceGraphic"/>
+        </feMerge>
+      </filter>
+    </defs>
+  </svg>
+</div>
+</div>
+
+<div class="restart-hint">click stage to replay</div>
+
+<script>
+/* ── Loop / preview mode ──────────────────────────────────────────── */
+const QS = new URLSearchParams(location.search);
+if (QS.has('loop')) {
+  document.body.classList.add('loop');
+}
+
+/* ── Scrubbable timeline (?t=<seconds>) ───────────────────────────────
+   Frame-by-frame capture mode. Browsers (especially headless) don't
+   sync requestAnimationFrame to a fixed 30/60fps clock, so naive video
+   recording samples whatever animation state happens to be in memory
+   when the recorder polls. Result: dropped frames + frame duplicates
+   in transcode = visible choppiness.
+   The fix: snapshot a deterministic timeline. URL param `t` (seconds)
+   freezes every CSS animation at exactly that point via negative
+   animation-delay + paused state, and pins the JS star orbit to the
+   same `t`. A capture script then walks t = 0/30, 1/30, 2/30 … 5.5
+   and screenshots each, producing N pristine frames that ffmpeg joins
+   into a perfectly-smooth 30fps mp4 regardless of render-loop jitter.
+─────────────────────────────────────────────────────────────────────── */
+const SCRUB_T = QS.has('t') ? parseFloat(QS.get('t')) : null;
+const IS_SCRUB = SCRUB_T !== null && !Number.isNaN(SCRUB_T);
+
+/* Per-element CSS-animation scrub.
+   A blanket `animation-delay: -<t>s !important` is wrong because each
+   animation has a different start time in the storyboard (globeIn
+   starts at 0.4s, eIn at 1.6s, wordmarkIn at 2.0s, etc.). Applying
+   the same negative delay to all of them jumps every animation to
+   roughly the same point — which means at any t the elements appear
+   in completely the wrong states (e.g. logo already onscreen at t=0).
+
+   Correct behavior: for each animated element, override its
+   animation-delay to `-(t - originalDelay)s` so the animation is
+   scrubbed relative to its own start. The `forwards` fill-mode on
+   each animation locks the final state once t > delay + duration,
+   so completed animations stay frozen at their end keyframe. */
+if (IS_SCRUB) {
+  // Run synchronously at script-tag time. The script tag sits at the
+  // bottom of <body> after all animated elements, so the DOM is parsed
+  // and the head <style> rules are applied — getComputedStyle returns
+  // the correct cascaded animation-delay for each element. Using rAF
+  // here turned out unreliable in some headless capture paths (the
+  // callback would be queued but never flushed before page.screenshot()).
+  const scrubAnimation = (el) => {
+    const cs = getComputedStyle(el);
+    if (!cs.animationName || cs.animationName === 'none') return;
+    // animation-delay can be a list ("0.4s, 0.6s, ..."); take the first
+    // (we only ever set one animation per element in this file).
+    const delayStr = cs.animationDelay.split(',')[0].trim();
+    const originalDelay = parseFloat(delayStr) || 0;
+    // Offset the animation back by (t - originalDelay) so it's at
+    // frame (t - originalDelay) into its own duration. Paused so it
+    // doesn't drift after.
+    el.style.animationDelay = `${-(SCRUB_T - originalDelay)}s`;
+    el.style.animationPlayState = 'paused';
+  };
+  document
+    .querySelectorAll('#stars, .globe-wrap, .el-grid > *, #starGroup, .e-mark, .wordmark, .tagline, #stage')
+    .forEach(scrubAnimation);
+
+  // #stage::after carries the final fade-to-black (stageDim). It's a
+  // pseudo-element so we can't reach it via JS — inject a stylesheet
+  // that scrubs it to the same t.
+  const STAGE_DIM_DELAY = 4.4; // matches CSS
+  const sheet = document.createElement('style');
+  sheet.textContent = `
+    #stage::after {
+      animation-delay: ${-(SCRUB_T - STAGE_DIM_DELAY)}s !important;
+      animation-play-state: paused !important;
+    }
+  `;
+  document.head.appendChild(sheet);
+}
+
+/* ── Fit the 1290×2796 stage to the viewport for preview ──────────── */
+(function fitStage() {
+  const wrap = document.getElementById('wrap');
+  function fit() {
+    const sx = window.innerWidth  / 1290;
+    const sy = window.innerHeight / 2796;
+    const s = Math.min(sx, sy);
+    wrap.style.transform = `translate(-50%, -50%) scale(${s})`;
+  }
+  fit();
+  window.addEventListener('resize', fit);
+})();
+
+/* ── Twinkling starfield ──────────────────────────────────────────────
+   Each star has a base brightness + a sinusoidal twinkle that pulses
+   the brightness up and down. Per-star frequency and phase are seeded
+   deterministically so a given timestamp always produces the same
+   visual — critical for frame-by-frame scrub capture, otherwise
+   different frames would catch the twinkle at different phases.
+
+   Most stars twinkle gently (~30% amplitude); a small subset get a
+   stronger pulse for the eye-catching "look at the bright one"
+   effect. Frequencies are low (0.3–1.2 Hz) so the result reads as
+   ambient atmosphere, not a disco floor. */
+const stars = (() => {
+  let seed = 1337;
+  const rand = () => { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; };
+  const W = 1290, H = 2796;
+  const N = 380;
+  const arr = [];
+  for (let i = 0; i < N; i++) {
+    const x = rand() * W;
+    const y = rand() * H;
+    const size = rand() * 1.6 + 0.3;
+    const warm = rand() < 0.28;
+    const hue = warm ? (32 + rand() * 20) : (200 + rand() * 60);
+    const sat = warm ? (60 + rand() * 40) : (10 + rand() * 20);
+    const baseOp = rand() * 0.55 + 0.3;
+    const isBright = rand() < 0.18;                    // ~18% strong twinkle
+    const twinkleAmp = isBright ? 0.55 : 0.28;         // pulse depth
+    const twinkleHz  = 0.3 + rand() * 0.9;             // 0.3–1.2 Hz
+    const twinklePh  = rand() * Math.PI * 2;           // phase offset
+    arr.push({ x, y, size, hue, sat, baseOp, twinkleAmp, twinkleHz, twinklePh });
+  }
+  return arr;
+})();
+
+function renderStars(elapsedSec) {
+  const canvas = document.getElementById('stars');
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  for (const s of stars) {
+    // Twinkle factor: oscillates between (1 - amp) and (1 + amp), clamped 0..1.5
+    const wave = Math.sin(elapsedSec * s.twinkleHz * Math.PI * 2 + s.twinklePh);
+    const k = Math.max(0, 1 + wave * s.twinkleAmp);
+    const op = Math.min(1, s.baseOp * k);
+    const r = s.size * 3;
+    const g = ctx.createRadialGradient(s.x, s.y, 0, s.x, s.y, r);
+    g.addColorStop(0,   `hsla(${s.hue}, ${s.sat}%, 90%, ${op})`);
+    g.addColorStop(0.4, `hsla(${s.hue}, ${s.sat}%, 70%, ${op * 0.4})`);
+    g.addColorStop(1,   `hsla(${s.hue}, ${s.sat}%, 50%, 0)`);
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(s.x, s.y, r, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = `hsla(${s.hue}, ${s.sat}%, 95%, ${op})`;
+    ctx.beginPath(); ctx.arc(s.x, s.y, s.size * 0.55, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+if (IS_SCRUB) {
+  renderStars(SCRUB_T);
+} else {
+  const t0 = performance.now();
+  (function loop() {
+    renderStars((performance.now() - t0) / 1000);
+    requestAnimationFrame(loop);
+  })();
+}
+
+/* ── Star orbit (drives the tapered tail along an elliptical path) ─
+   Runs requestAnimationFrame for buttery 60fps. The orbit ring
+   sits ahead of the wireframe globe, tilted -32deg via the group
+   transform. Duration is one full revolution in 3.5s — slow enough
+   to feel cinematic, fast enough to read as motion. */
+(function startOrbit() {
+  const RX = 112, RY = 36;            // ellipse semi-axes (SVG units)
+  const TRAIL_FRAC = 0.22;            // length of the tail (frac of orbit)
+  const LAYER_CFG = [
+    [1.00, 1.0, 0.12],
+    [0.75, 1.8, 0.18],
+    [0.50, 2.8, 0.28],
+    [0.35, 4.0, 0.40],
+    [0.20, 5.5, 0.55],
+    [0.08, 7.0, 0.75],
+  ];
+  const PERIOD_MS = 3500;
+
+  const group = document.getElementById('starGroup');
+  const star  = group.querySelector('.el-star');
+  const blur  = group.querySelector('.el-trail-blur');
+  const segs  = Array.from(group.querySelectorAll('.el-trail-seg'));
+
+  function orbitPos(f) {
+    const a = f * 2 * Math.PI;
+    return [RX * Math.cos(a), -RY * Math.sin(a)];
+  }
+  function buildTrail(headFrac, fullLen, layerLenFrac) {
+    const len = fullLen * layerLenFrac;
+    const N = Math.max(8, Math.floor(24 * layerLenFrac));
+    let d = '';
+    for (let i = 0; i <= N; i++) {
+      const f = ((headFrac - len * (1 - i / N)) % 1 + 1) % 1;
+      const [x, y] = orbitPos(f);
+      d += i === 0 ? `M${x.toFixed(2)},${y.toFixed(2)}` : `L${x.toFixed(2)},${y.toFixed(2)}`;
+    }
+    return d;
+  }
+
+  // Star fade-in begins at 1.4s (see .el-star fadeIn animation); before
+  // that the group's opacity is 0 so its trail must not draw either.
+  // We render the trail unconditionally though — opacity is animated on
+  // the group, so freezing CSS at t<1.4s naturally hides it.
+  function renderAt(elapsedMs) {
+    const headFrac = (0.22 + (elapsedMs / PERIOD_MS)) % 1;
+    const [sx, sy] = orbitPos(headFrac);
+    star.setAttribute('transform', `translate(${sx.toFixed(2)},${sy.toFixed(2)})`);
+    blur.setAttribute('d', buildTrail(headFrac, TRAIL_FRAC, 1.0));
+    blur.style.opacity = 0.9;
+    segs.forEach((seg, i) => {
+      if (i >= LAYER_CFG.length) return;
+      const [lenFrac, sw, baseOp] = LAYER_CFG[i];
+      seg.style.strokeWidth = sw;
+      seg.style.stroke = `rgba(255,${180 + i * 12},${60 + i * 15},${baseOp})`;
+      seg.setAttribute('d', buildTrail(headFrac, TRAIL_FRAC, lenFrac));
+      seg.style.opacity = Math.min(1, baseOp * 1.6);
+    });
+  }
+
+  // Scrub mode: render exactly the requested timestamp and stop.
+  if (SCRUB_T !== null && !Number.isNaN(SCRUB_T)) {
+    renderAt(SCRUB_T * 1000);
+    return;
+  }
+
+  const start = performance.now();
+  function tick(now) {
+    renderAt(now - start);
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+})();
+</script>
+
+</body>
+</html>
