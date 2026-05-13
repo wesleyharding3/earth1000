@@ -24338,6 +24338,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
         const index = cities.findIndex(c => c.name === city.name);
         selectedNodeIndex = index;
         startFocus(city.lat, city.lon);
+        // Outside briefing mode, every city focus zooms to 2.3 (the same
+        // close-up the search path used). Previously only the search-
+        // driven path set targetZoom, so tapping a city via the globe-
+        // tap → commitCityHit path oriented the camera but never zoomed
+        // — which also made the concentric ring pulses imperceptible
+        // because they render at city scale, not globe scale. Briefing
+        // mode keeps its own wide zoom (set in startFocus).
+        if (!window.briefingActive) targetZoom = 2.3;
         const phi = (90 - city.lat) * (Math.PI / 180);
         const theta = (city.lon + 180) * (Math.PI / 180);
         const ringAltitude = 0.03;
