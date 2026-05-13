@@ -7421,6 +7421,12 @@ app.get('/notices.html', (req, res) => {
 app.get('/notices', (req, res) => {
   res.sendFile(path.join(__dirname, 'www', 'notices.html'));
 });
+app.get('/support.html', (req, res) => {
+  res.sendFile(path.join(__dirname, 'www', 'support.html'));
+});
+app.get('/support', (req, res) => {
+  res.sendFile(path.join(__dirname, 'www', 'support.html'));
+});
 
 /* =========================================
    Timeline Editor — Data Panel Workflow
