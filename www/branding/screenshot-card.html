@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Earth00 — Screenshot Card</title>
+<style>
+  /* ─────────────────────────────────────────────────────────────────────
+     App Store screenshot card template — 1290×2796 (iPhone 6.9" tier).
+     Composes a branded header strip + a centered screenshot of the app.
+
+     URL params:
+       img       Path to the source screenshot, relative to /branding/
+                 e.g. ?img=screenshots-src/04_briefing.png
+       headline  Top caption line (italic serif orange, large)
+       subtitle  Bottom caption line (white sans, small)
+                 Omit to show headline only — used for info-dense
+                 screenshots where the visual already speaks.
+
+     The screenshot is scaled to fit the bottom area, height-constrained
+     so the full screen content is visible (with brand-black letterbox
+     on the sides if the source aspect is narrower than the canvas).
+  ─────────────────────────────────────────────────────────────────────── */
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 100%; height: 100%;
+    background: #000;
+    overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+
+  body {
+    position: relative;
+    width: 100vw;
+    height: 100vh;
+  }
+
+  #wrap {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 1290px;
+    height: 2796px;
+    transform: translate(-50%, -50%);
+    transform-origin: center center;
+  }
+
+  #stage {
+    position: relative;
+    width: 1290px;
+    height: 2796px;
+    background: radial-gradient(ellipse at center top, #0a0d14 0%, #000 70%);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+
+  /* Static starfield drawn into a canvas. Same RNG seed as the intro
+     and outro so the constellations match across the whole listing. */
+  #stars {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.85;
+  }
+
+  /* ── Header strip — top 22% of canvas (~615px) ──────────────────────
+     The caption lives here in branded type. Never overlaps the
+     screenshot below. */
+  .header {
+    position: relative;
+    height: 615px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 0 64px;
+    text-align: center;
+    z-index: 2;
+  }
+
+  .headline {
+    font-family: "Georgia", "Times New Roman", serif;
+    font-style: italic;
+    font-weight: 900;
+    font-size: 92px;
+    line-height: 1.05;
+    letter-spacing: -0.02em;
+    color: rgba(255, 175, 50, 1);
+    text-shadow:
+      0 0 28px rgba(255, 140, 30, 0.5),
+      0 0 80px rgba(255, 100, 20, 0.25);
+    max-width: 1160px;
+  }
+
+  .subtitle {
+    margin-top: 28px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-weight: 400;
+    font-size: 38px;
+    line-height: 1.35;
+    letter-spacing: 0.02em;
+    color: rgba(255, 255, 255, 0.78);
+    max-width: 1040px;
+  }
+
+  /* When body.no-subtitle is set, hide the subtitle and let the
+     headline center alone. Used for info-dense screens. */
+  body.no-subtitle .subtitle { display: none; }
+
+  /* ── Screenshot zone — bottom 78% of canvas (~2181px) ──────────────
+     The img scales to fit the available height (object-fit: contain).
+     Source aspect ~0.46 vs zone aspect ~0.59 = brand-black letterbox
+     on the left + right edges of narrower screenshots. */
+  .shot-wrap {
+    position: relative;
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    z-index: 2;
+  }
+  .shot {
+    height: 100%;
+    width: auto;
+    max-width: 100%;
+    display: block;
+    /* Subtle inner shadow halo gives the screen a 'screen-in-space'
+       feel, separating it visually from the starfield background.
+       Drop-shadow filter scales with image, so this works regardless
+       of the actual rendered width. */
+    filter: drop-shadow(0 0 36px rgba(0, 0, 0, 0.7));
+  }
+</style>
+</head>
+<body>
+
+<div id="wrap">
+<div id="stage">
+  <canvas id="stars" width="1290" height="2796"></canvas>
+
+  <header class="header">
+    <div class="headline" id="headline">Headline</div>
+    <div class="subtitle" id="subtitle">Subtitle</div>
+  </header>
+
+  <div class="shot-wrap">
+    <img class="shot" id="shot" alt="" />
+  </div>
+</div>
+</div>
+
+<script>
+/* ── Fit stage to viewport (same pattern as intro/outro) ───────────── */
+(function fitStage() {
+  const wrap = document.getElementById('wrap');
+  function fit() {
+    const sx = window.innerWidth  / 1290;
+    const sy = window.innerHeight / 2796;
+    wrap.style.transform = `translate(-50%, -50%) scale(${Math.min(sx, sy)})`;
+  }
+  fit();
+  window.addEventListener('resize', fit);
+})();
+
+/* ── Starfield (deterministic, matches intro + outro seed) ────────── */
+(function drawStars() {
+  const canvas = document.getElementById('stars');
+  const ctx = canvas.getContext('2d');
+  let seed = 1337;
+  const rand = () => { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; };
+  const W = canvas.width, H = canvas.height;
+  const N = 320;
+  for (let i = 0; i < N; i++) {
+    const x = rand() * W;
+    const y = rand() * H;
+    const size = rand() * 1.4 + 0.3;
+    const warm = rand() < 0.28;
+    const hue = warm ? (32 + rand() * 20) : (200 + rand() * 60);
+    const sat = warm ? (60 + rand() * 40) : (10 + rand() * 20);
+    const op  = rand() * 0.5 + 0.25;
+    const r = size * 3;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0,   `hsla(${hue}, ${sat}%, 90%, ${op})`);
+    g.addColorStop(0.4, `hsla(${hue}, ${sat}%, 70%, ${op * 0.4})`);
+    g.addColorStop(1,   `hsla(${hue}, ${sat}%, 50%, 0)`);
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = `hsla(${hue}, ${sat}%, 95%, ${op})`;
+    ctx.beginPath(); ctx.arc(x, y, size * 0.55, 0, Math.PI * 2); ctx.fill();
+  }
+})();
+
+/* ── Read URL params and apply ───────────────────────────────────── */
+(function applyParams() {
+  const QS = new URLSearchParams(location.search);
+  const headline = QS.get('headline');
+  const subtitle = QS.get('subtitle');
+  const img      = QS.get('img');
+
+  if (headline) document.getElementById('headline').textContent = headline;
+  if (subtitle) {
+    document.getElementById('subtitle').textContent = subtitle;
+  } else {
+    document.body.classList.add('no-subtitle');
+  }
+  if (img) {
+    document.getElementById('shot').src = img;
+  }
+})();
+</script>
+
+</body>
+</html>
