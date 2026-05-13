@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Support — earth00</title>
+  <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="apple-touch-icon" href="/favicon.png">
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0d0d0d;
+      --surface: #141414;
+      --border: rgba(255,255,255,0.08);
+      --text: rgba(255,255,255,0.87);
+      --muted: rgba(255,255,255,0.45);
+      --accent: #4ade80;
+      --link: #60a5fa;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      font-size: 15px;
+      line-height: 1.75;
+      padding: 0;
+    }
+
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(13,13,13,0.92);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      padding: 0 24px;
+      height: 52px;
+    }
+
+    .topbar-home {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      text-decoration: none;
+      color: var(--text);
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.04em;
+      opacity: 0.7;
+      transition: opacity 0.15s;
+    }
+    .topbar-home:hover { opacity: 1; }
+    .topbar-home svg { flex-shrink: 0; }
+
+    .topbar-sep { color: var(--border); font-size: 18px; }
+    .topbar-title { font-size: 13px; color: var(--muted); font-weight: 500; }
+
+    .layout {
+      display: flex;
+      gap: 40px;
+      max-width: 1020px;
+      margin: 0 auto;
+      padding: 48px 24px 96px;
+    }
+
+    .toc {
+      flex-shrink: 0;
+      width: 220px;
+      position: sticky;
+      top: 68px;
+      align-self: flex-start;
+      max-height: calc(100vh - 80px);
+      overflow-y: auto;
+      padding-right: 8px;
+    }
+    .toc::-webkit-scrollbar { width: 4px; }
+    .toc::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+    .toc-label {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-bottom: 12px;
+      padding-left: 12px;
+    }
+    .toc a {
+      display: block;
+      padding: 5px 12px;
+      font-size: 12px;
+      color: var(--muted);
+      text-decoration: none;
+      border-left: 2px solid transparent;
+      transition: color 0.15s, border-color 0.15s;
+      line-height: 1.4;
+    }
+    .toc a:hover {
+      color: var(--text);
+      border-left-color: var(--accent);
+    }
+
+    .content { flex: 1; min-width: 0; }
+
+    .page-eyebrow {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 10px;
+    }
+    .page-title {
+      font-size: clamp(24px, 4vw, 36px);
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin-bottom: 6px;
+    }
+    .page-lede {
+      font-size: 15px;
+      color: var(--muted);
+      margin-bottom: 40px;
+      max-width: 640px;
+    }
+
+    .contact-hero {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 28px 32px;
+      margin-bottom: 48px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .contact-hero h2 {
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .contact-hero .email {
+      font-size: clamp(20px, 3vw, 26px);
+      font-weight: 700;
+      letter-spacing: -0.01em;
+    }
+    .contact-hero .email a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+    .contact-hero .email a:hover { text-decoration: underline; }
+    .contact-hero .response {
+      font-size: 13px;
+      color: rgba(255,255,255,0.6);
+    }
+
+    .policy-section {
+      margin-bottom: 48px;
+      scroll-margin-top: 72px;
+    }
+    .policy-section h2 {
+      font-size: 17px;
+      font-weight: 700;
+      letter-spacing: -0.01em;
+      margin-bottom: 16px;
+      padding-bottom: 10px;
+      border-bottom: 1px solid var(--border);
+    }
+    .policy-section h3 {
+      font-size: 14px;
+      font-weight: 600;
+      margin-top: 24px;
+      margin-bottom: 8px;
+      color: rgba(255,255,255,0.85);
+    }
+    .policy-section p {
+      margin-bottom: 14px;
+      color: rgba(255,255,255,0.78);
+    }
+    .policy-section ul, .policy-section ol {
+      list-style: none;
+      padding: 0;
+      margin: 0 0 14px 0;
+    }
+    .policy-section ul li, .policy-section ol li {
+      position: relative;
+      padding-left: 22px;
+      margin-bottom: 8px;
+      color: rgba(255,255,255,0.78);
+      font-size: 14px;
+    }
+    .policy-section ul li::before {
+      content: "";
+      position: absolute;
+      left: 4px;
+      top: 10px;
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: var(--accent);
+      opacity: 0.6;
+    }
+    .policy-section ol { counter-reset: step; }
+    .policy-section ol li {
+      counter-increment: step;
+    }
+    .policy-section ol li::before {
+      content: counter(step) ".";
+      position: absolute;
+      left: 0;
+      top: 0;
+      color: var(--accent);
+      font-weight: 600;
+      font-size: 13px;
+    }
+    .policy-section a { color: var(--link); text-decoration: none; }
+    .policy-section a:hover { text-decoration: underline; }
+
+    .page-footer {
+      text-align: center;
+      padding: 32px 24px;
+      border-top: 1px solid var(--border);
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .page-footer a { color: var(--link); text-decoration: none; }
+    .page-footer a:hover { text-decoration: underline; }
+
+    @media (max-width: 720px) {
+      .toc { display: none; }
+      .layout { padding: 32px 16px 80px; }
+      .contact-hero { padding: 22px 22px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav class="topbar">
+  <a class="topbar-home" href="/">
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <path d="M3 8L8 3L13 8V13H10V10H6V13H3V8Z" fill="currentColor"/>
+    </svg>
+    earth00
+  </a>
+  <span class="topbar-sep">/</span>
+  <span class="topbar-title">Support</span>
+</nav>
+
+<div class="layout">
+
+  <aside class="toc">
+    <div class="toc-label">Contents</div>
+    <a href="#contact">Contact</a>
+    <a href="#getting-started">Getting started</a>
+    <a href="#sign-in">Signing in</a>
+    <a href="#notifications">Notifications</a>
+    <a href="#translation">Translation</a>
+    <a href="#subscriptions">Subscriptions</a>
+    <a href="#restore">Restoring purchases</a>
+    <a href="#cancel">Canceling a subscription</a>
+    <a href="#delete-account">Deleting your account</a>
+    <a href="#bug">Reporting a bug</a>
+    <a href="#legal">Privacy &amp; terms</a>
+  </aside>
+
+  <main class="content">
+
+    <div class="page-eyebrow">Help Center</div>
+    <h1 class="page-title">Support</h1>
+    <p class="page-lede">Help with Earth00 — sign-in, subscriptions, notifications, and everything in between. If you can't find what you need below, reach out anytime.</p>
+
+    <div class="contact-hero" id="contact">
+      <h2>Email us</h2>
+      <div class="email"><a href="mailto:feedback@earth00.com">feedback@earth00.com</a></div>
+      <div class="response">We read every message and aim to reply within 2 business days. Please include your device model, iOS version, and a brief description of what you were doing when the issue happened — it helps us resolve things faster.</div>
+    </div>
+
+    <section class="policy-section" id="getting-started">
+      <h2>Getting started</h2>
+      <p>Earth00 lets you track world events on a 3D globe. Open the app, spin the globe, and tap any country to see today's headlines from there. You can read each story from its first article to the latest update, watch events unfold day by day, and start each day with a briefing on what matters most.</p>
+      <p>No account is required to explore. Sign in to follow countries, save views, and unlock daily briefings.</p>
+    </section>
+
+    <section class="policy-section" id="sign-in">
+      <h2>Signing in</h2>
+      <p>Earth00 supports Sign in with Apple and Google. Both are listed side by side on the sign-in screen — pick whichever you prefer.</p>
+      <h3>I can't sign in</h3>
+      <ul>
+        <li>Make sure you have an active internet connection.</li>
+        <li>If Sign in with Apple fails, open <strong>Settings → [your name] → Sign-In &amp; Security → Apps Using Apple ID</strong> on your iPhone and confirm Earth00 is listed.</li>
+        <li>If a Google sign-in dialog doesn't appear, restart the app and try again. iOS occasionally caches a stale session.</li>
+        <li>Still stuck? Email us at <a href="mailto:feedback@earth00.com">feedback@earth00.com</a> with your sign-in method and any error message.</li>
+      </ul>
+    </section>
+
+    <section class="policy-section" id="notifications">
+      <h2>Notifications</h2>
+      <p>Earth00 sends two kinds of push notifications: breaking-news alerts for the countries you follow, and a notice when your daily briefing is ready.</p>
+      <h3>I'm not receiving notifications</h3>
+      <ol>
+        <li>Open <strong>Settings → Notifications → Earth00</strong> on your iPhone.</li>
+        <li>Confirm <strong>Allow Notifications</strong> is on.</li>
+        <li>Make sure <strong>Banners</strong>, <strong>Sounds</strong>, and <strong>Badges</strong> are enabled.</li>
+        <li>Inside Earth00, open the account menu and confirm you've followed at least one country.</li>
+      </ol>
+      <h3>Notifications are too frequent</h3>
+      <p>You can unfollow a country to stop alerts for it. Tap the country on the globe and toggle off the follow icon.</p>
+    </section>
+
+    <section class="policy-section" id="translation">
+      <h2>Translation</h2>
+      <p>Pro and Enterprise subscribers can translate articles into their preferred language with one tap. The translation button appears on each article. Translations are powered by an external service and can occasionally drop a sentence on long pieces — open the original article anytime by tapping the source link.</p>
+    </section>
+
+    <section class="policy-section" id="subscriptions">
+      <h2>Subscriptions</h2>
+      <p>Earth00 offers three plans:</p>
+      <ul>
+        <li><strong>Free</strong> — Explore the globe and the day's headlines.</li>
+        <li><strong>Pro — $4.99 / month</strong> — Daily briefings and article translation.</li>
+        <li><strong>Enterprise — $24.99 / month</strong> — Everything in Pro, plus deeper context on people and places and a monthly briefing built around your interests.</li>
+      </ul>
+      <p>Subscriptions are processed through your Apple ID. Payment will be charged at confirmation of purchase. Subscriptions automatically renew unless auto-renew is turned off at least 24 hours before the end of the current period.</p>
+    </section>
+
+    <section class="policy-section" id="restore">
+      <h2>Restoring purchases</h2>
+      <p>If you subscribed and your subscription isn't showing up — for example after reinstalling the app or signing in on a new device — open the pricing screen and tap <strong>Restore Purchases</strong>. Earth00 will check your Apple ID for an active subscription and re-link it to your account.</p>
+      <p>If the restore doesn't find your subscription, double-check that you're signed in with the same Apple ID that made the original purchase.</p>
+    </section>
+
+    <section class="policy-section" id="cancel">
+      <h2>Canceling a subscription</h2>
+      <p>You can cancel anytime. Cancellations take effect at the end of the current billing period — you keep access to paid features until then.</p>
+      <ol>
+        <li>Open the <strong>Settings</strong> app on your iPhone.</li>
+        <li>Tap your name at the top, then <strong>Subscriptions</strong>.</li>
+        <li>Tap <strong>Earth00</strong>.</li>
+        <li>Tap <strong>Cancel Subscription</strong>.</li>
+      </ol>
+      <p>You can also manage your subscription from the Earth00 account menu — tap <strong>Manage Subscription</strong> and you'll be taken directly to your Apple ID settings.</p>
+    </section>
+
+    <section class="policy-section" id="delete-account">
+      <h2>Deleting your account</h2>
+      <p>You can permanently delete your Earth00 account from inside the app at any time. Deletion is immediate and irreversible — it removes your sign-in, followed countries, saved views, and any data tied to your account.</p>
+      <ol>
+        <li>Open Earth00 and tap your account icon.</li>
+        <li>Choose <strong>Delete Account</strong> from the menu.</li>
+        <li>Type <strong>DELETE</strong> to confirm, then tap <strong>Delete forever</strong>.</li>
+      </ol>
+      <p>If you have an active subscription, canceling it through your Apple ID settings is a separate step — deleting your Earth00 account does not cancel an active Apple subscription.</p>
+    </section>
+
+    <section class="policy-section" id="bug">
+      <h2>Reporting a bug</h2>
+      <p>If something looks wrong or the app crashes, please send us a note at <a href="mailto:feedback@earth00.com">feedback@earth00.com</a>. The most helpful reports include:</p>
+      <ul>
+        <li>Your device model (e.g. iPhone 15 Pro) and iOS version.</li>
+        <li>The Earth00 version number — find it on the account screen.</li>
+        <li>What you were doing when the issue happened, step by step.</li>
+        <li>A screenshot if you have one.</li>
+      </ul>
+    </section>
+
+    <section class="policy-section" id="legal">
+      <h2>Privacy &amp; terms</h2>
+      <p>For details on how Earth00 handles your data, see our <a href="/privacy.html">Privacy Policy</a>. The full <a href="/terms.html">Terms of Use</a> govern your use of the app.</p>
+    </section>
+
+  </main>
+</div>
+
+<footer class="page-footer">
+  <p>&copy; 2026 earth00 &middot; <a href="/privacy.html">Privacy</a> &middot; <a href="/terms.html">Terms</a></p>
+</footer>
+
+</body>
+</html>
