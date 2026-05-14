@@ -31,6 +31,7 @@ const pool = require("./db");
 const Anthropic = require("@anthropic-ai/sdk");
 const { normalizeRecentKeywordsBudgeted } = require("./keywordNormalizer");
 const { computeNationsForItem, enforceDisjointAndCapped } = require("./nationDesignations");
+const { classifyAndPersist: classifyActorsAndPersist } = require("./threadActorClassifier");
 
 // ── Pool query retry wrapper ───────────────────────────────────────────────
 //
@@ -1612,7 +1613,11 @@ async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()
         // among the 48 accumulated anchors is from 4/29.
         await insertArticles(threadId, def.article_ids, null, def.importance, validIdSet);
         await recomputeBreakingSignal(threadId);
-        await recomputeAndPersistNations(threadId);
+        // LLM-powered actor classification replaces the old signal-only
+        // recomputeAndPersistNations(). Failure is silent — the thread keeps
+        // its prior tags. See threadActorClassifier.js for the prompt and
+        // failure semantics.
+        await classifyActorsAndPersist({ pool, anthropic: client, threadId });
         if (current) {
           existingThreadMap.set(threadId, {
             ...current,
@@ -1661,6 +1666,11 @@ async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()
         const threadId = rows[0].id;
         await insertArticles(threadId, def.article_ids, def.anchor_article_id, def.importance, validIdSet);
         await recomputeBreakingSignal(threadId);
+        // Upgrade Claude's strict-prompt nation guess (passed to the INSERT
+        // above for safety in case classification fails) with the loosened
+        // per-thread actor classifier. Latent actors — alliances, regional
+        // rivals, treaty signatories — get picked up here.
+        await classifyActorsAndPersist({ pool, anthropic: client, threadId });
         existingThreadMap.set(Number(threadId), {
           id: Number(threadId),
           title: def.title,

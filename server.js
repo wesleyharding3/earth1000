@@ -4388,7 +4388,7 @@ app.get("/api/flows/thread/:id", async (req, res) => {
 // routing arcs (pre-tier behavior).
 // ═══════════════════════════════════════════════════════════════════════════
 const TIER_MAX_ARCS           = 20;   // hard cap per endpoint response
-const TIER_MAX_SECONDARIES    = 8;    // matches classifier's cap
+const TIER_MAX_SECONDARIES    = 8;    // cap on arcs RENDERED per response — classifier may store up to 32 in secondary_nations
 const TIER_FALLBACK_LIMIT     = 10;   // for legacy linear-chain fallback
 
 async function _buildTieredFlows({ kind, id, rowTable, articleJoinTable, articleJoinKey, statementTimeoutMs = null }) {
