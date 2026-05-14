@@ -17533,12 +17533,19 @@ window.__arcCtxSegmented = (function() {
 
       <div class="semHeatSection">
         <div class="semHeatCtlTabs" id="semHeatCtlTabs">
+          <!-- Keyword tab now hosts BOTH the topic input AND the time-
+               series scrub/play controls. A separate Time-series tab
+               used to exist; it produced an aggregate (no-keyword) time
+               replay and competed with this tab's keyword filter for
+               the same `semHeatKw` input. Consolidating them means
+               every keyword query yields per-bucket time-series data —
+               critical for tracking how a story spreads across
+               countries day by day. The standalone aggregate-TS share
+               path was removed in the same pass; a share clip is only
+               meaningful when there's a keyword or AI question. -->
           <div class="semHeatCtlTab" data-ctl="keyword"
                data-hold-tip-title="Keyword Mode"
-               data-hold-tip="Show coverage volume by country for a specific topic — type a word, see which countries are talking about it most.">Keyword</div>
-          <div class="semHeatCtlTab" data-ctl="timeseries"
-               data-hold-tip-title="Time-series Mode"
-               data-hold-tip="Watch coverage shift across countries over the past N days — replay the rising and falling attention.">Time-series</div>
+               data-hold-tip="Type a topic — see coverage volume by country and watch it spread day by day across the date range.">Keyword</div>
           <div class="semHeatCtlTab active" data-ctl="ask"
                data-hold-tip-title="Map This"
                data-hold-tip="Type any question in plain English — coverage, sentiment, GDP, tariffs — and see it painted across countries.">Map This</div>
@@ -17554,32 +17561,32 @@ window.__arcCtxSegmented = (function() {
             <button type="button" class="semHeatGoBtn" id="semHeatGoBtn">Enter</button>
           </div>
           <div style="display:flex;gap:6px;">
+            <!-- Days range + bucket granularity. Range options merged
+                 from the old Keyword (1/3/7/30) + Time-series (1/3/7/14)
+                 selects into one unified list. The bucket selector
+                 (hourly/daily) used to live in the Time-series panel;
+                 it controls how the time-series animation steps. -->
             <select class="semHeatSelect" id="semHeatKwDays" style="flex:1;">
               <option value="1">Last 24h</option>
               <option value="3">Last 3 days</option>
               <option value="7" selected>Last 7 days</option>
+              <option value="14">Last 14 days</option>
               <option value="30">Last 30 days</option>
-            </select>
-          </div>
-        </div>
-
-        <div class="semHeatCtlPanel" data-panel="timeseries">
-          <div style="display:flex;gap:6px;">
-            <select class="semHeatSelect" id="semHeatTsRange" style="flex:1;">
-              <option value="1">24 hours</option>
-              <option value="3">3 days</option>
-              <option value="7" selected>7 days</option>
-              <option value="14">14 days</option>
             </select>
             <select class="semHeatSelect" id="semHeatTsBucket" style="flex:1;">
               <option value="hour">hourly</option>
               <option value="day" selected>daily</option>
             </select>
           </div>
+          <!-- Time-series scrub controls — moved into the Keyword panel
+               so every keyword query exposes them. They sit dormant
+               (no series yet) until a keyword is entered + reload()
+               fetches with bucket=day/hour, at which point the slider
+               populates and play becomes meaningful. -->
           <div class="semHeatTsRow">
             <button class="semHeatTsBtn" id="semHeatPlayBtn" title="Play / pause"
                     data-hold-tip-title="Play / Pause"
-                    data-hold-tip="Animate the heatmap forward in time — watch coverage rise and fall day by day.">▶</button>
+                    data-hold-tip="Animate the keyword's coverage forward in time — watch the story spread day by day.">▶</button>
             <button class="semHeatTsBtn" id="semHeatTsReset" title="Reset"
                     data-hold-tip-title="Reset"
                     data-hold-tip="Jump back to the start of the time window.">↺</button>
@@ -18098,22 +18105,49 @@ window.__arcCtxSegmented = (function() {
     function applyYaw(rad)  { globeYaw += rad; }
     function applyTilt(rad) { globePitch = Math.max(-MAX_PITCH, Math.min(MAX_PITCH, globePitch + rad)); }
 
-    // Programmatically drive a 360° yaw spin over `durationMs`. Used by
-    // the share-clip recorder. Lands back at startYaw exactly so the
-    // user's view doesn't drift across recordings. Kills drag inertia
-    // so the spin reads as a clean cinematic loop. See index.html for
-    // full rationale.
+    // Programmatically drive a cinematic 360° camera move over
+    // `durationMs`. Used by the share-clip recorder. Three layers
+    // compound into a more "native" feel than a flat linear yaw:
+    //
+    //   1. Cubic ease-in-out on yaw  → slow start, steady middle,
+    //      gentle settle. Avoids the jarring whip of constant-speed.
+    //   2. Subtle pitch dip (sine, peak ≈ 3°) at the midpoint →
+    //      reads as a dolly arc rather than a turntable spin.
+    //   3. Returns to exact startYaw / startPitch at t=1 so the
+    //      clip loops cleanly (first frame == last frame state).
+    //
+    // Drag inertia is killed at start so the spin doesn't fight
+    // momentum from a preceding swipe gesture.
     window.__spinGlobeFor = function(durationMs) {
       return new Promise((resolve) => {
-        const startYaw = globeYaw;
-        yawVelocity = 0;
+        const startYaw   = globeYaw;
+        const startPitch = globePitch;
+        const PITCH_DIP  = 0.052;          // ~3° peak, subtle
+        yawVelocity  = 0;
         tiltVelocity = 0;
         const t0 = performance.now();
+        // Cubic ease-in-out: t<0.5 ? 4t³ : 1 - (-2t+2)³/2.
+        // Symmetric, integrates to a full circle, and matches the
+        // standard Apple-style "smooth" easing closely enough that
+        // viewers don't read it as canned linear motion.
+        const easeInOutCubic = (t) => t < 0.5
+          ? 4 * t * t * t
+          : 1 - Math.pow(-2 * t + 2, 3) / 2;
         function step(now) {
           const t = Math.min(1, (now - t0) / durationMs);
-          globeYaw = startYaw + t * Math.PI * 2;
+          const e = easeInOutCubic(t);
+          // Yaw — full 2π revolution along the eased curve.
+          globeYaw = startYaw + e * Math.PI * 2;
+          // Pitch — half-sine peaks at t=0.5 and returns to 0 at
+          // both ends, so the camera dolly arc is symmetric and
+          // self-cancelling. Multiplied by linear t (not eased) so
+          // the dip onset matches viewer expectation of "the camera
+          // starts moving immediately."
+          globePitch = startPitch + PITCH_DIP * Math.sin(t * Math.PI);
           if (t >= 1) {
-            globeYaw = startYaw;
+            // Snap exactly back to start to guarantee a loopable end.
+            globeYaw   = startYaw;
+            globePitch = startPitch;
             resolve();
             return;
           }
@@ -34086,8 +34120,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
             }
           },
           { at: 10000, do: () => {
-              const tab = document.querySelector('.semHeatCtlTab[data-ctl="timeseries"]');
-              if (tab) { tab.click(); pulse(tab); }
+              // The standalone Time-series tab was consolidated into
+              // the Keyword tab. Demonstrate the time-series scrub by
+              // pulsing the Play button inside the Keyword panel
+              // instead of switching tabs.
+              const playBtn = document.getElementById('semHeatPlayBtn');
+              if (playBtn) pulse(playBtn);
             }
           },
           // 12s: minimize-reveal — collapse the heatmap panel so the
@@ -44935,17 +44973,255 @@ const settingsToggle     = document.getElementById("settingsToggle");
     _wireDeleteAccount();
   }
 
-  /* ── Library (Saved / History) ── */
+  /* ── Library (Saved / History) ──
+   *
+   * Three persistence layers, in order of durability:
+   *   1. Capacitor Preferences (native UserDefaults on iOS) — survives
+   *      WKWebView storage eviction, app reinstalls (data wipe still
+   *      clears it), and works offline.
+   *   2. localStorage — same surface on web/desktop; on iOS it's used
+   *      as a write-through cache for fast sync reads.
+   *   3. Supabase (user_saved_items + user_history) — only when signed
+   *      in. Cross-device sync, server-side cap of 500 history entries
+   *      via a DB trigger. Union semantics on merge: items present on
+   *      either side are kept; same (kind, ref_id) → server's metadata
+   *      wins on conflict.
+   *
+   * Reads stay sync from in-memory arrays so the rest of the app
+   * doesn't need to await anything; writes are queued through the
+   * three layers asynchronously (UI doesn't block on storage / network).
+   */
+
   // Lazy lookups — these DOM elements appear later in the HTML
   function getLibPanel()   { return document.getElementById('libraryPanel'); }
   function getLibContent() { return document.getElementById('libContent'); }
   function getLibClose()   { return document.getElementById('libClose'); }
   let _libTab = 'saved';
-  let _savedItems  = JSON.parse(localStorage.getItem('earth00_saved') || '[]');
-  let _historyItems = JSON.parse(localStorage.getItem('earth00_history') || '[]');
 
-  function _persistSaved()  { localStorage.setItem('earth00_saved', JSON.stringify(_savedItems)); }
-  function _persistHistory() { localStorage.setItem('earth00_history', JSON.stringify(_historyItems)); }
+  // ── Storage shim ────────────────────────────────────────────────
+  // Resolves the Capacitor Preferences plugin lazily. The plugin only
+  // exists when running inside the Capacitor WebView — on web it's
+  // undefined and we fall back to localStorage entirely. Lazy access
+  // (vs grabbing once at boot) handles the case where Capacitor's
+  // bridge isn't ready when this IIFE runs.
+  const _libPrefs = () => window.Capacitor?.Plugins?.Preferences || null;
+  const _libStorage = {
+    async get(key) {
+      const p = _libPrefs();
+      if (p) {
+        try {
+          const r = await p.get({ key });
+          if (r && r.value != null) return r.value;
+        } catch (_) {}
+      }
+      try { return localStorage.getItem(key); } catch (_) { return null; }
+    },
+    async set(key, value) {
+      const v = String(value);
+      const p = _libPrefs();
+      if (p) { try { await p.set({ key, value: v }); } catch (_) {} }
+      try { localStorage.setItem(key, v); } catch (_) {}
+    },
+    async remove(key) {
+      const p = _libPrefs();
+      if (p) { try { await p.remove({ key }); } catch (_) {} }
+      try { localStorage.removeItem(key); } catch (_) {}
+    },
+  };
+
+  // ── In-memory arrays ────────────────────────────────────────────
+  // Sync-readable. Seeded from localStorage at script-tag time (fast,
+  // no await) and then upgraded by the async _libHydrate() call below
+  // which reads from Capacitor Preferences AND triggers a server sync
+  // if the user is already signed in.
+  let _savedItems   = [];
+  let _historyItems = [];
+  try { _savedItems   = JSON.parse(localStorage.getItem('earth00_saved')   || '[]'); } catch (_) {}
+  try { _historyItems = JSON.parse(localStorage.getItem('earth00_history') || '[]'); } catch (_) {}
+
+  // ── Identity / mapping helpers ──────────────────────────────────
+  // Local items use { id, type, …}; server rows use { ref_id, kind, …}.
+  // These translate between the two so the same logic works either way.
+  const _libToLocalSaved = (row) => ({
+    id:     row.ref_id,
+    type:   row.kind || 'article',
+    title:  row.title  || '',
+    source: row.source || '',
+    url:    row.url    || '',
+    date:   row.created_at ? String(row.created_at).slice(0, 10) : '',
+    data:   row.metadata && Object.keys(row.metadata).length ? row.metadata : null,
+  });
+  const _libToLocalHistory = (row) => ({
+    id:     row.ref_id,
+    title:  row.title  || '',
+    source: row.source || '',
+    url:    (row.metadata && row.metadata.url) || '',
+    date:   row.viewed_at ? String(row.viewed_at).slice(0, 10) : '',
+  });
+  const _libToServerSaved = (it) => ({
+    kind:   it.type || 'article',
+    ref_id: String(it.id ?? ''),
+    title:  it.title  || null,
+    source: it.source || null,
+    url:    it.url    || null,
+    metadata: it.data && typeof it.data === 'object' ? it.data : {},
+  });
+  const _libToServerHistory = (it) => ({
+    kind:   it.type || 'article',
+    ref_id: String(it.id ?? ''),
+    title:  it.title  || null,
+    source: it.source || null,
+    metadata: it.url ? { url: it.url } : {},
+  });
+  const _libSavedKey   = (it) => `${it.type || 'article'}::${it.id}`;
+  const _libHistoryKey = (it) => `${it.type || 'article'}::${it.id}`;
+
+  // ── Server fetch wrapper ────────────────────────────────────────
+  // Reuses window.__authToken (populated by applySession during auth
+  // state changes). Returns null on any non-2xx or network error so
+  // callers can fall through to local-only state gracefully — sync is
+  // a best-effort enhancement, not a hard dependency.
+  async function _libFetch(path, opts = {}) {
+    if (!window.__authToken) return null;
+    const API = window.__API_BASE || window.__API || 'https://earth-wjr6.onrender.com';
+    try {
+      const res = await fetch(`${API}${path}`, {
+        method: opts.method || 'GET',
+        headers: {
+          'Authorization': `Bearer ${window.__authToken}`,
+          ...(opts.body ? { 'Content-Type': 'application/json' } : {}),
+          ...(opts.headers || {}),
+        },
+        body: opts.body ? JSON.stringify(opts.body) : undefined,
+      });
+      if (!res.ok) return null;
+      if (res.status === 204) return true;
+      try { return await res.json(); } catch (_) { return true; }
+    } catch (_) { return null; }
+  }
+
+  // ── Persistence ──────────────────────────────────────────────────
+  // Writes through localStorage (sync, for fast same-session reads)
+  // AND Capacitor Preferences (durable on iOS). Server push happens
+  // separately at the call site (after every save/unsave/track) so
+  // each mutation can include the right metadata payload without this
+  // helper having to know the kind.
+  function _persistSaved()   { _libStorage.set('earth00_saved',   JSON.stringify(_savedItems));   }
+  function _persistHistory() { _libStorage.set('earth00_history', JSON.stringify(_historyItems)); }
+
+  // ── Sync on sign-in ──────────────────────────────────────────────
+  // Called from applySession when the user transitions to signed-in.
+  // Fetches server state, unions with local, writes the merged result
+  // back to local storage, then pushes any local-only items up to the
+  // server in bulk (the "migration on sign-in" path for users who
+  // accumulated saves while anonymous).
+  let _libSyncing = false;
+  async function _libSyncWithServer() {
+    if (_libSyncing || !window.__authToken) return;
+    _libSyncing = true;
+    try {
+      const [serverSaved, serverHistory] = await Promise.all([
+        _libFetch('/api/library/saved'),
+        _libFetch('/api/library/history?limit=500'),
+      ]);
+      const remoteSaved   = Array.isArray(serverSaved)   ? serverSaved   : [];
+      const remoteHistory = Array.isArray(serverHistory) ? serverHistory : [];
+
+      // Union: index local by key, layer server rows on top so server
+      // metadata wins on (kind, ref_id) conflicts (server's record is
+      // canonical because it's the only place that can see all
+      // devices). Anon-only items survive because they're not in the
+      // server set and get unioned in afterward.
+      const savedMap = new Map();
+      for (const r of remoteSaved) {
+        const local = _libToLocalSaved(r);
+        savedMap.set(_libSavedKey(local), local);
+      }
+      const localOnlySaved = [];
+      for (const it of _savedItems) {
+        const k = _libSavedKey(it);
+        if (!savedMap.has(k)) {
+          savedMap.set(k, it);
+          localOnlySaved.push(it);    // these need pushing to server
+        }
+      }
+      const histMap = new Map();
+      for (const r of remoteHistory) {
+        const local = _libToLocalHistory(r);
+        histMap.set(_libHistoryKey(local), local);
+      }
+      const localOnlyHistory = [];
+      for (const it of _historyItems) {
+        const k = _libHistoryKey(it);
+        if (!histMap.has(k)) {
+          histMap.set(k, it);
+          localOnlyHistory.push(it);
+        }
+      }
+
+      // Sort: saved by date desc (matches server's created_at order),
+      // history by date desc (matches server's viewed_at order).
+      const cmp = (a, b) => String(b.date || '').localeCompare(String(a.date || ''));
+      _savedItems   = Array.from(savedMap.values()).sort(cmp).slice(0, 200);
+      _historyItems = Array.from(histMap.values()).sort(cmp).slice(0, 500);
+      _persistSaved();
+      _persistHistory();
+      _updateSavedCount?.();
+      const libPanel = getLibPanel?.();
+      if (libPanel?.classList.contains('open')) _renderLib?.();
+
+      // Push local-only items up to the server in bulk so they sync
+      // forward to future devices. Fire-and-forget — failure here
+      // doesn't roll back the merge, just leaves those items local
+      // until the next sync attempt.
+      if (localOnlySaved.length) {
+        const items = localOnlySaved.map(_libToServerSaved);
+        _libFetch('/api/library/saved/bulk', { method: 'POST', body: { items } });
+      }
+      if (localOnlyHistory.length) {
+        const items = localOnlyHistory.map(_libToServerHistory);
+        _libFetch('/api/library/history/bulk', { method: 'POST', body: { items } });
+      }
+    } catch (e) {
+      console.warn('[library/sync]', e.message);
+    } finally {
+      _libSyncing = false;
+    }
+  }
+  window.__librarySyncWithServer = _libSyncWithServer;
+
+  // ── Hydrate from durable storage on boot ────────────────────────
+  // Called once at the bottom of this IIFE (see boot block). Reads
+  // Capacitor Preferences (more durable than localStorage on iOS) and
+  // merges any items into the in-memory arrays already seeded from
+  // localStorage. If signed in already, also kicks off server sync.
+  async function _libHydrate() {
+    try {
+      const [savedRaw, histRaw] = await Promise.all([
+        _libStorage.get('earth00_saved'),
+        _libStorage.get('earth00_history'),
+      ]);
+      const fromPrefsSaved = savedRaw ? JSON.parse(savedRaw)   : [];
+      const fromPrefsHist  = histRaw  ? JSON.parse(histRaw)    : [];
+      // If prefs has more items than memory (means localStorage got
+      // evicted), use prefs as the source of truth. Otherwise keep
+      // memory (which started from localStorage at script-tag time).
+      if (Array.isArray(fromPrefsSaved) && fromPrefsSaved.length > _savedItems.length) {
+        _savedItems = fromPrefsSaved.slice(0, 200);
+      }
+      if (Array.isArray(fromPrefsHist) && fromPrefsHist.length > _historyItems.length) {
+        _historyItems = fromPrefsHist.slice(0, 500);
+      }
+      _updateSavedCount?.();
+    } catch (e) {
+      console.warn('[library/hydrate]', e.message);
+    }
+    if (window.__authToken) _libSyncWithServer();
+  }
+  // Fire after a tick so the rest of this IIFE finishes defining
+  // dependent helpers (_updateSavedCount, _renderLib, getLibPanel)
+  // before _libHydrate references them.
+  setTimeout(_libHydrate, 0);
 
   function _updateSavedCount() {
     // Renamed: the dropdown row is now a single "Library" button (was
@@ -45125,11 +45401,25 @@ const settingsToggle     = document.getElementById("settingsToggle");
         e.stopPropagation();
         const idx = parseInt(btn.dataset.rm);
         if (_libTab === 'saved') {
+          const removed = _savedItems[idx];
           _savedItems.splice(idx, 1);
           _persistSaved(); _updateSavedCount();
+          if (window.__authToken && removed) {
+            _libFetch('/api/library/saved', {
+              method: 'DELETE',
+              body: { kind: removed.type || 'article', ref_id: String(removed.id) },
+            });
+          }
         } else {
+          const removed = _historyItems[idx];
           _historyItems.splice(idx, 1);
           _persistHistory();
+          if (window.__authToken && removed) {
+            _libFetch('/api/library/history', {
+              method: 'DELETE',
+              body: { kind: removed.type || 'article', ref_id: String(removed.id) },
+            });
+          }
         }
         _renderLib();
       });
@@ -45192,9 +45482,29 @@ const settingsToggle     = document.getElementById("settingsToggle");
                        :                         'saved views';
         if (!window.confirm(`Clear all ${tabLabel}? This cannot be undone.`)) return;
         if (_libTab === 'saved') {
+          // Wipe server first so a successful network call lines up
+          // with the local wipe; if offline, server cleanup happens on
+          // next sync (server-state-wins for items still present
+          // means stale rows resurface, but the user can re-clear).
+          if (window.__authToken) {
+            // No bulk DELETE endpoint — fire one DELETE per item.
+            // Local list is capped at 200, so worst case is 200 requests
+            // which the server pool handles fine.
+            for (const it of _savedItems.slice()) {
+              _libFetch('/api/library/saved', {
+                method: 'DELETE',
+                body: { kind: it.type || 'article', ref_id: String(it.id) },
+              });
+            }
+          }
           _savedItems = [];
           _persistSaved(); _updateSavedCount();
         } else if (_libTab === 'history') {
+          // History has a server-side clear-all path (`?all=1`) so we
+          // don't fan out 500 DELETE requests for power users.
+          if (window.__authToken) {
+            _libFetch('/api/library/history', { method: 'DELETE', body: { all: true } });
+          }
           _historyItems = [];
           _persistHistory();
         } else {
@@ -45244,7 +45554,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
   window.__librarySave = function(item) {
     const t = item.type || 'article';
     if (_savedItems.some(s => s.id === item.id && (s.type || 'article') === t)) return;
-    _savedItems.unshift({
+    const localItem = {
       id: item.id,
       type: t,
       title: item.title,
@@ -45252,14 +45562,27 @@ const settingsToggle     = document.getElementById("settingsToggle");
       url: _resolveItemUrl(item),
       date: item.published_at ? item.published_at.slice(0, 10) : (item.date || ''),
       data: t === 'article' ? null : (item.data || item),
-    });
+    };
+    _savedItems.unshift(localItem);
     if (_savedItems.length > 200) _savedItems.length = 200;
     _persistSaved(); _updateSavedCount();
+    // Push to server. Fire-and-forget — if it fails (offline, expired
+    // token), the next _libSyncWithServer() call on the next sign-in
+    // event will pick it up via the local-only bulk path.
+    if (window.__authToken) {
+      _libFetch('/api/library/saved', { method: 'POST', body: _libToServerSaved(localItem) });
+    }
   };
   window.__libraryUnsave = function(id, type) {
     const t = type || 'article';
     _savedItems = _savedItems.filter(s => !(s.id === id && (s.type || 'article') === t));
     _persistSaved(); _updateSavedCount(); if (libraryPanel.classList.contains('open') && _libTab === 'saved') _renderLib();
+    if (window.__authToken) {
+      _libFetch('/api/library/saved', {
+        method: 'DELETE',
+        body: { kind: t, ref_id: String(id) },
+      });
+    }
   };
   window.__libraryIsSaved = function(id, type) {
     const t = type || 'article';
@@ -45291,9 +45614,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
   };
   window.__libraryTrackView = function(item) {
     _historyItems = _historyItems.filter(h => h.id !== item.id);
-    _historyItems.unshift({ id: item.id, title: item.title, source: item.source_name || item.source || '', url: _resolveItemUrl(item), date: new Date().toISOString().slice(0, 10) });
+    const localItem = {
+      id: item.id,
+      type: item.type || 'article',
+      title: item.title,
+      source: item.source_name || item.source || '',
+      url: _resolveItemUrl(item),
+      date: new Date().toISOString().slice(0, 10),
+    };
+    _historyItems.unshift(localItem);
     if (_historyItems.length > 500) _historyItems.length = 500;
     _persistHistory();
+    if (window.__authToken) {
+      _libFetch('/api/library/history', { method: 'POST', body: _libToServerHistory(localItem) });
+    }
   };
   _updateSavedCount();
 
@@ -45342,6 +45676,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // retention IIFE itself dedupes per-day so re-applying a session
       // won't double-tick.
       try { window.__retentionRefresh?.(); } catch (_) {}
+      // Pull library state (saved + history) from the server, merge
+      // with anything saved locally while signed out, then push the
+      // local-only delta back up. Fire-and-forget — UI doesn't block
+      // on the round-trip; the in-memory arrays + localStorage are
+      // still authoritative for this session even if sync fails.
+      try { window.__librarySyncWithServer?.(); } catch (_) {}
       // Onboarding questionnaire temporarily disabled — code kept intact
       // (maybeShowOnboarding / showOnboarding / _obData etc.) so re-enabling
       // is a one-line flip of the gate below. Leaving the SIGNED_UP block
@@ -55628,7 +55968,12 @@ body.ticker-active .gTickerLabel {
   const kwDays    = document.getElementById('semHeatKwDays');
   // threadSel removed — threads are no longer a heatmap filter; they
   // appear as items inside the country interpanel alongside articles/videos.
-  const tsRange   = document.getElementById('semHeatTsRange');
+  // tsRange was a separate range selector inside the old Time-series
+  // panel; consolidated away — kwDays is now the single canonical
+  // range control. Kept as an alias for any legacy code paths that
+  // still reference it; resolves to the same element so reads/writes
+  // stay coherent.
+  const tsRange   = kwDays;
   const tsBucket  = document.getElementById('semHeatTsBucket');
   const tsSlider  = document.getElementById('semHeatTsSlider');
   const tsLabel   = document.getElementById('semHeatTsLabel');
@@ -56836,14 +57181,13 @@ body.ticker-active .gTickerLabel {
 
     const params = { mode: state.mode };
     if (state.ctl === 'keyword') {
-      params.days = kwDays.value || '7';
-      const kw = (kwInput.value || '').trim();
-      if (kw) {
-        if (!window.__kwIsValid(kwInput)) { window.__kwShowReject(kwInput); return; }
-        params.keyword = kw;
-      }
-    } else if (state.ctl === 'timeseries') {
-      params.days = tsRange.value || '7';
+      // Consolidated keyword + time-series. Bucket is ALWAYS set here
+      // (was previously only set in the standalone Time-series ctl)
+      // so every keyword query returns per-bucket data — the user can
+      // then play/scrub through the spread day by day. Without bucket,
+      // the backend collapses to an aggregate snapshot and the scrub
+      // controls would be inoperative.
+      params.days   = kwDays.value || '7';
       params.bucket = tsBucket.value || 'day';
       const kw = (kwInput.value || '').trim();
       if (kw) {
@@ -56851,6 +57195,8 @@ body.ticker-active .gTickerLabel {
         params.keyword = kw;
       }
     }
+    // Note: state.ctl === 'timeseries' branch removed — see HTML for
+    // tab consolidation rationale.
 
     const data = await fetchSnapshot(params);
     if (!data) return;
@@ -57053,9 +57399,12 @@ body.ticker-active .gTickerLabel {
     const activeMode = document.querySelector('#semHeatModeRow .semHeatPill.active')?.dataset?.mode || 'coverage';
     const activeCtl  = document.querySelector('#semHeatCtlTabs .semHeatCtlTab.active')?.dataset?.ctl || 'keyword';
     const payload = {
+      // `ctl` is still serialized for backward compat with previously
+      // saved views; on restore, a legacy 'timeseries' value is
+      // remapped to 'keyword' since the tabs were consolidated.
       mode: activeMode, ctl: activeCtl,
       keyword: (document.getElementById('semHeatKw')?.value || '').trim(),
-      days:    document.getElementById('semHeatKwDays')?.value || document.getElementById('semHeatTsRange')?.value || '7',
+      days:    document.getElementById('semHeatKwDays')?.value || '7',
       bucket:  document.getElementById('semHeatTsBucket')?.value || '',
       qaQuestion: panel?.dataset?.qaQuestion || (document.getElementById('semHeatAskInput')?.value || '').trim(),
       qaMode:  panel?.dataset?.qaMode || document.getElementById('semHeatAskMode')?.value || '',
@@ -57072,7 +57421,11 @@ body.ticker-active .gTickerLabel {
   window.__restoreHeatmapView = function(p) {
     if (!p) return false;
     try {
-      const tab = document.querySelector(`#semHeatCtlTabs [data-ctl="${p.ctl}"]`);
+      // Legacy 'timeseries' saved views are remapped to 'keyword'
+      // since the two tabs were consolidated. All time-series state
+      // (days, bucket) now lives under the Keyword panel.
+      const targetCtl = (p.ctl === 'timeseries') ? 'keyword' : p.ctl;
+      const tab = document.querySelector(`#semHeatCtlTabs [data-ctl="${targetCtl}"]`);
       if (tab) tab.click();
       const modePill = document.querySelector(`#semHeatModeRow .semHeatPill[data-mode="${p.mode}"]`);
       if (modePill) modePill.click();
@@ -57082,7 +57435,6 @@ body.ticker-active .gTickerLabel {
       };
       setVal('semHeatKw',       p.keyword);
       setVal('semHeatKwDays',   p.days);
-      setVal('semHeatTsRange',  p.days);
       setVal('semHeatTsBucket', p.bucket);
       setVal('semHeatAskInput', p.qaQuestion);
       setVal('semHeatAskMode',  p.qaMode);
@@ -57754,7 +58106,7 @@ body.ticker-active .gTickerLabel {
   };
   kwInput.addEventListener('input', () => {
     _syncKwClear();
-    if (state.ctl !== 'keyword' && state.ctl !== 'timeseries') return;
+    if (state.ctl !== 'keyword') return;
     clearTimeout(_kwTimer);
     _kwTimer = setTimeout(reload, 450);
   });
@@ -57765,7 +58117,7 @@ body.ticker-active .gTickerLabel {
     kwInput.value = '';
     _syncKwClear();
     clearTimeout(_kwTimer);
-    if (state.ctl === 'keyword' || state.ctl === 'timeseries') reload();
+    if (state.ctl === 'keyword') reload();
     kwInput.focus();
   });
   const goBtn = document.getElementById('semHeatGoBtn');
@@ -62266,42 +62618,129 @@ body.ticker-active .gTickerLabel {
     }
   };
 
+  // ─── Thread/line clip share ───────────────────────────────────────
+  // Records a "fly around the globe" clip of the current view with the
+  // thread/line's arcs animating. Mirrors __shareFlowsClip but with
+  // entity-derived overlay text and the default __spinGlobeFor animator
+  // (arcs run on their own render loop, so no separate playback hook is
+  // required — whatever is on the globe at recording time is captured).
+  window.__shareEntityClip = async function(entity) {
+    if (!entity || !entity.id) {
+      console.warn('[shareEntityClip] missing entity'); return;
+    }
+    const kindLabel  = entity.kind === 'line' ? 'Timeline' : 'Storyline';
+    const subtitleBits = [];
+    if (Number.isFinite(entity.articleCount))  subtitleBits.push(`${entity.articleCount} articles`);
+    if (Number.isFinite(entity.countryCount))  subtitleBits.push(`${entity.countryCount} countries`);
+    if (Number.isFinite(entity.languageCount)) subtitleBits.push(`${entity.languageCount} languages`);
+    const subtitle = subtitleBits.length ? `${kindLabel} · ${subtitleBits.join(' · ')}` : kindLabel;
+
+    return window.__shareGlobeClip?.({
+      durationMs:   10000,
+      shareTitle:   `Earth00 · ${entity.title || kindLabel}`,
+      shareText:    `${entity.title || kindLabel} — on Earth00`,
+      filenameBase: `earth00-${entity.kind || 'thread'}-${entity.id}-clip`,
+      // No animator override — uses default __spinGlobeFor. Arcs animate
+      // on their own render loop while the globe spins, producing the
+      // "flying around the globe" cinematic the user asked for.
+      overlay: {
+        title:    entity.title || kindLabel,
+        subtitle,
+        dateLine: '',
+      },
+    });
+  };
+
   // ─── Wire share buttons into existing panels ──────────────────
   // Cluster panel (.cdHeader): inject a share button next to the
-  // existing close button. The cluster panel renders dynamically each
-  // time a thread/line opens, so we observe its container and attach
-  // the button on render. Idempotent — re-runs are safe.
+  // existing close button. Now uses the wrap+popover pattern (Image +
+  // Clip) instead of a single direct-fire button, matching the News
+  // Flows + Heatmap panel share UX. Idempotent — observer re-runs are
+  // safe because we guard on `.shareBtnWrap` already being present.
   function _attachClusterShareBtn() {
     const close = document.querySelector('#cdCloseBtn');
-    if (!close || close.parentElement.querySelector('.shareBtn')) return;
+    if (!close || close.parentElement.querySelector('.shareBtnWrap')) return;
 
-    // Single direct-action snapshot button — see index.html for rationale.
-    // No clip option: shares for threads/lines render as server-side
-    // OG cards, never live globe state.
-    const btn = document.createElement('button');
-    btn.className = 'shareBtn';
-    btn.title = 'Share';
-    btn.setAttribute('aria-label', 'Share');
-    btn.style.marginRight = '6px';
-    btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>`;
-    btn.addEventListener('click', (e) => {
-      e.stopPropagation();
+    const _clipSupported = typeof MediaRecorder !== 'undefined' &&
+      typeof window.__renderer?.domElement?.captureStream === 'function';
+
+    // Read the live entity off the panel's dataset every time an action
+    // fires — the cluster panel reuses one DOM container for whatever
+    // thread/line is currently open, so closing over a stale snapshot
+    // here would send the wrong id once the user navigates between
+    // threads via the back/forward stack.
+    const _getEntity = () => {
       const panel = close.closest('#clusterDetail') || document.getElementById('clusterDetail');
       const dataset = panel?.dataset || {};
-      const kind  = dataset.kind || 'thread';
-      const id    = dataset.entityId;
-      const title = dataset.entityTitle || (panel?.querySelector('.cdTitle')?.textContent || '').trim();
-      if (!id) { console.warn('[share] no entity id on cluster panel'); return; }
-      window.__shareEntity({
-        kind,
-        id: parseInt(id, 10),
-        title,
-        articleCount:  parseInt(dataset.entityArticles,  10),
-        languageCount: parseInt(dataset.entityLanguages, 10),
-        countryCount:  parseInt(dataset.entityCountries, 10),
-      });
+      return {
+        kind:           dataset.kind || 'thread',
+        id:             parseInt(dataset.entityId, 10),
+        title:          dataset.entityTitle || (panel?.querySelector('.cdTitle')?.textContent || '').trim(),
+        articleCount:   parseInt(dataset.entityArticles,  10),
+        languageCount:  parseInt(dataset.entityLanguages, 10),
+        countryCount:   parseInt(dataset.entityCountries, 10),
+      };
+    };
+
+    const wrap = document.createElement('div');
+    wrap.className = 'shareBtnWrap';
+    wrap.style.marginRight = '6px';
+
+    const trigger = document.createElement('button');
+    trigger.className = 'shareBtn';
+    trigger.title = 'Share…';
+    trigger.setAttribute('aria-label', 'Share');
+    trigger.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>`;
+
+    const pop = document.createElement('div');
+    pop.className = 'shareBtnPopover';
+    pop.hidden = true;
+
+    const imgItem = document.createElement('button');
+    imgItem.className = 'shareBtnPopoverItem';
+    imgItem.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg><span>Image</span>`;
+    imgItem.addEventListener('click', (e) => {
+      e.stopPropagation();
+      pop.hidden = true;
+      const entity = _getEntity();
+      if (!entity.id) { console.warn('[share] no entity id on cluster panel'); return; }
+      window.__shareEntity(entity);
     });
-    close.parentElement.insertBefore(btn, close);
+    pop.appendChild(imgItem);
+
+    if (_clipSupported) {
+      const clipItem = document.createElement('button');
+      clipItem.className = 'shareBtnPopoverItem';
+      clipItem.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg><span>Clip</span>`;
+      clipItem.addEventListener('click', (e) => {
+        e.stopPropagation();
+        pop.hidden = true;
+        const entity = _getEntity();
+        if (!entity.id) { console.warn('[share] no entity id on cluster panel'); return; }
+        window.__shareEntityClip(entity);
+      });
+      pop.appendChild(clipItem);
+    }
+
+    trigger.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const willOpen = pop.hidden;
+      pop.hidden = !willOpen;
+      if (willOpen) {
+        setTimeout(() => {
+          const closeOnOutside = (ev) => {
+            if (pop.contains(ev.target) || trigger.contains(ev.target)) return;
+            pop.hidden = true;
+            document.removeEventListener('click', closeOnOutside);
+          };
+          document.addEventListener('click', closeOnOutside);
+        }, 0);
+      }
+    });
+
+    wrap.appendChild(trigger);
+    wrap.appendChild(pop);
+    close.parentElement.insertBefore(wrap, close);
   }
   // Heatmap panel: small share button next to the panel close.
   // Captures the live globe (or 2D map, depending on user's projection)
@@ -62373,8 +62812,7 @@ body.ticker-active .gTickerLabel {
         }
         if (!overlayDateLine) {
           const days = parseInt(
-            document.getElementById('semHeatKwDays')?.value
-              || document.getElementById('semHeatTsRange')?.value || '7', 10);
+            document.getElementById('semHeatKwDays')?.value || '7', 10);
           overlayDateLine = (days === 1) ? 'Last 1 day' : `Last ${days} days`;
         }
       }
@@ -62450,7 +62888,10 @@ body.ticker-active .gTickerLabel {
 
       // ── Path 2 & 3: Coverage / Sentiment heatmap ──────────────────
       // No AI question → user is in coverage/sentiment view. Read mode
-      // pill + active control tab + keyword + days from live UI.
+      // pill + the Keyword tab's inputs (the standalone Time-series
+      // tab was folded into Keyword in the consolidation pass — every
+      // keyword query is now a time-series query, so bucket is always
+      // read from the same tab as keyword + days).
       const activeModePill = document.querySelector('#semHeatModeRow .semHeatPill.active');
       const heatMode  = activeModePill?.dataset?.mode || 'coverage';
       const activeCtl = document.querySelector('#semHeatCtlTabs .semHeatCtlTab.active')?.dataset?.ctl || 'keyword';
@@ -62459,11 +62900,8 @@ body.ticker-active .gTickerLabel {
       let bucket  = '';
       if (activeCtl === 'keyword') {
         keyword = (document.getElementById('semHeatKw')?.value || '').trim();
-        days    = document.getElementById('semHeatKwDays')?.value || '7';
-      } else if (activeCtl === 'timeseries') {
-        keyword = (document.getElementById('semHeatKw')?.value || '').trim();
-        days    = document.getElementById('semHeatTsRange')?.value  || '7';
-        bucket  = document.getElementById('semHeatTsBucket')?.value || 'day';
+        days    = document.getElementById('semHeatKwDays')?.value   || '7';
+        bucket  = document.getElementById('semHeatTsBucket')?.value || '';
       }
       const qs = new URLSearchParams();
       qs.set('mode', heatMode);
@@ -62519,8 +62957,18 @@ body.ticker-active .gTickerLabel {
     });
     pop.appendChild(imgItem);
 
+    // Clip item is built unconditionally if MediaRecorder is supported,
+    // but its visibility is recomputed each time the popover opens —
+    // see trigger handler below. Rationale: after the keyword + time-
+    // series tab consolidation, a clip is only meaningful when there
+    // is either a keyword OR an AI question driving the heatmap. A
+    // "standalone" aggregate-only clip (no keyword, no question) used
+    // to be possible from the now-removed Time-series tab; that path
+    // is intentionally suppressed so the share menu doesn't offer a
+    // clip that would just spin the globe over a generic backdrop.
+    let clipItem = null;
     if (_clipSupported) {
-      const clipItem = document.createElement('button');
+      clipItem = document.createElement('button');
       clipItem.className = 'shareBtnPopoverItem';
       clipItem.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg><span>Clip</span>`;
       clipItem.addEventListener('click', (e) => {
@@ -62534,6 +62982,15 @@ body.ticker-active .gTickerLabel {
     trigger.addEventListener('click', (e) => {
       e.stopPropagation();
       const willOpen = pop.hidden;
+      if (willOpen && clipItem) {
+        // Recompute on each open — user may have just typed a keyword,
+        // submitted a Map This question, or cleared either.
+        const panelEl = document.getElementById('semHeatPanel');
+        const hasKeyword  = !!(document.getElementById('semHeatKw')?.value || '').trim();
+        const hasQuestion = !!(panelEl?.dataset?.qaQuestion ||
+                               (document.getElementById('semHeatAskInput')?.value || '').trim());
+        clipItem.hidden = !(hasKeyword || hasQuestion);
+      }
       pop.hidden = !willOpen;
       if (willOpen) {
         setTimeout(() => {
@@ -62567,54 +63024,143 @@ body.ticker-active .gTickerLabel {
   // Initial attach in case panels are already open.
   setTimeout(() => { _attachClusterShareBtn(); _attachHeatmapShareBtn(); }, 200);
 
-  // Flow-context card share button — kind/id/title are stamped onto
-  // the card's dataset by __arcAiSetSession when a thread/timeline
-  // flow opens. Article-flow sessions never set them; the button is
-  // hidden by an attribute-selector CSS rule in that case.
+  // Flow-context card share — kind/id/title are stamped onto the
+  // card's dataset by __arcAiSetSession when a thread/timeline flow
+  // opens. Article-flow sessions never set them; the button is hidden
+  // by an attribute-selector CSS rule in that case.
   //
-  // Dispatches via __shareSnapshot so the recipient gets the LIVE
-  // globe with the arcs visible — that's the whole point of sharing
-  // from this surface. Also passes the /share/{kind}/{id} URL so
-  // iMessage / Twitter etc. render the link card preview alongside
-  // the image, and Universal Links can route a tap back into the app.
-  document.addEventListener('click', (e) => {
-    const btn = e.target?.closest?.('#flowCtxShareBtn');
-    if (!btn) return;
-    e.stopPropagation();
-    e.preventDefault();
-    const card = document.getElementById('flowCtxCard');
-    const ds = card?.dataset || {};
-    const kind = ds.kind;
-    const id = parseInt(ds.entityId || '', 10);
-    const title = ds.entityTitle || '';
-    if (!kind || !Number.isFinite(id)) {
-      showToast('Nothing to share');
+  // The button used to fire __shareSnapshot directly. As of the clip-
+  // share rollout it instead toggles a small Image/Clip popover (same
+  // shape as the heatmap + news-flows panels). Both options share the
+  // LIVE globe with arcs visible — only the medium differs.
+  function _attachFlowCtxSharePopover() {
+    const btn = document.getElementById('flowCtxShareBtn');
+    if (!btn || btn.dataset.popoverWired === '1') return;
+    btn.dataset.popoverWired = '1';
+
+    const _clipSupported = typeof MediaRecorder !== 'undefined' &&
+      typeof window.__renderer?.domElement?.captureStream === 'function';
+
+    // Always read live dataset at action time — the flow-context card
+    // is a singleton DOM node whose dataset is rewritten every time a
+    // new thread/line flow opens. Closing over a snapshot would send
+    // the wrong entity once the user navigates between flows.
+    const _getCtx = () => {
+      const card = document.getElementById('flowCtxCard');
+      const ds   = card?.dataset || {};
+      return {
+        kind:          ds.kind,
+        id:            parseInt(ds.entityId || '', 10),
+        title:         ds.entityTitle || '',
+        articleCount:  parseInt(ds.articleCount  || '', 10),
+        languageCount: parseInt(ds.languageCount || '', 10),
+        countryCount:  parseInt(ds.countryCount  || '', 10),
+      };
+    };
+
+    const _doSnapshot = () => {
+      const ctx = _getCtx();
+      if (!ctx.kind || !Number.isFinite(ctx.id)) { showToast('Nothing to share'); return; }
+      const badge = (ctx.kind === 'line') ? 'STORY LINE · FLOW ARCS' : 'STORY THREAD · FLOW ARCS';
+      const projectionTag = (window.__projection === 'map') ? '2D MAP' : 'GLOBE';
+      // Scope line like "COVERAGE IN 51 LANGUAGES · 107 COUNTRIES ·
+      // 1,338 ARTICLES" — skipped entirely if any stat is missing,
+      // since half-data looks worse than no data.
+      const _fmtNum = (n) => Number(n).toLocaleString('en-US');
+      let scopeLine = '';
+      if (Number.isFinite(ctx.articleCount) && Number.isFinite(ctx.languageCount) &&
+          Number.isFinite(ctx.countryCount) && ctx.articleCount > 0) {
+        scopeLine = `COVERAGE IN ${_fmtNum(ctx.languageCount)} LANGUAGE${ctx.languageCount === 1 ? '' : 'S'} · ${_fmtNum(ctx.countryCount)} COUNTR${ctx.countryCount === 1 ? 'Y' : 'IES'} · ${_fmtNum(ctx.articleCount)} ARTICLE${ctx.articleCount === 1 ? '' : 'S'}`;
+      }
+      window.__shareSnapshot({
+        title: ctx.title,
+        subtitle: `${ctx.kind === 'line' ? 'TIMELINE' : 'THREAD'} FLOWS · ${projectionTag}`,
+        badge,
+        scopeLine,
+        url:        `${SHARE_HOST}/share/${ctx.kind}/${ctx.id}`,
+        shareTitle: ctx.title || (ctx.kind === 'line' ? 'Story line on Earth00' : 'Story thread on Earth00'),
+        shareText:  ctx.title ? `${ctx.title} — flow arcs on Earth00` : 'Flow arcs on Earth00',
+      });
+    };
+
+    const _doClip = () => {
+      const ctx = _getCtx();
+      if (!ctx.kind || !Number.isFinite(ctx.id)) { showToast('Nothing to share'); return; }
+      window.__shareEntityClip(ctx);
+    };
+
+    // Build popover next to the button. The flow-context card itself
+    // is repositionable, so the popover lives inside the button's
+    // wrap rather than at document root — keeps anchor + popover in
+    // the same coordinate space.
+    const pop = document.createElement('div');
+    pop.className = 'shareBtnPopover';
+    pop.hidden = true;
+    pop.style.position = 'absolute';
+    pop.style.zIndex = '1000';
+
+    const imgItem = document.createElement('button');
+    imgItem.className = 'shareBtnPopoverItem';
+    imgItem.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg><span>Image</span>`;
+    imgItem.addEventListener('click', (e) => {
+      e.stopPropagation();
+      pop.hidden = true;
+      _doSnapshot();
+    });
+    pop.appendChild(imgItem);
+
+    if (_clipSupported) {
+      const clipItem = document.createElement('button');
+      clipItem.className = 'shareBtnPopoverItem';
+      clipItem.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg><span>Clip</span>`;
+      clipItem.addEventListener('click', (e) => {
+        e.stopPropagation();
+        pop.hidden = true;
+        _doClip();
+      });
+      pop.appendChild(clipItem);
+    }
+
+    // Anchor: insert into the button's parent so the popover floats
+    // beneath the button (CSS handles offset via .shareBtnPopover).
+    btn.parentElement.appendChild(pop);
+
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      e.preventDefault();
+      const willOpen = pop.hidden;
+      pop.hidden = !willOpen;
+      if (willOpen) {
+        // Position the popover under the button — same coordinate space
+        // because we appended into btn.parentElement above.
+        const r = btn.getBoundingClientRect();
+        const pr = btn.parentElement.getBoundingClientRect();
+        pop.style.top  = `${r.bottom - pr.top + 4}px`;
+        pop.style.left = `${r.left   - pr.left}px`;
+        setTimeout(() => {
+          const closeOnOutside = (ev) => {
+            if (pop.contains(ev.target) || btn.contains(ev.target)) return;
+            pop.hidden = true;
+            document.removeEventListener('click', closeOnOutside);
+          };
+          document.addEventListener('click', closeOnOutside);
+        }, 0);
+      }
+    });
+  }
+  // Wire once. The flow-ctx card is built inside an IIFE that runs
+  // shortly after page boot; poll with bounded retries until the
+  // button exists rather than running a permanent MutationObserver.
+  // Idempotent guard inside _attachFlowCtxSharePopover prevents
+  // double-wiring even if poll + observer paths ever race.
+  (function _pollAttach(attempts = 0) {
+    if (document.getElementById('flowCtxShareBtn')) {
+      _attachFlowCtxSharePopover();
       return;
     }
-    const badge = (kind === 'line') ? 'STORY LINE · FLOW ARCS' : 'STORY THREAD · FLOW ARCS';
-    const projectionTag = (window.__projection === 'map') ? '2D MAP' : 'GLOBE';
-    // Build the scope line (e.g. "COVERAGE IN 51 LANGUAGES · 107
-    // COUNTRIES · 1,338 ARTICLES") from the stats __arcAiSetSession
-    // stamped on flowCtxCard.dataset. If any of the three are missing,
-    // skip the line entirely — half-data looks worse than no data.
-    const _fmtNum = (n) => Number(n).toLocaleString('en-US');
-    const _ac = parseInt(ds.articleCount  || '', 10);
-    const _lc = parseInt(ds.languageCount || '', 10);
-    const _cc = parseInt(ds.countryCount  || '', 10);
-    let scopeLine = '';
-    if (Number.isFinite(_ac) && Number.isFinite(_lc) && Number.isFinite(_cc) && _ac > 0) {
-      scopeLine = `COVERAGE IN ${_fmtNum(_lc)} LANGUAGE${_lc === 1 ? '' : 'S'} · ${_fmtNum(_cc)} COUNTR${_cc === 1 ? 'Y' : 'IES'} · ${_fmtNum(_ac)} ARTICLE${_ac === 1 ? '' : 'S'}`;
-    }
-    window.__shareSnapshot({
-      title,
-      subtitle: `${kind === 'line' ? 'TIMELINE' : 'THREAD'} FLOWS · ${projectionTag}`,
-      badge,
-      scopeLine,
-      url:      `${SHARE_HOST}/share/${kind}/${id}`,
-      shareTitle: title || (kind === 'line' ? 'Story line on Earth00' : 'Story thread on Earth00'),
-      shareText:  title ? `${title} — flow arcs on Earth00` : 'Flow arcs on Earth00',
-    });
-  }, true);
+    if (attempts >= 40) return;          // ~10s total — card always exists by then
+    setTimeout(() => _pollAttach(attempts + 1), 250);
+  })();
 
   // News Flows panel snapshot share — captures the live globe (or 2D
   // map) view as the user sees it RIGHT NOW: arcs in motion at the

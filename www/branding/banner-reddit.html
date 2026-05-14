@@ -1,0 +1,221 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Earth00 — Reddit Banner</title>
+<style>
+  /* ─────────────────────────────────────────────────────────────────────
+     Reddit subreddit banner — 1920 × 384 (5:1 horizontal).
+     Concentric arcs in brand orange emanating from a focal point on
+     the left-center, evoking the app's city-tap ring pulses (the same
+     visual language we use to mark where stories break). Tagline +
+     wordmark sit on the right where the rings are thinnest, so the
+     mobile-safe center band shows the strongest part of the pulse.
+  ─────────────────────────────────────────────────────────────────────── */
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  html, body {
+    width: 100%; height: 100%;
+    background: #000;
+    overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+
+  body { position: relative; width: 100vw; height: 100vh; }
+
+  #wrap {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 1920px;
+    height: 384px;
+    transform: translate(-50%, -50%);
+    transform-origin: center center;
+  }
+
+  #stage {
+    position: relative;
+    width: 1920px;
+    height: 384px;
+    background: radial-gradient(ellipse 90% 80% at 22% 50%,
+                  #1a0f04 0%,
+                  #0a0a0a 45%,
+                  #000 90%);
+    overflow: hidden;
+  }
+
+  #stars {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    opacity: 0.85;
+  }
+
+  /* The concentric-arc SVG sits behind the text; the arcs are drawn
+     as partial circles (left half hidden behind the focal-point bloom)
+     centered on a single focal point off the left edge. */
+  #arcs {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    pointer-events: none;
+  }
+
+  /* Focal-point bloom — soft warm halo at the arc-origin, sells the
+     "pulse source" reading of the rings. */
+  .bloom {
+    position: absolute;
+    left: 22%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: 280px;
+    height: 280px;
+    border-radius: 50%;
+    background: radial-gradient(circle,
+                  rgba(255, 200, 100, 0.30) 0%,
+                  rgba(255, 160, 40, 0.18) 30%,
+                  rgba(255, 100, 20, 0.08) 60%,
+                  transparent 90%);
+    pointer-events: none;
+    z-index: 1;
+  }
+
+  /* Bright focal dot — small, like the city pin the rings emanate from. */
+  .dot {
+    position: absolute;
+    left: 22%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: rgba(255, 222, 100, 1);
+    box-shadow:
+      0 0 12px rgba(255, 200, 80, 0.95),
+      0 0 30px rgba(255, 160, 40, 0.7),
+      0 0 60px rgba(255, 100, 20, 0.4);
+    z-index: 3;
+  }
+
+  /* Tagline + wordmark — stacked on the right half of the banner where
+     the rings are wide and thin (less visual competition). Vertically
+     centered together for a single tight brand block. */
+  .brand {
+    position: absolute;
+    top: 50%;
+    right: 6%;
+    transform: translateY(-50%);
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 14px;
+    z-index: 4;
+    text-align: right;
+  }
+
+  .tagline {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    font-weight: 400;
+    font-size: 28px;
+    letter-spacing: 0.20em;
+    text-transform: uppercase;
+    color: rgba(255, 255, 255, 0.82);
+    text-shadow: 0 0 24px rgba(255, 140, 30, 0.18);
+  }
+
+  .wordmark {
+    font-family: "Georgia", "Times New Roman", serif;
+    font-style: italic;
+    font-weight: 900;
+    font-size: 80px;
+    line-height: 1;
+    letter-spacing: -0.02em;
+    color: rgba(255, 175, 50, 1);
+    text-shadow:
+      0 0 28px rgba(255, 140, 30, 0.6),
+      0 0 70px rgba(255, 100, 20, 0.32);
+  }
+</style>
+</head>
+<body>
+
+<div id="wrap">
+<div id="stage">
+  <canvas id="stars" width="1920" height="384"></canvas>
+
+  <svg id="arcs" viewBox="0 0 1920 384" preserveAspectRatio="none" xmlns="http://www.w3.org/2000/svg">
+    <!-- Concentric circular arcs centered on the focal point at (422, 192).
+         Radii increase outward; opacity + stroke weight decrease so the
+         pulse looks like it fades away with distance.
+         The arcs are full circles — only the visible portion inside the
+         viewBox shows; the left half is hidden under the bloom anyway. -->
+    <g fill="none" stroke="rgb(255, 175, 50)">
+      <circle cx="422" cy="192" r="100"  stroke-width="2.4" opacity="0.92"/>
+      <circle cx="422" cy="192" r="180"  stroke-width="2.2" opacity="0.78"/>
+      <circle cx="422" cy="192" r="270"  stroke-width="2.0" opacity="0.64"/>
+      <circle cx="422" cy="192" r="370"  stroke-width="1.8" opacity="0.52"/>
+      <circle cx="422" cy="192" r="480"  stroke-width="1.6" opacity="0.42"/>
+      <circle cx="422" cy="192" r="600"  stroke-width="1.4" opacity="0.34"/>
+      <circle cx="422" cy="192" r="730"  stroke-width="1.2" opacity="0.27"/>
+      <circle cx="422" cy="192" r="870"  stroke-width="1.1" opacity="0.21"/>
+      <circle cx="422" cy="192" r="1020" stroke-width="1.0" opacity="0.16"/>
+      <circle cx="422" cy="192" r="1180" stroke-width="1.0" opacity="0.12"/>
+      <circle cx="422" cy="192" r="1350" stroke-width="0.9" opacity="0.09"/>
+      <circle cx="422" cy="192" r="1530" stroke-width="0.9" opacity="0.06"/>
+    </g>
+  </svg>
+
+  <div class="bloom"></div>
+  <div class="dot"></div>
+
+  <div class="brand">
+    <div class="tagline">TRACK WORLD EVENTS</div>
+    <div class="wordmark">earth00</div>
+  </div>
+</div>
+</div>
+
+<script>
+(function fitStage() {
+  const wrap = document.getElementById('wrap');
+  function fit() {
+    const sx = window.innerWidth  / 1920;
+    const sy = window.innerHeight / 384;
+    wrap.style.transform = `translate(-50%, -50%) scale(${Math.min(sx, sy)})`;
+  }
+  fit();
+  window.addEventListener('resize', fit);
+})();
+
+(function drawStars() {
+  const canvas = document.getElementById('stars');
+  const ctx = canvas.getContext('2d');
+  let seed = 1337;
+  const rand = () => { seed = (seed * 9301 + 49297) % 233280; return seed / 233280; };
+  const W = canvas.width, H = canvas.height;
+  const N = 120;
+  for (let i = 0; i < N; i++) {
+    const x = rand() * W;
+    const y = rand() * H;
+    const size = rand() * 1.3 + 0.3;
+    const warm = rand() < 0.3;
+    const hue = warm ? (32 + rand() * 20) : (200 + rand() * 60);
+    const sat = warm ? (60 + rand() * 40) : (10 + rand() * 20);
+    const op  = rand() * 0.5 + 0.25;
+    const r = size * 3;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0,   `hsla(${hue}, ${sat}%, 90%, ${op})`);
+    g.addColorStop(0.4, `hsla(${hue}, ${sat}%, 70%, ${op * 0.4})`);
+    g.addColorStop(1,   `hsla(${hue}, ${sat}%, 50%, 0)`);
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = `hsla(${hue}, ${sat}%, 95%, ${op})`;
+    ctx.beginPath(); ctx.arc(x, y, size * 0.55, 0, Math.PI * 2); ctx.fill();
+  }
+})();
+</script>
+
+</body>
+</html>

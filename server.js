@@ -1516,6 +1516,273 @@ app.post('/api/badges/seen', async (req, res) => {
 });
 
 /* =========================================
+   Library: per-user saved items + view history
+   =========================================
+   Backed by user_saved_items + user_history tables (see
+   migrations/20260513_user_library_saved_history.sql). Both tables
+   are keyed by (user_id, kind, ref_id) which gives us upsert
+   semantics — re-saving from a second device is a no-op, re-viewing
+   bumps viewed_at instead of inserting a duplicate row. A trigger on
+   user_history caps each user at 500 most-recent rows.
+
+   All endpoints require auth (anon users keep working with their
+   localStorage-only state on the client; sync activates the moment
+   they sign in).
+
+   The /bulk variants exist so the client can push its locally-
+   accumulated anon items to the server in a single round-trip on
+   sign-in (the merge path) — without bulk, a user with 50 saved
+   items would issue 50 sequential POSTs the moment they sign in.
+*/
+
+const _LIBRARY_VALID_KINDS = new Set([
+  'article', 'thread', 'line', 'view', 'briefing', 'heatmap', 'flow',
+]);
+const _LIBRARY_HISTORY_LIMIT = 500;     // matches the DB-side trim trigger
+
+// Coerces the incoming body shape into the column set the table
+// accepts, with hard caps so a malformed client can't blow up storage.
+// Returns null if the row is unusable (no kind or no ref_id).
+function _libraryNormalizeItem(raw, { allowUrl = true } = {}) {
+  if (!raw || typeof raw !== 'object') return null;
+  const kind = String(raw.kind || '').trim().toLowerCase();
+  if (!kind || !_LIBRARY_VALID_KINDS.has(kind)) return null;
+  const ref_id = String(raw.ref_id ?? raw.id ?? '').trim();
+  if (!ref_id) return null;
+  // 4kB safety caps. Way larger than any reasonable title/source.
+  const title  = raw.title  != null ? String(raw.title).slice(0, 1024) : null;
+  const source = raw.source != null ? String(raw.source).slice(0, 256) : null;
+  const url    = (allowUrl && raw.url != null) ? String(raw.url).slice(0, 2048) : null;
+  let metadata = raw.metadata && typeof raw.metadata === 'object' ? raw.metadata : {};
+  // jsonb storage — clamp serialized size to keep the row small.
+  try {
+    const json = JSON.stringify(metadata);
+    if (json.length > 8192) metadata = {};
+  } catch (_) { metadata = {}; }
+  return { kind, ref_id, title, source, url, metadata };
+}
+
+// ── GET /api/library/saved ────────────────────────────────────────────
+app.get('/api/library/saved', async (req, res) => {
+  if (!req.user?.id) return res.status(401).json({ error: 'Authentication required' });
+  try {
+    const { rows } = await pool.query(
+      `SELECT kind, ref_id, title, source, url, metadata, created_at
+         FROM user_saved_items
+        WHERE user_id = $1
+        ORDER BY created_at DESC`,
+      [req.user.id]
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error('[library/saved GET]', err.message);
+    res.status(500).json({ error: 'Failed to load saved items' });
+  }
+});
+
+// ── POST /api/library/saved ───────────────────────────────────────────
+// Idempotent upsert. Re-saving the same (kind, ref_id) does NOT touch
+// created_at — the library's sort order stays stable across re-saves.
+app.post('/api/library/saved', async (req, res) => {
+  if (!req.user?.id) return res.status(401).json({ error: 'Authentication required' });
+  const item = _libraryNormalizeItem(req.body);
+  if (!item) return res.status(400).json({ error: 'kind + ref_id are required' });
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO user_saved_items (user_id, kind, ref_id, title, source, url, metadata)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+       ON CONFLICT (user_id, kind, ref_id) DO UPDATE
+         SET title    = COALESCE(EXCLUDED.title,    user_saved_items.title),
+             source   = COALESCE(EXCLUDED.source,   user_saved_items.source),
+             url      = COALESCE(EXCLUDED.url,      user_saved_items.url),
+             metadata = EXCLUDED.metadata
+       RETURNING kind, ref_id, title, source, url, metadata, created_at`,
+      [req.user.id, item.kind, item.ref_id, item.title, item.source, item.url, JSON.stringify(item.metadata)]
+    );
+    res.json(rows[0]);
+  } catch (err) {
+    console.error('[library/saved POST]', err.message);
+    res.status(500).json({ error: 'Failed to save item' });
+  }
+});
+
+// ── POST /api/library/saved/bulk ──────────────────────────────────────
+// Accepts up to 200 items in one request. Used by the merge-on-sign-in
+// flow so a user with a long pre-existing localStorage library doesn't
+// fire 50 sequential POSTs the moment they sign in.
+app.post('/api/library/saved/bulk', async (req, res) => {
+  if (!req.user?.id) return res.status(401).json({ error: 'Authentication required' });
+  const rawItems = Array.isArray(req.body?.items) ? req.body.items.slice(0, 200) : null;
+  if (!rawItems) return res.status(400).json({ error: 'items[] required (max 200)' });
+  const items = rawItems.map(r => _libraryNormalizeItem(r)).filter(Boolean);
+  if (!items.length) return res.json({ inserted: 0 });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    for (const it of items) {
+      await client.query(
+        `INSERT INTO user_saved_items (user_id, kind, ref_id, title, source, url, metadata)
+         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+         ON CONFLICT (user_id, kind, ref_id) DO UPDATE
+           SET title    = COALESCE(EXCLUDED.title,    user_saved_items.title),
+               source   = COALESCE(EXCLUDED.source,   user_saved_items.source),
+               url      = COALESCE(EXCLUDED.url,      user_saved_items.url),
+               metadata = EXCLUDED.metadata`,
+        [req.user.id, it.kind, it.ref_id, it.title, it.source, it.url, JSON.stringify(it.metadata)]
+      );
+    }
+    await client.query('COMMIT');
+    res.json({ inserted: items.length });
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch (_) {}
+    console.error('[library/saved bulk]', err.message);
+    res.status(500).json({ error: 'Bulk save failed' });
+  } finally {
+    client.release();
+  }
+});
+
+// ── DELETE /api/library/saved ─────────────────────────────────────────
+// Removes one (kind, ref_id) row. 204 even if the row didn't exist —
+// idempotent semantics match the client's "unsave" affordance.
+app.delete('/api/library/saved', async (req, res) => {
+  if (!req.user?.id) return res.status(401).json({ error: 'Authentication required' });
+  const kind   = String(req.body?.kind   || req.query.kind   || '').trim().toLowerCase();
+  const ref_id = String(req.body?.ref_id || req.query.ref_id || req.body?.id || req.query.id || '').trim();
+  if (!_LIBRARY_VALID_KINDS.has(kind) || !ref_id) {
+    return res.status(400).json({ error: 'kind + ref_id are required' });
+  }
+  try {
+    await pool.query(
+      `DELETE FROM user_saved_items WHERE user_id = $1 AND kind = $2 AND ref_id = $3`,
+      [req.user.id, kind, ref_id]
+    );
+    res.status(204).end();
+  } catch (err) {
+    console.error('[library/saved DELETE]', err.message);
+    res.status(500).json({ error: 'Failed to remove item' });
+  }
+});
+
+// ── GET /api/library/history ──────────────────────────────────────────
+app.get('/api/library/history', async (req, res) => {
+  if (!req.user?.id) return res.status(401).json({ error: 'Authentication required' });
+  // Optional `?limit=N` (default + cap = _LIBRARY_HISTORY_LIMIT).
+  const limit = Math.max(1, Math.min(
+    _LIBRARY_HISTORY_LIMIT,
+    parseInt(req.query.limit || _LIBRARY_HISTORY_LIMIT, 10) || _LIBRARY_HISTORY_LIMIT
+  ));
+  try {
+    const { rows } = await pool.query(
+      `SELECT kind, ref_id, title, source, metadata, viewed_at
+         FROM user_history
+        WHERE user_id = $1
+        ORDER BY viewed_at DESC
+        LIMIT $2`,
+      [req.user.id, limit]
+    );
+    res.json(rows);
+  } catch (err) {
+    console.error('[library/history GET]', err.message);
+    res.status(500).json({ error: 'Failed to load history' });
+  }
+});
+
+// ── POST /api/library/history ─────────────────────────────────────────
+// Records a view. Re-viewing the same item BUMPS viewed_at via the
+// unique-constraint upsert path; no duplicate rows.
+app.post('/api/library/history', async (req, res) => {
+  if (!req.user?.id) return res.status(401).json({ error: 'Authentication required' });
+  const item = _libraryNormalizeItem(req.body, { allowUrl: false });
+  if (!item) return res.status(400).json({ error: 'kind + ref_id are required' });
+  try {
+    const { rows } = await pool.query(
+      `INSERT INTO user_history (user_id, kind, ref_id, title, source, metadata)
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+       ON CONFLICT (user_id, kind, ref_id) DO UPDATE
+         SET viewed_at = NOW(),
+             title    = COALESCE(EXCLUDED.title,    user_history.title),
+             source   = COALESCE(EXCLUDED.source,   user_history.source),
+             metadata = EXCLUDED.metadata
+       RETURNING kind, ref_id, title, source, metadata, viewed_at`,
+      [req.user.id, item.kind, item.ref_id, item.title, item.source, JSON.stringify(item.metadata)]
+    );
+    res.json(rows[0]);
+  } catch (err) {
+    console.error('[library/history POST]', err.message);
+    res.status(500).json({ error: 'Failed to record view' });
+  }
+});
+
+// ── POST /api/library/history/bulk ────────────────────────────────────
+app.post('/api/library/history/bulk', async (req, res) => {
+  if (!req.user?.id) return res.status(401).json({ error: 'Authentication required' });
+  const rawItems = Array.isArray(req.body?.items) ? req.body.items.slice(0, 200) : null;
+  if (!rawItems) return res.status(400).json({ error: 'items[] required (max 200)' });
+  const items = rawItems
+    .map(r => _libraryNormalizeItem(r, { allowUrl: false }))
+    .filter(Boolean);
+  if (!items.length) return res.json({ inserted: 0 });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    for (const it of items) {
+      await client.query(
+        `INSERT INTO user_history (user_id, kind, ref_id, title, source, metadata)
+         VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+         ON CONFLICT (user_id, kind, ref_id) DO UPDATE
+           SET viewed_at = NOW(),
+               title    = COALESCE(EXCLUDED.title,    user_history.title),
+               source   = COALESCE(EXCLUDED.source,   user_history.source),
+               metadata = EXCLUDED.metadata`,
+        [req.user.id, it.kind, it.ref_id, it.title, it.source, JSON.stringify(it.metadata)]
+      );
+    }
+    await client.query('COMMIT');
+    res.json({ inserted: items.length });
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch (_) {}
+    console.error('[library/history bulk]', err.message);
+    res.status(500).json({ error: 'Bulk history failed' });
+  } finally {
+    client.release();
+  }
+});
+
+// ── DELETE /api/library/history ───────────────────────────────────────
+// Two modes:
+//   • body: { kind, ref_id } → remove one row (single dismiss).
+//   • body: { all: true }    → clear the user's entire history.
+app.delete('/api/library/history', async (req, res) => {
+  if (!req.user?.id) return res.status(401).json({ error: 'Authentication required' });
+  const clearAll = !!req.body?.all || req.query.all === '1' || req.query.all === 'true';
+  if (clearAll) {
+    try {
+      await pool.query(`DELETE FROM user_history WHERE user_id = $1`, [req.user.id]);
+      return res.status(204).end();
+    } catch (err) {
+      console.error('[library/history clearAll]', err.message);
+      return res.status(500).json({ error: 'Failed to clear history' });
+    }
+  }
+  const kind   = String(req.body?.kind   || req.query.kind   || '').trim().toLowerCase();
+  const ref_id = String(req.body?.ref_id || req.query.ref_id || req.body?.id || req.query.id || '').trim();
+  if (!_LIBRARY_VALID_KINDS.has(kind) || !ref_id) {
+    return res.status(400).json({ error: 'kind + ref_id are required (or { all: true })' });
+  }
+  try {
+    await pool.query(
+      `DELETE FROM user_history WHERE user_id = $1 AND kind = $2 AND ref_id = $3`,
+      [req.user.id, kind, ref_id]
+    );
+    res.status(204).end();
+  } catch (err) {
+    console.error('[library/history DELETE]', err.message);
+    res.status(500).json({ error: 'Failed to remove history entry' });
+  }
+});
+
+/* =========================================
    AI content reports
    Apple's App Store review (2024-2025) requires a user-facing report
    path for AI-generated content. Three surfaces qualify in Earth00:
@@ -11262,7 +11529,7 @@ app.get('/share/thread/:id.png', async (req, res) => {
     // image — clean dark layout, brand-consistent, no third-party CDN
     // dependency on the render path.
     const { rows } = await pool.query(
-      `SELECT t.id, t.title, t.primary_category, t.primary_nations,
+      `SELECT t.id, t.title, t.description, t.primary_category, t.primary_nations,
               t.last_updated_at, t.article_count
          FROM story_threads t
         WHERE t.id = $1`,
@@ -11306,8 +11573,12 @@ app.get('/share/thread/:id.png', async (req, res) => {
       kind: 'thread',
       // Cache key: last_updated_at + counts. Hero is no longer in the
       // mix (see SELECT comment above) so it drops out of the key too.
-      cacheKey: `thread:${id}:${new Date(t.last_updated_at || 0).getTime()}:${articleCount}:${languageCount ?? 'x'}:${countryCount ?? 'x'}`,
+      // `v2` suffix forces a flush after the share-card layout upgrade
+      // (added summary line + larger fonts) so existing cached PNGs
+      // don't keep serving the old layout to scrapers + iMessage.
+      cacheKey: `thread:v2:${id}:${new Date(t.last_updated_at || 0).getTime()}:${articleCount}:${languageCount ?? 'x'}:${countryCount ?? 'x'}`,
       title:                t.title,
+      description:          t.description,
       isos:                 (t.primary_nations || []).slice(0, 6),
       category:             t.primary_category,
       articleCount,
@@ -11377,7 +11648,7 @@ app.get('/share/line/:id.png', async (req, res) => {
     // own; the prior code tried to pull a hero from the most-recent
     // child thread, but story_threads doesn't have those columns either.
     const { rows } = await pool.query(
-      `SELECT t.id, t.title, t.primary_category, t.primary_nations,
+      `SELECT t.id, t.title, t.description, t.primary_category, t.primary_nations,
               t.last_updated_at,
               COALESCE(
                 (SELECT SUM(article_count)::int
@@ -11424,8 +11695,12 @@ app.get('/share/line/:id.png', async (req, res) => {
     const articleCount = Number.isFinite(qArticles) ? qArticles : (t.article_count || 0);
     const png = await shareImg.generate({
       kind: 'line',
-      cacheKey: `line:${id}:${new Date(t.last_updated_at || 0).getTime()}:${articleCount}:${languageCount ?? 'x'}:${countryCount ?? 'x'}`,
+      // `v2` suffix forces a cache flush after the share-card layout
+      // upgrade (added summary line + larger fonts). See thread
+      // endpoint for the matching change.
+      cacheKey: `line:v2:${id}:${new Date(t.last_updated_at || 0).getTime()}:${articleCount}:${languageCount ?? 'x'}:${countryCount ?? 'x'}`,
       title:                t.title,
+      description:          t.description,
       isos:                 (t.primary_nations || []).slice(0, 6),
       category:             t.primary_category,
       articleCount,

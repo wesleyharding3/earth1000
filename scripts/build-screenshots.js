@@ -23,8 +23,22 @@ const { chromium } = require('playwright');
 const path = require('path');
 const fs   = require('fs');
 
-const W = 1290, H = 2796;
-const OUT_DIR = path.join(__dirname, '..', 'media', 'screenshots');
+// Two output tiers — iPhone 6.9" (default) and iPad 13" (SEGMENT=ipad).
+// iPad requires a separate App Store Connect upload, so we render both
+// sets with the same captions but different canvas dimensions /
+// template files.
+const SEGMENT = (process.env.SEGMENT || 'iphone').toLowerCase();
+const SEGMENT_CFG = {
+  iphone: { w: 1290, h: 2796, template: 'screenshot-card.html',      out_subdir: 'screenshots'      },
+  ipad:   { w: 2064, h: 2752, template: 'screenshot-card-ipad.html', out_subdir: 'screenshots-ipad' },
+};
+const cfg = SEGMENT_CFG[SEGMENT];
+if (!cfg) {
+  console.error(`Unknown SEGMENT '${SEGMENT}'. Use iphone or ipad.`);
+  process.exit(1);
+}
+const W = cfg.w, H = cfg.h;
+const OUT_DIR = path.join(__dirname, '..', 'media', cfg.out_subdir);
 
 // 9 screenshots in App Store display order. `subtitle: null` =
 // single-line headline only (used for info-dense screens where the
@@ -102,7 +116,7 @@ async function main() {
     params.set('img', s.img);
     params.set('headline', s.headline);
     if (s.subtitle) params.set('subtitle', s.subtitle);
-    const url = `http://localhost:3900/branding/screenshot-card.html?${params.toString()}`;
+    const url = `http://localhost:3900/branding/${cfg.template}?${params.toString()}`;
     process.stdout.write(`  ${s.out} … `);
 
     await page.goto(url, { waitUntil: 'networkidle' });
