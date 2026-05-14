@@ -64170,18 +64170,28 @@ body.ticker-active .gTickerLabel {
     if (typeof canvas.captureStream !== 'function') throw new Error('captureStream not supported on this canvas');
 
     // ── Overlay path: 2-canvas composite ─────────────────────────
-    // Each frame: copy globe → 1080×1080 recording canvas, paint
+    // Each frame: copy globe → 1080×1350 (4:5) recording canvas, paint
     // overlay (title / date / flags / logo / earth00.com) on top.
     // captureStream from the RECORDING canvas (not the globe canvas)
     // so the encoded video bakes in the chrome.
+    //
+    // Output is 4:5 (Instagram Post Portrait), not 1:1 — a square crop
+    // of a portrait phone viewport (e.g. 1170×2532) chopped ~681px off
+    // the top + bottom of the globe sphere. 4:5 cuts that to ~535px,
+    // restoring most of the globe's vertical extent without going full
+    // 9:16 (Story) which would leave the globe small in a tall frame.
     if (overlay) {
-      const SIZE = 1080;
+      const REC_W = 1080;
+      const REC_H = 1350;        // 4:5
       const recCanvas = document.createElement('canvas');
-      recCanvas.width = SIZE; recCanvas.height = SIZE;
+      recCanvas.width = REC_W; recCanvas.height = REC_H;
       const recCtx = recCanvas.getContext('2d');
       // Pre-load async assets (logo + flag images) once. Returns a
-      // synchronous paint function for the hot loop.
-      const paintOverlay = await _buildClipOverlayPainter({ ...overlay, size: SIZE });
+      // synchronous paint function for the hot loop. `size` drives
+      // font/margin scaling and is keyed to the WIDTH (overlay layout
+      // hugs left/right edges + top/bottom corners, so width is the
+      // right scale anchor).
+      const paintOverlay = await _buildClipOverlayPainter({ ...overlay, size: REC_W });
       const stream = recCanvas.captureStream(30);
       const chunks = [];
       const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 6_000_000 });
@@ -64190,16 +64200,31 @@ body.ticker-active .gTickerLabel {
 
       let running = true;
       let rafId   = null;
+      const TARGET_ASPECT = REC_W / REC_H;   // 0.8 = portrait
       function paint() {
         if (!running) return;
         recCtx.fillStyle = '#000';
-        recCtx.fillRect(0, 0, SIZE, SIZE);
+        recCtx.fillRect(0, 0, REC_W, REC_H);
+        // Crop source canvas to match the 4:5 target aspect so the globe
+        // isn't distorted. If source aspect > target (source wider than
+        // 4:5), crop horizontally; if narrower (typical phone portrait),
+        // crop vertically — but less than a square crop would.
         const gw = canvas.width, gh = canvas.height;
-        const srcSize = Math.min(gw, gh);
-        const srcX = (gw - srcSize) / 2;
-        const srcY = (gh - srcSize) / 2;
-        recCtx.drawImage(canvas, srcX, srcY, srcSize, srcSize, 0, 0, SIZE, SIZE);
-        paintOverlay(recCtx, SIZE, SIZE);
+        const srcAspect = gw / gh;
+        let srcW, srcH, srcX, srcY;
+        if (srcAspect > TARGET_ASPECT) {
+          srcH = gh;
+          srcW = gh * TARGET_ASPECT;
+          srcX = (gw - srcW) / 2;
+          srcY = 0;
+        } else {
+          srcW = gw;
+          srcH = gw / TARGET_ASPECT;
+          srcX = 0;
+          srcY = (gh - srcH) / 2;
+        }
+        recCtx.drawImage(canvas, srcX, srcY, srcW, srcH, 0, 0, REC_W, REC_H);
+        paintOverlay(recCtx, REC_W, REC_H);
         rafId = requestAnimationFrame(paint);
       }
 
