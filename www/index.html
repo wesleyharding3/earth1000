@@ -38600,6 +38600,23 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // any arc draw / camera focus / highlight write so we don't
       // overlay a previous thread's arcs on the current view.
       if (_isFlowSessionStale(_mySession)) return;
+      // Stamp the date span + tier isos onto the flowCtxCard dataset so
+      // the share-clip overlay (built later, on user click) can read
+      // them without re-fetching. Each new flow load overwrites
+      // — singleton card, see _arcAiSetSession block earlier.
+      try {
+        const _card = document.getElementById('flowCtxCard');
+        if (_card) {
+          if (data.start_date) _card.dataset.startDate = String(data.start_date);
+          else delete _card.dataset.startDate;
+          if (data.end_date) _card.dataset.endDate = String(data.end_date);
+          else delete _card.dataset.endDate;
+          const _isos = [...(data.tier_primary || []), ...(data.tier_secondary || [])]
+            .map(s => String(s || '').toUpperCase()).filter(s => /^[A-Z]{2}$/.test(s));
+          if (_isos.length) _card.dataset.tierIsos = _isos.join(',');
+          else delete _card.dataset.tierIsos;
+        }
+      } catch (_) {}
       if (!data.flows || !data.flows.length) {
         // No flows drawn — several handling paths in order of authority:
 
@@ -39753,6 +39770,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
       const data = await res.json();
       // Stale-session guard — same as the segmented path above.
       if (_isFlowSessionStale(_mySession)) return;
+      // Stamp date span + tier isos onto flowCtxCard for share-clip overlay.
+      try {
+        const _card = document.getElementById('flowCtxCard');
+        if (_card) {
+          if (data.start_date) _card.dataset.startDate = String(data.start_date);
+          else delete _card.dataset.startDate;
+          if (data.end_date) _card.dataset.endDate = String(data.end_date);
+          else delete _card.dataset.endDate;
+          const _isos = [...(data.tier_primary || []), ...(data.tier_secondary || [])]
+            .map(s => String(s || '').toUpperCase()).filter(s => /^[A-Z]{2}$/.test(s));
+          if (_isos.length) _card.dataset.tierIsos = _isos.join(',');
+          else delete _card.dataset.tierIsos;
+        }
+      } catch (_) {}
       if (!data.flows || !data.flows.length) {
         // Priority 1: tier-aware highlight. When a Line is classified
         // as single-primary-no-secondary (or any tier state where the
@@ -62635,6 +62666,13 @@ body.ticker-active .gTickerLabel {
     if (Number.isFinite(entity.languageCount)) subtitleBits.push(`${entity.languageCount} languages`);
     const subtitle = subtitleBits.length ? `${kindLabel} · ${subtitleBits.join(' · ')}` : kindLabel;
 
+    // dateRange + flagIsos come from the flow-context dataset that was
+    // stamped after the /api/flows/* fetch resolved. _buildClipOverlayPainter
+    // (below) renders dateLine in the top-right and the flag chip row
+    // beneath the title.
+    const dateLine = entity.dateRange || '';
+    const flagIsos = Array.isArray(entity.flagIsos) ? entity.flagIsos.slice(0, 8) : [];
+
     return window.__shareGlobeClip?.({
       durationMs:   10000,
       shareTitle:   `Earth00 · ${entity.title || kindLabel}`,
@@ -62646,7 +62684,8 @@ body.ticker-active .gTickerLabel {
       overlay: {
         title:    entity.title || kindLabel,
         subtitle,
-        dateLine: '',
+        dateLine,
+        flagIsos,
       },
     });
   };
@@ -62661,7 +62700,10 @@ body.ticker-active .gTickerLabel {
     const close = document.querySelector('#cdCloseBtn');
     if (!close || close.parentElement.querySelector('.shareBtnWrap')) return;
 
-    const _clipSupported = typeof MediaRecorder !== 'undefined' &&
+    // Check at click time, not attach time — see _attachFlowCtxSharePopover
+    // for the full rationale (window.__renderer may not exist yet during
+    // boot polling).
+    const _isClipSupported = () => typeof MediaRecorder !== 'undefined' &&
       typeof window.__renderer?.domElement?.captureStream === 'function';
 
     // Read the live entity off the panel's dataset every time an action
@@ -62708,25 +62750,24 @@ body.ticker-active .gTickerLabel {
     });
     pop.appendChild(imgItem);
 
-    if (_clipSupported) {
-      const clipItem = document.createElement('button');
-      clipItem.className = 'shareBtnPopoverItem';
-      clipItem.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg><span>Clip</span>`;
-      clipItem.addEventListener('click', (e) => {
-        e.stopPropagation();
-        pop.hidden = true;
-        const entity = _getEntity();
-        if (!entity.id) { console.warn('[share] no entity id on cluster panel'); return; }
-        window.__shareEntityClip(entity);
-      });
-      pop.appendChild(clipItem);
-    }
+    const clipItem = document.createElement('button');
+    clipItem.className = 'shareBtnPopoverItem';
+    clipItem.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg><span>Clip</span>`;
+    clipItem.addEventListener('click', (e) => {
+      e.stopPropagation();
+      pop.hidden = true;
+      const entity = _getEntity();
+      if (!entity.id) { console.warn('[share] no entity id on cluster panel'); return; }
+      window.__shareEntityClip(entity);
+    });
+    pop.appendChild(clipItem);
 
     trigger.addEventListener('click', (e) => {
       e.stopPropagation();
       const willOpen = pop.hidden;
       pop.hidden = !willOpen;
       if (willOpen) {
+        clipItem.hidden = !_isClipSupported();
         setTimeout(() => {
           const closeOnOutside = (ev) => {
             if (pop.contains(ev.target) || trigger.contains(ev.target)) return;
@@ -62752,7 +62793,8 @@ body.ticker-active .gTickerLabel {
     const closeBtn = document.querySelector('#semHeatPanel .semHeatClose');
     if (!closeBtn || closeBtn.parentElement.querySelector('.shareBtnWrap')) return;
 
-    const _clipSupported = typeof MediaRecorder !== 'undefined' &&
+    // Check at click time, not attach time — see _attachFlowCtxSharePopover.
+    const _isClipSupported = () => typeof MediaRecorder !== 'undefined' &&
       typeof window.__renderer?.domElement?.captureStream === 'function';
 
     // Clip path — see index.html for full rationale.
@@ -62966,30 +63008,31 @@ body.ticker-active .gTickerLabel {
     // to be possible from the now-removed Time-series tab; that path
     // is intentionally suppressed so the share menu doesn't offer a
     // clip that would just spin the globe over a generic backdrop.
-    let clipItem = null;
-    if (_clipSupported) {
-      clipItem = document.createElement('button');
-      clipItem.className = 'shareBtnPopoverItem';
-      clipItem.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg><span>Clip</span>`;
-      clipItem.addEventListener('click', (e) => {
-        e.stopPropagation();
-        pop.hidden = true;
-        _doClip();
-      });
-      pop.appendChild(clipItem);
-    }
+    // Build the clip item unconditionally; visibility is computed on each
+    // open — both the recorder-support check AND the keyword/question
+    // gate happen there.
+    const clipItem = document.createElement('button');
+    clipItem.className = 'shareBtnPopoverItem';
+    clipItem.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg><span>Clip</span>`;
+    clipItem.addEventListener('click', (e) => {
+      e.stopPropagation();
+      pop.hidden = true;
+      _doClip();
+    });
+    pop.appendChild(clipItem);
 
     trigger.addEventListener('click', (e) => {
       e.stopPropagation();
       const willOpen = pop.hidden;
-      if (willOpen && clipItem) {
-        // Recompute on each open — user may have just typed a keyword,
-        // submitted a Map This question, or cleared either.
+      if (willOpen) {
+        // Two gates: recorder support + content gate (keyword OR AI
+        // question). After the keyword/time-series tab consolidation,
+        // a clip is only meaningful when one of those drives the map.
         const panelEl = document.getElementById('semHeatPanel');
         const hasKeyword  = !!(document.getElementById('semHeatKw')?.value || '').trim();
         const hasQuestion = !!(panelEl?.dataset?.qaQuestion ||
                                (document.getElementById('semHeatAskInput')?.value || '').trim());
-        clipItem.hidden = !(hasKeyword || hasQuestion);
+        clipItem.hidden = !_isClipSupported() || !(hasKeyword || hasQuestion);
       }
       pop.hidden = !willOpen;
       if (willOpen) {
@@ -63038,7 +63081,13 @@ body.ticker-active .gTickerLabel {
     if (!btn || btn.dataset.popoverWired === '1') return;
     btn.dataset.popoverWired = '1';
 
-    const _clipSupported = typeof MediaRecorder !== 'undefined' &&
+    // Clip support has to be checked LIVE every time the user opens the
+    // popover. At attach-time (which runs during boot polling), the
+    // WebGL renderer hasn't been created yet, so window.__renderer is
+    // undefined and this check returns false — silently hiding the Clip
+    // option forever. Reading it on open means the check sees the same
+    // state the recorder will see when it actually runs.
+    const _isClipSupported = () => typeof MediaRecorder !== 'undefined' &&
       typeof window.__renderer?.domElement?.captureStream === 'function';
 
     // Always read live dataset at action time — the flow-context card
@@ -63055,7 +63104,27 @@ body.ticker-active .gTickerLabel {
         articleCount:  parseInt(ds.articleCount  || '', 10),
         languageCount: parseInt(ds.languageCount || '', 10),
         countryCount:  parseInt(ds.countryCount  || '', 10),
+        // Optional fields populated after /api/flows/(thread|timeline)
+        // resolves. Absent on cold open, present once arcs draw.
+        startDate:     ds.startDate || null,
+        endDate:       ds.endDate   || null,
+        tierIsos:      ds.tierIsos ? ds.tierIsos.split(',').filter(Boolean) : [],
       };
+    };
+
+    // Format an ISO date string as "MAY 5 – MAY 13"-style for clip /
+    // image overlays. Returns empty string when either bound is missing
+    // so callers can short-circuit instead of rendering a half-range.
+    const _fmtDateRange = (startIso, endIso) => {
+      const fmt = (s) => {
+        if (!s) return '';
+        const d = new Date(s);
+        if (isNaN(d.getTime())) return '';
+        return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }).toUpperCase();
+      };
+      const a = fmt(startIso), b = fmt(endIso);
+      if (a && b) return a === b ? a : `${a} – ${b}`;
+      return a || b || '';
     };
 
     const _doSnapshot = () => {
@@ -63072,11 +63141,14 @@ body.ticker-active .gTickerLabel {
           Number.isFinite(ctx.countryCount) && ctx.articleCount > 0) {
         scopeLine = `COVERAGE IN ${_fmtNum(ctx.languageCount)} LANGUAGE${ctx.languageCount === 1 ? '' : 'S'} · ${_fmtNum(ctx.countryCount)} COUNTR${ctx.countryCount === 1 ? 'Y' : 'IES'} · ${_fmtNum(ctx.articleCount)} ARTICLE${ctx.articleCount === 1 ? '' : 'S'}`;
       }
+      const dateRange = _fmtDateRange(ctx.startDate, ctx.endDate);
+      const subtitleBase = `${ctx.kind === 'line' ? 'TIMELINE' : 'THREAD'} FLOWS · ${projectionTag}`;
       window.__shareSnapshot({
         title: ctx.title,
-        subtitle: `${ctx.kind === 'line' ? 'TIMELINE' : 'THREAD'} FLOWS · ${projectionTag}`,
+        subtitle: dateRange ? `${subtitleBase} · ${dateRange}` : subtitleBase,
         badge,
         scopeLine,
+        isos:       ctx.tierIsos.slice(0, 8),
         url:        `${SHARE_HOST}/share/${ctx.kind}/${ctx.id}`,
         shareTitle: ctx.title || (ctx.kind === 'line' ? 'Story line on Earth00' : 'Story thread on Earth00'),
         shareText:  ctx.title ? `${ctx.title} — flow arcs on Earth00` : 'Flow arcs on Earth00',
@@ -63086,7 +63158,11 @@ body.ticker-active .gTickerLabel {
     const _doClip = () => {
       const ctx = _getCtx();
       if (!ctx.kind || !Number.isFinite(ctx.id)) { showToast('Nothing to share'); return; }
-      window.__shareEntityClip(ctx);
+      window.__shareEntityClip({
+        ...ctx,
+        dateRange: _fmtDateRange(ctx.startDate, ctx.endDate),
+        flagIsos:  ctx.tierIsos.slice(0, 8),
+      });
     };
 
     // Build popover next to the button. The flow-context card itself
@@ -63109,17 +63185,18 @@ body.ticker-active .gTickerLabel {
     });
     pop.appendChild(imgItem);
 
-    if (_clipSupported) {
-      const clipItem = document.createElement('button');
-      clipItem.className = 'shareBtnPopoverItem';
-      clipItem.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg><span>Clip</span>`;
-      clipItem.addEventListener('click', (e) => {
-        e.stopPropagation();
-        pop.hidden = true;
-        _doClip();
-      });
-      pop.appendChild(clipItem);
-    }
+    // Build the Clip item unconditionally — visibility is decided each
+    // time the popover opens so the live MediaRecorder/captureStream
+    // check sees a populated window.__renderer.
+    const clipItem = document.createElement('button');
+    clipItem.className = 'shareBtnPopoverItem';
+    clipItem.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg><span>Clip</span>`;
+    clipItem.addEventListener('click', (e) => {
+      e.stopPropagation();
+      pop.hidden = true;
+      _doClip();
+    });
+    pop.appendChild(clipItem);
 
     // Anchor: insert into the button's parent so the popover floats
     // beneath the button (CSS handles offset via .shareBtnPopover).
@@ -63131,6 +63208,7 @@ body.ticker-active .gTickerLabel {
       const willOpen = pop.hidden;
       pop.hidden = !willOpen;
       if (willOpen) {
+        clipItem.hidden = !_isClipSupported();
         // Position the popover under the button — same coordinate space
         // because we appended into btn.parentElement above.
         const r = btn.getBoundingClientRect();
@@ -63956,11 +64034,18 @@ body.ticker-active .gTickerLabel {
           directory: 'CACHE',
         });
         const fileUri = result.uri;
+        // Pass the file URI in the `url` field — single-field share that
+        // matches __shareGlobeClip's known-working shape on Capacitor 8 iOS.
+        // The earlier `files: [fileUri]` + separate web `url` combination
+        // silently dismissed on iOS: the Share plugin would resolve without
+        // ever presenting the sheet when both fields were populated. The
+        // web URL is preserved via `composedText` (inlined at the end of
+        // the text body for iMessage's data-detector to auto-link), so
+        // receivers still get a clickable earth00.com link.
         await Share.share({
-          title: shareTitle || 'Earth00',
-          text:  composedText,
-          url:   url || undefined,
-          files: [fileUri],
+          title:       shareTitle || 'Earth00',
+          text:        composedText,
+          url:         fileUri,
           dialogTitle: 'Share',
         });
         // Best-effort cleanup; ignore failures (the cache dir is auto-purged anyway).
@@ -63969,7 +64054,8 @@ body.ticker-active .gTickerLabel {
       } catch (err) {
         if (err && /cancel/i.test(err.message || '')) return;
         console.warn('[snapshotShare] Capacitor failed:', err.message);
-        // fall through to web path
+        showToast('Share failed');
+        return; // Don't fall through to web path on Capacitor — its <a download> fallback is a no-op inside WKWebView.
       }
     }
 

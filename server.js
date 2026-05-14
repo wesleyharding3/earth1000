@@ -4351,7 +4351,7 @@ app.get("/api/flows/thread/:id", async (req, res) => {
     const isPrewarm = req.query.prewarm === '1';
     // 3h45m — thread builder + prewarm-threads cron both run every 4h.
     // TTL just under that cadence so cache never expires between warms.
-    const _cached = await ttlCached(`flows/thread:${threadId}`, 13_500_000, async () => {
+    const _cached = await ttlCached(`flows/thread:v2:${threadId}`, 13_500_000, async () => {
       return await _buildTieredFlows({
         kind: 'thread',
         id: threadId,
@@ -4402,7 +4402,23 @@ async function _buildTieredFlows({ kind, id, rowTable, articleJoinTable, article
     `SELECT primary_nations, secondary_nations FROM ${rowTable} WHERE id = $1`,
     [id]
   );
-  if (!rowRs.length) return { flows: [], maxCount: 0, tier_primary: [], tier_secondary: [] };
+  if (!rowRs.length) return { flows: [], maxCount: 0, tier_primary: [], tier_secondary: [], start_date: null, end_date: null };
+
+  // Date span — MIN/MAX published_at across constituent articles. Surfaces
+  // the story's actual lifespan to the client so share overlays, line
+  // cards, etc. can render a "May 5 – May 13"-style range. Cheap (one row,
+  // covered by the (thread_id, article_id) PK on the join table) and only
+  // runs on cache miss (TTL 3.75h).
+  const { rows: dateRs } = await runner.query(
+    `SELECT MIN(na.published_at) AS start_at,
+            MAX(na.published_at) AS end_at
+       FROM ${articleJoinTable} ja
+       JOIN news_articles na ON na.id = ja.article_id
+      WHERE ja.${articleJoinKey} = $1`,
+    [id]
+  );
+  const start_date = dateRs[0]?.start_at ? new Date(dateRs[0].start_at).toISOString() : null;
+  const end_date   = dateRs[0]?.end_at   ? new Date(dateRs[0].end_at).toISOString()   : null;
 
   const primaryIsos   = _normIsoArr(rowRs[0].primary_nations);
   const secondaryIsos = _normIsoArr(rowRs[0].secondary_nations).slice(0, TIER_MAX_SECONDARIES);
@@ -4521,6 +4537,8 @@ async function _buildTieredFlows({ kind, id, rowTable, articleJoinTable, article
         maxCount,
         tier_primary:   resolvedPrimaries,
         tier_secondary: resolvedSecondaries,
+        start_date,
+        end_date,
       };
     }
   }
@@ -4571,7 +4589,7 @@ async function _buildTieredFlows({ kind, id, rowTable, articleJoinTable, article
   }
 
   if (involvedCountries.length < 2) {
-    return { flows: [], maxCount: 0, tier_primary: [], tier_secondary: [] };
+    return { flows: [], maxCount: 0, tier_primary: [], tier_secondary: [], start_date, end_date };
   }
 
   // Legacy: consecutive pairs, no tier markers.
@@ -4588,7 +4606,7 @@ async function _buildTieredFlows({ kind, id, rowTable, articleJoinTable, article
     });
   }
   const maxCount = flows.length ? Math.max(...flows.map(f => f.count), 1) : 1;
-  return { flows, maxCount, tier_primary: [], tier_secondary: [] };
+  return { flows, maxCount, tier_primary: [], tier_secondary: [], start_date, end_date };
   } finally {
     // Release the dedicated client iff we acquired one (statementTimeoutMs
     // was provided). When statementTimeoutMs is null, runner === pool and
@@ -8533,7 +8551,7 @@ app.get("/api/articles/by-thread", async (req, res) => {
 app.get("/api/timelines/latest", async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit, 10) || 100, 500);
-    const _cacheKey = `timelines/latest:${limit}`;
+    const _cacheKey = `timelines/latest:v2:${limit}`;
     // 22h — timeline builder cron runs once daily
     const _cached = await ttlCached(_cacheKey, 79_200_000, async () => {
       // Use article-derived recency (not last_updated_at) — see the
@@ -8547,10 +8565,18 @@ app.get("/api/timelines/latest", async (req, res) => {
           t.primary_nations, t.secondary_nations, t.article_count, t.distinct_source_count, t.parabolic_weight_sum,
           t.historical_anchors, t.status, t.last_updated_at,
           COALESCE(lp.latest_pub, t.last_updated_at) AS true_latest_published_at,
+          -- Inferred start date for the storyline: the earliest published_at
+          -- among the line's constituent articles. Surfaces "story began on
+          -- May 5" on line cards + share content without storing redundant
+          -- columns on story_timelines. Falls back to first_seen_at when the
+          -- line has no articles yet (rare; happens only on freshly-created
+          -- manual lines before backfill).
+          COALESCE(lp.earliest_pub, t.first_seen_at) AS true_earliest_published_at,
           COALESCE(t.is_manual, FALSE) AS is_manual
         FROM story_timelines t
         LEFT JOIN LATERAL (
-          SELECT MAX(na.published_at) AS latest_pub
+          SELECT MIN(na.published_at) AS earliest_pub,
+                 MAX(na.published_at) AS latest_pub
           FROM story_timeline_articles sta
           JOIN news_articles na ON na.id = sta.article_id
           WHERE sta.timeline_id = t.id
@@ -8659,6 +8685,10 @@ app.get("/api/timelines/latest", async (req, res) => {
           thread_id: t.timeline_id,
           // article-derived recency (see threads/latest comment)
           latest_published_at: t.true_latest_published_at || t.last_updated_at,
+          // Inferred story-arc start: earliest article published_at, with
+          // first_seen_at as fallback. Powers the date range on line cards
+          // ("MAY 5 – MAY 13") and is forwarded into share clip/image overlays.
+          earliest_published_at: t.true_earliest_published_at || t.first_seen_at || null,
           hero_image_url: h?.hero_image_url || null,
           hero_catalog_image_url: null,
           hero_source_name: h?.hero_source_name || null,
@@ -8953,7 +8983,7 @@ app.get("/api/flows/timeline/:id", async (req, res) => {
     if (!timelineId) return res.status(400).json({ error: "Invalid timeline ID" });
 
     // 22h — timeline builder cron runs once daily
-    const _cached = await ttlCached(`flows/timeline:${timelineId}`, 79_200_000, async () => {
+    const _cached = await ttlCached(`flows/timeline:v2:${timelineId}`, 79_200_000, async () => {
       return await _buildTieredFlows({
         kind: 'timeline',
         id: timelineId,
