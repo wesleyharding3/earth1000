@@ -57041,13 +57041,24 @@ body.ticker-active .gTickerLabel {
 
     return function paintOverlay(ctx, w, h) {
       const margin   = Math.round(w * 0.045);
-      const titlePx  = Math.round(w * 0.038);
+      // Base title size is 3.8% of width; shrink it down for very long
+      // titles so we don't ellipsis-truncate to "Beijing Condemns
+      // Paraguay / Taiwan…" when the actual title is much longer.
+      const titleLen = (title || '').length;
+      const titleScale = titleLen > 80 ? 0.85 : titleLen > 55 ? 0.92 : 1.0;
+      const titlePx  = Math.round(w * 0.038 * titleScale);
       const subPx    = Math.round(w * 0.022);
       const datePx   = Math.round(w * 0.022);
       const sitePx   = Math.round(w * 0.024);
       const lineGap  = Math.round(titlePx * 1.15);
 
-      // ── Title (top-left, up to 2 lines, white with shadow)
+      // Track where the title block ENDS so the flag chip row + subtitle
+      // can be positioned below it dynamically. Without this, the flag
+      // row's old hard `margin + lineGap*2` placement assumed exactly 2
+      // title lines and would overlap a 3-line title.
+      let titleEndY = margin;
+
+      // ── Title (top-left, up to 3 lines, white with shadow)
       if (title) {
         ctx.save();
         ctx.shadowColor = 'rgba(0,0,0,0.85)';
@@ -57059,7 +57070,7 @@ body.ticker-active .gTickerLabel {
         ctx.textAlign = 'left';
         // Reserve right-edge space for the date pill.
         const titleMaxWidth = w - margin * 2 - (dateLine ? Math.round(w * 0.22) : 0);
-        const lines = wrapText(ctx, title, titleMaxWidth, 2);
+        const lines = wrapText(ctx, title, titleMaxWidth, 3);
         let y = margin;
         for (const line of lines) {
           ctx.fillText(line, margin, y);
@@ -57070,8 +57081,10 @@ body.ticker-active .gTickerLabel {
           ctx.font = `${subPx}px -apple-system, system-ui, sans-serif`;
           ctx.fillStyle = 'rgba(255, 220, 180, 0.94)';
           ctx.fillText(subtitle, margin, y + 4);
+          y += subPx + 8;
         }
         ctx.restore();
+        titleEndY = y;
       }
 
       // ── Date line (top-right, gold-cream)
@@ -57094,8 +57107,9 @@ body.ticker-active .gTickerLabel {
           const chipW = Math.round(w * 0.060);
           const chipH = Math.round(chipW * 0.66);
           const gap   = Math.round(w * 0.010);
-          // Position below subtitle (or title if no subtitle).
-          const flagY = margin + lineGap * 2 + (subtitle ? subPx + 14 : 8);
+          // Anchor below the actual title block (title + optional subtitle)
+          // with a small breathing gap.
+          const flagY = titleEndY + 10;
           valid.forEach((img, i) => {
             const x = margin + i * (chipW + gap);
             ctx.save();
