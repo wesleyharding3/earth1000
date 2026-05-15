@@ -9,8 +9,11 @@ process.env.DB_POOL_MAX = "2";
  *
  * Deletes old, low-value data to keep Postgres lean:
  *
- * 1. keyword_daily_stats — purge rows with junk dates or older than 90 days
- * 2. news_articles — delete articles older than 90 days UNLESS they:
+ * 1. keyword_daily_stats — purge rows with junk dates or older than 30 days
+ *    (was 90 days — tightened 2026-05-15 because daily volume of ~1.8M rows
+ *     meant 90-day retention accumulated 168M rows / 37GB; 30 days keeps
+ *     trend charts intact for the periods users actually look at)
+ * 2. news_articles — delete articles older than 45 days UNLESS they:
  *    a) belong to a story thread (story_thread_articles)
  *    b) belong to a story timeline (story_timeline_articles)
  *    c) are high-scoring (base_priority >= 5.0)
@@ -20,7 +23,9 @@ process.env.DB_POOL_MAX = "2";
  *    article_image_assignments, article_entities, article_entity_mentions,
  *    article_referenced_dates, article_entity_extraction_state, image_usage_log)
  *    cascade or are deleted explicitly.
- * 3. image_usage_log — prune entries older than 60 days
+ * 3. image_usage_log — prune entries older than 14 days
+ *    (was 60 days — tightened 2026-05-15; this is just impression
+ *     telemetry, doesn't need long retention)
  * 4. rss_error_logs — prune entries older than 30 days
  * 5. briefing_episodes — REINDEX to fix bloated indexes
  *
@@ -51,7 +56,7 @@ async function run() {
         DELETE FROM keyword_daily_stats
         WHERE ctid IN (
           SELECT ctid FROM keyword_daily_stats
-          WHERE date < CURRENT_DATE - INTERVAL '90 days'
+          WHERE date < CURRENT_DATE - INTERVAL '30 days'
              OR date > CURRENT_DATE + INTERVAL '7 days'
           LIMIT 50000
         )
@@ -64,7 +69,7 @@ async function run() {
   } else {
     const { rows: [{ count }] } = await pool.query(`
       SELECT COUNT(*) AS count FROM keyword_daily_stats
-      WHERE date < CURRENT_DATE - INTERVAL '90 days'
+      WHERE date < CURRENT_DATE - INTERVAL '30 days'
          OR date > CURRENT_DATE + INTERVAL '7 days'
     `);
     log(`  Would delete ~${Number(count).toLocaleString()} keyword_daily_stats rows`);
@@ -90,7 +95,7 @@ async function run() {
     const { rows: [{ count: candidateCount }] } = await pool.query(`
       SELECT COUNT(*) AS count
       FROM news_articles a
-      WHERE a.published_at < NOW() - INTERVAL '90 days'
+      WHERE a.published_at < NOW() - INTERVAL '45 days'
         AND a.base_priority < 5.0
         AND (a.media_type IS NULL OR a.media_type != 'video')
         AND NOT EXISTS (
@@ -115,7 +120,7 @@ async function run() {
         CREATE TEMP TABLE _prune_article_ids AS
         SELECT a.id
         FROM news_articles a
-        WHERE a.published_at < NOW() - INTERVAL '90 days'
+        WHERE a.published_at < NOW() - INTERVAL '45 days'
           AND a.base_priority < 5.0
           AND (a.media_type IS NULL OR a.media_type != 'video')
           AND NOT EXISTS (
@@ -189,7 +194,7 @@ async function run() {
     const { rows: [{ count }] } = await pool.query(`
       SELECT COUNT(*) AS count
       FROM news_articles a
-      WHERE a.published_at < NOW() - INTERVAL '90 days'
+      WHERE a.published_at < NOW() - INTERVAL '45 days'
         AND a.base_priority < 5.0
         AND (a.media_type IS NULL OR a.media_type != 'video')
         AND NOT EXISTS (
@@ -213,12 +218,12 @@ async function run() {
   log("Phase 3: image_usage_log cleanup...");
   if (!DRY_RUN) {
     const { rowCount } = await pool.query(`
-      DELETE FROM image_usage_log WHERE used_at < NOW() - INTERVAL '60 days'
+      DELETE FROM image_usage_log WHERE used_at < NOW() - INTERVAL '14 days'
     `);
     log(`  Purged ${rowCount.toLocaleString()} image_usage_log rows`);
   } else {
     const { rows: [{ count }] } = await pool.query(`
-      SELECT COUNT(*) AS count FROM image_usage_log WHERE used_at < NOW() - INTERVAL '60 days'
+      SELECT COUNT(*) AS count FROM image_usage_log WHERE used_at < NOW() - INTERVAL '14 days'
     `);
     log(`  Would delete ~${Number(count).toLocaleString()} image_usage_log rows`);
   }

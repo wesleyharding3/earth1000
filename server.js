@@ -15039,6 +15039,160 @@ Aim for high recall on clear positives and strict exclusion of vague matches.`;
   return { payload, countryRows };
 }
 
+// ─── Social post queue (admin) ─────────────────────────────────────────────
+// Reads + writes for the draft-then-approve pipeline. Filled by
+// socialQueuePickerCron.js (twice-daily); drained by manual review in
+// the earth-editor Social Queue tab. Auto-publishing (the future
+// socialPublisherCron.js) acts ONLY on status='approved' rows.
+
+app.get('/api/admin/social-queue', requireAdmin, async (req, res) => {
+  try {
+    const status = String(req.query.status || 'pending_approval');
+    const limit  = Math.min(parseInt(req.query.limit, 10) || 50, 200);
+    const ALLOWED = ['pending_approval', 'approved', 'posted', 'skipped', 'failed', 'all'];
+    if (!ALLOWED.includes(status)) {
+      return res.status(400).json({ error: `status must be one of: ${ALLOWED.join(', ')}` });
+    }
+    const whereClause = status === 'all' ? '' : 'WHERE spq.status = $1';
+    const params = status === 'all' ? [limit] : [status, limit];
+    const limitIdx = status === 'all' ? '$1' : '$2';
+    const { rows } = await pool.query(`
+      SELECT spq.id, spq.thread_id, spq.drafts, spq.platforms_enabled, spq.status,
+             spq.scheduled_for, spq.selection_reason, spq.approved_at, spq.posted_at,
+             spq.permalinks, spq.failure_log, spq.created_at, spq.updated_at,
+             st.title           AS thread_title,
+             st.description     AS thread_description,
+             st.primary_nations AS thread_primary_nations,
+             st.secondary_nations AS thread_secondary_nations,
+             st.article_count   AS thread_article_count,
+             st.primary_category AS thread_category
+        FROM social_post_queue spq
+        JOIN story_threads st ON st.id = spq.thread_id
+        ${whereClause}
+       ORDER BY spq.scheduled_for DESC
+       LIMIT ${limitIdx}
+    `, params);
+    res.json({ items: rows });
+  } catch (err) {
+    console.error('[social-queue/list]', err.message);
+    res.status(500).json({ error: 'Failed to fetch social queue' });
+  }
+});
+
+app.patch('/api/admin/social-queue/:id', requireAdmin, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid id' });
+    const { drafts, platforms_enabled, status } = req.body || {};
+    const sets = [];
+    const params = [];
+    let pi = 1;
+    if (drafts !== undefined) {
+      if (typeof drafts !== 'object') return res.status(400).json({ error: 'drafts must be an object' });
+      sets.push(`drafts = $${pi++}::jsonb`);
+      params.push(JSON.stringify(drafts));
+    }
+    if (platforms_enabled !== undefined) {
+      if (typeof platforms_enabled !== 'object') return res.status(400).json({ error: 'platforms_enabled must be an object' });
+      sets.push(`platforms_enabled = $${pi++}::jsonb`);
+      params.push(JSON.stringify(platforms_enabled));
+    }
+    if (status !== undefined) {
+      const ALLOWED = ['pending_approval', 'approved', 'skipped'];
+      if (!ALLOWED.includes(status)) {
+        return res.status(400).json({ error: `status must be one of: ${ALLOWED.join(', ')}` });
+      }
+      sets.push(`status = $${pi++}`);
+      params.push(status);
+      if (status === 'approved') sets.push('approved_at = NOW()');
+    }
+    if (!sets.length) return res.status(400).json({ error: 'no updatable fields provided' });
+    params.push(id);
+    const { rows } = await pool.query(
+      `UPDATE social_post_queue SET ${sets.join(', ')} WHERE id = $${pi} RETURNING *`,
+      params,
+    );
+    if (!rows.length) return res.status(404).json({ error: 'queue row not found' });
+    res.json({ item: rows[0] });
+  } catch (err) {
+    console.error('[social-queue/patch]', err.message);
+    res.status(500).json({ error: 'Failed to update queue row' });
+  }
+});
+
+// Manual picker trigger — runs the picker cron logic on demand. Useful
+// for re-filling the queue after a manual purge or to test the dedup
+// filters. Spawns the cron as a child process so the request returns
+// quickly; the cron logs to stdout.
+app.post('/api/admin/social-queue/pick-now', requireAdmin, async (req, res) => {
+  try {
+    const { spawn } = require('child_process');
+    const child = spawn('node', ['socialQueuePickerCron.js'], {
+      cwd: __dirname,
+      env: process.env,
+      detached: true,
+      stdio: 'ignore',
+    });
+    child.unref();
+    res.json({ ok: true, message: 'Picker triggered. Refresh in ~10 sec to see new rows.' });
+  } catch (err) {
+    console.error('[social-queue/pick-now]', err.message);
+    res.status(500).json({ error: 'Failed to trigger picker' });
+  }
+});
+
+// Stub: manual publish. Real platform API integration (X, Reddit, IG,
+// LinkedIn, BlueSky) is v1.1 — for now, this endpoint marks the row as
+// 'posted' with a stubbed permalink so the UI can be tested end-to-end.
+// Replace the marker block below with real platform-API calls when
+// each integration lands.
+app.post('/api/admin/social-queue/:id/publish', requireAdmin, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid id' });
+    const { rows: [row] } = await pool.query(
+      `SELECT id, thread_id, drafts, platforms_enabled, status
+         FROM social_post_queue WHERE id = $1`,
+      [id],
+    );
+    if (!row) return res.status(404).json({ error: 'queue row not found' });
+    if (row.status !== 'approved') {
+      return res.status(400).json({ error: `row must be approved (currently ${row.status})` });
+    }
+    // STUB — replace per-platform branches below with real API calls
+    // (Twitter API v2, Reddit OAuth, LinkedIn REST, BlueSky atproto,
+    // Meta Graph for IG). Each branch should append to permalinks on
+    // success and to failure_log on failure.
+    const permalinks = {};
+    const failures   = [];
+    const platforms  = row.platforms_enabled || {};
+    for (const [p, enabled] of Object.entries(platforms)) {
+      if (!enabled) continue;
+      // Replace this stub with real publish-platform code:
+      permalinks[p] = `stub://platform-not-wired/${p}/${row.thread_id}`;
+    }
+    await pool.query(`
+      UPDATE social_post_queue
+         SET status      = $1,
+             posted_at   = NOW(),
+             permalinks  = COALESCE(permalinks, '{}'::jsonb) || $2::jsonb,
+             failure_log = failure_log || $3::jsonb
+       WHERE id = $4
+    `, [
+      failures.length ? 'failed' : 'posted',
+      JSON.stringify(permalinks),
+      JSON.stringify(failures),
+      id,
+    ]);
+    res.json({ ok: failures.length === 0, permalinks, failures });
+  } catch (err) {
+    console.error('[social-queue/publish]', err.message);
+    res.status(500).json({ error: 'Failed to publish' });
+  }
+});
+
+// ─── Heatmap admin (existing) ──────────────────────────────────────────────
+
 // Simulate — runs Sonnet, merges with catalog so the editor can
 // display every country (including ones Sonnet omitted). Always
 // fresh — no cache lookup, no cache write. Caller is admin so we

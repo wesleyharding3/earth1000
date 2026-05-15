@@ -52168,6 +52168,19 @@ body.ticker-active .gTickerLabel {
     // Clear any leftover Map-This QA state so a previous QA palette
     // doesn't bleed into the news-coverage / sentiment renders.
     state.qaMode = null;
+    // Also drop the stamped Map-This question from the panel dataset
+    // (and from the Ask input). Share-clip / share-snapshot read this
+    // dataset to decide between "Map This" and "keyword" overlay
+    // branding — without this clear, switching back to coverage/
+    // sentiment AFTER having asked a question would still render the
+    // clip overlay as the prior Map-This view even though the user is
+    // now looking at coverage/sentiment.
+    try {
+      const sp = document.getElementById('semHeatPanel');
+      if (sp && sp.dataset) delete sp.dataset.qaQuestion;
+      const ai = document.getElementById('semHeatAskInput');
+      if (ai) ai.value = '';
+    } catch (_) {}
     updateLegend();
     syncPaletteUI();
     if (state.series) {
@@ -55751,8 +55764,13 @@ body.ticker-active .gTickerLabel {
     // with mode-aware overlay chrome (AI question / keyword / aggregate).
     const _doClip = () => {
       const panel = document.getElementById('semHeatPanel');
-      const qaQuestion = panel?.dataset?.qaQuestion ||
-                         (document.getElementById('semHeatAskInput')?.value || '').trim();
+      // Read qaQuestion from the dataset ONLY (not the Ask input field).
+      // The dataset is the authoritative "Map This is currently active"
+      // signal — stamped on submit, cleared by the mode-pill click handler
+      // above. The input value can linger as stale text after switching
+      // back to coverage/keyword, so reading it here would force Map-This
+      // branding onto a clip the user has since reframed.
+      const qaQuestion = (panel?.dataset?.qaQuestion || '').trim();
       const activeModePill = document.querySelector('#semHeatModeRow .semHeatPill.active');
       const heatMode = activeModePill?.dataset?.mode || 'coverage';
       const keyword = (document.getElementById('semHeatKw')?.value || '').trim();
@@ -55769,8 +55787,18 @@ body.ticker-active .gTickerLabel {
           window.__playHeatmapTimeseries(ms),
         ]);
       } else if (isTsClip) {
+        // 2D map + time-series: play the time-series scrub only (no globe
+        // spin — the map is static, the timeseries is the animation).
         animator = (ms) => window.__playHeatmapTimeseries(ms);
+      } else if (projection === 'map') {
+        // 2D map, no time-series: hold the current view for the duration.
+        // Returning a plain promise here prevents __shareGlobeClip from
+        // falling back to __spinGlobeFor (a globe-only animator that
+        // would have no visible effect in 2D map mode).
+        animator = (ms) => new Promise(r => setTimeout(r, ms));
       } else {
+        // Globe, no time-series: let __shareGlobeClip default to
+        // __spinGlobeFor for the standard rotating-globe clip.
         animator = undefined;
       }
 
@@ -55854,9 +55882,12 @@ body.ticker-active .gTickerLabel {
 
       // ── Path 1: Map This (AI Q&A) ─────────────────────────────────
       // panel.dataset.qaQuestion gets stamped when the user submits an
-      // AI question. If present we share that — same shape as before.
-      const qaQuestion = panel?.dataset?.qaQuestion ||
-                         (document.getElementById('semHeatAskInput')?.value || '').trim();
+      // AI question and is cleared by the mode-pill click handler when
+      // the user switches back to coverage/sentiment. Reading from the
+      // dataset only (not the input field) prevents stale Ask-input
+      // text from forcing Map-This branding onto a clip whose mode has
+      // since been reframed.
+      const qaQuestion = (panel?.dataset?.qaQuestion || '').trim();
       if (qaQuestion) {
         const mode = panel?.dataset?.qaMode || 'percent';
         const qs = new URLSearchParams({ q: qaQuestion });
@@ -57174,11 +57205,25 @@ body.ticker-active .gTickerLabel {
       // for the painter and _recordCanvasClip's overlay branch for the
       // 2-canvas composite path. Omit to capture raw globe (no chrome).
       overlay,
+      // Optional: explicit canvas to record. Defaults to whichever
+      // surface is currently active per window.__projection — globe in
+      // 'globe' mode, 2D-map canvas in 'map' mode. Pass this only when
+      // a caller needs to override the auto-detection (rare).
+      canvas: canvasOverride,
     } = opts;
 
-    const renderer = window.__renderer;
-    if (!renderer || !renderer.domElement) {
-      console.warn('[shareGlobeClip] renderer not ready'); return;
+    // Auto-pick the canvas based on the active projection so heatmap /
+    // news-flow clips recorded while in 2D map mode actually capture
+    // the 2D map view instead of the globe canvas underneath. The
+    // 2D map renders into a regular 2D canvas at window.__map2d.state
+    // .canvas — both globe (WebGL) and map (2D) canvases support
+    // captureStream so MediaRecorder treats them identically.
+    const isMapMode  = window.__projection === 'map' && window.__map2d?.state?.canvas;
+    const renderer   = window.__renderer;
+    const targetCanvas = canvasOverride
+      || (isMapMode ? window.__map2d.state.canvas : renderer?.domElement);
+    if (!targetCanvas) {
+      console.warn('[shareGlobeClip] no canvas to record (projection=', window.__projection, ')'); return;
     }
     const animator = animatorOverride || window.__spinGlobeFor;
     if (typeof animator !== 'function') {
@@ -57192,7 +57237,7 @@ body.ticker-active .gTickerLabel {
     setToast('Generating clip…');
     try {
       const { blob, ext } = await _recordCanvasClip({
-        canvas: renderer.domElement,
+        canvas: targetCanvas,
         animator: (ms) => animator(ms),
         durationMs,
         overlay,

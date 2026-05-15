@@ -4,6 +4,12 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Earth Editor</title>
+  <!-- Supabase JS SDK — wired with autoRefreshToken so the editor stays
+       logged in indefinitely instead of dropping after the 1-hour access
+       token expiry. The SDK refreshes ~5 min before each expiry and fires
+       a TOKEN_REFRESHED event onAuthStateChange (subscribed below) so the
+       local `token` var always holds the latest. -->
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -825,6 +831,7 @@
       <button class="top-tab" data-tab="threads" onclick="switchTab('threads')">Threads</button>
       <button class="top-tab" data-tab="rankings" onclick="switchTab('rankings')">Rankings</button>
       <button class="top-tab" data-tab="heatmap" onclick="switchTab('heatmap')">Heatmap</button>
+      <button class="top-tab" data-tab="social" onclick="switchTab('social')">Social Queue</button>
     </div>
 
     <!-- ═══════════════════════════════════════════════════════════════
@@ -1380,6 +1387,60 @@
         <button class="btn-primary" onclick="hmSave()">Save curated answer</button>
       </div>
     </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════
+         TAB 7: SOCIAL QUEUE
+         Draft-then-approve pipeline for posting threads to social
+         platforms. Picker cron fills the queue (twice daily); admins
+         review here. Each row exposes per-platform drafts, an inline
+         editor, and approve / skip / publish controls.
+         ═══════════════════════════════════════════════════════════════ -->
+    <div id="tab-social" class="hidden">
+      <style>
+        .sq-toolbar { display:flex; align-items:center; gap:12px; margin-bottom:16px; flex-wrap:wrap; }
+        .sq-toolbar select, .sq-toolbar button { font-size:0.85rem; }
+        .sq-row { background:#0f172a; border:1px solid #1e293b; border-radius:8px; padding:14px; margin-bottom:12px; }
+        .sq-row-head { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:10px; }
+        .sq-thread-title { font-weight:600; color:#e2e8f0; font-size:1rem; line-height:1.3; }
+        .sq-meta { font-size:0.75rem; color:#94a3b8; margin-top:4px; }
+        .sq-status-pill { display:inline-block; padding:2px 8px; border-radius:10px; font-size:0.7rem; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; }
+        .sq-status-pending_approval { background:#422006; color:#fbbf24; }
+        .sq-status-approved { background:#064e3b; color:#34d399; }
+        .sq-status-posted { background:#1e3a8a; color:#93c5fd; }
+        .sq-status-skipped { background:#374151; color:#9ca3af; }
+        .sq-status-failed { background:#7f1d1d; color:#fca5a5; }
+        .sq-platforms { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin:10px 0; }
+        .sq-platform-card { background:#020617; border:1px solid #1e293b; border-radius:6px; padding:8px; }
+        .sq-platform-name { font-size:0.7rem; font-weight:700; color:#64748b; text-transform:uppercase; letter-spacing:1px; margin-bottom:6px; display:flex; align-items:center; gap:6px; }
+        .sq-platform-toggle { margin-left:auto; }
+        .sq-textarea { width:100%; background:#0f172a; color:#e2e8f0; border:1px solid #1e293b; border-radius:4px; padding:6px; font-family:inherit; font-size:0.8rem; resize:vertical; min-height:60px; }
+        .sq-input { width:100%; background:#0f172a; color:#e2e8f0; border:1px solid #1e293b; border-radius:4px; padding:6px; font-family:inherit; font-size:0.8rem; margin-bottom:4px; }
+        .sq-char-count { font-size:0.65rem; color:#64748b; text-align:right; margin-top:2px; }
+        .sq-char-over { color:#ef4444; }
+        .sq-actions { display:flex; gap:8px; margin-top:10px; flex-wrap:wrap; }
+        .sq-empty { color:#94a3b8; padding:40px; text-align:center; }
+        .sq-reason { font-size:0.7rem; color:#64748b; font-style:italic; margin-top:4px; }
+      </style>
+
+      <div class="sq-toolbar">
+        <label>Status:
+          <select id="sq-status-filter" onchange="loadSocialQueue()">
+            <option value="pending_approval" selected>Pending approval</option>
+            <option value="approved">Approved</option>
+            <option value="posted">Posted</option>
+            <option value="skipped">Skipped</option>
+            <option value="all">All</option>
+          </select>
+        </label>
+        <button class="btn-secondary btn-small" onclick="loadSocialQueue()">Refresh</button>
+        <button class="btn-primary btn-small" onclick="sqPickNow()">Pick now (run picker cron)</button>
+        <span id="sq-count" style="font-size:0.8rem;color:#94a3b8;margin-left:auto"></span>
+      </div>
+
+      <div id="sq-list">
+        <div class="sq-empty">Loading…</div>
+      </div>
+    </div>
   </div>
 
   <!-- Progress Overlay -->
@@ -1397,6 +1458,24 @@
     // ════════════════════════════════════════════════════════════════
     const API_BASE = window.location.origin;
     let token = '';
+
+    // Supabase client — same URL + publishable key as the main app, so the
+    // editor reads the session stored by the iOS/desktop app. autoRefreshToken
+    // keeps the access token fresh forever (refreshes ~5 min before expiry).
+    // Without this, editing a briefing for more than ~55 minutes would silently
+    // 401 every admin call after the access token expired.
+    const SUPABASE_URL = 'https://hqzabwjwuszupxwookgx.supabase.co';
+    const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_9mT1GessoNyi5cvPN-PSbw_IcTydubW';
+    const sbClient = (typeof supabase !== 'undefined' && supabase.createClient)
+      ? supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+          auth: {
+            persistSession:    true,
+            autoRefreshToken:  true,
+            detectSessionInUrl:false,
+            storage:           window.localStorage,
+          },
+        })
+      : null;
 
     function detectToken() {
       const manual = localStorage.getItem('sb-access-token');
@@ -1416,12 +1495,53 @@
     }
     token = detectToken();
 
+    // Subscribe to SDK auth events — fires on TOKEN_REFRESHED (background
+    // refresh), SIGNED_IN, SIGNED_OUT. Keeps the local `token` var in sync
+    // so authHeaders() always returns the freshest credential without any
+    // per-call refresh logic.
+    if (sbClient) {
+      sbClient.auth.onAuthStateChange((event, session) => {
+        if (session?.access_token) {
+          token = session.access_token;
+        } else if (event === 'SIGNED_OUT') {
+          token = '';
+          showLogin();
+        }
+      });
+      // Hydrate from the SDK on boot so the first request uses a freshly-
+      // validated token (the SDK may have rotated it just before this loaded).
+      sbClient.auth.getSession().then(({ data: { session } }) => {
+        if (session?.access_token) token = session.access_token;
+      }).catch(() => {});
+    }
+
     function authHeaders() { return { 'Authorization': `Bearer ${token}`, 'Content-Type': 'application/json' }; }
+
+    // Fetch wrapper that retries once on 401 after forcing a session refresh.
+    // Handles the rare edge case where the auto-refresh interval missed
+    // (tab backgrounded for > token lifetime, system sleep, etc.).
+    async function authFetch(url, opts = {}) {
+      const merged = { ...opts, headers: { ...authHeaders(), ...(opts.headers || {}) } };
+      let res = await fetch(url, merged);
+      if (res.status === 401 && sbClient) {
+        try {
+          const { data: { session } } = await sbClient.auth.refreshSession();
+          if (session?.access_token) {
+            token = session.access_token;
+            merged.headers = { ...authHeaders(), ...(opts.headers || {}) };
+            res = await fetch(url, merged);
+          }
+        } catch (_) {}
+      }
+      return res;
+    }
+    // Expose globally so existing inline fetch sites can opt in over time.
+    window.authFetch = authFetch;
 
     async function checkAuth() {
       if (!token) { showLogin(); return; }
       try {
-        const res = await fetch(`${API_BASE}/api/auth/profile`, { headers: { 'Authorization': `Bearer ${token}` } });
+        const res = await authFetch(`${API_BASE}/api/auth/profile`);
         if (!res.ok) throw new Error('Auth failed');
         const data = await res.json();
         if (!data.is_admin) { showAuthError('Admin access required'); return; }
@@ -1480,6 +1600,7 @@
       // Heatmap tab is intentionally lazy — initial state is empty
       // until the admin types a question and clicks Simulate. No prefetch.
       if (tab === 'heatmap' && !tabLoaded.heatmap) { tabLoaded.heatmap = true; }
+      if (tab === 'social'  && !tabLoaded.social)  { tabLoaded.social  = true; loadSocialQueue(); }
     }
 
     // ════════════════════════════════════════════════════════════════
@@ -4689,6 +4810,192 @@
       document.getElementById('hm-saved-list').classList.add('hidden');
       hmSimulate();
     };
+
+    // ════════════════════════════════════════════════════════════════
+    // TAB 7: SOCIAL QUEUE
+    // Draft-then-approve UI for the social posting pipeline. Reads from
+    // /api/admin/social-queue (filled by socialQueuePickerCron.js).
+    // ════════════════════════════════════════════════════════════════
+    const SQ_LIMITS = { x: 280, reddit_title: 300, linkedin: 3000, bluesky: 300, instagram: 2200 };
+    const SQ_PLATFORMS = ['x', 'reddit', 'linkedin', 'bluesky', 'instagram'];
+    let _sqItems = [];
+
+    function esc(s) {
+      return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+
+    async function loadSocialQueue() {
+      const status = document.getElementById('sq-status-filter').value;
+      const list   = document.getElementById('sq-list');
+      list.innerHTML = '<div class="sq-empty">Loading…</div>';
+      try {
+        const res = await authFetch(`${API_BASE}/api/admin/social-queue?status=${encodeURIComponent(status)}&limit=100`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        _sqItems = data.items || [];
+        document.getElementById('sq-count').textContent = `${_sqItems.length} item${_sqItems.length === 1 ? '' : 's'}`;
+        if (!_sqItems.length) {
+          list.innerHTML = '<div class="sq-empty">No items. Click "Pick now" to run the picker cron.</div>';
+          return;
+        }
+        list.innerHTML = _sqItems.map(renderSqRow).join('');
+      } catch (err) {
+        list.innerHTML = `<div class="sq-empty">Failed to load: ${esc(err.message)}</div>`;
+      }
+    }
+
+    function renderSqRow(item) {
+      const d = item.drafts || {};
+      const platforms = item.platforms_enabled || {};
+      const isos = item.thread_primary_nations || [];
+      const flagRow = isos.slice(0, 8).map(iso => {
+        const c = String(iso || '').toUpperCase();
+        if (!/^[A-Z]{2}$/.test(c)) return c;
+        const a = 0x1F1E6 + (c.charCodeAt(0) - 65);
+        const b = 0x1F1E6 + (c.charCodeAt(1) - 65);
+        return String.fromCodePoint(a) + String.fromCodePoint(b);
+      }).join(' ');
+      const canApprove = item.status === 'pending_approval';
+      const canPublish = item.status === 'approved';
+      return `
+      <div class="sq-row" data-id="${item.id}">
+        <div class="sq-row-head">
+          <div style="flex:1">
+            <div class="sq-thread-title">${esc(item.thread_title)} <span style="font-weight:400;color:#64748b">${flagRow}</span></div>
+            <div class="sq-meta">
+              thread #${item.thread_id} · ${esc(item.thread_category || '?')} · ${item.thread_article_count || 0} articles · queued ${esc((item.scheduled_for || '').slice(0, 16).replace('T', ' '))}
+            </div>
+            <div class="sq-reason">${esc(item.selection_reason || '')}</div>
+          </div>
+          <span class="sq-status-pill sq-status-${item.status}">${esc(item.status.replace(/_/g, ' '))}</span>
+        </div>
+
+        <div class="sq-platforms">
+          ${renderPlatformCard(item.id, 'x', d.x || {}, platforms.x !== false, ['body'], { body: SQ_LIMITS.x })}
+          ${renderPlatformCard(item.id, 'bluesky', d.bluesky || {}, platforms.bluesky !== false, ['body'], { body: SQ_LIMITS.bluesky })}
+          ${renderPlatformCard(item.id, 'reddit', d.reddit || {}, platforms.reddit !== false, ['title', 'body'], { title: SQ_LIMITS.reddit_title })}
+          ${renderPlatformCard(item.id, 'linkedin', d.linkedin || {}, platforms.linkedin !== false, ['body'], { body: SQ_LIMITS.linkedin })}
+          ${renderPlatformCard(item.id, 'instagram', d.instagram || {}, platforms.instagram !== false, ['caption'], { caption: SQ_LIMITS.instagram })}
+        </div>
+
+        <div class="sq-actions">
+          ${canApprove ? `<button class="btn-primary btn-small" onclick="sqUpdate(${item.id}, 'approved')">Approve</button>` : ''}
+          ${canApprove ? `<button class="btn-secondary btn-small" onclick="sqUpdate(${item.id}, 'skipped')">Skip</button>` : ''}
+          <button class="btn-secondary btn-small" onclick="sqSaveDrafts(${item.id})">Save edits</button>
+          ${canPublish ? `<button class="btn-primary btn-small" onclick="sqPublish(${item.id})">Publish (STUB)</button>` : ''}
+          ${item.permalinks && Object.keys(item.permalinks).length ? `<span style="font-size:0.7rem;color:#94a3b8">posted: ${esc(Object.keys(item.permalinks).join(', '))}</span>` : ''}
+        </div>
+      </div>`;
+    }
+
+    function renderPlatformCard(itemId, platform, draft, enabled, fields, limits) {
+      const fieldHtml = fields.map(f => {
+        const val = draft[f] || '';
+        const limit = limits[f];
+        const over = limit && val.length > limit;
+        const isTitle = f === 'title';
+        const input = isTitle
+          ? `<input class="sq-input" data-sq-field="${platform}.${f}" value="${esc(val)}" />`
+          : `<textarea class="sq-textarea" data-sq-field="${platform}.${f}" rows="3">${esc(val)}</textarea>`;
+        return `
+          ${input}
+          ${limit ? `<div class="sq-char-count ${over ? 'sq-char-over' : ''}"><span class="sq-len">${val.length}</span> / ${limit}</div>` : ''}
+        `;
+      }).join('');
+      return `
+      <div class="sq-platform-card" data-platform="${platform}">
+        <div class="sq-platform-name">
+          ${platform}
+          <input type="checkbox" class="sq-platform-toggle" ${enabled ? 'checked' : ''} data-sq-enable="${platform}" title="Include in publish" />
+        </div>
+        ${fieldHtml}
+      </div>`;
+    }
+
+    // Inline char-count updater — fires on input across the panel.
+    document.addEventListener('input', (e) => {
+      const t = e.target;
+      if (!t.classList || !t.classList.contains('sq-textarea') && !t.classList.contains('sq-input')) return;
+      const card = t.closest('.sq-platform-card');
+      if (!card) return;
+      const counter = t.parentElement.querySelector('.sq-char-count .sq-len') || t.nextElementSibling?.querySelector('.sq-len');
+      if (counter) counter.textContent = t.value.length;
+      const wrap = t.parentElement.querySelector('.sq-char-count') || t.nextElementSibling;
+      if (wrap && wrap.classList) {
+        // We don't have an easy limit lookup here; rely on initial render
+        // having marked over-limit. Re-evaluate on save instead.
+      }
+    });
+
+    function collectDraftsFromDom(itemId) {
+      const row = document.querySelector(`.sq-row[data-id="${itemId}"]`);
+      if (!row) return null;
+      const drafts = {};
+      const platforms_enabled = {};
+      row.querySelectorAll('[data-sq-field]').forEach(el => {
+        const [platform, field] = el.dataset.sqField.split('.');
+        if (!drafts[platform]) drafts[platform] = {};
+        drafts[platform][field] = el.value;
+      });
+      row.querySelectorAll('[data-sq-enable]').forEach(el => {
+        platforms_enabled[el.dataset.sqEnable] = el.checked;
+      });
+      // Preserve fields we don't expose in the inline editor (e.g. instagram.image_url, instagram.deep_link).
+      const original = _sqItems.find(i => i.id === itemId);
+      if (original?.drafts?.instagram) {
+        drafts.instagram = { ...original.drafts.instagram, ...drafts.instagram };
+      }
+      return { drafts, platforms_enabled };
+    }
+
+    async function sqSaveDrafts(itemId) {
+      const collected = collectDraftsFromDom(itemId);
+      if (!collected) return alert('Could not collect drafts');
+      try {
+        const res = await authFetch(`${API_BASE}/api/admin/social-queue/${itemId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(collected),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        loadSocialQueue();
+      } catch (err) { alert(`Save failed: ${err.message}`); }
+    }
+
+    async function sqUpdate(itemId, status) {
+      const collected = collectDraftsFromDom(itemId) || {};
+      try {
+        const res = await authFetch(`${API_BASE}/api/admin/social-queue/${itemId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...collected, status }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        loadSocialQueue();
+      } catch (err) { alert(`Update failed: ${err.message}`); }
+    }
+
+    async function sqPublish(itemId) {
+      if (!confirm('Publish this draft now? (Platform APIs are STUBBED — this will mark as posted but not actually publish until APIs are wired.)')) return;
+      try {
+        const res = await authFetch(`${API_BASE}/api/admin/social-queue/${itemId}/publish`, { method: 'POST' });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
+        alert(`Published. Stub permalinks recorded: ${Object.keys(data.permalinks || {}).join(', ')}`);
+        loadSocialQueue();
+      } catch (err) { alert(`Publish failed: ${err.message}`); }
+    }
+
+    async function sqPickNow() {
+      if (!confirm('Run the picker cron now? Adds 2-3 new threads to pending_approval.')) return;
+      try {
+        const res = await authFetch(`${API_BASE}/api/admin/social-queue/pick-now`, { method: 'POST' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        alert('Picker triggered. Refresh in ~5 sec to see new rows.');
+        setTimeout(loadSocialQueue, 5000);
+      } catch (err) { alert(`Picker failed: ${err.message}`); }
+    }
 
     // ════════════════════════════════════════════════════════════════
     // INIT

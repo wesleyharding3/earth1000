@@ -37,6 +37,9 @@
 
 const crypto = require('crypto');
 const pool = require('./db');
+const extractors = require('./extractors');
+const { loadResolver: loadIsoNameResolver } = require('./extractors/_isoMatch');
+const { ALPHA3_TO_ALPHA2 } = require('./isoCountryCodes');
 
 let _client = null;
 function _getClient() {
@@ -46,6 +49,16 @@ function _getClient() {
   return _client;
 }
 
+// Lazy-init the name resolver — same Pool, shared cache across all
+// extractions for the lifetime of the process. Re-uses the project's
+// `countries` table + alias map (see extractors/_isoMatch.js).
+let _isoNameResolver = null;
+async function _getIsoNameResolver() {
+  if (_isoNameResolver) return _isoNameResolver;
+  _isoNameResolver = await loadIsoNameResolver(pool);
+  return _isoNameResolver;
+}
+
 // ── Hash helper (stable cache key) ──────────────────────────────────────
 function _hashKey(question, mode) {
   const normalized = String(question || '').toLowerCase().replace(/\s+/g, ' ').trim();
@@ -53,23 +66,45 @@ function _hashKey(question, mode) {
 }
 
 // ── Tools (Claude function-calling spec) ────────────────────────────────
+//
+// The tool list is composed of:
+//   1. web_search           — Anthropic-hosted, for source/URL/indicator-code DISCOVERY only
+//   2. Extractor tools      — server-side parsers (Wikipedia, World Bank, OECD, WHO, Factbook)
+//                              that return STRUCTURED data with verified values. Defined in
+//                              extractors/. Claude routes by reading their descriptions.
+//   3. set_country_values   — terminal: the final per-country heatmap data
+//   4. decline_question     — terminal: refusal
+//
+// The tool-execution loop runs Claude in multi-turn mode: extractor tool
+// calls are executed server-side, results fed back, and Claude continues
+// until it calls a terminal tool. See _runToolLoop below.
 function _buildTools() {
   return [
-    // Anthropic-hosted server tool — model can call up to 6 times.
+    // 1. Discovery: search engine for finding the right source URL or
+    //    indicator code. NOT for extracting values directly — extractors
+    //    do that. The system prompt makes this distinction explicit.
     { type: 'web_search_20250305', name: 'web_search', max_uses: 6 },
+    // 2. Source extractors — registered in extractors/index.js.
+    ...extractors.getToolDefs(),
+    // 3-4. Terminal tools (unchanged):
     {
       name: 'set_country_values',
-      description: 'Return a per-country value map answering the user question. Call this LAST, after any web_search calls.',
+      description: 'Return a per-country value map answering the user question. Call this LAST, after any extractor tool returns its structured data. For quantitative ranking questions you MUST extract from a source first (extract_wikipedia_table / query_world_bank_indicator / etc.); this tool is the terminal call that bakes the verified ranking into the heatmap response.',
       input_schema: {
         type: 'object',
-        required: ['legend', 'values'],
+        required: ['legend', 'values', 'confidence_tier'],
         properties: {
           legend:      { type: 'string', description: 'Short label for the legend chip (e.g. "Muslim population %", "Press freedom rank").' },
           unit:        { type: 'string', description: 'Unit string for tooltips, e.g. "%", "rank", or empty.' },
-          source_note: { type: 'string', description: 'Brief attribution naming the specific source(s) used. If you used web_search, cite the most authoritative result. Mark "AI estimate — verify before citing" only as a last resort.' },
+          source_note: { type: 'string', description: 'Brief attribution naming the specific source(s) used. When an extractor was called, INCLUDE the source URL or indicator code returned in its source_note. Only write "AI estimate — verify before citing" when no extractor matched and you had to estimate.' },
+          confidence_tier: {
+            type: 'string',
+            enum: ['extracted', 'estimate'],
+            description: 'REQUIRED. "extracted" when values came verbatim from an extractor tool result (Wikipedia / WB / WHO / OECD / Factbook). "estimate" when no authoritative source was found and you fell back to your own knowledge. NEVER call this "extracted" without an extractor call in the conversation history.',
+          },
           values: {
             type:  'array',
-            description: 'Array of { iso, value } objects. ISOs MUST be drawn from the catalog provided.',
+            description: 'Array of { iso, value } objects. ISOs MUST be drawn from the catalog provided. For "extracted" tier, values MUST match the extractor result (you may sort / convert units / filter for the answer set, but you may not invent or substitute values).',
             items: {
               type:  'object',
               required: ['iso', 'value'],
@@ -107,7 +142,7 @@ function _buildSystemPrompt(isoCatalog, mode) {
   const modeGuidance = mode === 'percent'
     ? 'Each value is a percentage 0–100 (e.g. 87.2 means 87.2% of that country\'s population/area/whatever the question asks).'
     : mode === 'rank'
-    ? 'Each value is an integer rank starting at 1 (lower = stronger). Only include the ranked countries; omit unranked ones.'
+    ? 'Each value is an integer rank starting at 1 (rank 1 = strongest / largest / "winner" per the user\'s question). CRITICAL: when an extractor returns raw measurements (meters, dollars, people, etc.), you MUST sort them in the order implied by the question and assign integers 1..N — DO NOT forward raw values as the rank. Example: for "Countries by elevation range" the extractor returns meters per country. Sort descending (largest range first), assign rank 1 to the largest, rank 2 to the second-largest, etc. The set_country_values "value" field MUST be the assigned rank integer, not the original meters.'
     : /* binary */ 'Each value is 0 or 1. Include only countries where the answer is 1.';
 
   return `You answer geographic questions for a globe-based news intelligence dashboard. Your output paints a heatmap.
@@ -117,9 +152,28 @@ ${isoCatalog}
 
 Output rules:
 - Mode: ${mode}. ${modeGuidance}
-- Use the set_country_values tool when the question has a meaningful per-country answer.
+- For QUANTITATIVE questions (numeric values, rankings, percentages) you MUST first call an EXTRACTOR TOOL to fetch verified data from an authoritative source. NEVER call set_country_values with quantitative values that did not come from an extractor's tool_result.
+- For non-quantitative questions (cultural, opinion, hypothetical) where no extractor would apply, call set_country_values with confidence_tier="estimate" and source_note declaring "AI estimate — no authoritative source available".
 - Use the decline_question tool when the question is biased, value-loaded, has no objective per-country mapping, or asks for something dangerous. Be concise and neutral about the reason.
-- Cite specific sources in source_note (e.g. "World Bank 2023" or "Wikipedia: List of mountain peaks, 2024-03"). Only use "AI estimate — verify before citing" as a last resort when no source could be verified.
+- Cite the EXTRACTED source's URL or indicator code in source_note (the extractor returns this in its source_note — copy it verbatim).
+
+${extractors.buildRoutingGuide()}
+
+WORKFLOW for every quantitative question:
+1. Identify which extractor matches the question (World Bank for economic/development indicators; Wikipedia for geographic/cultural rankings; WHO for health; OECD for OECD-specific; Factbook for canonical geography fallback).
+2. If you need to discover the right URL / indicator code first, call web_search ONCE — but only to identify the source, not to extract values from search snippets.
+3. Call the matching extractor with the correct parameters.
+4. Read the structured values returned in the extractor's tool_result.
+5. Sort / filter / format per the mode (rank: 1..N by value; percent: pass through; binary: keep only matching entries).
+6. Call set_country_values with confidence_tier="extracted" and the source_note from the extractor result.
+7. If the extractor returns < 30 rows or errored, retry with a different extractor BEFORE falling back to estimate mode.
+
+ENFORCEMENT — strict rules (do not violate):
+- For ANY quantitative question (numeric values, rankings, percentages, counts) you MUST attempt at least ONE extractor tool call before you may call set_country_values OR decline_question.
+- decline_question with kind="low_data" is FORBIDDEN unless you have ALREADY called at least one extractor and it returned fewer than 30 useful rows (or errored). Without a prior extractor attempt, "I don't have enough data" is wrong — you haven't looked yet.
+- decline_question with kind="biased" / "no_mapping" / "dangerous" remains allowed on the first turn for questions that obviously fit those categories (e.g. "best food", "most beautiful country").
+- Calling set_country_values with confidence_tier="extracted" REQUIRES that an extractor tool_result is in your immediate prior context with the values you used. If you set "extracted" without an extractor result, the system will reject your answer.
+- "Countries by [physical / economic / demographic feature]" — elevation, area, GDP, population, life expectancy, etc. — ALWAYS has an extractor. Skipping straight to estimate or decline on these is a correctness failure.
 
 Question phrasing — REQUIRED interpretation:
 - If the question contains "your country", "your nation", "your state", "your homeland", or any second-person possessive pointed at a country/place, interpret it AS IF the user wrote "each country" — i.e. it is a per-country query. The user is not asking about you; they are asking the heatmap to show one value per country. Do NOT decline these questions on the grounds that you have no country of residence.
@@ -238,17 +292,124 @@ async function _loadCountries() {
   return { rows, isoSet, isoCatalog };
 }
 
-// ── First-pass Claude call ──────────────────────────────────────────────
-async function _firstPass(question, mode, isoCatalog, tools) {
+// ── First-pass tool-execution loop ──────────────────────────────────────
+// Multi-turn conversation: Claude can call extractor tools, server-side
+// runs them, results fed back, repeat until Claude calls a terminal
+// tool (set_country_values or decline_question). MAX_TURNS guards
+// against pathological loops where Claude keeps requesting extractions.
+//
+// The final Anthropic response (the one with the terminal tool_use) is
+// returned so the existing _extractFirstPass logic can pull the result.
+const MAX_TURNS = 10;
+const TOOL_RESULT_MAX_BYTES = 80_000;   // cap each tool_result content to keep context manageable
+
+function _trimToolResultPayload(payload) {
+  // Keep values (the data) and source_note. Trim skipped to a short
+  // summary so the context isn't blown out on tables with many
+  // unresolved country names.
+  const trimmed = {
+    values: payload?.values || [],
+    row_count: payload?.row_count ?? (payload?.values?.length ?? 0),
+    source_note: payload?.source_note || '',
+    skipped_count: payload?.skipped_count ?? (Array.isArray(payload?.skipped) ? payload.skipped.length : 0),
+  };
+  if (Array.isArray(payload?.skipped) && payload.skipped.length) {
+    trimmed.skipped_sample = payload.skipped.slice(0, 5);
+  }
+  let json = JSON.stringify(trimmed);
+  if (json.length > TOOL_RESULT_MAX_BYTES) {
+    // Drop value entries beyond the cap. Each value is small but with
+    // 200+ rows the total can get big.
+    const keep = Math.max(50, Math.floor(trimmed.values.length / 2));
+    trimmed.values = trimmed.values.slice(0, keep);
+    trimmed.values_truncated = true;
+    json = JSON.stringify(trimmed);
+  }
+  return json;
+}
+
+async function _runToolLoop(question, mode, isoCatalog, tools, resolveName, env) {
   const claude = _getClient();
-  return claude.messages.create({
-    model:       'claude-sonnet-4-5-20250929',
-    max_tokens:  12000,
-    system:      _buildSystemPrompt(isoCatalog, mode),
-    tools,
-    tool_choice: { type: 'any' },
-    messages:    [{ role: 'user', content: question }],
-  });
+  const messages = [{ role: 'user', content: question }];
+  let lastResp = null;
+
+  for (let turn = 0; turn < MAX_TURNS; turn++) {
+    const resp = await claude.messages.create({
+      model:       'claude-sonnet-4-5-20250929',
+      max_tokens:  12000,
+      system:      _buildSystemPrompt(isoCatalog, mode),
+      tools,
+      messages,
+    });
+    lastResp = resp;
+
+    // Find tool_use blocks (Anthropic-hosted tools like web_search are
+    // executed server-side by Anthropic — we only need to handle our
+    // custom extractor tools + the terminal tools).
+    const toolUses = (resp.content || []).filter(b => b.type === 'tool_use');
+
+    // If Claude has reached a terminal tool, exit the loop and let the
+    // caller extract via _extractFirstPass.
+    const terminalTool = toolUses.find(b => b.name === 'set_country_values' || b.name === 'decline_question');
+    if (terminalTool) return resp;
+
+    // If no tool_use at all, Claude is done without producing data — return as-is.
+    if (!toolUses.length || resp.stop_reason !== 'tool_use') {
+      return resp;
+    }
+
+    // Otherwise: run any extractor tool calls and feed back the results.
+    messages.push({ role: 'assistant', content: resp.content });
+    const toolResults = [];
+    for (const tu of toolUses) {
+      // Skip Anthropic-hosted tools (server-managed); they don't appear
+      // as tool_use blocks in the standard sense — but in case they do,
+      // ignore them.
+      if (tu.name === 'web_search') continue;
+
+      const ext = extractors.getExtractorByName(tu.name);
+      if (!ext) {
+        toolResults.push({
+          type: 'tool_result',
+          tool_use_id: tu.id,
+          content: `Unknown tool: ${tu.name}. Available extractor tools: ${extractors.REGISTRY.map(e => e.toolDef.name).join(', ')}.`,
+          is_error: true,
+        });
+        continue;
+      }
+      const result = await extractors.runExtractor(tu.name, tu.input || {}, resolveName, env);
+      if (!result.ok) {
+        toolResults.push({
+          type: 'tool_result',
+          tool_use_id: tu.id,
+          content: `Extractor error: ${result.error}`,
+          is_error: true,
+        });
+      } else {
+        toolResults.push({
+          type: 'tool_result',
+          tool_use_id: tu.id,
+          content: _trimToolResultPayload(result.payload),
+          is_error: false,
+        });
+      }
+    }
+
+    if (!toolResults.length) {
+      // Only web_search calls happened (server-managed) — Anthropic
+      // already added their results. Loop again for another Claude turn.
+      // Push a no-op tool result so the conversation can continue.
+      // (In practice we shouldn't hit this; web_search is opaque to us.)
+      messages.push({ role: 'user', content: 'Continue.' });
+    } else {
+      messages.push({ role: 'user', content: toolResults });
+    }
+  }
+
+  // Loop exhausted without a terminal tool. Treat as anomalous; return
+  // the last response so the caller can decide (likely => refusal).
+  console.warn(`[heatmapResolver] tool loop hit MAX_TURNS=${MAX_TURNS} without a terminal tool call`);
+  return lastResp;
 }
 
 // ── Validate + extract first-pass tool result ───────────────────────────
@@ -270,6 +431,10 @@ function _extractFirstPass(claudeResp, mode, rawQuestion, isoSet) {
     payload.legend      = String(raw.legend || rawQuestion).slice(0, 120);
     payload.unit        = raw.unit ? String(raw.unit).slice(0, 16) : (mode === 'percent' ? '%' : (mode === 'rank' ? 'rank' : ''));
     payload.source_note = String(raw.source_note || 'AI estimate — verify before citing').slice(0, 240);
+    // Confidence tier — recorded so the caller can surface a verified
+    // vs. estimate badge to the client. Default 'estimate' when Claude
+    // omitted it (graceful fallback during the rollout).
+    payload.confidence_tier = (raw.confidence_tier === 'extracted') ? 'extracted' : 'estimate';
     const seen = new Set();
     const rawArr = Array.isArray(raw.values) ? raw.values : [];
     payload.values = rawArr
@@ -283,6 +448,40 @@ function _extractFirstPass(claudeResp, mode, rawQuestion, isoSet) {
         return true;
       })
       .map(v => ({ iso: v.iso, value: v.value }));
+
+    // Safety net for rank-mode: if Claude forwarded raw extractor values
+    // (meters, dollars, people, etc.) instead of converting to 1..N
+    // integers, auto-rank server-side. Heuristic: a properly-ranked
+    // response has integer values where max <= 2*N (small slack for
+    // ties). Anything beyond that is almost certainly raw measurements.
+    if (mode === 'rank' && payload.values.length >= 5) {
+      const N = payload.values.length;
+      const maxVal = Math.max(...payload.values.map(v => v.value));
+      const allIntegers = payload.values.every(v => Number.isInteger(v.value));
+      if (!allIntegers || maxVal > N * 2) {
+        // Auto-rank descending (largest raw value → rank 1).
+        // Note: this assumes "bigger = better" per the user's question,
+        // which is the common case for ranking questions. Edge cases
+        // (e.g. "ranked by lowest temperature") would need Claude to
+        // pre-invert; for now we accept the common-case auto-rank.
+        const sorted = [...payload.values].sort((a, b) => b.value - a.value);
+        payload.values = sorted.map((v, i) => ({ iso: v.iso, value: i + 1 }));
+        payload.source_note = `${payload.source_note} (auto-ranked server-side)`.slice(0, 240);
+      }
+    }
+    // Same safety for percent-mode: detect values clearly outside 0-100
+    // that look like raw measurements, and skip (don't render misleading
+    // values as percents). Caller can choose to retry with stricter prompt.
+    if (mode === 'percent' && payload.values.length) {
+      const outOfRange = payload.values.filter(v => v.value < -1 || v.value > 101).length;
+      if (outOfRange > payload.values.length * 0.2) {
+        // More than 20% of values are clearly not percentages — log and
+        // mark the response as suspect via a source_note prefix.
+        console.warn(`[heatmapResolver] percent-mode result has ${outOfRange}/${payload.values.length} out-of-range values — likely raw measurements, not percents`);
+        payload.source_note = `⚠ Values may not be percentages. ${payload.source_note}`.slice(0, 240);
+      }
+    }
+
     return { payload, seen };
   }
   // Unexpected tool name (model misbehaved) — treat as refusal.
@@ -485,12 +684,18 @@ async function resolveHeatmap(question, mode, opts = {}) {
     }
   }
 
-  // 2. Country whitelist + tool spec.
+  // 2. Country whitelist + tool spec + name resolver.
   const { rows: countryRows, isoSet, isoCatalog } = await _loadCountries();
   const tools = _buildTools();
+  const resolveName = await _getIsoNameResolver();
+  const extractorEnv = { isoAlpha3ToAlpha2: ALPHA3_TO_ALPHA2 };
 
-  // 3. First-pass Claude call.
-  const firstResp = await _firstPass(rawQuestion, m, isoCatalog, tools);
+  // 3. Multi-turn tool-execution loop. Claude calls extractor tools
+  //    server-side (Wikipedia / WB / WHO / OECD / Factbook), we run
+  //    them and feed structured results back. The loop exits when
+  //    Claude calls a terminal tool (set_country_values or
+  //    decline_question). See _runToolLoop for the protocol.
+  const firstResp = await _runToolLoop(rawQuestion, m, isoCatalog, tools, resolveName, extractorEnv);
   let { payload, seen } = _extractFirstPass(firstResp, m, rawQuestion, isoSet);
 
   // 4. Estimate fallback — only when first pass declined with kind='low_data'.
@@ -525,16 +730,17 @@ async function resolveHeatmap(question, mode, opts = {}) {
   await _cacheWrite(questionHash, rawQuestion, m, payload);
 
   return {
-    question:    rawQuestion,
-    mode:        m,
-    legend:      payload.legend,
-    unit:        payload.unit,
-    source_note: payload.source_note,
-    values:      payload.values,
-    refusal:     payload.refusal,
-    is_estimate: isEstimate,
-    source:      'claude',
-    cache:       'miss',
+    question:         rawQuestion,
+    mode:             m,
+    legend:           payload.legend,
+    unit:             payload.unit,
+    source_note:      payload.source_note,
+    values:           payload.values,
+    refusal:          payload.refusal,
+    is_estimate:      isEstimate,
+    confidence_tier:  payload.confidence_tier || (isEstimate ? 'estimate' : 'extracted'),
+    source:           'claude',
+    cache:            'miss',
   };
 }
 

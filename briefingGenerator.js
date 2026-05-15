@@ -718,6 +718,7 @@ async function run() {
       const threadIds = manifest.selected_threads.map(t => t.thread_id);
       const { rows: threadRows } = await pool.query(`
         SELECT st.id, st.title, st.primary_category, st.importance, st.keywords, st.geographic_scope,
+               st.primary_nations, st.secondary_nations,
                COUNT(sta.article_id)::int AS recent_articles
         FROM story_threads st
         JOIN story_thread_articles sta ON sta.thread_id = st.id
@@ -1395,6 +1396,7 @@ async function selectThreads(profile = null) {
     SELECT
       st.id, st.title, st.description, st.importance,
       st.primary_category, st.geographic_scope, st.keywords,
+      st.primary_nations, st.secondary_nations,
       st.article_count,
       COUNT(sta.article_id)                                           AS recent_articles,
       COUNT(CASE WHEN a.video_id IS NOT NULL THEN 1 END)             AS video_count
@@ -2299,7 +2301,14 @@ async function buildSegments(narrative, threadData, allArcs, entityCoords = {}) 
   //   2. Build a lowercase-name → iso lookup
   //   3. For any location without a name match, fall back to nearest centroid
   // Returns a function (name, lat, lon) → iso string or null.
-  const _isoResolver = await (async () => {
+  // Builds two helpers in one pass over the countries table:
+  //   _isoResolver(name, lat, lon) → ISO string
+  //   _isoToCountry(iso) → { iso, name, lat, lon } | null
+  // Second one is used by the classifier-based fallback below to expand
+  // a thread's primary_nations / secondary_nations arrays into real globe
+  // coordinates so we can synthesize secondary_locations + flow arcs.
+  const { _isoResolver, _isoToCountry } = await (async () => {
+    const NULL_PAIR = { _isoResolver: () => null, _isoToCountry: () => null };
     try {
       const { rows } = await pool.query(
         `SELECT iso_code, name, latitude, longitude
@@ -2307,13 +2316,16 @@ async function buildSegments(narrative, threadData, allArcs, entityCoords = {}) 
           WHERE iso_code IS NOT NULL`
       );
       const byName = new Map();
+      const byIso  = new Map();
       const centroids = [];
       for (const r of rows) {
         const iso = String(r.iso_code || '').toUpperCase();
         if (!iso) continue;
         if (r.name) byName.set(String(r.name).trim().toLowerCase(), iso);
         if (r.latitude != null && r.longitude != null) {
-          centroids.push({ iso, lat: +r.latitude, lon: +r.longitude });
+          const lat = +r.latitude, lon = +r.longitude;
+          centroids.push({ iso, lat, lon });
+          byIso.set(iso, { iso, name: r.name, lat, lon });
         }
       }
       // A handful of common aliases that don't appear as canonical names.
@@ -2335,18 +2347,104 @@ async function buildSegments(narrative, threadData, allArcs, entityCoords = {}) 
         }
         return best ? best.iso : null;
       };
-      return (name, lat, lon) => {
-        if (name) {
-          const hit = byName.get(String(name).trim().toLowerCase());
-          if (hit) return hit;
-        }
-        return nearest(lat, lon);
+      return {
+        _isoResolver: (name, lat, lon) => {
+          if (name) {
+            const hit = byName.get(String(name).trim().toLowerCase());
+            if (hit) return hit;
+          }
+          return nearest(lat, lon);
+        },
+        _isoToCountry: (iso) => {
+          if (!iso) return null;
+          return byIso.get(String(iso).trim().toUpperCase()) || null;
+        },
       };
     } catch (err) {
       console.warn(`   ⚠ ISO resolver init failed: ${err.message}`);
-      return () => null;
+      return NULL_PAIR;
     }
   })();
+
+  // Tunables for the classifier-derived fallback. The actor-classifier
+  // populates story_threads.primary_nations / secondary_nations using
+  // Claude with full geopolitical inference (alliances, treaty stakes,
+  // regional rivalries), so each segment arrives with rich country
+  // coverage. The briefing pipeline previously only used Claude's
+  // SEGMENT-level entity extraction for arcs + secondary nodes, which
+  // meant most segments rendered with just 1-2 highlighted countries
+  // and zero arcs — even when the underlying thread had 6-10 actors
+  // classified. These caps prevent the visual from going from too-sparse
+  // to too-crowded.
+  const CLASSIFIER_FALLBACK_PRIMARY_CAP   = 4;
+  const CLASSIFIER_FALLBACK_SECONDARY_CAP = 6;
+  const CLASSIFIER_FALLBACK_ARC_CAP       = 8;
+
+  // Generate a primary mesh + primary→secondary spider from a thread's
+  // classified nations. Mirrors _buildTieredFlows in server.js so the
+  // briefing's pre-built arc set matches what the live Flow Arcs view
+  // would render if the user tapped through to that thread.
+  function _classifierArcsForThread(thread, existingArcs) {
+    const primaryIsos = (Array.isArray(thread.primary_nations) ? thread.primary_nations : [])
+      .map(s => String(s || '').toUpperCase())
+      .filter(Boolean)
+      .slice(0, CLASSIFIER_FALLBACK_PRIMARY_CAP);
+    const primarySet  = new Set(primaryIsos);
+    const secondaryIsos = (Array.isArray(thread.secondary_nations) ? thread.secondary_nations : [])
+      .map(s => String(s || '').toUpperCase())
+      .filter(iso => iso && !primarySet.has(iso))
+      .slice(0, CLASSIFIER_FALLBACK_SECONDARY_CAP);
+
+    // Resolve each ISO to a coordinate. Drop any we can't place (rare —
+    // supranational codes like "EU" won't be in the countries table).
+    const primary   = primaryIsos.map(iso => _isoToCountry(iso)).filter(Boolean);
+    const secondary = secondaryIsos.map(iso => _isoToCountry(iso)).filter(Boolean);
+
+    // Avoid re-generating arcs that already exist (Claude-derived ones
+    // win). Match on rounded coord pair so floating-point noise doesn't
+    // create duplicates.
+    const arcKey = (la1, lo1, la2, lo2) => {
+      const a = `${(+la1).toFixed(2)},${(+lo1).toFixed(2)}`;
+      const b = `${(+la2).toFixed(2)},${(+lo2).toFixed(2)}`;
+      return a < b ? `${a}|${b}` : `${b}|${a}`;
+    };
+    const seen = new Set();
+    for (const a of existingArcs) {
+      seen.add(arcKey(a.from_lat, a.from_lng, a.to_lat, a.to_lng));
+    }
+
+    const out = [];
+    const push = (from, to) => {
+      const k = arcKey(from.lat, from.lon, to.lat, to.lon);
+      if (seen.has(k)) return;
+      seen.add(k);
+      out.push({
+        thread_id: thread.id,
+        from_name: from.name, from_lat: from.lat, from_lng: from.lon,
+        to_name:   to.name,   to_lat:   to.lat,   to_lng:   to.lon,
+        is_city_arc: false,
+        _source: 'classifier',
+      });
+    };
+
+    // 1. Primary mesh — all pairs among primaries.
+    for (let i = 0; i < primary.length; i++) {
+      for (let j = i + 1; j < primary.length; j++) {
+        if (out.length >= CLASSIFIER_FALLBACK_ARC_CAP) break;
+        push(primary[i], primary[j]);
+      }
+      if (out.length >= CLASSIFIER_FALLBACK_ARC_CAP) break;
+    }
+    // 2. Spider — each primary × each secondary.
+    for (const p of primary) {
+      for (const s of secondary) {
+        if (out.length >= CLASSIFIER_FALLBACK_ARC_CAP) break;
+        push(p, s);
+      }
+      if (out.length >= CLASSIFIER_FALLBACK_ARC_CAP) break;
+    }
+    return out;
+  }
 
   // Intro segment
   const introSeg = { type: 'intro', voiceover_text: narrative.intro, globe_animate: { lat: 20, lng: 0, zoom: 0.9 } };
@@ -2381,8 +2479,22 @@ async function buildSegments(narrative, threadData, allArcs, entityCoords = {}) 
       .filter(a => !_isZeroSentinel(a.from_lat, a.from_lng) &&
                    !_isZeroSentinel(a.to_lat,   a.to_lng));
 
-    // secondary_locations = all story entities + arc endpoints, deduped by position.
-    // Used by the globe player to pulse all relevant nodes, not just the primary.
+    // ─── Classifier-derived fallback ─────────────────────────────────
+    // Augment whatever Claude's segment-level extraction produced with
+    // the thread's full classified actor set (primary_nations +
+    // secondary_nations populated by threadActorClassifier.js). Without
+    // this, segments routinely shipped with 0 arcs and 1 secondary
+    // location even though the underlying thread had 6-10 actors
+    // classified — because Claude's per-segment entity list is narrow
+    // (subjects only) while the classifier captures every material
+    // stakeholder including latent ones (alliances, treaty parties,
+    // regional rivals).
+    const classifierArcs = _classifierArcsForThread(thread, arcs);
+    if (classifierArcs.length) arcs.push(...classifierArcs);
+
+    // secondary_locations = all story entities + arc endpoints + classifier
+    // nations, deduped by position. Used by the globe player to pulse all
+    // relevant nodes, not just the primary.
     const secondaryLocations = [];
     const seen = new Set();
     const addLoc = (name, lat, lon) => {
@@ -2399,6 +2511,18 @@ async function buildSegments(narrative, threadData, allArcs, entityCoords = {}) 
     for (const arc of arcs) {
       addLoc(arc.from_name, arc.from_lat, arc.from_lng);
       addLoc(arc.to_name,   arc.to_lat,   arc.to_lng);
+    }
+    // Finally, fill in any classifier nations that didn't survive the
+    // arc-cap or weren't already added via entities/arcs. Caps mirror
+    // _classifierArcsForThread so the secondary node ring matches the
+    // arc topology.
+    const _classifierIsos = [
+      ...(Array.isArray(thread.primary_nations)   ? thread.primary_nations   : []).slice(0, CLASSIFIER_FALLBACK_PRIMARY_CAP),
+      ...(Array.isArray(thread.secondary_nations) ? thread.secondary_nations : []).slice(0, CLASSIFIER_FALLBACK_SECONDARY_CAP),
+    ];
+    for (const iso of _classifierIsos) {
+      const c = _isoToCountry(iso);
+      if (c) addLoc(c.name, c.lat, c.lon);
     }
 
     // Deduplicate articles: strip any article IDs already used in an earlier segment
@@ -2420,6 +2544,17 @@ async function buildSegments(narrative, threadData, allArcs, entityCoords = {}) 
     if (!primaryCity && !primaryCountry) {
       primaryCity    = thread.primaryCity    || null;
       primaryCountry = thread.primaryCountry || null;
+    }
+    // Final fallback: pull primary country from the actor classifier. The
+    // first ISO in primary_nations is the most-central country to the
+    // story per Claude's geopolitical inference. Used when neither
+    // segment entities nor article-sourced geo yielded a country —
+    // common for diplomacy stories where the actor is named but the
+    // article publisher is some Reuters wire desk in London.
+    if (!primaryCountry && Array.isArray(thread.primary_nations) && thread.primary_nations.length) {
+      const firstIso = thread.primary_nations[0];
+      const c = _isoToCountry(firstIso);
+      if (c) primaryCountry = { name: c.name, lat: c.lat, lon: c.lon };
     }
 
     // Strip primary node(s) from secondary_locations — avoids duplication in
@@ -2805,6 +2940,7 @@ async function listCandidateThreads(limit = 50) {
     SELECT
       st.id, st.title, st.primary_category, st.importance, st.keywords,
       st.geographic_scope,
+      st.primary_nations, st.secondary_nations,
       COUNT(sta.article_id)                                           AS recent_articles,
       COUNT(CASE WHEN a.video_id IS NOT NULL THEN 1 END)             AS video_count
     FROM story_threads st

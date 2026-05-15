@@ -366,20 +366,100 @@ fetchers into one subsystem.
 
 ---
 
-### 1.7 Tabled briefing-media ideas
+### 1.7 News-flow AI relationships ("Map This" for arcs)
+
+**What it is**: the AI Q&A pattern that v1's heatmap already uses ("Map
+This: countries that import the most oil from Iran") extended to the
+News Flows surface — but instead of shading polygons, the AI returns
+**directed relationships between countries** that the existing flow-arc
+renderer draws.
+
+User asks the News Flows panel:
+- *"Which African nations have the strongest growing ties to China?"*
+- *"Map countries most economically interdependent with Russia right now"*
+- *"Show how Iran's regional alliances have shifted since the Hormuz crisis"*
+
+Claude returns a tiered arc network. Source / target nodes resolve to
+country polygons via the same ISO resolver the rest of the briefing
+pipeline uses; arc thickness encodes relationship strength; arc color
+encodes type (economic / diplomatic / military / cultural).
+
+**Architecture**:
+
+```js
+// New mode alongside existing heatmap-AI ones:
+flowMode      = 'relationships'
+flowQuestion  = 'African nations with growing ties to China'
+flowResolved  = {
+  arcs: [
+    { from: 'CN', to: 'KE', weight: 0.9, type: 'economic',
+      rationale: 'Standard Gauge Railway financing, $4.7B since 2017' },
+    { from: 'CN', to: 'ET', weight: 0.85, type: 'economic',
+      rationale: 'Addis Ababa light rail + Belt and Road…' },
+    { from: 'CN', to: 'DJ', weight: 0.8, type: 'military',
+      rationale: 'PLA Navy base at Doraleh, first overseas base' },
+    …
+  ],
+  primary_nation: 'CN',   // anchor country for camera focus
+  legend: {               // for the side panel
+    economic:    { color: '#ffa64a', count: 12 },
+    military:    { color: '#ff5e5e', count: 3 },
+    diplomatic:  { color: '#6ec5ff', count: 7 },
+  }
+}
+```
+
+**Reuses (no rebuild)**:
+- Flow-arc renderer (curved great-circle arcs + animated draw, already
+  in `www/index.html` / root)
+- Camera focus + globe-spin animation
+- The `semHeatPanel` Ask-input UI pattern — just a parallel
+  `flowAskPanel` with different submit handler
+- ISO resolver from briefingGenerator's `_isoToCountry`
+- The tiered-flow-builder topology rules (`_buildTieredFlows`) for
+  capping arc count + dropping spider edges when over budget
+
+**New work**:
+- Claude prompt template for "given this question, return a list of
+  weighted directed country-relationships with rationale + type"
+- Type → color palette mapping (4-5 relationship types)
+- Side legend panel (mirrors heatmap's category legend in 1.5)
+- Share clip + image variants that capture the relationship view
+  with overlay (relationship type swatches in the chip row instead
+  of country flags)
+
+**Why this is post-v1**: the heatmap-AI orchestrator + flow-arc
+renderer already exist independently in v1, but **wiring an AI
+prompt that emits well-typed `{ from, to, weight, type, rationale }`
+tuples and getting the relationship taxonomy right** (what counts
+as "diplomatic" vs "cultural", how to score weight consistently)
+needs the schema work that v2 Track 1 is already opening up. Easier
+to ship this as part of the same architectural wave than to retrofit
+it onto v1's single-mode flow panel.
+
+**Effort**: ~3 days. Prompt + schema (0.5d), flow-mode plumbing
+through existing flow renderer (1d), legend panel (0.5d), share
+variants (1d).
+
+**Dependencies**: 1.5 (sentiment heatmap) ships first so the multi-
+color legend infrastructure is in place — same component pattern.
+
+---
+
+### 1.8 Tabled briefing-media ideas
 
 Captured here so they're not forgotten:
 
 | # | Idea | Reason tabled | Revisit |
 |---|---|---|---|
-| 1.7.1 | Camera dive into 3D city via Google Tiles 3D | Heavy lifting + non-trivial billing | post-v2 |
-| 1.7.2 | Historic-borders time-rewind | Specialized data + animation pipeline | v3 |
-| 1.7.3 | Volumetric phenomena (auroras, ash plumes) at full ray-marching quality | 4–8 weeks for one phenomenon at production grade | v3 |
-| 1.7.4 | AI-generated diorama (text-to-3D GLB scenes) | Quality not there yet (2026 state) | revisit in 12 months |
-| 1.7.5 | Text-to-video synthesized B-roll (Sora/Veo class) | Quality + legal exposure | revisit in 6–12 months |
-| 1.7.6 | Multi-perspective AI character interviews | Differentiating but heavy production; depends on chatbot infra (Track 4) | post-Track-4 |
-| 1.7.7 | Generated "letter from the ground" | Tone/safety calibration is hard | post-Track-4 |
-| 1.7.8 | Counterfactual narrator mode | Editorial guidelines must precede tech | post-launch + editorial-policy work |
+| 1.8.1 | Camera dive into 3D city via Google Tiles 3D | Heavy lifting + non-trivial billing | post-v2 |
+| 1.8.2 | Historic-borders time-rewind | Specialized data + animation pipeline | v3 |
+| 1.8.3 | Volumetric phenomena (auroras, ash plumes) at full ray-marching quality | 4–8 weeks for one phenomenon at production grade | v3 |
+| 1.8.4 | AI-generated diorama (text-to-3D GLB scenes) | Quality not there yet (2026 state) | revisit in 12 months |
+| 1.8.5 | Text-to-video synthesized B-roll (Sora/Veo class) | Quality + legal exposure | revisit in 6–12 months |
+| 1.8.6 | Multi-perspective AI character interviews | Differentiating but heavy production; depends on chatbot infra (Track 4) | post-Track-4 |
+| 1.8.7 | Generated "letter from the ground" | Tone/safety calibration is hard | post-Track-4 |
+| 1.8.8 | Counterfactual narrator mode | Editorial guidelines must precede tech | post-launch + editorial-policy work |
 
 ---
 
@@ -829,6 +909,7 @@ Sorted by track, with rough effort and priority signals:
 | 1.6.5 | Media | Document scan via DocumentCloud | ~1 wk | High |
 | 1.6.6 | Media | Wire-copy autoreader | ~1 d | Low |
 | 1.6.7 | Media | Court / hearing snippet (Oyez) | ~3 d | Medium |
+| 1.7 | Media | News-flow AI relationships ("Map This" for arcs) | ~3 d | High |
 | 2.1 | Wireframe | Foundation + Mapbox proxy | ~1–2 wk | High |
 | 2.2 | Wireframe | Briefing pre-rendered MP4 | ~1 wk | **High** |
 | 2.3 | Wireframe | Briefing UI integration | ~3–5 d | High |
