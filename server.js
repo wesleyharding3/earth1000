@@ -15189,6 +15189,36 @@ app.get('/api/debug/publisher-env', (req, res) => {
   res.json({ checks: result, all_matching_keys: allKeys, per_publisher_isConfigured: perPub, listConfigured_result: listResult });
 });
 
+// TEMPORARY one-shot publish test — to verify X after token regen.
+// Will be removed immediately after.
+app.post('/api/debug/social-test-publish', async (req, res) => {
+  try {
+    const composer = require('./socialDraftComposer');
+    const { rows } = await pool.query(`
+      SELECT id, title, description, primary_nations, secondary_nations,
+             primary_category, article_count, last_updated_at
+        FROM story_threads
+       WHERE title IS NOT NULL AND description IS NOT NULL
+         AND article_count >= 5
+       ORDER BY last_updated_at DESC NULLS LAST
+       OFFSET 1 LIMIT 1
+    `);
+    const row = rows[0];
+    if (!row) return res.status(404).json({ error: 'no thread found' });
+    const drafts = composer.composeDrafts(row);
+    const enabled = { x: true, bluesky: false, instagram: false, reddit: false, linkedin: false };
+    const { permalinks, failures } = await socialPublishers.publishAll(drafts, enabled, process.env);
+    res.json({
+      thread: { id: row.id, title: row.title, primary_nations: row.primary_nations },
+      x_draft_body: drafts.x?.body,
+      permalinks,
+      failures,
+    });
+  } catch (err) {
+    console.error('[social-test-publish]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 app.post('/api/admin/social-queue/:id/publish', requireAdmin, async (req, res) => {
   try {
