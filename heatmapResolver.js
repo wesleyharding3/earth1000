@@ -441,26 +441,31 @@ function _extractFirstPass(claudeResp, mode, rawQuestion, isoSet, extractedIsos 
       })
       .map(v => ({ iso: v.iso, value: v.value }));
 
-    // Strict-extracted filter: if Claude claimed confidence_tier='extracted',
-    // restrict the answer to ONLY countries the extractor(s) actually
-    // returned. Catches the failure mode where Claude pads out coverage
-    // with its own estimates while still claiming the answer is extracted.
-    // Without this, mid-tier rankings on quantitative questions (e.g.
-    // "Spain > France" for elevation range) come out wrong because Claude
-    // is using memory for countries the extractor didn't cover.
-    if (payload.confidence_tier === 'extracted' && extractedIsos && extractedIsos.size > 0) {
-      const before = payload.values.length;
-      payload.values = payload.values.filter(v => extractedIsos.has(v.iso));
-      const dropped = before - payload.values.length;
-      if (dropped > 0) {
-        console.warn(`[heatmapResolver] strict filter dropped ${dropped}/${before} values not present in extractor results`);
-        const note = ` [${dropped} unverified value${dropped === 1 ? '' : 's'} dropped]`;
-        payload.source_note = (payload.source_note + note).slice(0, 240);
+    // Strict-extracted enforcement. Two failure modes to catch:
+    //   A) Claude claims 'extracted' BUT no extractor returned any
+    //      values (all failed / weren't called). Downgrade to 'estimate'.
+    //   B) Claude claims 'extracted' AND extractor returned values,
+    //      but Claude padded with countries not in the extractor set.
+    //      Filter values to the extractor's verified ISO set.
+    if (payload.confidence_tier === 'extracted') {
+      if (!extractedIsos || extractedIsos.size === 0) {
+        // (A) No extractor data backing the claim — downgrade.
+        console.warn(`[heatmapResolver] downgrading 'extracted' → 'estimate': no extractor returned any values`);
+        payload.confidence_tier = 'estimate';
+        payload.source_note = `⚠ AI estimate (extractor returned no data). ${payload.source_note}`.slice(0, 240);
+      } else {
+        // (B) Filter to extractor-verified ISOs.
+        const before = payload.values.length;
+        payload.values = payload.values.filter(v => extractedIsos.has(v.iso));
+        const dropped = before - payload.values.length;
+        if (dropped > 0) {
+          console.warn(`[heatmapResolver] strict filter dropped ${dropped}/${before} values not in extractor results`);
+          const note = ` [${dropped} unverified value${dropped === 1 ? '' : 's'} dropped]`;
+          payload.source_note = (payload.source_note + note).slice(0, 240);
+        }
+        seen.clear();
+        for (const v of payload.values) seen.add(v.iso);
       }
-      // Refresh `seen` so downstream fill-in pass (if it runs) sees the
-      // post-filter coverage, not the pre-filter inflated count.
-      seen.clear();
-      for (const v of payload.values) seen.add(v.iso);
     }
 
     // Safety net for rank-mode: if Claude forwarded raw extractor values

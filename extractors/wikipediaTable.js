@@ -218,11 +218,11 @@ const toolDef = {
       value_columns: {
         type: 'array',
         items: { type: 'string' },
-        description: 'Array of header-text substrings for the numeric column(s) to extract per row. Use 1 column for direct values; 2+ for derived expressions like "high - low".',
+        description: 'Array of header-text substrings for the NUMERIC column(s) to extract per row. The cells in these columns must contain actual numbers (e.g. "4806 m", "39,512,733"), NOT place names or descriptions (e.g. "Mont Blanc", "Dead Sea"). Many Wikipedia "extremes" pages separate the place name from the elevation/value into different columns — pick the column with numbers. Use 1 column for direct values; 2+ for derived expressions like "high - low".',
       },
       derived: {
         type: 'object',
-        description: 'Optional. Combine value_columns into a single per-country value. Example for elevation range: { expr: "a - b" } with value_columns = ["Highest point", "Lowest point"] yields high minus low.',
+        description: 'Optional. Combine value_columns into a single per-country value. CORRECT example for elevation range on the "List of elevation extremes by country" page: value_columns = ["Maximum elevation", "Minimum elevation"] (the columns with numbers like "4806 m" / "−10 m"), derived = { expr: "a - b" }. WRONG: value_columns = ["Highest point", "Lowest point"] — those columns contain place names ("Mont Blanc", "Étang de Lavalduc"), not numbers. Many such pages ALSO have a pre-computed "Elevation span" column you can use directly with no derived expression at all.',
         properties: {
           expr: { type: 'string', description: 'Expression in single letters: a, b, c, ... referencing value_columns[0], [1], [2], ... Operators: + - * /. e.g. "a - b".' },
         },
@@ -316,9 +316,27 @@ async function run(spec, resolveName) {
     dedup.push(v);
   }
 
+  // If we extracted zero values, return a diagnostic payload that helps
+  // Claude pick better columns on retry. Lists the available headers and
+  // a sample row so Claude can see whether it picked text columns by
+  // mistake (e.g. "Highest point" → "Mont Blanc" instead of "Maximum
+  // elevation" → "4806 m").
+  if (dedup.length === 0) {
+    const sampleRow = rows.first().find('td, th').map((i, el) => {
+      const t = $(el).text().replace(/\s+/g, ' ').trim().slice(0, 60);
+      return t;
+    }).get();
+    return {
+      error: `extract_wikipedia_table parsed 0 values from ${dedup.length === 0 ? 'all ' + rows.length + ' rows' : 'this table'}. The columns you specified (${value_columns.join(', ')}) likely contain text, not numbers. ` +
+             `Available column headers on this table: [${[...headerMap.keys()].join(' | ')}]. ` +
+             `Sample first row cells (text content shown): [${sampleRow.map(s => `"${s}"`).join(', ')}]. ` +
+             `Retry with value_columns pointing at columns whose cells contain numeric data (look for "m", "ft", commas, or pure numbers).`,
+    };
+  }
+
   return {
     values: dedup,
-    skipped: skipped.slice(0, 25),  // cap log size returned to Claude
+    skipped: skipped.slice(0, 25),
     skipped_count: skipped.length,
     source_note: `Wikipedia (${new URL(url).pathname.split('/').pop().replace(/_/g, ' ')}) — extracted ${new Date().toISOString().slice(0, 10)}${fromCache ? ' (cached)' : ''}`,
     table_used: table_selector || 'wikitable[0]',
