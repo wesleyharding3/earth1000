@@ -15165,48 +15165,6 @@ app.get('/api/admin/social-queue/configured', requireAdmin, async (req, res) => 
   }
 });
 
-app.get('/api/debug/threads-env-check', (req, res) => {
-  res.json({
-    THREADS_ACCESS_TOKEN_set: !!process.env.THREADS_ACCESS_TOKEN,
-    THREADS_ACCESS_TOKEN_len: (process.env.THREADS_ACCESS_TOKEN || '').length,
-    THREADS_USER_ID_set: !!process.env.THREADS_USER_ID,
-    THREADS_USER_ID_value: process.env.THREADS_USER_ID || null,
-    threads_isConfigured: !!(process.env.THREADS_ACCESS_TOKEN && process.env.THREADS_USER_ID),
-    all_threads_keys: Object.keys(process.env).filter(k => /threads/i.test(k)).sort(),
-  });
-});
-
-// TEMPORARY Threads-only test publish — will be removed after verification.
-app.post('/api/debug/threads-test', async (req, res) => {
-  try {
-    const composer = require('./socialDraftComposer');
-    const { rows } = await pool.query(`
-      SELECT id, title, description, primary_nations, secondary_nations,
-             primary_category, article_count, last_updated_at
-        FROM story_threads
-       WHERE title IS NOT NULL AND description IS NOT NULL
-         AND article_count >= 5
-         AND status IN ('active','cooling')
-       ORDER BY last_updated_at DESC NULLS LAST
-       OFFSET 2 LIMIT 1
-    `);
-    const row = rows[0];
-    if (!row) return res.status(404).json({ error: 'no thread found' });
-    const drafts = composer.composeDrafts(row);
-    const enabled = { x: false, bluesky: false, reddit: false, linkedin: false, instagram: false, threads: true };
-    const { permalinks, failures } = await socialPublishers.publishAll(drafts, enabled, process.env);
-    res.json({
-      thread: { id: row.id, title: row.title },
-      threads_draft: drafts.threads?.body,
-      permalinks,
-      failures,
-    });
-  } catch (err) {
-    console.error('[threads-test]', err);
-    res.status(500).json({ error: err.message });
-  }
-});
-
 app.post('/api/admin/social-queue/:id/publish', requireAdmin, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
