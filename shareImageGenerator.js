@@ -422,25 +422,21 @@ function _importanceBadge(score, x, y) {
 
 // ─── Templates per entity type ────────────────────────────────────────
 
-// Build the summary SVG block. `description` truncates to 100 chars
+// Build the summary SVG block. `description` truncates to 220 chars
 // with ellipsis; wrapped to fit the left chrome zone (wider if no
-// hero, narrower if a hero panel occupies the right 55%). Two lines
-// max — we want a short hook, not a paragraph; a long description
-// belongs in the actual app, not the share card.
+// hero, narrower if a hero panel occupies the right 55%). Three lines
+// max — gives the reader a real elevator pitch, not a stub.
 function _summarySvg({ description, hasHero, y }) {
   if (!description || typeof description !== 'string') return '';
-  // 100-char hard cap on the raw text, then wrap. Trim before
-  // checking length so trailing whitespace doesn't burn budget.
   const trimmed = description.trim();
   if (!trimmed) return '';
-  const capped = trimmed.length > 100
-    ? trimmed.slice(0, 97).replace(/\s+\S*$/, '') + '…'
+  const capped = trimmed.length > 220
+    ? trimmed.slice(0, 217).replace(/\s+\S*$/, '') + '…'
     : trimmed;
   // Wrap width matches the title's chars-per-line so the two blocks
-  // share a visual rhythm. 28 chars without hero (wide left zone),
-  // 22 chars with hero (narrow left zone).
-  const wrapWidth = hasHero ? 28 : 36;
-  const lines = _wrapLines(capped, wrapWidth, 2);
+  // share a visual rhythm. Wider zone without a hero panel.
+  const wrapWidth = hasHero ? 32 : 44;
+  const lines = _wrapLines(capped, wrapWidth, 3);
   const fontSize = 22;
   const lineH = 30;
   return lines.map((line, i) => `
@@ -458,16 +454,14 @@ async function _renderThreadSvg({ title, description, isos, category, articleCou
   const heroSvg = await _heroPanel(heroImageUrl, heroCatalogImageUrl);
   const hasHero = !!heroSvg;
 
-  // Title now caps at 2 lines (was 3) to leave vertical room for a
-  // summary line below. A 3-line title left no breathing room above
-  // the coverage row, and the summary is the better way to give the
-  // viewer context anyway — the title is the hook, the summary is
-  // the elevator pitch.
+  // Title fits up to 3 lines with slightly tightened font/line height
+  // so the 3-line summary block below has room without overlapping the
+  // chip + coverage row.
   const lines = hasHero
-    ? _wrapLines(title || 'Untitled story', 22, 2)
-    : _wrapLines(title || 'Untitled story', 28, 2);
-  const titleSize = hasHero ? 56 : 62;
-  const titleLineH = hasHero ? 70 : 78;
+    ? _wrapLines(title || 'Untitled story', 24, 3)
+    : _wrapLines(title || 'Untitled story', 32, 3);
+  const titleSize = hasHero ? 48 : 54;
+  const titleLineH = hasHero ? 60 : 66;
   const titleSvg = lines.map((line, i) => {
     const y = 240 + i * titleLineH;
     return `<text x="56" y="${y}"
@@ -476,16 +470,16 @@ async function _renderThreadSvg({ title, description, isos, category, articleCou
                   fill="${BRAND.cream}">${_esc(line)}</text>`;
   }).join('\n');
 
-  // Summary block sits 24px below the title's last visible baseline.
+  // Summary block sits 36px below the title's last visible baseline.
   // Anchors off the actual line count so a short single-line title
   // doesn't leave a giant empty band before the summary.
   const titleBottomY = 240 + (lines.length - 1) * titleLineH;
-  const summarySvg = _summarySvg({ description, hasHero, y: titleBottomY + 56 });
+  const summarySvg = _summarySvg({ description, hasHero, y: titleBottomY + 40 });
 
-  // Chips dropped from H-150 → H-130 to give the new summary block
-  // breathing room above the coverage row. Chip row + coverage row
-  // still finish above the brand footer with consistent margins.
-  const chipsY = H - 130;
+  // Chips moved down (H-130 → H-80) to make room for the longer
+  // title + summary stack above. Chip row + coverage row still
+  // finish above the brand footer with consistent margins.
+  const chipsY = H - 80;
   const coverageText = _coverageLine({ articleCount, languageCount, countryCount });
   // Coverage font bumped to 20px (was 18) to match the upgraded
   // summary + footer typography. Letter-spacing kept at 1.4 for
@@ -532,13 +526,12 @@ async function _renderLineSvg({ title, description, isos, category, articleCount
   const heroSvg = await _heroPanel(heroImageUrl, heroCatalogImageUrl);
   const hasHero = !!heroSvg;
 
-  // See _renderThreadSvg for full layout rationale. Title now caps at
-  // 2 lines (was 3) to leave room for the summary block below.
+  // See _renderThreadSvg for full layout rationale.
   const lines = hasHero
-    ? _wrapLines(title || 'Untitled timeline', 22, 2)
-    : _wrapLines(title || 'Untitled timeline', 28, 2);
-  const titleSize = hasHero ? 56 : 62;
-  const titleLineH = hasHero ? 70 : 78;
+    ? _wrapLines(title || 'Untitled timeline', 24, 3)
+    : _wrapLines(title || 'Untitled timeline', 32, 3);
+  const titleSize = hasHero ? 48 : 54;
+  const titleLineH = hasHero ? 60 : 66;
   const titleSvg = lines.map((line, i) => {
     const y = 240 + i * titleLineH;
     return `<text x="56" y="${y}"
@@ -548,11 +541,9 @@ async function _renderLineSvg({ title, description, isos, category, articleCount
   }).join('\n');
 
   const titleBottomY = 240 + (lines.length - 1) * titleLineH;
-  const summarySvg = _summarySvg({ description, hasHero, y: titleBottomY + 56 });
+  const summarySvg = _summarySvg({ description, hasHero, y: titleBottomY + 40 });
 
-  // Chips dropped from H-150 → H-130 to give the summary breathing
-  // room above the coverage row.
-  const chipsY = H - 130;
+  const chipsY = H - 80;
   const coverageText = _coverageLine({ articleCount, languageCount, countryCount });
   const coverageSvg = coverageText ? `
     <text x="56" y="${chipsY - 22}"
