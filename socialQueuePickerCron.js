@@ -29,9 +29,19 @@ process.env.DB_POOL_MAX = '2';
 require("dotenv").config();
 const pool = require('./db');
 const { composeDrafts } = require('./socialDraftComposer');
+const socialPublishers = require('./publishers');
 
 const TAG = '[socialPicker]';
 const DRY_RUN = process.argv.includes('--dry-run');
+const AUTO_PUBLISH = process.argv.includes('--auto-publish');
+// Per-platform disable. Pass --no-x to skip X (e.g. when free-tier credits
+// are exhausted). Other platforms have similar flags. Useful while one
+// platform's billing is in a bad state.
+const PLATFORMS_DISABLED = new Set();
+for (const arg of process.argv) {
+  const m = arg.match(/^--no-(x|reddit|linkedin|bluesky|instagram)$/);
+  if (m) PLATFORMS_DISABLED.add(m[1]);
+}
 
 // ── Selection constants ───────────────────────────────────────────────────
 const BATCH_TARGET            = 3;    // post 2-3 per session; we aim for 3 and accept down to 2 if constraints bite
@@ -242,19 +252,65 @@ function pickBatch(candidates) {
 
     if (DRY_RUN) continue;
 
+    // Build platforms_enabled object: enabled platforms default to true,
+    // disabled (via --no-<platform>) set to false. The publishAll dispatcher
+    // skips platforms set to false.
+    const platforms_enabled = {};
+    for (const p of ['x', 'reddit', 'linkedin', 'bluesky', 'instagram']) {
+      platforms_enabled[p] = !PLATFORMS_DISABLED.has(p);
+    }
+
+    // Insert as pending_approval first; flip to posted/failed below if
+    // auto-publishing.
+    let rowId;
     try {
-      await pool.query(`
+      const { rows: [r] } = await pool.query(`
         INSERT INTO social_post_queue
-          (thread_id, drafts, status, scheduled_for, selection_reason)
-        VALUES ($1, $2::jsonb, 'pending_approval', NOW(), $3)
-      `, [t.id, JSON.stringify(drafts), reasons[i]]);
+          (thread_id, drafts, platforms_enabled, status, scheduled_for, selection_reason)
+        VALUES ($1, $2::jsonb, $3::jsonb, 'pending_approval', NOW(), $4)
+        RETURNING id
+      `, [t.id, JSON.stringify(drafts), JSON.stringify(platforms_enabled), reasons[i]]);
+      rowId = r.id;
       inserted++;
     } catch (err) {
       warn(`insert failed for thread ${t.id}: ${err.message}`);
+      continue;
+    }
+
+    if (!AUTO_PUBLISH) continue;
+
+    // Auto-publish: dispatch immediately, update row with results.
+    try {
+      const { permalinks, failures } = await socialPublishers.publishAll(
+        drafts, platforms_enabled, process.env,
+      );
+      const anySuccess = Object.keys(permalinks).length > 0;
+      const nextStatus = anySuccess ? 'posted' : (failures.length ? 'failed' : 'pending_approval');
+      await pool.query(`
+        UPDATE social_post_queue
+           SET status      = $1,
+               posted_at   = CASE WHEN $5::boolean THEN NOW() ELSE posted_at END,
+               permalinks  = COALESCE(permalinks, '{}'::jsonb) || $2::jsonb,
+               failure_log = failure_log || $3::jsonb
+         WHERE id = $4
+      `, [
+        nextStatus,
+        JSON.stringify(permalinks),
+        JSON.stringify(failures.map(f => ({ ...f, attempted_at: new Date().toISOString() }))),
+        rowId,
+        anySuccess,
+      ]);
+      console.log(`         → ${nextStatus}  permalinks=${Object.keys(permalinks).join(',') || 'none'}  failures=${failures.length}`);
+      if (failures.length) {
+        for (const f of failures) console.log(`             ✗ ${f.platform}: ${f.error}`);
+      }
+    } catch (err) {
+      warn(`auto-publish failed for queue row ${rowId}: ${err.message}`);
     }
   }
 
-  log(`\nDone in ${((Date.now() - t0) / 1000).toFixed(1)}s. Queued ${inserted} row${inserted === 1 ? '' : 's'}${DRY_RUN ? ' (dry-run)' : ''}.`);
+  log(`\nDone in ${((Date.now() - t0) / 1000).toFixed(1)}s. Queued ${inserted} row${inserted === 1 ? '' : 's'}${DRY_RUN ? ' (dry-run)' : ''}${AUTO_PUBLISH ? ' + auto-published' : ''}.`);
+  if (PLATFORMS_DISABLED.size) log(`Disabled platforms: ${[...PLATFORMS_DISABLED].join(', ')}`);
   await pool.end();
 })().catch(err => {
   console.error(`${TAG} fatal:`, err);
