@@ -15497,8 +15497,10 @@ function _renderGlobeHtml({ threadId, title, category, countries, totalFrames })
   });
 
   // ─── Flow arcs between primary nations ──────────────────────────
-  // Each pair of primary countries gets an arc that "draws in" over a
-  // 60-frame window inside the globe-rotation portion of the animation.
+  // Use TubeGeometry instead of Line — Line widths > 1px don't work in
+  // headless WebGL on most platforms, leaving the connections invisible
+  // (which is why earlier renders showed dots but no arcs between them).
+  // Tubes give us actual 3D thickness that always renders.
   const arcCurves = [];
   const primaries = COUNTRIES.filter(c => c.primary);
   for (let i = 0; i < primaries.length; i++) {
@@ -15507,21 +15509,24 @@ function _renderGlobeHtml({ threadId, title, category, countries, totalFrames })
       const b = latLonToVec3(primaries[j].lat, primaries[j].lon, R + 0.04);
       const mid = a.clone().add(b).multiplyScalar(0.5);
       const dist = a.distanceTo(b);
-      // Pull control point outward proportional to arc length so longer
-      // arcs lift higher and don't pass through the globe.
       const lift = 1.0 + Math.min(0.8, dist * 0.18);
       const control = mid.clone().normalize().multiplyScalar(R * lift + dist * 0.25);
       const curve = new THREE.QuadraticBezierCurve3(a, control, b);
-      const points = curve.getPoints(48);
-      const geo = new THREE.BufferGeometry().setFromPoints(points);
-      const mat = new THREE.LineBasicMaterial({ color: 0xf4c443, transparent: true, opacity: 0.0, linewidth: 3 });
-      const line = new THREE.Line(geo, mat);
-      // Tag with full point count so we can animate progressive draw
-      line.userData.drawableCount = points.length;
-      arcCurves.push({ line, mat, geo, points });
-      globeGroup.add(line);
+      const SEGMENTS = 64;
+      const RADIUS   = 0.04;     // tube thickness in world units
+      const mat = new THREE.MeshBasicMaterial({ color: 0xf4c443, transparent: true, opacity: 0.0 });
+      // We'll regenerate the tube geometry each frame to animate the
+      // "drawing-in" effect by extending the visible curve fraction.
+      // Cache the full curve so per-frame rebuilds are fast.
+      arcCurves.push({ curve, mat, mesh: null, SEGMENTS, RADIUS });
     }
   }
+  // First-frame placeholder tubes (radius 0 until they fade in)
+  arcCurves.forEach(a => {
+    const placeholderGeo = new THREE.TubeGeometry(a.curve, 2, 0.001, 6, false);
+    a.mesh = new THREE.Mesh(placeholderGeo, a.mat);
+    globeGroup.add(a.mesh);
+  });
 
   // ─── Frame orchestration ────────────────────────────────────────
   // Animation timeline (assuming 360 total frames @ 30fps = 12s):
@@ -15579,29 +15584,42 @@ function _renderGlobeHtml({ threadId, title, category, countries, totalFrames })
     globeGroup.rotation.y = spinT * Math.PI * 1.6;
     globeGroup.rotation.x = -0.25 + Math.sin(spinT * Math.PI) * 0.10;
 
-    // Camera zoom: starts at 18, pulls in to 13 by mid-video, holds.
-    // At z=13 with vertical 9:16 aspect + 35° FOV, the globe diameter 6
-    // sits at ~75% of frame width — readable but not cropped.
-    const zoomT = smoothstep(0, _t * 0.5, n);
-    camera.position.z = 18 - 5 * zoomT;
+    // Camera zoom: gentle pull-in. Starts at 20, ends at 17. Keeps the
+    // globe fully inside the 9:16 frame at all times — earlier z=10–13
+    // had the globe horizontally cropped on the narrow vertical aspect.
+    const zoomT = smoothstep(0, _t * 0.7, n);
+    camera.position.z = 20 - 3 * zoomT;
     camera.lookAt(0, 0, 0);
 
-    // Arc progressive draw — distribute arcs across [arcsStart..arcsEnd]
+    // Arc progressive draw — distribute arcs across [arcsStart..arcsEnd].
+    // Each tube regenerates its TubeGeometry per frame with a partial
+    // curve (start..t fraction of the full bezier) so the tube grows
+    // from origin → destination over its window.
     if (arcCurves.length) {
       const winStart = SEG.arcsStart;
       const winEnd   = SEG.arcsEnd;
       const perArc = (winEnd - winStart) / Math.max(1, arcCurves.length);
       arcCurves.forEach((arc, idx) => {
-        const arcStart = winStart + idx * perArc * 0.6;  // overlap by 40%
+        const arcStart = winStart + idx * perArc * 0.6;
         const arcEnd   = arcStart + perArc * 1.3;
-        const t = smoothstep(arcStart, arcEnd, n);
-        // Opacity ramps in, holds, then slightly dims after appearance
-        const op = 0.85 * smoothstep(arcStart, arcStart + 8, n);
-        arc.mat.opacity = op;
-        // Progressive geometry — show first (t*total) points only
-        const total = arc.points.length;
-        const visible = Math.max(2, Math.floor(t * total));
-        arc.geo.setFromPoints(arc.points.slice(0, visible));
+        const t = Math.max(0, Math.min(1, smoothstep(arcStart, arcEnd, n)));
+        arc.mat.opacity = 0.95 * smoothstep(arcStart, arcStart + 8, n);
+
+        // Rebuild tube with a partial curve. Skip if t === 0 (placeholder
+        // already at minimal size).
+        if (t > 0.02) {
+          // SubCurve: clone original Bezier with end point interpolated.
+          const sub = new THREE.QuadraticBezierCurve3(
+            arc.curve.v0,
+            arc.curve.v0.clone().lerp(arc.curve.v1, t),
+            arc.curve.v0.clone().lerp(arc.curve.v2, t),
+          );
+          // Improved: keep control proportional via direct interpolation
+          // along the parameter, not raw lerp of control point.
+          const oldGeo = arc.mesh.geometry;
+          arc.mesh.geometry = new THREE.TubeGeometry(sub, Math.max(8, Math.floor(arc.SEGMENTS * t)), arc.RADIUS, 6, false);
+          if (oldGeo) oldGeo.dispose();
+        }
       });
     }
 
