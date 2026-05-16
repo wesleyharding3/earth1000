@@ -15163,6 +15163,62 @@ app.post('/api/admin/social-queue/pick-now', requireAdmin, async (req, res) => {
 // platform failed. The UI surfaces both states so the admin sees which
 // platforms went live.
 const socialPublishers = require('./publishers');
+
+// TEMPORARY Chromium probe — verifies Puppeteer can launch and render on
+// this Render instance. Used as the gating test before building out the
+// /share/thread/:id/arc.mp4 video pipeline. Will be removed after the
+// pipeline is confirmed.
+app.get('/api/debug/chromium-probe', async (req, res) => {
+  const t0 = Date.now();
+  let browser;
+  try {
+    const puppeteer = require('puppeteer');
+    browser = await puppeteer.launch({
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--use-gl=swiftshader',
+      ],
+      headless: 'new',
+    });
+    const launchedAt = Date.now();
+    const page = await browser.newPage();
+    await page.setViewport({ width: 800, height: 600 });
+    // Render a simple data-URI page so we don't depend on external network
+    await page.goto('data:text/html,<html><body style="background:#0a0a0a;color:#f4ead2;font:48px sans-serif;display:flex;align-items:center;justify-content:center;height:100vh"><h1>Earth00 Probe ✓</h1></body></html>');
+    const screenshot = await page.screenshot({ type: 'png', encoding: 'base64' });
+    const renderedAt = Date.now();
+    const mem = process.memoryUsage();
+    res.json({
+      ok: true,
+      timing_ms: {
+        total: renderedAt - t0,
+        launch: launchedAt - t0,
+        render_and_capture: renderedAt - launchedAt,
+      },
+      memory_mb: {
+        rss:        Math.round(mem.rss / 1024 / 1024),
+        heap_used:  Math.round(mem.heapUsed / 1024 / 1024),
+        heap_total: Math.round(mem.heapTotal / 1024 / 1024),
+      },
+      screenshot_bytes: Buffer.from(screenshot, 'base64').length,
+      chromium_version: await browser.version(),
+    });
+  } catch (err) {
+    res.status(500).json({
+      ok: false,
+      error: err.message,
+      stack: err.stack?.split('\n').slice(0, 8),
+      elapsed_ms: Date.now() - t0,
+    });
+  } finally {
+    if (browser) {
+      try { await browser.close(); } catch (_) {}
+    }
+  }
+});
+
 app.get('/api/admin/social-queue/configured', requireAdmin, async (req, res) => {
   // Diagnostic: which publishers have credentials. Surfaced in the UI so
   // the admin can see at a glance which platforms will actually attempt
