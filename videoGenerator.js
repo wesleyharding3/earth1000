@@ -62,7 +62,13 @@ async function _captureFrames(threadId, frameDir, hostBase) {
       '--no-sandbox',
       '--disable-setuid-sandbox',
       '--disable-dev-shm-usage',
-      '--use-gl=swiftshader',
+      // SwiftShader via ANGLE — required for WebGL in headless Chrome on
+      // Linux without a GPU. The older --use-gl=swiftshader flag silently
+      // fails on modern Chrome (>= 110) with "BindToCurrentSequence failed".
+      '--use-angle=swiftshader',
+      '--enable-webgl',
+      '--ignore-gpu-blocklist',
+      '--enable-unsafe-swiftshader',
       '--hide-scrollbars',
     ],
     headless: 'new',
