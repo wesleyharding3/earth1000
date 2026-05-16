@@ -15189,50 +15189,6 @@ app.get('/api/debug/publisher-env', (req, res) => {
   res.json({ checks: result, all_matching_keys: allKeys, per_publisher_isConfigured: perPub, listConfigured_result: listResult });
 });
 
-// One-shot verification publish — temporary unauthenticated endpoint
-// for end-to-end pipeline test. Will be removed immediately after the
-// test publish completes. DO NOT leave this on for any meaningful
-// length of time — it can be triggered by anyone to publish to your
-// social accounts.
-app.post('/api/debug/social-test-publish', async (req, res) => {
-  try {
-    const composer = require('./socialDraftComposer');
-    const threadId = req.query.thread_id ? parseInt(req.query.thread_id, 10) : null;
-    let row;
-    if (threadId) {
-      const { rows } = await pool.query(`
-        SELECT id, title, description, primary_nations, secondary_nations,
-               primary_category, article_count, last_updated_at
-          FROM story_threads WHERE id = $1
-      `, [threadId]);
-      row = rows[0];
-    } else {
-      const { rows } = await pool.query(`
-        SELECT id, title, description, primary_nations, secondary_nations,
-               primary_category, article_count, last_updated_at
-          FROM story_threads
-         WHERE title IS NOT NULL AND description IS NOT NULL
-           AND article_count >= 5
-         ORDER BY last_updated_at DESC NULLS LAST
-         LIMIT 1
-      `);
-      row = rows[0];
-    }
-    if (!row) return res.status(404).json({ error: 'no thread found' });
-    const drafts = composer.composeDrafts(row);
-    const enabled = { x: true, bluesky: true, instagram: true, reddit: false, linkedin: false };
-    const { permalinks, failures } = await socialPublishers.publishAll(drafts, enabled, process.env);
-    res.json({
-      thread: { id: row.id, title: row.title, primary_nations: row.primary_nations },
-      drafts,
-      permalinks,
-      failures,
-    });
-  } catch (err) {
-    console.error('[social-test-publish]', err);
-    res.status(500).json({ error: err.message });
-  }
-});
 
 app.post('/api/admin/social-queue/:id/publish', requireAdmin, async (req, res) => {
   try {
