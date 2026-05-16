@@ -11438,6 +11438,14 @@ function _shareHtml({ title, description, imageUrl, canonicalUrl, deepLinkPath }
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => (
     {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]
   ));
+  // CTA points to the App Store. Visitors with the app already installed
+  // never land on this page (iOS Universal Links intercept the share URL
+  // before the browser renders it), so this is the visitor who DOESN'T
+  // have the app yet. The right action is "Install Earth00", not
+  // "open the page they're already on".
+  const appStoreUrl = process.env.APPLE_APP_APPLE_ID
+    ? `https://apps.apple.com/app/id${process.env.APPLE_APP_APPLE_ID}`
+    : null;
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -11483,7 +11491,7 @@ ${process.env.APPLE_APP_APPLE_ID ? `<!-- Apple smart app banner (lets iOS Safari
     <img class="preview" src="${esc(imageUrl)}" alt="${esc(title)}">
     <h1>${esc(title)}</h1>
     <p>${esc(description)}</p>
-    <a class="cta" href="${esc(deepLinkPath)}">Open in Earth00</a>
+    ${appStoreUrl ? `<a class="cta" href="${esc(appStoreUrl)}">Get Earth00 on the App Store</a>` : ''}
     <div class="footer">earth00.com</div>
   </div>
 </body>
