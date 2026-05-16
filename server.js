@@ -15167,45 +15167,6 @@ app.get('/api/admin/social-queue/configured', requireAdmin, async (req, res) => 
   }
 });
 
-// TEMPORARY heatmap debug — bypass auth + cache, return raw payload.
-// Used to diagnose extractor/rank issues. Remove after debugging.
-app.post('/api/debug/heatmap-trace', async (req, res) => {
-  try {
-    const question = String(req.body?.question || '').trim();
-    const mode = String(req.body?.mode || 'rank').toLowerCase();
-    if (!question) return res.status(400).json({ error: 'question required' });
-    // Capture extractor invocations + results in-process
-    const extractors = require('./extractors');
-    const trace = { extractor_calls: [] };
-    const _origRun = extractors.runExtractor;
-    extractors.runExtractor = async function(name, spec, resolveName, env) {
-      const t0 = Date.now();
-      const result = await _origRun.call(this, name, spec, resolveName, env);
-      trace.extractor_calls.push({
-        name,
-        input: spec,
-        ok: result?.ok,
-        elapsed_ms: Date.now() - t0,
-        values_count: result?.payload?.values?.length || 0,
-        skipped_count: result?.payload?.skipped?.length || 0,
-        source_note: result?.payload?.source_note,
-        error: result?.error,
-        sample_values: (result?.payload?.values || []).slice(0, 8),
-      });
-      return result;
-    };
-    try {
-      const result = await heatmapResolver.resolveHeatmap(question, mode, { forceFresh: true });
-      res.json({ ...result, debug_trace: trace });
-    } finally {
-      extractors.runExtractor = _origRun;
-    }
-  } catch (err) {
-    console.error('[heatmap-trace]', err);
-    res.status(500).json({ error: err.message, stack: err.stack?.split('\n').slice(0, 5) });
-  }
-});
-
 app.post('/api/admin/social-queue/:id/publish', requireAdmin, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
