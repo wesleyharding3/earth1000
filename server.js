@@ -15203,22 +15203,23 @@ app.get('/share/thread/:id/arc.mp4', async (req, res) => {
     // overlay can bake title / subtitle / flag chips into the recording.
     const { rows } = await pool.query(`
       SELECT id, title, primary_nations, secondary_nations, article_count,
-             language_count, country_count, primary_category
+             distinct_source_count, primary_category
         FROM story_threads WHERE id = $1
     `, [id]);
     if (!rows.length) return res.status(404).send('thread not found');
     const t = rows[0];
+    const isos = [
+      ...(Array.isArray(t.primary_nations) ? t.primary_nations : []),
+      ...(Array.isArray(t.secondary_nations) ? t.secondary_nations : []),
+    ].slice(0, 8);
     const subtitleBits = [];
-    if (Number.isFinite(t.article_count))  subtitleBits.push(`${t.article_count} articles`);
-    if (Number.isFinite(t.country_count))  subtitleBits.push(`${t.country_count} countries`);
-    if (Number.isFinite(t.language_count)) subtitleBits.push(`${t.language_count} languages`);
+    if (Number.isFinite(t.article_count))         subtitleBits.push(`${t.article_count} articles`);
+    if (isos.length)                              subtitleBits.push(`${isos.length} countries`);
+    if (Number.isFinite(t.distinct_source_count)) subtitleBits.push(`${t.distinct_source_count} sources`);
     const threadMeta = {
       title:    t.title || 'Story',
       subtitle: subtitleBits.length ? `Storyline · ${subtitleBits.join(' · ')}` : 'Storyline',
-      flagIsos: [
-        ...(Array.isArray(t.primary_nations) ? t.primary_nations : []),
-        ...(Array.isArray(t.secondary_nations) ? t.secondary_nations : []),
-      ].slice(0, 8),
+      flagIsos: isos,
     };
     const mp4Path = await videoGenerator.composeArcVideo(id, { threadMeta });
     res.setHeader('Content-Type', 'video/mp4');
