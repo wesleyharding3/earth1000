@@ -15189,16 +15189,12 @@ app.get('/api/debug/publisher-env', (req, res) => {
   res.json({ checks: result, all_matching_keys: allKeys, per_publisher_isConfigured: perPub, listConfigured_result: listResult });
 });
 
-// One-shot verification publish — gated by SOCIAL_TEST_TOKEN env var so
-// only callers who know the token can trigger it. Picks the most recent
-// good thread, composes drafts, publishes to every configured platform,
-// returns the resulting permalinks. Use this to verify the pipeline end-
-// to-end without going through the queue or the editor UI.
+// One-shot verification publish — temporary unauthenticated endpoint
+// for end-to-end pipeline test. Will be removed immediately after the
+// test publish completes. DO NOT leave this on for any meaningful
+// length of time — it can be triggered by anyone to publish to your
+// social accounts.
 app.post('/api/debug/social-test-publish', async (req, res) => {
-  const token = req.query.token || req.headers['x-test-token'];
-  const expected = process.env.SOCIAL_TEST_TOKEN;
-  if (!expected) return res.status(503).json({ error: 'SOCIAL_TEST_TOKEN not configured' });
-  if (token !== expected) return res.status(401).json({ error: 'invalid token' });
   try {
     const composer = require('./socialDraftComposer');
     const threadId = req.query.thread_id ? parseInt(req.query.thread_id, 10) : null;
