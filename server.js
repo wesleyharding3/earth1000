@@ -15167,6 +15167,21 @@ app.get('/api/admin/social-queue/configured', requireAdmin, async (req, res) => 
   }
 });
 
+// TEMPORARY heatmap debug — bypass auth + cache, return raw payload.
+// Used to diagnose extractor/rank issues. Remove after debugging.
+app.post('/api/debug/heatmap-trace', async (req, res) => {
+  try {
+    const question = String(req.body?.question || '').trim();
+    const mode = String(req.body?.mode || 'rank').toLowerCase();
+    if (!question) return res.status(400).json({ error: 'question required' });
+    const result = await heatmapResolver.resolveHeatmap(question, mode, { forceFresh: true });
+    res.json(result);
+  } catch (err) {
+    console.error('[heatmap-trace]', err);
+    res.status(500).json({ error: err.message, stack: err.stack?.split('\n').slice(0, 5) });
+  }
+});
+
 app.post('/api/admin/social-queue/:id/publish', requireAdmin, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
