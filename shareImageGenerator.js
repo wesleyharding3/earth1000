@@ -435,10 +435,10 @@ function _summarySvg({ description, hasHero, y }) {
     : trimmed;
   // Wrap width matches the title's chars-per-line so the two blocks
   // share a visual rhythm. Wider zone without a hero panel.
-  const wrapWidth = hasHero ? 32 : 44;
+  const wrapWidth = hasHero ? 36 : 50;
   const lines = _wrapLines(capped, wrapWidth, 3);
-  const fontSize = 22;
-  const lineH = 30;
+  const fontSize = 19;
+  const lineH = 26;
   return lines.map((line, i) => `
     <text x="56" y="${y + i * lineH}"
           font-family="${FONT_FAMILY}"
@@ -454,12 +454,12 @@ async function _renderThreadSvg({ title, description, isos, category, articleCou
   const heroSvg = await _heroPanel(heroImageUrl, heroCatalogImageUrl);
   const hasHero = !!heroSvg;
 
-  // Title fits up to 3 lines with slightly tightened font/line height
-  // so the 3-line summary block below has room without overlapping the
-  // chip + coverage row.
+  // Title 2 lines max. Summary block (3 lines, tighter font) lives below.
+  // Constraint: title + summary + coverage + chips must all fit above
+  // the brand footer at H-38.
   const lines = hasHero
-    ? _wrapLines(title || 'Untitled story', 24, 3)
-    : _wrapLines(title || 'Untitled story', 32, 3);
+    ? _wrapLines(title || 'Untitled story', 24, 2)
+    : _wrapLines(title || 'Untitled story', 32, 2);
   const titleSize = hasHero ? 48 : 54;
   const titleLineH = hasHero ? 60 : 66;
   const titleSvg = lines.map((line, i) => {
@@ -470,16 +470,12 @@ async function _renderThreadSvg({ title, description, isos, category, articleCou
                   fill="${BRAND.cream}">${_esc(line)}</text>`;
   }).join('\n');
 
-  // Summary block sits 36px below the title's last visible baseline.
-  // Anchors off the actual line count so a short single-line title
-  // doesn't leave a giant empty band before the summary.
+  // Summary block sits 28px below the title's last visible baseline.
   const titleBottomY = 240 + (lines.length - 1) * titleLineH;
-  const summarySvg = _summarySvg({ description, hasHero, y: titleBottomY + 40 });
+  const summarySvg = _summarySvg({ description, hasHero, y: titleBottomY + 28 });
 
-  // Chips moved down (H-130 → H-80) to make room for the longer
-  // title + summary stack above. Chip row + coverage row still
-  // finish above the brand footer with consistent margins.
-  const chipsY = H - 80;
+  // Chips at H-130 — original position, well above the brand footer at H-38.
+  const chipsY = H - 130;
   const coverageText = _coverageLine({ articleCount, languageCount, countryCount });
   // Coverage font bumped to 20px (was 18) to match the upgraded
   // summary + footer typography. Letter-spacing kept at 1.4 for
@@ -528,8 +524,8 @@ async function _renderLineSvg({ title, description, isos, category, articleCount
 
   // See _renderThreadSvg for full layout rationale.
   const lines = hasHero
-    ? _wrapLines(title || 'Untitled timeline', 24, 3)
-    : _wrapLines(title || 'Untitled timeline', 32, 3);
+    ? _wrapLines(title || 'Untitled timeline', 24, 2)
+    : _wrapLines(title || 'Untitled timeline', 32, 2);
   const titleSize = hasHero ? 48 : 54;
   const titleLineH = hasHero ? 60 : 66;
   const titleSvg = lines.map((line, i) => {
@@ -541,9 +537,9 @@ async function _renderLineSvg({ title, description, isos, category, articleCount
   }).join('\n');
 
   const titleBottomY = 240 + (lines.length - 1) * titleLineH;
-  const summarySvg = _summarySvg({ description, hasHero, y: titleBottomY + 40 });
+  const summarySvg = _summarySvg({ description, hasHero, y: titleBottomY + 28 });
 
-  const chipsY = H - 80;
+  const chipsY = H - 130;
   const coverageText = _coverageLine({ articleCount, languageCount, countryCount });
   const coverageSvg = coverageText ? `
     <text x="56" y="${chipsY - 22}"
