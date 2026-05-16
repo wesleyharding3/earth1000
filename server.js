@@ -11486,12 +11486,6 @@ ${process.env.APPLE_APP_APPLE_ID ? `<!-- Apple smart app banner (lets iOS Safari
     <a class="cta" href="${esc(deepLinkPath)}">Open in Earth00</a>
     <div class="footer">earth00.com</div>
   </div>
-  <script>
-    // Universal Link attempt — the app intercepts when installed. If
-    // not installed, the app-argument deep link is a no-op and the
-    // user stays on the web page.
-    setTimeout(() => { try { window.location.href = ${JSON.stringify(deepLinkPath)}; } catch (_) {} }, 250);
-  </script>
 </body>
 </html>`;
 }
