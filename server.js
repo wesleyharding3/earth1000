@@ -15165,6 +15165,19 @@ app.get('/api/admin/social-queue/configured', requireAdmin, async (req, res) => 
   }
 });
 
+app.get('/api/debug/publisher-env', (req, res) => {
+  const checks = [
+    'BLUESKY_HANDLE', 'BLUESKY_APP_PASSWORD',
+    'X_API_KEY', 'X_API_SECRET', 'X_ACCESS_TOKEN', 'X_ACCESS_TOKEN_SECRET',
+    'IG_ACCESS_TOKEN', 'IG_USER_ID',
+    'REDDIT_CLIENT_ID', 'REDDIT_CLIENT_SECRET', 'REDDIT_USERNAME', 'REDDIT_PASSWORD', 'REDDIT_USER_AGENT',
+    'LINKEDIN_ACCESS_TOKEN', 'LINKEDIN_AUTHOR_URN',
+  ];
+  const result = checks.map(k => ({ name: k, set: !!process.env[k], len: (process.env[k] || '').length }));
+  const allKeys = Object.keys(process.env).filter(k => /^(BLUESKY|X_|IG_|REDDIT|LINKEDIN|INSTAGRAM|TWITTER)/i.test(k)).sort();
+  res.json({ checks: result, all_matching_keys: allKeys });
+});
+
 app.post('/api/admin/social-queue/:id/publish', requireAdmin, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
