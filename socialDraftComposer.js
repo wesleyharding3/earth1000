@@ -172,6 +172,24 @@ function composeBluesky(thread) {
   return { body: body.slice(0, BLUESKY_MAX) };
 }
 
+function composeThreads(thread) {
+  // Threads: 500 char limit. Renders OG link previews automatically, so
+  // text + share URL gets the stylized card for free — same pattern as
+  // BlueSky (no explicit image attachment needed).
+  const flags = flagRow(thread.primary_nations, 6);
+  const link = shareLink(thread.id);
+  const reserve = link.length + flags.length + 4;
+  const room = 500 - reserve;
+  const hook = truncateAtWord(thread.title, Math.max(80, Math.floor(room * 0.5)));
+  const desc = thread.description
+    ? truncateAtWord(thread.description, room - hook.length - 4)
+    : '';
+  const parts = [hook];
+  if (desc) parts.push('', desc);
+  parts.push('', `${flags ? flags + ' ' : ''}${link}`);
+  return { body: parts.join('\n').slice(0, 500) };
+}
+
 function composeInstagram(thread) {
   const flags = flagRow(thread.primary_nations, 8);
   const link  = shareLink(thread.id);
@@ -209,6 +227,7 @@ function composeDrafts(thread) {
     linkedin:  composeLinkedIn(thread),
     bluesky:   composeBluesky(thread),
     instagram: composeInstagram(thread),
+    threads:   composeThreads(thread),
   };
 }
 

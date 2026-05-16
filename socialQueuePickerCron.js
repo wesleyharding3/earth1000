@@ -39,7 +39,7 @@ const AUTO_PUBLISH = process.argv.includes('--auto-publish');
 // platform's billing is in a bad state.
 const PLATFORMS_DISABLED = new Set();
 for (const arg of process.argv) {
-  const m = arg.match(/^--no-(x|reddit|linkedin|bluesky|instagram)$/);
+  const m = arg.match(/^--no-(x|reddit|linkedin|bluesky|instagram|threads)$/);
   if (m) PLATFORMS_DISABLED.add(m[1]);
 }
 
@@ -256,7 +256,7 @@ function pickBatch(candidates) {
     // disabled (via --no-<platform>) set to false. The publishAll dispatcher
     // skips platforms set to false.
     const platforms_enabled = {};
-    for (const p of ['x', 'reddit', 'linkedin', 'bluesky', 'instagram']) {
+    for (const p of ['x', 'reddit', 'linkedin', 'bluesky', 'instagram', 'threads']) {
       platforms_enabled[p] = !PLATFORMS_DISABLED.has(p);
     }
 

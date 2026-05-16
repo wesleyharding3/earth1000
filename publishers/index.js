@@ -30,8 +30,9 @@ const x         = require('./x');
 const reddit    = require('./reddit');
 const linkedin  = require('./linkedin');
 const instagram = require('./instagram');
+const threads   = require('./threads');
 
-const REGISTRY = { bluesky, x, reddit, linkedin, instagram };
+const REGISTRY = { bluesky, x, reddit, linkedin, instagram, threads };
 
 function listConfigured(env = process.env) {
   return Object.entries(REGISTRY)

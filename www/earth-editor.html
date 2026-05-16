@@ -4818,7 +4818,7 @@
     // Draft-then-approve UI for the social posting pipeline. Reads from
     // /api/admin/social-queue (filled by socialQueuePickerCron.js).
     // ════════════════════════════════════════════════════════════════
-    const SQ_LIMITS = { x: 280, reddit_title: 300, linkedin: 3000, bluesky: 300, instagram: 2200 };
+    const SQ_LIMITS = { x: 280, reddit_title: 300, linkedin: 3000, bluesky: 300, instagram: 2200, threads: 500 };
     const SQ_PLATFORMS = ['x', 'reddit', 'linkedin', 'bluesky', 'instagram'];
     let _sqItems = [];
 
@@ -4842,7 +4842,7 @@
         const pubEl = document.getElementById('sq-publisher-status');
         if (statusRes && statusRes.ok) {
           const cfg = await statusRes.json();
-          const allPlats = ['x', 'reddit', 'linkedin', 'bluesky', 'instagram'];
+          const allPlats = ['x', 'reddit', 'linkedin', 'bluesky', 'instagram', 'threads'];
           pubEl.innerHTML = allPlats.map(p => {
             const ok = (cfg.configured || []).includes(p);
             return `<span style="padding:2px 6px;border-radius:4px;background:${ok ? '#064e3b' : '#374151'};color:${ok ? '#34d399' : '#9ca3af'}">${ok ? '✓' : '✗'} ${p}</span>`;
@@ -4897,6 +4897,7 @@
           ${renderPlatformCard(item.id, 'reddit', d.reddit || {}, platforms.reddit !== false, ['title', 'body'], { title: SQ_LIMITS.reddit_title })}
           ${renderPlatformCard(item.id, 'linkedin', d.linkedin || {}, platforms.linkedin !== false, ['body'], { body: SQ_LIMITS.linkedin })}
           ${renderPlatformCard(item.id, 'instagram', d.instagram || {}, platforms.instagram !== false, ['caption'], { caption: SQ_LIMITS.instagram })}
+          ${renderPlatformCard(item.id, 'threads', d.threads || {}, platforms.threads !== false, ['body'], { body: SQ_LIMITS.threads })}
         </div>
 
         <div class="sq-actions">
