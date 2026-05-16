@@ -15165,6 +15165,17 @@ app.get('/api/admin/social-queue/configured', requireAdmin, async (req, res) => 
   }
 });
 
+app.get('/api/debug/threads-env-check', (req, res) => {
+  res.json({
+    THREADS_ACCESS_TOKEN_set: !!process.env.THREADS_ACCESS_TOKEN,
+    THREADS_ACCESS_TOKEN_len: (process.env.THREADS_ACCESS_TOKEN || '').length,
+    THREADS_USER_ID_set: !!process.env.THREADS_USER_ID,
+    THREADS_USER_ID_value: process.env.THREADS_USER_ID || null,
+    threads_isConfigured: !!(process.env.THREADS_ACCESS_TOKEN && process.env.THREADS_USER_ID),
+    all_threads_keys: Object.keys(process.env).filter(k => /threads/i.test(k)).sort(),
+  });
+});
+
 // TEMPORARY Threads-only test publish — will be removed after verification.
 app.post('/api/debug/threads-test', async (req, res) => {
   try {
