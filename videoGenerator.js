@@ -71,9 +71,13 @@ async function _captureFrames(threadId, frameDir, hostBase) {
     const page = await browser.newPage();
     await page.setViewport({ width: WIDTH, height: HEIGHT, deviceScaleFactor: 1 });
     const url = `${hostBase}/render-globe?thread=${threadId}&frames=${FRAMES}`;
-    await page.goto(url, { waitUntil: 'networkidle0', timeout: 30000 });
-    // Page sets window.RENDER_READY = true after texture load + first paint.
-    await page.waitForFunction(() => window.RENDER_READY === true, { timeout: 30000 });
+    // `domcontentloaded` is enough — we don't need to wait for all network
+    // to settle (three.js loads from CDN, but the RENDER_READY signal below
+    // tells us when the scene is actually rendered).
+    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    // Page sets window.RENDER_READY = true after three.js executes + first
+    // paint. 60s timeout is generous for unpkg.com latency on cold Render.
+    await page.waitForFunction(() => window.RENDER_READY === true, { timeout: 60000 });
 
     for (let i = 0; i < FRAMES; i++) {
       await page.evaluate(n => window.advanceToFrame(n), i);
