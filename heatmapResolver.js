@@ -332,6 +332,11 @@ async function _runToolLoop(question, mode, isoCatalog, tools, resolveName, env)
   const claude = _getClient();
   const messages = [{ role: 'user', content: question }];
   let lastResp = null;
+  // Union of all country ISOs returned by extractor tool_results across
+  // every turn. Used downstream to enforce: if Claude claims
+  // confidence_tier='extracted', it can only include countries that
+  // actually appeared in an extractor's output (no hallucinated entries).
+  const extractedIsos = new Set();
 
   for (let turn = 0; turn < MAX_TURNS; turn++) {
     const resp = await claude.messages.create({
@@ -343,28 +348,18 @@ async function _runToolLoop(question, mode, isoCatalog, tools, resolveName, env)
     });
     lastResp = resp;
 
-    // Find tool_use blocks (Anthropic-hosted tools like web_search are
-    // executed server-side by Anthropic — we only need to handle our
-    // custom extractor tools + the terminal tools).
     const toolUses = (resp.content || []).filter(b => b.type === 'tool_use');
 
-    // If Claude has reached a terminal tool, exit the loop and let the
-    // caller extract via _extractFirstPass.
     const terminalTool = toolUses.find(b => b.name === 'set_country_values' || b.name === 'decline_question');
-    if (terminalTool) return resp;
+    if (terminalTool) return { resp, extractedIsos };
 
-    // If no tool_use at all, Claude is done without producing data — return as-is.
     if (!toolUses.length || resp.stop_reason !== 'tool_use') {
-      return resp;
+      return { resp, extractedIsos };
     }
 
-    // Otherwise: run any extractor tool calls and feed back the results.
     messages.push({ role: 'assistant', content: resp.content });
     const toolResults = [];
     for (const tu of toolUses) {
-      // Skip Anthropic-hosted tools (server-managed); they don't appear
-      // as tool_use blocks in the standard sense — but in case they do,
-      // ignore them.
       if (tu.name === 'web_search') continue;
 
       const ext = extractors.getExtractorByName(tu.name);
@@ -386,6 +381,12 @@ async function _runToolLoop(question, mode, isoCatalog, tools, resolveName, env)
           is_error: true,
         });
       } else {
+        // Collect ISOs from this extractor's output. Each extractor's
+        // result.payload.values is an array of { iso, value, ... }.
+        const isos = Array.isArray(result.payload?.values) ? result.payload.values : [];
+        for (const v of isos) {
+          if (v?.iso) extractedIsos.add(String(v.iso).toUpperCase());
+        }
         toolResults.push({
           type: 'tool_result',
           tool_use_id: tu.id,
@@ -396,24 +397,18 @@ async function _runToolLoop(question, mode, isoCatalog, tools, resolveName, env)
     }
 
     if (!toolResults.length) {
-      // Only web_search calls happened (server-managed) — Anthropic
-      // already added their results. Loop again for another Claude turn.
-      // Push a no-op tool result so the conversation can continue.
-      // (In practice we shouldn't hit this; web_search is opaque to us.)
       messages.push({ role: 'user', content: 'Continue.' });
     } else {
       messages.push({ role: 'user', content: toolResults });
     }
   }
 
-  // Loop exhausted without a terminal tool. Treat as anomalous; return
-  // the last response so the caller can decide (likely => refusal).
   console.warn(`[heatmapResolver] tool loop hit MAX_TURNS=${MAX_TURNS} without a terminal tool call`);
-  return lastResp;
+  return { resp: lastResp, extractedIsos };
 }
 
 // ── Validate + extract first-pass tool result ───────────────────────────
-function _extractFirstPass(claudeResp, mode, rawQuestion, isoSet) {
+function _extractFirstPass(claudeResp, mode, rawQuestion, isoSet, extractedIsos = null) {
   const toolUse = (claudeResp.content || []).find(b => b.type === 'tool_use');
   if (!toolUse) {
     const err = new Error('Model returned no tool call');
@@ -431,9 +426,6 @@ function _extractFirstPass(claudeResp, mode, rawQuestion, isoSet) {
     payload.legend      = String(raw.legend || rawQuestion).slice(0, 120);
     payload.unit        = raw.unit ? String(raw.unit).slice(0, 16) : (mode === 'percent' ? '%' : (mode === 'rank' ? 'rank' : ''));
     payload.source_note = String(raw.source_note || 'AI estimate — verify before citing').slice(0, 240);
-    // Confidence tier — recorded so the caller can surface a verified
-    // vs. estimate badge to the client. Default 'estimate' when Claude
-    // omitted it (graceful fallback during the rollout).
     payload.confidence_tier = (raw.confidence_tier === 'extracted') ? 'extracted' : 'estimate';
     const seen = new Set();
     const rawArr = Array.isArray(raw.values) ? raw.values : [];
@@ -448,6 +440,28 @@ function _extractFirstPass(claudeResp, mode, rawQuestion, isoSet) {
         return true;
       })
       .map(v => ({ iso: v.iso, value: v.value }));
+
+    // Strict-extracted filter: if Claude claimed confidence_tier='extracted',
+    // restrict the answer to ONLY countries the extractor(s) actually
+    // returned. Catches the failure mode where Claude pads out coverage
+    // with its own estimates while still claiming the answer is extracted.
+    // Without this, mid-tier rankings on quantitative questions (e.g.
+    // "Spain > France" for elevation range) come out wrong because Claude
+    // is using memory for countries the extractor didn't cover.
+    if (payload.confidence_tier === 'extracted' && extractedIsos && extractedIsos.size > 0) {
+      const before = payload.values.length;
+      payload.values = payload.values.filter(v => extractedIsos.has(v.iso));
+      const dropped = before - payload.values.length;
+      if (dropped > 0) {
+        console.warn(`[heatmapResolver] strict filter dropped ${dropped}/${before} values not present in extractor results`);
+        const note = ` [${dropped} unverified value${dropped === 1 ? '' : 's'} dropped]`;
+        payload.source_note = (payload.source_note + note).slice(0, 240);
+      }
+      // Refresh `seen` so downstream fill-in pass (if it runs) sees the
+      // post-filter coverage, not the pre-filter inflated count.
+      seen.clear();
+      for (const v of payload.values) seen.add(v.iso);
+    }
 
     // Safety net for rank-mode: if Claude forwarded raw extractor values
     // (meters, dollars, people, etc.) instead of converting to 1..N
@@ -695,8 +709,8 @@ async function resolveHeatmap(question, mode, opts = {}) {
   //    them and feed structured results back. The loop exits when
   //    Claude calls a terminal tool (set_country_values or
   //    decline_question). See _runToolLoop for the protocol.
-  const firstResp = await _runToolLoop(rawQuestion, m, isoCatalog, tools, resolveName, extractorEnv);
-  let { payload, seen } = _extractFirstPass(firstResp, m, rawQuestion, isoSet);
+  const { resp: firstResp, extractedIsos } = await _runToolLoop(rawQuestion, m, isoCatalog, tools, resolveName, extractorEnv);
+  let { payload, seen } = _extractFirstPass(firstResp, m, rawQuestion, isoSet, extractedIsos);
 
   // 4. Estimate fallback — only when first pass declined with kind='low_data'.
   // Other decline kinds (biased / no_mapping / dangerous) stay declined.
@@ -720,8 +734,26 @@ async function resolveHeatmap(question, mode, opts = {}) {
   // 5. Optional second-pass fill-in for rank/binary truncation.
   // Skip on estimate path — fill-in's prompt re-asserts the 85% confidence
   // floor, which contradicts the estimate intent.
-  if (!opts.skipFillIn && !payload.refusal && !isEstimate) {
+  // ALSO skip on extracted path — fill-in asks Claude to estimate
+  // missing countries from memory, which is exactly the hallucination
+  // we just stripped via the strict filter above. Letting it run would
+  // re-pollute the answer with the same wrong values we dropped.
+  // Accuracy > coverage: a 60-country verified ranking beats a 195-
+  // country half-verified one.
+  if (!opts.skipFillIn && !payload.refusal && !isEstimate && payload.confidence_tier !== 'extracted') {
     await _fillInPass({ payload, seen, mode: m, rawQuestion, countryRows, isoSet, isoCatalog, tools });
+  }
+
+  // After all passes (including fill-in for non-extracted paths), re-run
+  // the rank-mode auto-rank if values were added by the fill-in pass.
+  // Otherwise rank values can have gaps (e.g. 1, 2, 3, 5, 8) after the
+  // strict filter dropped some entries — fix by re-normalizing to 1..N.
+  if (mode === 'rank' && payload.values.length >= 5 && !payload.refusal) {
+    const allIntegers = payload.values.every(v => Number.isInteger(v.value));
+    if (allIntegers) {
+      const sorted = [...payload.values].sort((a, b) => a.value - b.value);
+      payload.values = sorted.map((v, i) => ({ iso: v.iso, value: i + 1 }));
+    }
   }
 
   // 6. Persist to cache (UPSERT). The estimate caveat is encoded in
