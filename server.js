@@ -15269,8 +15269,11 @@ function _renderGlobeHtml({ threadId, title, category, countries, totalFrames })
     return String.fromCodePoint(0x1F1E6 + c.charCodeAt(0) - 65) +
            String.fromCodePoint(0x1F1E6 + c.charCodeAt(1) - 65);
   };
+  // Flag emojis don't render in headless Chromium on Linux (no emoji
+  // font installed). Fall back to ISO country codes shown as styled
+  // text — readable everywhere, no font dependency.
   const flagRow = countries.filter(c => c.primary).slice(0, 6)
-    .map(c => isoFlag(c.iso)).join(' ');
+    .map(c => c.iso).join('  ·  ');
   const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
   return `<!doctype html>
@@ -15291,8 +15294,8 @@ function _renderGlobeHtml({ threadId, title, category, countries, totalFrames })
   #title { font-size:84px; font-weight:800; line-height:1.05; letter-spacing:-2px;
            color:#f4ead2; margin-top:24px; opacity:0;
            text-shadow:0 4px 16px rgba(0,0,0,0.65); }
-  #flags { font-size:64px; line-height:1; margin-top:32px; opacity:0;
-           letter-spacing:8px; }
+  #flags { font-size:36px; font-weight:700; line-height:1; margin-top:28px;
+           opacity:0; letter-spacing:4px; color:#d4a843; }
   #overlay-bottom { position:absolute; left:0; right:0; bottom:140px;
                     padding:0 60px; text-align:center; z-index:5; pointer-events:none; }
   #brand { font-size:48px; font-weight:800; letter-spacing:8px;
@@ -15365,25 +15368,99 @@ function _renderGlobeHtml({ threadId, title, category, countries, totalFrames })
   const globeGroup = new THREE.Group();
   scene.add(globeGroup);
 
-  // Solid sphere (deep ocean-blue)
+  // Bright sea-blue globe — needs enough contrast with the dark
+  // background to actually read as a sphere. Earlier 0x0c2342 was
+  // basically invisible against 0x040810.
   const globeMat = new THREE.MeshPhongMaterial({
-    color: 0x0c2342,
-    specular: 0x223355,
-    shininess: 30,
+    color:     0x1a4a82,
+    specular:  0x4a7ab8,
+    shininess: 60,
+    emissive:  0x0a1830,    // self-lit so it's visible even in shadow
     transparent: false,
   });
   const globeMesh = new THREE.Mesh(new THREE.SphereGeometry(R, 64, 64), globeMat);
   globeGroup.add(globeMesh);
 
-  // Wireframe lat/lon grid overlay for visual interest
-  const wireMat = new THREE.MeshBasicMaterial({
+  // Bright gold wireframe — visible lat/lon grid, gives the sphere
+  // structure and motion cues during rotation.
+  const wireMat = new THREE.LineBasicMaterial({
     color: 0xd4a843,
-    wireframe: true,
     transparent: true,
-    opacity: 0.10,
+    opacity: 0.55,
   });
-  const wireMesh = new THREE.Mesh(new THREE.SphereGeometry(R + 0.005, 24, 16), wireMat);
-  globeGroup.add(wireMesh);
+  const wireGeo = new THREE.WireframeGeometry(new THREE.SphereGeometry(R + 0.008, 32, 16));
+  globeGroup.add(new THREE.LineSegments(wireGeo, wireMat));
+
+  // Atmospheric outer halo — soft gold glow around the silhouette.
+  // Renders behind everything else, gives the globe edge definition
+  // against the dark space background.
+  const haloMat = new THREE.MeshBasicMaterial({
+    color: 0xd4a843,
+    transparent: true,
+    opacity: 0.18,
+    side: THREE.BackSide,
+  });
+  const haloMesh = new THREE.Mesh(new THREE.SphereGeometry(R * 1.08, 48, 48), haloMat);
+  globeGroup.add(haloMesh);
+
+  // Continent overlays — procedural land outlines. We draw a low-res
+  // earth landmask onto an offscreen canvas, project to a texture, and
+  // overlay it as a second sphere slightly above the ocean sphere.
+  // This gives recognizable continent shapes without needing an external
+  // texture asset.
+  {
+    const TEX_W = 1024, TEX_H = 512;
+    const cv = document.createElement('canvas');
+    cv.width = TEX_W; cv.height = TEX_H;
+    const ctx = cv.getContext('2d');
+    ctx.fillStyle = 'rgba(0,0,0,0)';
+    ctx.fillRect(0, 0, TEX_W, TEX_H);
+    ctx.fillStyle = '#1f6b3a';   // continent green
+    // Coarse continent shapes — lat/lon → canvas (equirectangular)
+    // Format: [{ name, points: [[lat,lon],...] }]
+    const CONTINENTS = [
+      // North America
+      [[71,-160],[60,-140],[50,-130],[34,-118],[20,-105],[15,-95],[18,-80],[28,-80],[45,-65],[60,-58],[65,-90],[70,-130]],
+      // South America
+      [[12,-72],[5,-78],[-15,-75],[-35,-70],[-55,-67],[-50,-58],[-35,-55],[-20,-40],[-5,-35],[5,-50],[12,-72]],
+      // Europe + N Africa
+      [[71,5],[60,30],[55,40],[45,40],[36,30],[30,15],[36,-5],[44,-9],[50,-5],[60,5],[71,5]],
+      // Africa (sub-saharan)
+      [[20,20],[15,40],[0,45],[-20,40],[-35,18],[-22,15],[-5,8],[10,-10],[18,-15],[20,20]],
+      // Asia (broad)
+      [[71,55],[65,90],[60,130],[55,160],[40,140],[25,120],[10,105],[5,95],[20,80],[30,60],[45,45],[60,40],[71,55]],
+      // India subcontinent
+      [[30,72],[20,68],[8,77],[12,85],[24,90],[30,80],[30,72]],
+      // SE Asia/Indonesia
+      [[20,95],[10,100],[0,105],[-10,115],[-5,135],[5,128],[15,108],[20,95]],
+      // Australia
+      [[-12,128],[-22,115],[-35,118],[-38,138],[-30,153],[-15,144],[-12,128]],
+      // Antarctica strip
+      [[-65,-180],[-72,-90],[-75,0],[-72,90],[-65,180],[-65,-180]],
+    ];
+    function project(lat, lon) {
+      return [((lon + 180) / 360) * TEX_W, ((90 - lat) / 180) * TEX_H];
+    }
+    CONTINENTS.forEach(poly => {
+      ctx.beginPath();
+      poly.forEach(([lat, lon], i) => {
+        const [x, y] = project(lat, lon);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      });
+      ctx.closePath();
+      ctx.fill();
+    });
+    const tex = new THREE.CanvasTexture(cv);
+    tex.needsUpdate = true;
+    const landMat = new THREE.MeshPhongMaterial({
+      map: tex,
+      transparent: true,
+      opacity: 0.85,
+      emissive: 0x0a1a08,
+    });
+    const landMesh = new THREE.Mesh(new THREE.SphereGeometry(R + 0.005, 64, 64), landMat);
+    globeGroup.add(landMesh);
+  }
 
   // ─── Country markers ────────────────────────────────────────────
   // Convert lat/lon → 3D position on the sphere surface
@@ -15397,21 +15474,26 @@ function _renderGlobeHtml({ threadId, title, category, countries, totalFrames })
     );
   }
 
+  // Markers stay small (no screen-space scaling) so they don't bloat
+  // when the camera zooms in. Primary = bright gold dot, secondary =
+  // smaller cream dot.
   const markerMaterialPrimary = new THREE.MeshBasicMaterial({ color: 0xf4c443 });
-  const markerMaterialSecondary = new THREE.MeshBasicMaterial({ color: 0xa9b8d8 });
+  const markerMaterialSecondary = new THREE.MeshBasicMaterial({ color: 0xe6deca });
   COUNTRIES.forEach((c) => {
-    const pos = latLonToVec3(c.lat, c.lon, R + 0.04);
+    const pos = latLonToVec3(c.lat, c.lon, R + 0.06);
     const mat = c.primary ? markerMaterialPrimary : markerMaterialSecondary;
-    const m = new THREE.Mesh(new THREE.SphereGeometry(c.primary ? 0.10 : 0.07, 16, 16), mat);
+    const m = new THREE.Mesh(new THREE.SphereGeometry(c.primary ? 0.07 : 0.05, 12, 12), mat);
     m.position.copy(pos);
     globeGroup.add(m);
-    // Faint halo
-    const halo = new THREE.Mesh(
-      new THREE.SphereGeometry((c.primary ? 0.18 : 0.12), 16, 16),
-      new THREE.MeshBasicMaterial({ color: mat.color, transparent: true, opacity: 0.18 })
-    );
-    halo.position.copy(pos);
-    globeGroup.add(halo);
+    // Soft halo for primary nations only (de-clutters the secondary set)
+    if (c.primary) {
+      const halo = new THREE.Mesh(
+        new THREE.SphereGeometry(0.13, 16, 16),
+        new THREE.MeshBasicMaterial({ color: mat.color, transparent: true, opacity: 0.30 })
+      );
+      halo.position.copy(pos);
+      globeGroup.add(halo);
+    }
   });
 
   // ─── Flow arcs between primary nations ──────────────────────────
@@ -15432,7 +15514,7 @@ function _renderGlobeHtml({ threadId, title, category, countries, totalFrames })
       const curve = new THREE.QuadraticBezierCurve3(a, control, b);
       const points = curve.getPoints(48);
       const geo = new THREE.BufferGeometry().setFromPoints(points);
-      const mat = new THREE.LineBasicMaterial({ color: 0xf4c443, transparent: true, opacity: 0.0 });
+      const mat = new THREE.LineBasicMaterial({ color: 0xf4c443, transparent: true, opacity: 0.0, linewidth: 3 });
       const line = new THREE.Line(geo, mat);
       // Tag with full point count so we can animate progressive draw
       line.userData.drawableCount = points.length;
