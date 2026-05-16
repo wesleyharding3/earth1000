@@ -15579,9 +15579,11 @@ function _renderGlobeHtml({ threadId, title, category, countries, totalFrames })
     globeGroup.rotation.y = spinT * Math.PI * 1.6;
     globeGroup.rotation.x = -0.25 + Math.sin(spinT * Math.PI) * 0.10;
 
-    // Camera zoom: starts at 14, pulls in to 10 by mid-video, holds.
+    // Camera zoom: starts at 18, pulls in to 13 by mid-video, holds.
+    // At z=13 with vertical 9:16 aspect + 35° FOV, the globe diameter 6
+    // sits at ~75% of frame width — readable but not cropped.
     const zoomT = smoothstep(0, _t * 0.5, n);
-    camera.position.z = 14 - 4 * zoomT;
+    camera.position.z = 18 - 5 * zoomT;
     camera.lookAt(0, 0, 0);
 
     // Arc progressive draw — distribute arcs across [arcsStart..arcsEnd]
