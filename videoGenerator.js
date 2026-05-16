@@ -69,14 +69,15 @@ async function _captureFrames(threadId, frameDir, hostBase) {
   });
   try {
     const page = await browser.newPage();
+    // Surface browser-side errors + console to our logs so we can see why
+    // the page isn't reaching RENDER_READY.
+    page.on('console',  msg => console.log(`[render-globe console ${msg.type()}]`, msg.text()));
+    page.on('pageerror', err => console.error('[render-globe pageerror]', err.message));
+    page.on('requestfailed', req => console.warn(`[render-globe requestfailed] ${req.url()} — ${req.failure()?.errorText}`));
+
     await page.setViewport({ width: WIDTH, height: HEIGHT, deviceScaleFactor: 1 });
     const url = `${hostBase}/render-globe?thread=${threadId}&frames=${FRAMES}`;
-    // `domcontentloaded` is enough — we don't need to wait for all network
-    // to settle (three.js loads from CDN, but the RENDER_READY signal below
-    // tells us when the scene is actually rendered).
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    // Page sets window.RENDER_READY = true after three.js executes + first
-    // paint. 60s timeout is generous for unpkg.com latency on cold Render.
     await page.waitForFunction(() => window.RENDER_READY === true, { timeout: 60000 });
 
     for (let i = 0; i < FRAMES; i++) {

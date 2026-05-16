@@ -15179,6 +15179,15 @@ const socialPublishers = require('./publishers');
 // /share/thread/:id/arc.mp4 lazily generates + caches the MP4 the first
 // time it's hit. The picker cron warms this URL before posting so social
 // publishers can upload the video immediately.
+// Serve three.js from the local node_modules so /render-globe doesn't
+// depend on unpkg.com (which is slow + occasionally unreachable from
+// Render's edge, causing RENDER_READY to never fire).
+app.get('/vendor/three.min.js', (req, res) => {
+  res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
+  res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+  res.sendFile(path.join(__dirname, 'node_modules', 'three', 'build', 'three.min.js'));
+});
+
 app.get('/api/debug/recent-threads', async (req, res) => {
   try {
     const { rows } = await pool.query(`
@@ -15306,7 +15315,7 @@ function _renderGlobeHtml({ threadId, title, category, countries, totalFrames })
   </div>
 </div>
 
-<script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+<script src="/vendor/three.min.js"></script>
 <script>
 (function() {
   'use strict';
