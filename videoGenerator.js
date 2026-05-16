@@ -67,18 +67,29 @@ async function _captureFrames(threadId, frameDir, hostBase) {
     ],
     headless: 'new',
   });
+  // Collect browser-side errors + console so we can attach them to any
+  // RENDER_READY failure for diagnosis (instead of having to dig through
+  // Render's UI logs).
+  const browserLogs = [];
   try {
     const page = await browser.newPage();
-    // Surface browser-side errors + console to our logs so we can see why
-    // the page isn't reaching RENDER_READY.
-    page.on('console',  msg => console.log(`[render-globe console ${msg.type()}]`, msg.text()));
-    page.on('pageerror', err => console.error('[render-globe pageerror]', err.message));
-    page.on('requestfailed', req => console.warn(`[render-globe requestfailed] ${req.url()} — ${req.failure()?.errorText}`));
+    page.on('console',     msg => browserLogs.push(`[${msg.type()}] ${msg.text()}`));
+    page.on('pageerror',   err => browserLogs.push(`[pageerror] ${err.message}`));
+    page.on('requestfailed', req => browserLogs.push(`[requestfailed] ${req.url()} — ${req.failure()?.errorText}`));
 
     await page.setViewport({ width: WIDTH, height: HEIGHT, deviceScaleFactor: 1 });
     const url = `${hostBase}/render-globe?thread=${threadId}&frames=${FRAMES}`;
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await page.waitForFunction(() => window.RENDER_READY === true, { timeout: 60000 });
+    try {
+      await page.waitForFunction(() => window.RENDER_READY === true, { timeout: 60000 });
+    } catch (waitErr) {
+      // Surface whatever we know about the page state.
+      const has3 = await page.evaluate(() => typeof THREE).catch(() => '<eval-failed>');
+      const readyState = await page.evaluate(() => document.readyState).catch(() => '<eval-failed>');
+      const ready = await page.evaluate(() => !!window.RENDER_READY).catch(() => '<eval-failed>');
+      const e = new Error(`RENDER_READY timeout. THREE=${has3} readyState=${readyState} RENDER_READY=${ready}\nbrowser-logs:\n${browserLogs.join('\n').slice(0, 2000)}`);
+      throw e;
+    }
 
     for (let i = 0; i < FRAMES; i++) {
       await page.evaluate(n => window.advanceToFrame(n), i);
