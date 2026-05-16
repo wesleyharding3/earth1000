@@ -57210,6 +57210,11 @@ body.ticker-active .gTickerLabel {
       // 'globe' mode, 2D-map canvas in 'map' mode. Pass this only when
       // a caller needs to override the auto-detection (rare).
       canvas: canvasOverride,
+      // Headless-capture mode (server-side videoGenerator.js): when true,
+      // skip the iOS-share / web-share / download paths and return the
+      // raw { blob, ext } object directly. Lets Puppeteer intercept the
+      // recorded MP4 without triggering any browser-native share dialog.
+      returnBlob = false,
     } = opts;
 
     // Auto-pick the canvas based on the active projection so heatmap /
@@ -57242,6 +57247,12 @@ body.ticker-active .gTickerLabel {
         durationMs,
         overlay,
       });
+
+      // Headless-capture intercept: return blob to caller, skip share.
+      if (returnBlob) {
+        hideToast();
+        return { blob, ext };
+      }
 
       setToast('Clip ready');
 

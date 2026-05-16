@@ -1,183 +1,182 @@
 /**
  * videoGenerator.js — server-side arc-flyby video generation.
  *
- * Orchestrates:
- *   1. Headless Chromium (Puppeteer) loads /render-globe?thread=:id
- *   2. Page renders deterministic 360-frame three.js globe animation
- *   3. Puppeteer steps frame-by-frame, captures PNG screenshots
- *   4. ffmpeg encodes frames → H.264 MP4 (9:16 vertical, 30fps, 12s)
- *   5. Output cached at /tmp/arc-cache/{threadId}.mp4
+ * Reuses the in-app clip-recording pipeline (window.__shareGlobeClip in
+ * root index.html). The flow:
  *
- * Output spec:
- *   1080×1920 (Instagram Reels / Threads / Stories native)
- *   12 seconds @ 30fps = 360 frames
- *   H.264 high profile, +faststart, AAC silent audio track (Instagram
- *   Graph API rejects video with no audio stream).
+ *   1. Headless Chromium loads https://earth00.com/?thread=:id — same
+ *      desktop site a user would visit.
+ *   2. Wait for window.__shareGlobeClip + window.__openThread to exist
+ *      (signals the globe is initialized).
+ *   3. Open the thread programmatically so the globe shows the thread's
+ *      flow arcs.
+ *   4. Call __shareGlobeClip({ returnBlob: true, durationMs: 10000, ... })
+ *      — this triggers the SAME cinematic 360° rotation + arc animation
+ *      a real user gets when they hit "Share → Clip" in the app. The
+ *      returnBlob: true opt skips iOS/web share and returns the recorded
+ *      Blob directly.
+ *   5. Convert blob → base64 across the Puppeteer evaluate boundary,
+ *      decode to a Buffer on Node side, write to disk.
  *
- * Lazy + cached. The /share/thread/:id/arc.mp4 route in server.js
- * calls composeArcVideo() on cache miss.
+ * Output: the exact MP4 the app produces for user share — H.264 / AAC,
+ * vertical, with title + flags + brand chrome baked in by the existing
+ * overlay painter. Cached at /tmp/arc-cache/{threadId}.mp4 for 24h.
+ *
+ * No ffmpeg, no frame-by-frame stepping, no custom three.js renderer —
+ * the production app's MediaRecorder does everything.
  */
 
 'use strict';
 
 const fs   = require('fs');
 const path = require('path');
-const { spawn } = require('child_process');
-// @ffmpeg-installer bundles a static ffmpeg binary so we don't depend on
-// the host having ffmpeg installed (Render's Node buildpack doesn't).
-const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
 
-const FRAMES    = 360;          // 12s @ 30fps
-const FPS       = 30;
 const WIDTH     = 1080;
 const HEIGHT    = 1920;
+const DURATION_MS = 10_000;       // matches __shareEntityClip default
 const CACHE_DIR = '/tmp/arc-cache';
-const FRAME_DIR_BASE = '/tmp/arc-frames';
 
-// One concurrent render at a time — server has limited RAM and ffmpeg
-// + Chromium both spike. Queued requests wait their turn.
 let _renderingPromise = null;
 
 async function _ensureDir(dir) {
   await fs.promises.mkdir(dir, { recursive: true });
 }
 
-async function _spawnFfmpeg(args) {
-  return new Promise((resolve, reject) => {
-    const proc = spawn(ffmpegPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-    let stderr = '';
-    proc.stderr.on('data', d => { stderr += d.toString(); });
-    proc.on('error', reject);
-    proc.on('close', code => {
-      if (code === 0) return resolve();
-      reject(new Error(`ffmpeg exit ${code}: ${stderr.slice(-500)}`));
-    });
-  });
-}
-
-async function _captureFrames(threadId, frameDir, hostBase) {
+async function _captureClip(threadId, threadMeta, desktopAppBase) {
   const puppeteer = require('puppeteer');
   const browser = await puppeteer.launch({
     args: [
       '--no-sandbox',
       '--disable-setuid-sandbox',
       '--disable-dev-shm-usage',
-      // SwiftShader via ANGLE — required for WebGL in headless Chrome on
-      // Linux without a GPU. The older --use-gl=swiftshader flag silently
-      // fails on modern Chrome (>= 110) with "BindToCurrentSequence failed".
       '--use-angle=swiftshader',
       '--enable-webgl',
       '--ignore-gpu-blocklist',
       '--enable-unsafe-swiftshader',
       '--hide-scrollbars',
+      '--autoplay-policy=no-user-gesture-required',
     ],
     headless: 'new',
   });
-  // Collect browser-side errors + console so we can attach them to any
-  // RENDER_READY failure for diagnosis (instead of having to dig through
-  // Render's UI logs).
   const browserLogs = [];
   try {
     const page = await browser.newPage();
-    page.on('console',     msg => browserLogs.push(`[${msg.type()}] ${msg.text()}`));
-    page.on('pageerror',   err => browserLogs.push(`[pageerror] ${err.message}`));
+    page.on('console',       msg => browserLogs.push(`[${msg.type()}] ${msg.text().slice(0, 200)}`));
+    page.on('pageerror',     err => browserLogs.push(`[pageerror] ${err.message}`));
     page.on('requestfailed', req => browserLogs.push(`[requestfailed] ${req.url()} — ${req.failure()?.errorText}`));
 
     await page.setViewport({ width: WIDTH, height: HEIGHT, deviceScaleFactor: 1 });
-    const url = `${hostBase}/render-globe?thread=${threadId}&frames=${FRAMES}`;
+
+    const url = `${desktopAppBase}/?thread=${threadId}`;
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
+
+    // Wait for the production globe to mount + the share-clip hook.
     try {
-      await page.waitForFunction(() => window.RENDER_READY === true, { timeout: 60000 });
-    } catch (waitErr) {
-      // Surface whatever we know about the page state.
-      const has3 = await page.evaluate(() => typeof THREE).catch(() => '<eval-failed>');
-      const readyState = await page.evaluate(() => document.readyState).catch(() => '<eval-failed>');
-      const ready = await page.evaluate(() => !!window.RENDER_READY).catch(() => '<eval-failed>');
-      const e = new Error(`RENDER_READY timeout. THREE=${has3} readyState=${readyState} RENDER_READY=${ready}\nbrowser-logs:\n${browserLogs.join('\n').slice(0, 2000)}`);
-      throw e;
+      await page.waitForFunction(() => {
+        return typeof window.__shareGlobeClip === 'function'
+            && typeof window.__openThread === 'function'
+            && !!window.__renderer
+            && !!window.__renderer.domElement;
+      }, { timeout: 60000 });
+    } catch (err) {
+      throw new Error(`Globe/share hooks never initialized.\nbrowser-logs:\n${browserLogs.join('\n').slice(0, 2000)}`);
     }
 
-    for (let i = 0; i < FRAMES; i++) {
-      await page.evaluate(n => window.advanceToFrame(n), i);
-      // Wait until the page confirms it rendered the frame we asked for.
-      await page.waitForFunction(n => window.LATEST_FRAME === n, { timeout: 5000 }, i);
-      await page.screenshot({
-        path: path.join(frameDir, `${String(i).padStart(4, '0')}.png`),
-        omitBackground: false,
-      });
+    // Open the thread so the globe focuses on its primary nations and
+    // the flow arcs render. Wait briefly for camera focus animation.
+    await page.evaluate(async (id) => {
+      try {
+        await window.__openThread(id);
+      } catch (e) {
+        console.warn('[capture] __openThread failed:', e.message);
+      }
+    }, threadId);
+    await new Promise(r => setTimeout(r, 3000));
+
+    // Drive the same recording pipeline that "Share → Clip" uses in the
+    // app, but with returnBlob: true so we get the raw MP4 back instead
+    // of a share dialog. Pass overlay so title/subtitle/flags get baked
+    // into the recorded video by the existing _buildClipOverlayPainter.
+    const result = await page.evaluate(async (opts) => {
+      try {
+        const r = await window.__shareGlobeClip({
+          returnBlob:   true,
+          durationMs:   opts.durationMs,
+          shareTitle:   `Earth00 · ${opts.title || 'Story'}`,
+          shareText:    `${opts.title || 'Story'} — on Earth00`,
+          filenameBase: `earth00-thread-${opts.threadId}-clip`,
+          overlay: {
+            title:    opts.title || 'Story',
+            subtitle: opts.subtitle || 'Storyline',
+            flagIsos: opts.flagIsos || [],
+          },
+        });
+        if (!r || !r.blob) return { ok: false, error: 'shareGlobeClip returned no blob' };
+
+        // Serialize blob → base64 in 32KB chunks (avoid call-stack
+        // overflow that String.fromCharCode(...spread) hits past ~100KB).
+        const buf = await r.blob.arrayBuffer();
+        const bytes = new Uint8Array(buf);
+        const chunk = 0x8000;
+        let bin = '';
+        for (let i = 0; i < bytes.length; i += chunk) {
+          bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+        }
+        return { ok: true, base64: btoa(bin), ext: r.ext, mime: r.blob.type, bytes: bytes.length };
+      } catch (e) {
+        return { ok: false, error: e.message };
+      }
+    }, {
+      threadId,
+      durationMs: DURATION_MS,
+      title:      threadMeta.title,
+      subtitle:   threadMeta.subtitle,
+      flagIsos:   threadMeta.flagIsos,
+    });
+
+    if (!result?.ok) {
+      throw new Error(`shareGlobeClip failed: ${result?.error || 'unknown'}\nbrowser-logs:\n${browserLogs.join('\n').slice(0, 2000)}`);
     }
+
+    return {
+      buffer: Buffer.from(result.base64, 'base64'),
+      ext:    result.ext,
+      mime:   result.mime,
+    };
   } finally {
     await browser.close().catch(() => {});
   }
 }
 
-async function _encodeVideo(frameDir, outPath) {
-  // -shortest with -f lavfi anullsrc gives us a silent AAC track —
-  // Instagram Graph API rejects video without an audio stream.
-  // -profile:v high -level 4.0 for broad mobile/desktop compatibility.
-  // +faststart moves the moov atom to the front so players can begin
-  // playback before the file finishes downloading (matters for IG
-  // upload responsiveness).
-  await _spawnFfmpeg([
-    '-y',
-    '-framerate', String(FPS),
-    '-i', path.join(frameDir, '%04d.png'),
-    '-f', 'lavfi',
-    '-i', 'anullsrc=channel_layout=stereo:sample_rate=48000',
-    '-shortest',
-    '-c:v', 'libx264',
-    '-pix_fmt', 'yuv420p',
-    '-profile:v', 'high',
-    '-level', '4.0',
-    '-preset', 'veryfast',
-    '-crf', '23',
-    '-c:a', 'aac',
-    '-b:a', '128k',
-    '-movflags', '+faststart',
-    outPath,
-  ]);
-}
-
 /**
- * Generate the arc-flyby video for a thread. Returns the path to the
- * MP4 on disk. Cached: subsequent calls for the same threadId return
- * the cached path without regenerating.
+ * Generate (or fetch cached) arc-flyby video for a thread.
  *
  * @param {number} threadId
  * @param {object} opts
- * @param {string} opts.hostBase — base URL for /render-globe, e.g. http://localhost:3000
+ * @param {string} opts.desktopAppBase — base URL of the desktop app
+ *   (default: process.env.DESKTOP_APP_BASE || 'https://earth00.com')
+ * @param {object} opts.threadMeta — { title, subtitle, flagIsos } baked
+ *   into the video overlay. Caller (server.js arc.mp4 route) populates
+ *   from the DB row.
  * @returns {Promise<string>} absolute path to the MP4
  */
 async function composeArcVideo(threadId, opts = {}) {
   await _ensureDir(CACHE_DIR);
   const outPath = path.join(CACHE_DIR, `${threadId}.mp4`);
-  // Cache hit?
   try {
     const stat = await fs.promises.stat(outPath);
-    // 24h freshness window
     if (Date.now() - stat.mtimeMs < 24 * 60 * 60 * 1000 && stat.size > 0) {
       return outPath;
     }
   } catch (_) { /* not cached */ }
 
-  // Serialize renders — only one Chromium at a time.
   if (_renderingPromise) await _renderingPromise.catch(() => {});
 
   _renderingPromise = (async () => {
-    const frameDir = path.join(FRAME_DIR_BASE, String(threadId));
-    await _ensureDir(frameDir);
-    try {
-      const hostBase = opts.hostBase || `http://localhost:${process.env.PORT || 3000}`;
-      await _captureFrames(threadId, frameDir, hostBase);
-      await _encodeVideo(frameDir, outPath);
-    } finally {
-      // Clean up frames whether or not encoding succeeded.
-      try {
-        const files = await fs.promises.readdir(frameDir);
-        for (const f of files) await fs.promises.unlink(path.join(frameDir, f)).catch(() => {});
-        await fs.promises.rmdir(frameDir).catch(() => {});
-      } catch (_) {}
-    }
+    const desktopAppBase = opts.desktopAppBase || process.env.DESKTOP_APP_BASE || 'https://earth00.com';
+    const threadMeta = opts.threadMeta || {};
+    const { buffer } = await _captureClip(threadId, threadMeta, desktopAppBase);
+    await fs.promises.writeFile(outPath, buffer);
     return outPath;
   })();
 
@@ -188,4 +187,4 @@ async function composeArcVideo(threadId, opts = {}) {
   }
 }
 
-module.exports = { composeArcVideo, FRAMES, FPS, WIDTH, HEIGHT, CACHE_DIR };
+module.exports = { composeArcVideo, WIDTH, HEIGHT, DURATION_MS, CACHE_DIR };
