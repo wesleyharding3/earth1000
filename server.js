@@ -15189,30 +15189,57 @@ app.get('/api/debug/publisher-env', (req, res) => {
   res.json({ checks: result, all_matching_keys: allKeys, per_publisher_isConfigured: perPub, listConfigured_result: listResult });
 });
 
-// TEMPORARY one-shot publish test — to verify X after token regen.
-// Will be removed immediately after.
+// TEMPORARY X auth diagnostic — calls both /2/users/me (read) and
+// /2/tweets (write) so we can see which level of auth is failing.
 app.post('/api/debug/social-test-publish', async (req, res) => {
   try {
-    const composer = require('./socialDraftComposer');
-    const { rows } = await pool.query(`
-      SELECT id, title, description, primary_nations, secondary_nations,
-             primary_category, article_count, last_updated_at
-        FROM story_threads
-       WHERE title IS NOT NULL AND description IS NOT NULL
-         AND article_count >= 5
-       ORDER BY last_updated_at DESC NULLS LAST
-       OFFSET 1 LIMIT 1
-    `);
-    const row = rows[0];
-    if (!row) return res.status(404).json({ error: 'no thread found' });
-    const drafts = composer.composeDrafts(row);
-    const enabled = { x: true, bluesky: false, instagram: false, reddit: false, linkedin: false };
-    const { permalinks, failures } = await socialPublishers.publishAll(drafts, enabled, process.env);
+    const crypto = require('crypto');
+    const env = process.env;
+    function pctEncode(str) {
+      return encodeURIComponent(String(str)).replace(/[!*'()]/g, c =>
+        '%' + c.charCodeAt(0).toString(16).toUpperCase()
+      );
+    }
+    function buildOAuthHeader({ method, url, bodyParams = {} }) {
+      const p = {
+        oauth_consumer_key: env.X_API_KEY,
+        oauth_nonce: crypto.randomBytes(16).toString('hex'),
+        oauth_signature_method: 'HMAC-SHA1',
+        oauth_timestamp: Math.floor(Date.now() / 1000).toString(),
+        oauth_token: env.X_ACCESS_TOKEN,
+        oauth_version: '1.0',
+      };
+      const all = { ...p, ...bodyParams };
+      const keys = Object.keys(all).sort();
+      const ps = keys.map(k => `${pctEncode(k)}=${pctEncode(all[k])}`).join('&');
+      const base = [method.toUpperCase(), pctEncode(url), pctEncode(ps)].join('&');
+      const key = `${pctEncode(env.X_API_SECRET)}&${pctEncode(env.X_ACCESS_TOKEN_SECRET)}`;
+      const sig = crypto.createHmac('sha1', key).update(base).digest('base64');
+      p.oauth_signature = sig;
+      return 'OAuth ' + Object.keys(p).sort().map(k => `${pctEncode(k)}="${pctEncode(p[k])}"`).join(', ');
+    }
+    // GET /2/users/me — pure read, tests basic auth
+    const meUrl = 'https://api.twitter.com/2/users/me';
+    const meHeader = buildOAuthHeader({ method: 'GET', url: meUrl });
+    const meRes = await fetch(meUrl, { headers: { Authorization: meHeader } });
+    const meBody = await meRes.text();
+    // POST /2/tweets — write, tests posting permission
+    const postUrl = 'https://api.twitter.com/2/tweets';
+    const postHeader = buildOAuthHeader({ method: 'POST', url: postUrl });
+    const postRes = await fetch(postUrl, {
+      method: 'POST',
+      headers: { Authorization: postHeader, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: `Test tweet from Earth00 ${Date.now()}` }),
+    });
+    const postBody = await postRes.text();
     res.json({
-      thread: { id: row.id, title: row.title, primary_nations: row.primary_nations },
-      x_draft_body: drafts.x?.body,
-      permalinks,
-      failures,
+      env_check: {
+        api_key_len: (env.X_API_KEY || '').length,
+        api_key_first8: (env.X_API_KEY || '').slice(0, 8),
+        access_token_first8: (env.X_ACCESS_TOKEN || '').slice(0, 16),
+      },
+      me_endpoint: { status: meRes.status, body: meBody.slice(0, 500) },
+      post_endpoint: { status: postRes.status, body: postBody.slice(0, 500) },
     });
   } catch (err) {
     console.error('[social-test-publish]', err);
