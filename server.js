@@ -15175,7 +15175,18 @@ app.get('/api/debug/publisher-env', (req, res) => {
   ];
   const result = checks.map(k => ({ name: k, set: !!process.env[k], len: (process.env[k] || '').length }));
   const allKeys = Object.keys(process.env).filter(k => /^(BLUESKY|X_|IG_|REDDIT|LINKEDIN|INSTAGRAM|TWITTER)/i.test(k)).sort();
-  res.json({ checks: result, all_matching_keys: allKeys });
+  // Also call each publisher's isConfigured directly to see what it returns.
+  const perPub = {};
+  try {
+    for (const [pname, mod] of Object.entries(socialPublishers.REGISTRY)) {
+      try { perPub[pname] = !!mod.isConfigured(process.env); }
+      catch (e) { perPub[pname] = `error: ${e.message}`; }
+    }
+  } catch (e) { perPub._error = e.message; }
+  let listResult;
+  try { listResult = socialPublishers.listConfigured(process.env); }
+  catch (e) { listResult = `error: ${e.message}`; }
+  res.json({ checks: result, all_matching_keys: allKeys, per_publisher_isConfigured: perPub, listConfigured_result: listResult });
 });
 
 app.post('/api/admin/social-queue/:id/publish', requireAdmin, async (req, res) => {
