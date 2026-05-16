@@ -15179,6 +15179,23 @@ const socialPublishers = require('./publishers');
 // /share/thread/:id/arc.mp4 lazily generates + caches the MP4 the first
 // time it's hit. The picker cron warms this URL before posting so social
 // publishers can upload the video immediately.
+app.get('/api/debug/recent-threads', async (req, res) => {
+  try {
+    const { rows } = await pool.query(`
+      SELECT id, title, primary_nations, status
+        FROM story_threads
+       WHERE status IN ('active','cooling')
+         AND primary_nations IS NOT NULL
+         AND array_length(primary_nations, 1) >= 2
+       ORDER BY last_updated_at DESC NULLS LAST
+       LIMIT 5
+    `);
+    res.json({ threads: rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/render-globe', async (req, res) => {
   try {
     const threadId = parseInt(req.query.thread, 10);
