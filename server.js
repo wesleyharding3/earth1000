@@ -15141,11 +15141,30 @@ app.post('/api/admin/social-queue/pick-now', requireAdmin, async (req, res) => {
   }
 });
 
-// Stub: manual publish. Real platform API integration (X, Reddit, IG,
-// LinkedIn, BlueSky) is v1.1 — for now, this endpoint marks the row as
-// 'posted' with a stubbed permalink so the UI can be tested end-to-end.
-// Replace the marker block below with real platform-API calls when
-// each integration lands.
+// Manual publish — dispatches each enabled platform's draft through its
+// publisher module. Per-platform failures don't block other platforms;
+// the row's final status is 'posted' if at least one publish succeeded
+// (and any failures are recorded in failure_log) OR 'failed' if every
+// platform failed. The UI surfaces both states so the admin sees which
+// platforms went live.
+const socialPublishers = require('./publishers');
+app.get('/api/admin/social-queue/configured', requireAdmin, async (req, res) => {
+  // Diagnostic: which publishers have credentials. Surfaced in the UI so
+  // the admin can see at a glance which platforms will actually attempt
+  // to post vs which are skipped for missing env vars.
+  try {
+    const configured = socialPublishers.listConfigured(process.env);
+    const all = Object.keys(socialPublishers.REGISTRY);
+    res.json({
+      configured,
+      missing: all.filter(p => !configured.includes(p)),
+    });
+  } catch (err) {
+    console.error('[social-queue/configured]', err.message);
+    res.status(500).json({ error: 'Failed to check publisher config' });
+  }
+});
+
 app.post('/api/admin/social-queue/:id/publish', requireAdmin, async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
@@ -15159,35 +15178,37 @@ app.post('/api/admin/social-queue/:id/publish', requireAdmin, async (req, res) =
     if (row.status !== 'approved') {
       return res.status(400).json({ error: `row must be approved (currently ${row.status})` });
     }
-    // STUB — replace per-platform branches below with real API calls
-    // (Twitter API v2, Reddit OAuth, LinkedIn REST, BlueSky atproto,
-    // Meta Graph for IG). Each branch should append to permalinks on
-    // success and to failure_log on failure.
-    const permalinks = {};
-    const failures   = [];
-    const platforms  = row.platforms_enabled || {};
-    for (const [p, enabled] of Object.entries(platforms)) {
-      if (!enabled) continue;
-      // Replace this stub with real publish-platform code:
-      permalinks[p] = `stub://platform-not-wired/${p}/${row.thread_id}`;
-    }
+    const { permalinks, failures } = await socialPublishers.publishAll(
+      row.drafts || {},
+      row.platforms_enabled || {},
+      process.env,
+    );
+    const anySuccess = Object.keys(permalinks).length > 0;
+    // Status policy:
+    //   ≥ 1 success → 'posted' (with failures recorded in failure_log)
+    //   0 success + ≥ 1 failure → 'failed' (admin can retry from the UI)
+    //   0 of either (i.e. nothing enabled) → leave 'approved' as a no-op
+    let nextStatus = row.status;
+    if (anySuccess) nextStatus = 'posted';
+    else if (failures.length) nextStatus = 'failed';
     await pool.query(`
       UPDATE social_post_queue
          SET status      = $1,
-             posted_at   = NOW(),
+             posted_at   = CASE WHEN $5::boolean THEN NOW() ELSE posted_at END,
              permalinks  = COALESCE(permalinks, '{}'::jsonb) || $2::jsonb,
              failure_log = failure_log || $3::jsonb
        WHERE id = $4
     `, [
-      failures.length ? 'failed' : 'posted',
+      nextStatus,
       JSON.stringify(permalinks),
-      JSON.stringify(failures),
+      JSON.stringify(failures.map(f => ({ ...f, attempted_at: new Date().toISOString() }))),
       id,
+      anySuccess,
     ]);
-    res.json({ ok: failures.length === 0, permalinks, failures });
+    res.json({ ok: anySuccess, permalinks, failures });
   } catch (err) {
     console.error('[social-queue/publish]', err.message);
-    res.status(500).json({ error: 'Failed to publish' });
+    res.status(500).json({ error: 'Failed to publish', detail: req.user?.is_admin ? err.message : undefined });
   }
 });
 

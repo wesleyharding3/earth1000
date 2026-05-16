@@ -1436,6 +1436,8 @@
         <button class="btn-primary btn-small" onclick="sqPickNow()">Pick now (run picker cron)</button>
         <span id="sq-count" style="font-size:0.8rem;color:#94a3b8;margin-left:auto"></span>
       </div>
+      <!-- Per-platform credentials status. Updated on every loadSocialQueue() -->
+      <div id="sq-publisher-status" style="font-size:0.75rem;color:#94a3b8;margin:0 0 12px 0;display:flex;gap:8px;flex-wrap:wrap"></div>
 
       <div id="sq-list">
         <div class="sq-empty">Loading…</div>
@@ -4829,10 +4831,28 @@
       const status = document.getElementById('sq-status-filter').value;
       const list   = document.getElementById('sq-list');
       list.innerHTML = '<div class="sq-empty">Loading…</div>';
+      // Fetch publisher-config + queue items in parallel; both populate
+      // their respective sections.
       try {
-        const res = await authFetch(`${API_BASE}/api/admin/social-queue?status=${encodeURIComponent(status)}&limit=100`);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
+        const [statusRes, queueRes] = await Promise.all([
+          authFetch(`${API_BASE}/api/admin/social-queue/configured`).catch(() => null),
+          authFetch(`${API_BASE}/api/admin/social-queue?status=${encodeURIComponent(status)}&limit=100`),
+        ]);
+        // Publisher-config strip
+        const pubEl = document.getElementById('sq-publisher-status');
+        if (statusRes && statusRes.ok) {
+          const cfg = await statusRes.json();
+          const allPlats = ['x', 'reddit', 'linkedin', 'bluesky', 'instagram'];
+          pubEl.innerHTML = allPlats.map(p => {
+            const ok = (cfg.configured || []).includes(p);
+            return `<span style="padding:2px 6px;border-radius:4px;background:${ok ? '#064e3b' : '#374151'};color:${ok ? '#34d399' : '#9ca3af'}">${ok ? '✓' : '✗'} ${p}</span>`;
+          }).join('');
+        } else {
+          pubEl.innerHTML = '<span style="color:#ef4444">Could not check publisher config</span>';
+        }
+        // Queue items
+        if (!queueRes.ok) throw new Error(`HTTP ${queueRes.status}`);
+        const data = await queueRes.json();
         _sqItems = data.items || [];
         document.getElementById('sq-count').textContent = `${_sqItems.length} item${_sqItems.length === 1 ? '' : 's'}`;
         if (!_sqItems.length) {
@@ -4883,7 +4903,7 @@
           ${canApprove ? `<button class="btn-primary btn-small" onclick="sqUpdate(${item.id}, 'approved')">Approve</button>` : ''}
           ${canApprove ? `<button class="btn-secondary btn-small" onclick="sqUpdate(${item.id}, 'skipped')">Skip</button>` : ''}
           <button class="btn-secondary btn-small" onclick="sqSaveDrafts(${item.id})">Save edits</button>
-          ${canPublish ? `<button class="btn-primary btn-small" onclick="sqPublish(${item.id})">Publish (STUB)</button>` : ''}
+          ${canPublish ? `<button class="btn-primary btn-small" onclick="sqPublish(${item.id})">Publish</button>` : ''}
           ${item.permalinks && Object.keys(item.permalinks).length ? `<span style="font-size:0.7rem;color:#94a3b8">posted: ${esc(Object.keys(item.permalinks).join(', '))}</span>` : ''}
         </div>
       </div>`;
@@ -4977,12 +4997,18 @@
     }
 
     async function sqPublish(itemId) {
-      if (!confirm('Publish this draft now? (Platform APIs are STUBBED — this will mark as posted but not actually publish until APIs are wired.)')) return;
+      if (!confirm('Publish this draft now? Each enabled+configured platform will be posted to.')) return;
       try {
         const res = await authFetch(`${API_BASE}/api/admin/social-queue/${itemId}/publish`, { method: 'POST' });
         const data = await res.json();
         if (!res.ok) throw new Error(data.error || `HTTP ${res.status}`);
-        alert(`Published. Stub permalinks recorded: ${Object.keys(data.permalinks || {}).join(', ')}`);
+        const ok = Object.keys(data.permalinks || {});
+        const failed = (data.failures || []).map(f => `${f.platform}: ${f.error}`);
+        const msg = [
+          ok.length ? `Posted to: ${ok.join(', ')}` : 'No platforms succeeded.',
+          failed.length ? `\nFailures:\n  ${failed.join('\n  ')}` : '',
+        ].filter(Boolean).join('\n');
+        alert(msg);
         loadSocialQueue();
       } catch (err) { alert(`Publish failed: ${err.message}`); }
     }
