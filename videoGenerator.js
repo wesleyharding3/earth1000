@@ -142,16 +142,11 @@ async function _captureFrames(threadId, frameDir, desktopAppBase) {
       }
     }, DURATION_MS);
 
-    // Resolve the canvas element handle once — reuse across the screenshot
-    // loop instead of re-querying every frame.
-    const canvasHandle = await page.evaluateHandle(() => window.__renderer?.domElement);
-    const canvasEl = canvasHandle.asElement();
-    if (!canvasEl) throw new Error('renderer.domElement not found');
-
-    // Capture loop. Aim for TOTAL_FRAMES screenshots evenly spread across
-    // DURATION_MS. Puppeteer's Page.screenshot adds ~30-80ms latency per
-    // call in headless mode, so we don't hit a perfect 20fps — we get
-    // whatever the wall clock allows and let ffmpeg slot them at FPS.
+    // Capture loop. Use full-page screenshots (with UI hidden via injected
+    // CSS) — element-level screenshots on a WebGL canvas in headless
+    // Chromium frequently fail with "no node found" or zero-size errors.
+    let writtenCount = 0;
+    let firstError = null;
     const t0 = Date.now();
     for (let i = 0; i < TOTAL_FRAMES; i++) {
       const targetTime = t0 + i * FRAME_INTERVAL_MS;
@@ -160,16 +155,22 @@ async function _captureFrames(threadId, frameDir, desktopAppBase) {
         await new Promise(r => setTimeout(r, targetTime - now));
       }
       try {
-        await canvasEl.screenshot({
-          path: path.join(frameDir, `${String(i).padStart(4, '0')}.png`),
+        await page.screenshot({
+          path:           path.join(frameDir, `${String(i).padStart(4, '0')}.png`),
           omitBackground: false,
+          fullPage:       false,
+          captureBeyondViewport: false,
+          clip:           { x: 0, y: 0, width: WIDTH, height: HEIGHT },
         });
+        writtenCount++;
       } catch (err) {
-        // Single-frame failures are non-fatal — the gap will be filled by
-        // ffmpeg duplicating the prior frame at encode time.
-        console.warn(`[arc-capture] frame ${i} screenshot failed: ${err.message}`);
+        if (!firstError) firstError = err.message;
       }
     }
+    if (writtenCount === 0) {
+      throw new Error(`Captured 0 frames. First error: ${firstError || 'unknown'}\nbrowser-logs:\n${browserLogs.join('\n').slice(0, 2000)}`);
+    }
+    console.log(`[arc-capture] wrote ${writtenCount}/${TOTAL_FRAMES} frames`);
   } finally {
     await browser.close().catch(() => {});
   }
