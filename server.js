@@ -2033,6 +2033,11 @@ app.get("/api/news/city/:cityId/global", async (req, res) => {
         WHERE al.city_id        = $1
           AND al.routing_type   IN ('content', 'source')
           AND a.city_id        != $1
+          -- 30-day window: see /api/news/country/:id/global for full
+          -- rationale. Same heavy article_locations × news_articles
+          -- cross-join, same risk of timing out for high-mention
+          -- cities (NYC, London, Moscow…) without a date filter.
+          AND a.published_at > NOW() - INTERVAL '30 days'
           ${tagWhere}
         ORDER BY a.id, ${tagInnerTie}
       ) sub
@@ -2182,6 +2187,14 @@ app.get("/api/news/country/:countryId/global", async (req, res) => {
         WHERE al.country_id     = $1
           AND al.routing_type   IN ('content', 'source')
           AND a.country_id     != $1
+          -- 30-day window: heavy-mention countries (US/RU/CN/IN/FR/IT/BR/JP)
+          -- accumulate millions of article_locations rows over all time.
+          -- Without this filter, the DISTINCT-ON scan crosses ~M rows on
+          -- cold buffer and routinely 500s past the 120s timeout. Users
+          -- browsing "global coverage of country X" want recent news;
+          -- older context lives in search. This collapses heavy queries
+          -- from 60-120s+ to a few seconds.
+          AND a.published_at > NOW() - INTERVAL '30 days'
           ${tagWhere}
         ORDER BY a.id, ${tagInnerTie}
       ) sub
