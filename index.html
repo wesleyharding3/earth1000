@@ -24596,6 +24596,25 @@ const settingsToggle     = document.getElementById("settingsToggle");
   let arcObjects      = [];
   let arcPool         = [];
   let _arcNextUid     = 0;  // monotonic UID for stable DOM keying
+
+  // Replay the draw-in animation on every arc currently mounted on the
+  // globe. Used by the server-side videoGenerator: after the headless
+  // browser opens a thread, the arcs have already drawn-in once (and
+  // .drawInPlayed=true). Calling this resets each arc's drawIn state so
+  // the recording captures origin→destination travel rather than just
+  // a static set of pre-drawn arcs. No-op when no arcs are mounted.
+  window.__replayArcAnimations = function() {
+    let n = 0;
+    for (const arc of arcObjects) {
+      arc.drawInPlayed   = false;
+      arc.drawInElapsed  = 0;
+      // Some arcs use drawDuration / waveStart for the wave-batched
+      // aggregate flow. Resetting those too so wave replay is consistent.
+      if ('waveStart' in arc) arc.waveStart = null;
+      n++;
+    }
+    return n;
+  };
   let flowPlaying     = false;
   let flowProgress    = 0;
   let flowSpeed       = 1.0;

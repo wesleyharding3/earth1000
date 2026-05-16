@@ -97,8 +97,16 @@ async function _captureClip(threadId, threadMeta, desktopAppBase) {
     // app, but with returnBlob: true so we get the raw MP4 back instead
     // of a share dialog. Pass overlay so title/subtitle/flags get baked
     // into the recorded video by the existing _buildClipOverlayPainter.
+    //
+    // Before recording, call __replayArcAnimations() so the thread's
+    // flow arcs draw-in *during* the recording (origin→destination
+    // travel) instead of being already-drawn when the recording starts.
     const result = await page.evaluate(async (opts) => {
       try {
+        // Reset draw-in state so arcs animate during the capture window.
+        if (typeof window.__replayArcAnimations === 'function') {
+          window.__replayArcAnimations();
+        }
         const r = await window.__shareGlobeClip({
           returnBlob:   true,
           durationMs:   opts.durationMs,
