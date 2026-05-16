@@ -1,40 +1,47 @@
 /**
  * videoGenerator.js — server-side arc-flyby video generation.
  *
- * Reuses the in-app clip-recording pipeline (window.__shareGlobeClip in
- * root index.html). The flow:
+ * Pipeline:
+ *   1. Headless Chromium loads https://earth00.com/?thread=:id — the
+ *      live desktop site. Reuses the production three.js globe +
+ *      flow-arc renderer (no parallel implementation).
+ *   2. Wait for window.__shareGlobeClip + window.__openThread (signals
+ *      the production globe is mounted).
+ *   3. Open the thread programmatically. The app's existing camera-
+ *      focus + arc draw-in fires.
+ *   4. Wait briefly, then call window.__replayArcAnimations() so the
+ *      arcs draw in *during* the recorded window (origin → destination
+ *      travel, not pre-drawn static lines).
+ *   5. Kick off window.__spinGlobeFor(durationMs) as a fire-and-forget
+ *      Promise — same cinematic cubic-ease 360° rotation a user gets
+ *      from "Share → Clip" in the live app.
+ *   6. While the spin runs, Puppeteer screenshots the globe canvas
+ *      every ~33–50ms and writes PNG frames to disk.
+ *   7. ffmpeg encodes the frames as 1080×1920 H.264 MP4.
  *
- *   1. Headless Chromium loads https://earth00.com/?thread=:id — same
- *      desktop site a user would visit.
- *   2. Wait for window.__shareGlobeClip + window.__openThread to exist
- *      (signals the globe is initialized).
- *   3. Open the thread programmatically so the globe shows the thread's
- *      flow arcs.
- *   4. Call __shareGlobeClip({ returnBlob: true, durationMs: 10000, ... })
- *      — this triggers the SAME cinematic 360° rotation + arc animation
- *      a real user gets when they hit "Share → Clip" in the app. The
- *      returnBlob: true opt skips iOS/web share and returns the recorded
- *      Blob directly.
- *   5. Convert blob → base64 across the Puppeteer evaluate boundary,
- *      decode to a Buffer on Node side, write to disk.
+ * Why screenshots instead of MediaRecorder + captureStream: MediaRecorder
+ * in headless Chromium with SwiftShader produces sub-second clips
+ * (RAF throttling + captureStream quirks). Puppeteer's Page.screenshot
+ * works reliably and gives us deterministic frame counts.
  *
- * Output: the exact MP4 the app produces for user share — H.264 / AAC,
- * vertical, with title + flags + brand chrome baked in by the existing
- * overlay painter. Cached at /tmp/arc-cache/{threadId}.mp4 for 24h.
- *
- * No ffmpeg, no frame-by-frame stepping, no custom three.js renderer —
- * the production app's MediaRecorder does everything.
+ * Output cached at /tmp/arc-cache/{threadId}.mp4 for 24h.
  */
 
 'use strict';
 
 const fs   = require('fs');
 const path = require('path');
+const { spawn } = require('child_process');
+const ffmpegPath = require('@ffmpeg-installer/ffmpeg').path;
 
-const WIDTH     = 1080;
-const HEIGHT    = 1920;
-const DURATION_MS = 10_000;       // matches __shareEntityClip default
-const CACHE_DIR = '/tmp/arc-cache';
+const WIDTH       = 1080;
+const HEIGHT      = 1920;
+const DURATION_MS = 10_000;
+const FPS         = 20;                      // screenshots-per-second target
+const FRAME_INTERVAL_MS = Math.floor(1000 / FPS);
+const TOTAL_FRAMES = Math.floor(DURATION_MS / FRAME_INTERVAL_MS);
+const CACHE_DIR   = '/tmp/arc-cache';
+const FRAME_DIR_BASE = '/tmp/arc-frames';
 
 let _renderingPromise = null;
 
@@ -42,7 +49,20 @@ async function _ensureDir(dir) {
   await fs.promises.mkdir(dir, { recursive: true });
 }
 
-async function _captureClip(threadId, threadMeta, desktopAppBase) {
+async function _spawnFfmpeg(args) {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(ffmpegPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    let stderr = '';
+    proc.stderr.on('data', d => { stderr += d.toString(); });
+    proc.on('error', reject);
+    proc.on('close', code => {
+      if (code === 0) return resolve();
+      reject(new Error(`ffmpeg exit ${code}: ${stderr.slice(-500)}`));
+    });
+  });
+}
+
+async function _captureFrames(threadId, frameDir, desktopAppBase) {
   const puppeteer = require('puppeteer');
   const browser = await puppeteer.launch({
     args: [
@@ -55,15 +75,9 @@ async function _captureClip(threadId, threadMeta, desktopAppBase) {
       '--enable-unsafe-swiftshader',
       '--hide-scrollbars',
       '--autoplay-policy=no-user-gesture-required',
-      // Headless Chromium throttles RAF + timers when the page isn't
-      // "visible" (which is always the case in headless mode). Without
-      // these flags, __spinGlobeFor's RAF loop pauses and MediaRecorder
-      // stops with a sub-second clip. These match the recipe used by
-      // every production headless-screencap pipeline.
       '--disable-background-timer-throttling',
       '--disable-backgrounding-occluded-windows',
       '--disable-renderer-backgrounding',
-      '--disable-features=IsolateOrigins,site-per-process',
     ],
     headless: 'new',
   });
@@ -79,114 +93,113 @@ async function _captureClip(threadId, threadMeta, desktopAppBase) {
     const url = `${desktopAppBase}/?thread=${threadId}`;
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
 
-    // Wait for the production globe to mount + the share-clip hook.
+    // Wait for the production globe + thread-open hook.
     try {
       await page.waitForFunction(() => {
-        return typeof window.__shareGlobeClip === 'function'
-            && typeof window.__openThread === 'function'
+        return typeof window.__openThread === 'function'
+            && typeof window.__spinGlobeFor === 'function'
             && !!window.__renderer
             && !!window.__renderer.domElement;
       }, { timeout: 60000 });
     } catch (err) {
-      throw new Error(`Globe/share hooks never initialized.\nbrowser-logs:\n${browserLogs.join('\n').slice(0, 2000)}`);
+      throw new Error(`Globe hooks never initialized.\nbrowser-logs:\n${browserLogs.join('\n').slice(0, 2000)}`);
     }
 
-    // Open the thread so the globe focuses on its primary nations and
-    // the flow arcs render. Wait briefly for camera focus animation.
+    // Hide UI chrome (header, panels, modals) so screenshots capture only
+    // the globe canvas behind. We don't hide canvas-adjacent elements
+    // since the canvas itself is z:0 — anything else stacks above.
+    await page.addStyleTag({
+      content: `
+        /* Hide everything that isn't the globe canvas */
+        body > *:not(canvas):not(#globeCanvas):not([data-keep-on-capture]) {
+          display: none !important;
+        }
+        canvas { position: fixed !important; inset: 0 !important;
+                  width: 100vw !important; height: 100vh !important;
+                  z-index: 1 !important; }
+        html, body { background: #040810 !important; overflow: hidden !important; }
+      `,
+    });
+
+    // Open thread → camera focuses, arcs mount + initial draw-in plays.
     await page.evaluate(async (id) => {
-      try {
-        await window.__openThread(id);
-      } catch (e) {
-        console.warn('[capture] __openThread failed:', e.message);
-      }
+      try { await window.__openThread(id); }
+      catch (e) { console.warn('[capture] __openThread failed:', e.message); }
     }, threadId);
     await new Promise(r => setTimeout(r, 3000));
 
-    // DEBUG: Direct screenshot of the page state before recording starts.
-    // If this image shows the globe, the issue is specifically with the
-    // MediaRecorder+captureStream path in headless mode. If it's also
-    // black, the globe simply isn't rendering on the server.
-    if (process.env.ARC_DEBUG_PRESHOT) {
-      try {
-        await page.screenshot({ path: '/tmp/arc-preshot.png' });
-        console.log('[capture] pre-record screenshot → /tmp/arc-preshot.png');
-      } catch (_) {}
-    }
-
-    // Drive the same recording pipeline that "Share → Clip" uses in the
-    // app, but with returnBlob: true so we get the raw MP4 back instead
-    // of a share dialog. Pass overlay so title/subtitle/flags get baked
-    // into the recorded video by the existing _buildClipOverlayPainter.
-    //
-    // Before recording, call __replayArcAnimations() so the thread's
-    // flow arcs draw-in *during* the recording (origin→destination
-    // travel) instead of being already-drawn when the recording starts.
-    const result = await page.evaluate(async (opts) => {
-      try {
-        // Reset draw-in state so arcs animate during the capture window.
-        if (typeof window.__replayArcAnimations === 'function') {
-          window.__replayArcAnimations();
-        }
-        const r = await window.__shareGlobeClip({
-          returnBlob:   true,
-          durationMs:   opts.durationMs,
-          shareTitle:   `Earth00 · ${opts.title || 'Story'}`,
-          shareText:    `${opts.title || 'Story'} — on Earth00`,
-          filenameBase: `earth00-thread-${opts.threadId}-clip`,
-          overlay: {
-            title:    opts.title || 'Story',
-            subtitle: opts.subtitle || 'Storyline',
-            flagIsos: opts.flagIsos || [],
-          },
-        });
-        if (!r || !r.blob) return { ok: false, error: 'shareGlobeClip returned no blob' };
-
-        // Serialize blob → base64 in 32KB chunks (avoid call-stack
-        // overflow that String.fromCharCode(...spread) hits past ~100KB).
-        const buf = await r.blob.arrayBuffer();
-        const bytes = new Uint8Array(buf);
-        const chunk = 0x8000;
-        let bin = '';
-        for (let i = 0; i < bytes.length; i += chunk) {
-          bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
-        }
-        return { ok: true, base64: btoa(bin), ext: r.ext, mime: r.blob.type, bytes: bytes.length };
-      } catch (e) {
-        return { ok: false, error: e.message };
+    // Reset arc draw-in state so it animates again during the recorded
+    // window. Then kick off the cinematic spin as a fire-and-forget
+    // Promise — we don't await it because we want to take screenshots
+    // *while* it runs.
+    await page.evaluate(() => {
+      if (typeof window.__replayArcAnimations === 'function') {
+        window.__replayArcAnimations();
       }
-    }, {
-      threadId,
-      durationMs: DURATION_MS,
-      title:      threadMeta.title,
-      subtitle:   threadMeta.subtitle,
-      flagIsos:   threadMeta.flagIsos,
-    });
+      // Start spin in background — capture loop will run alongside it.
+      // We don't store the Promise; the spin runs until durationMs elapses
+      // even after our screenshots finish.
+      if (typeof window.__spinGlobeFor === 'function') {
+        window.__spinGlobeFor(arguments[0]).catch(() => {});
+      }
+    }, DURATION_MS);
 
-    if (!result?.ok) {
-      throw new Error(`shareGlobeClip failed: ${result?.error || 'unknown'}\nbrowser-logs:\n${browserLogs.join('\n').slice(0, 2000)}`);
+    // Resolve the canvas element handle once — reuse across the screenshot
+    // loop instead of re-querying every frame.
+    const canvasHandle = await page.evaluateHandle(() => window.__renderer?.domElement);
+    const canvasEl = canvasHandle.asElement();
+    if (!canvasEl) throw new Error('renderer.domElement not found');
+
+    // Capture loop. Aim for TOTAL_FRAMES screenshots evenly spread across
+    // DURATION_MS. Puppeteer's Page.screenshot adds ~30-80ms latency per
+    // call in headless mode, so we don't hit a perfect 20fps — we get
+    // whatever the wall clock allows and let ffmpeg slot them at FPS.
+    const t0 = Date.now();
+    for (let i = 0; i < TOTAL_FRAMES; i++) {
+      const targetTime = t0 + i * FRAME_INTERVAL_MS;
+      const now = Date.now();
+      if (now < targetTime) {
+        await new Promise(r => setTimeout(r, targetTime - now));
+      }
+      try {
+        await canvasEl.screenshot({
+          path: path.join(frameDir, `${String(i).padStart(4, '0')}.png`),
+          omitBackground: false,
+        });
+      } catch (err) {
+        // Single-frame failures are non-fatal — the gap will be filled by
+        // ffmpeg duplicating the prior frame at encode time.
+        console.warn(`[arc-capture] frame ${i} screenshot failed: ${err.message}`);
+      }
     }
-
-    return {
-      buffer: Buffer.from(result.base64, 'base64'),
-      ext:    result.ext,
-      mime:   result.mime,
-    };
   } finally {
     await browser.close().catch(() => {});
   }
 }
 
+async function _encodeVideo(frameDir, outPath) {
+  await _spawnFfmpeg([
+    '-y',
+    '-framerate', String(FPS),
+    '-i', path.join(frameDir, '%04d.png'),
+    '-f', 'lavfi',
+    '-i', 'anullsrc=channel_layout=stereo:sample_rate=48000',
+    '-shortest',
+    '-c:v', 'libx264',
+    '-pix_fmt', 'yuv420p',
+    '-profile:v', 'high',
+    '-level', '4.0',
+    '-preset', 'veryfast',
+    '-crf', '23',
+    '-c:a', 'aac',
+    '-b:a', '128k',
+    '-movflags', '+faststart',
+    outPath,
+  ]);
+}
+
 /**
  * Generate (or fetch cached) arc-flyby video for a thread.
- *
- * @param {number} threadId
- * @param {object} opts
- * @param {string} opts.desktopAppBase — base URL of the desktop app
- *   (default: process.env.DESKTOP_APP_BASE || 'https://earth00.com')
- * @param {object} opts.threadMeta — { title, subtitle, flagIsos } baked
- *   into the video overlay. Caller (server.js arc.mp4 route) populates
- *   from the DB row.
- * @returns {Promise<string>} absolute path to the MP4
  */
 async function composeArcVideo(threadId, opts = {}) {
   await _ensureDir(CACHE_DIR);
@@ -202,9 +215,18 @@ async function composeArcVideo(threadId, opts = {}) {
 
   _renderingPromise = (async () => {
     const desktopAppBase = opts.desktopAppBase || process.env.DESKTOP_APP_BASE || 'https://earth00.com';
-    const threadMeta = opts.threadMeta || {};
-    const { buffer } = await _captureClip(threadId, threadMeta, desktopAppBase);
-    await fs.promises.writeFile(outPath, buffer);
+    const frameDir = path.join(FRAME_DIR_BASE, String(threadId));
+    await _ensureDir(frameDir);
+    try {
+      await _captureFrames(threadId, frameDir, desktopAppBase);
+      await _encodeVideo(frameDir, outPath);
+    } finally {
+      try {
+        const files = await fs.promises.readdir(frameDir);
+        for (const f of files) await fs.promises.unlink(path.join(frameDir, f)).catch(() => {});
+        await fs.promises.rmdir(frameDir).catch(() => {});
+      } catch (_) {}
+    }
     return outPath;
   })();
 
@@ -215,4 +237,4 @@ async function composeArcVideo(threadId, opts = {}) {
   }
 }
 
-module.exports = { composeArcVideo, WIDTH, HEIGHT, DURATION_MS, CACHE_DIR };
+module.exports = { composeArcVideo, WIDTH, HEIGHT, DURATION_MS, FPS, CACHE_DIR };
