@@ -132,15 +132,13 @@ async function _captureFrames(threadId, frameDir, desktopAppBase) {
     // window. Then kick off the cinematic spin as a fire-and-forget
     // Promise — we don't await it because we want to take screenshots
     // *while* it runs.
-    await page.evaluate(() => {
+    await page.evaluate((durationMs) => {
       if (typeof window.__replayArcAnimations === 'function') {
         window.__replayArcAnimations();
       }
       // Start spin in background — capture loop will run alongside it.
-      // We don't store the Promise; the spin runs until durationMs elapses
-      // even after our screenshots finish.
       if (typeof window.__spinGlobeFor === 'function') {
-        window.__spinGlobeFor(arguments[0]).catch(() => {});
+        window.__spinGlobeFor(durationMs).catch(() => {});
       }
     }, DURATION_MS);
 
