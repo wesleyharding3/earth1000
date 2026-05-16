@@ -15164,6 +15164,374 @@ app.post('/api/admin/social-queue/pick-now', requireAdmin, async (req, res) => {
 // platforms went live.
 const socialPublishers = require('./publishers');
 
+// ── Arc-flyby video pipeline ────────────────────────────────────────────
+// /render-globe is a server-rendered HTML page LOADED ONLY by the headless
+// Chromium running inside videoGenerator.js. It's never served to real
+// users. Lives entirely in server.js — NOT in www/ — so changes here do
+// not propagate to the iOS Capacitor bundle and never require a new iOS
+// build.
+//
+// The page renders a deterministic 12-second three.js fly-around of the
+// thread's primary + secondary nations, with arcs drawn between them.
+// Frame-by-frame stepping is exposed via window.advanceToFrame(n) so
+// Puppeteer can capture each frame exactly once before encoding.
+//
+// /share/thread/:id/arc.mp4 lazily generates + caches the MP4 the first
+// time it's hit. The picker cron warms this URL before posting so social
+// publishers can upload the video immediately.
+app.get('/render-globe', async (req, res) => {
+  try {
+    const threadId = parseInt(req.query.thread, 10);
+    if (!Number.isFinite(threadId)) return res.status(400).send('thread query param required');
+    const totalFrames = Math.max(60, Math.min(600, parseInt(req.query.frames, 10) || 360));
+
+    const { rows: threadRows } = await pool.query(`
+      SELECT id, title, description, primary_nations, secondary_nations, primary_category
+        FROM story_threads WHERE id = $1
+    `, [threadId]);
+    if (!threadRows.length) return res.status(404).send('thread not found');
+    const thread = threadRows[0];
+
+    const isos = [
+      ...(Array.isArray(thread.primary_nations) ? thread.primary_nations : []),
+      ...(Array.isArray(thread.secondary_nations) ? thread.secondary_nations : []),
+    ].map(s => String(s).toUpperCase()).filter(Boolean);
+
+    let countries = [];
+    if (isos.length) {
+      const { rows } = await pool.query(`
+        SELECT iso_code, name, latitude, longitude
+          FROM countries
+         WHERE iso_code = ANY($1::text[])
+           AND latitude IS NOT NULL
+           AND longitude IS NOT NULL
+      `, [isos]);
+      countries = rows;
+    }
+
+    const primaryIsos   = (thread.primary_nations || []).map(s => String(s).toUpperCase());
+    const secondaryIsos = (thread.secondary_nations || []).map(s => String(s).toUpperCase());
+
+    const payload = {
+      threadId:      thread.id,
+      title:         thread.title || '',
+      category:      String(thread.primary_category || 'STORY').toUpperCase(),
+      countries:     countries.map(c => ({
+        iso:  c.iso_code,
+        name: c.name,
+        lat:  Number(c.latitude),
+        lon:  Number(c.longitude),
+        primary: primaryIsos.includes(c.iso_code),
+      })),
+      totalFrames,
+    };
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(_renderGlobeHtml(payload));
+  } catch (err) {
+    console.error('[render-globe]', err);
+    res.status(500).send('render-globe error: ' + err.message);
+  }
+});
+
+function _renderGlobeHtml({ threadId, title, category, countries, totalFrames }) {
+  // ISO 3166-1 alpha-2 → regional indicator flag emoji
+  const isoFlag = (iso) => {
+    const c = String(iso || '').toUpperCase();
+    if (!/^[A-Z]{2}$/.test(c)) return '';
+    return String.fromCodePoint(0x1F1E6 + c.charCodeAt(0) - 65) +
+           String.fromCodePoint(0x1F1E6 + c.charCodeAt(1) - 65);
+  };
+  const flagRow = countries.filter(c => c.primary).slice(0, 6)
+    .map(c => isoFlag(c.iso)).join(' ');
+  const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Render Globe #${threadId}</title>
+<style>
+  html, body { margin:0; padding:0; background:#040810; color:#f4ead2;
+               font-family:-apple-system,BlinkMacSystemFont,"Inter",sans-serif;
+               width:1080px; height:1920px; overflow:hidden; }
+  #stage { position:relative; width:1080px; height:1920px; }
+  #globe { position:absolute; inset:0; }
+  #overlay-top { position:absolute; left:0; right:0; top:140px;
+                 padding:0 60px; text-align:left; z-index:5; pointer-events:none; }
+  #cat   { font-size:32px; font-weight:700; letter-spacing:6px;
+           color:#d4a843; text-transform:uppercase; opacity:0; }
+  #title { font-size:84px; font-weight:800; line-height:1.05; letter-spacing:-2px;
+           color:#f4ead2; margin-top:24px; opacity:0;
+           text-shadow:0 4px 16px rgba(0,0,0,0.65); }
+  #flags { font-size:64px; line-height:1; margin-top:32px; opacity:0;
+           letter-spacing:8px; }
+  #overlay-bottom { position:absolute; left:0; right:0; bottom:140px;
+                    padding:0 60px; text-align:center; z-index:5; pointer-events:none; }
+  #brand { font-size:48px; font-weight:800; letter-spacing:8px;
+           color:#d4a843; text-transform:uppercase; opacity:0; }
+  #brand-sub { font-size:28px; font-weight:500; letter-spacing:4px;
+               color:rgba(255,255,255,0.7); margin-top:12px; opacity:0; }
+</style>
+</head>
+<body>
+<div id="stage">
+  <canvas id="globe"></canvas>
+  <div id="overlay-top">
+    <div id="cat">${esc(category)} · STORY THREAD</div>
+    <div id="title">${esc(title)}</div>
+    <div id="flags">${flagRow}</div>
+  </div>
+  <div id="overlay-bottom">
+    <div id="brand">EARTH00</div>
+    <div id="brand-sub">Track world events</div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+<script>
+(function() {
+  'use strict';
+  const COUNTRIES = ${JSON.stringify(countries)};
+  const TOTAL_FRAMES = ${totalFrames};
+  const W = 1080, H = 1920;
+
+  // ─── Scene setup ─────────────────────────────────────────────────
+  const canvas = document.getElementById('globe');
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+  renderer.setSize(W, H, false);
+  renderer.setPixelRatio(1);
+
+  const scene = new THREE.Scene();
+  scene.background = null;
+
+  const camera = new THREE.PerspectiveCamera(35, W / H, 0.1, 100);
+  camera.position.set(0, 0, 12);
+  camera.lookAt(0, 0, 0);
+
+  // Subtle starfield as background (sprite-rendered points)
+  {
+    const STAR_COUNT = 600;
+    const pos = new Float32Array(STAR_COUNT * 3);
+    for (let i = 0; i < STAR_COUNT; i++) {
+      const r = 40 + Math.random() * 20;
+      const theta = Math.random() * Math.PI * 2;
+      const phi = Math.acos(2 * Math.random() - 1);
+      pos[i*3]   = r * Math.sin(phi) * Math.cos(theta);
+      pos[i*3+1] = r * Math.sin(phi) * Math.sin(theta);
+      pos[i*3+2] = r * Math.cos(phi);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    const m = new THREE.PointsMaterial({ color: 0xffffff, size: 0.06, sizeAttenuation: true, transparent: true, opacity: 0.55 });
+    scene.add(new THREE.Points(g, m));
+  }
+
+  // Lighting
+  scene.add(new THREE.AmbientLight(0x4a5a8a, 0.6));
+  const sun = new THREE.DirectionalLight(0xfff4d6, 1.3);
+  sun.position.set(8, 4, 6);
+  scene.add(sun);
+
+  // ─── Globe ───────────────────────────────────────────────────────
+  const R = 3.0;
+  const globeGroup = new THREE.Group();
+  scene.add(globeGroup);
+
+  // Solid sphere (deep ocean-blue)
+  const globeMat = new THREE.MeshPhongMaterial({
+    color: 0x0c2342,
+    specular: 0x223355,
+    shininess: 30,
+    transparent: false,
+  });
+  const globeMesh = new THREE.Mesh(new THREE.SphereGeometry(R, 64, 64), globeMat);
+  globeGroup.add(globeMesh);
+
+  // Wireframe lat/lon grid overlay for visual interest
+  const wireMat = new THREE.MeshBasicMaterial({
+    color: 0xd4a843,
+    wireframe: true,
+    transparent: true,
+    opacity: 0.10,
+  });
+  const wireMesh = new THREE.Mesh(new THREE.SphereGeometry(R + 0.005, 24, 16), wireMat);
+  globeGroup.add(wireMesh);
+
+  // ─── Country markers ────────────────────────────────────────────
+  // Convert lat/lon → 3D position on the sphere surface
+  function latLonToVec3(lat, lon, radius) {
+    const phi = (90 - lat) * Math.PI / 180;
+    const theta = (lon + 180) * Math.PI / 180;
+    return new THREE.Vector3(
+      -radius * Math.sin(phi) * Math.cos(theta),
+       radius * Math.cos(phi),
+       radius * Math.sin(phi) * Math.sin(theta),
+    );
+  }
+
+  const markerMaterialPrimary = new THREE.MeshBasicMaterial({ color: 0xf4c443 });
+  const markerMaterialSecondary = new THREE.MeshBasicMaterial({ color: 0xa9b8d8 });
+  COUNTRIES.forEach((c) => {
+    const pos = latLonToVec3(c.lat, c.lon, R + 0.04);
+    const mat = c.primary ? markerMaterialPrimary : markerMaterialSecondary;
+    const m = new THREE.Mesh(new THREE.SphereGeometry(c.primary ? 0.10 : 0.07, 16, 16), mat);
+    m.position.copy(pos);
+    globeGroup.add(m);
+    // Faint halo
+    const halo = new THREE.Mesh(
+      new THREE.SphereGeometry((c.primary ? 0.18 : 0.12), 16, 16),
+      new THREE.MeshBasicMaterial({ color: mat.color, transparent: true, opacity: 0.18 })
+    );
+    halo.position.copy(pos);
+    globeGroup.add(halo);
+  });
+
+  // ─── Flow arcs between primary nations ──────────────────────────
+  // Each pair of primary countries gets an arc that "draws in" over a
+  // 60-frame window inside the globe-rotation portion of the animation.
+  const arcCurves = [];
+  const primaries = COUNTRIES.filter(c => c.primary);
+  for (let i = 0; i < primaries.length; i++) {
+    for (let j = i + 1; j < primaries.length; j++) {
+      const a = latLonToVec3(primaries[i].lat, primaries[i].lon, R + 0.04);
+      const b = latLonToVec3(primaries[j].lat, primaries[j].lon, R + 0.04);
+      const mid = a.clone().add(b).multiplyScalar(0.5);
+      const dist = a.distanceTo(b);
+      // Pull control point outward proportional to arc length so longer
+      // arcs lift higher and don't pass through the globe.
+      const lift = 1.0 + Math.min(0.8, dist * 0.18);
+      const control = mid.clone().normalize().multiplyScalar(R * lift + dist * 0.25);
+      const curve = new THREE.QuadraticBezierCurve3(a, control, b);
+      const points = curve.getPoints(48);
+      const geo = new THREE.BufferGeometry().setFromPoints(points);
+      const mat = new THREE.LineBasicMaterial({ color: 0xf4c443, transparent: true, opacity: 0.0 });
+      const line = new THREE.Line(geo, mat);
+      // Tag with full point count so we can animate progressive draw
+      line.userData.drawableCount = points.length;
+      arcCurves.push({ line, mat, geo, points });
+      globeGroup.add(line);
+    }
+  }
+
+  // ─── Frame orchestration ────────────────────────────────────────
+  // Animation timeline (assuming 360 total frames @ 30fps = 12s):
+  //   0–30   (0–1s):     title fade-in
+  //   30–90  (1–3s):     title held, globe slowly spins up
+  //   90–270 (3–9s):     arcs draw in one by one + globe rotation
+  //   270–330 (9–11s):   title fades out, camera pulls back slightly
+  //   330–360 (11–12s):  brand outro fades in
+  //
+  // These ratios scale with TOTAL_FRAMES so changing the duration just
+  // works.
+  const _t = TOTAL_FRAMES;
+  const SEG = {
+    titleIn:    [0,           Math.floor(_t * 0.08)],
+    titleHold:  [Math.floor(_t * 0.08),  Math.floor(_t * 0.75)],
+    titleOut:   [Math.floor(_t * 0.75),  Math.floor(_t * 0.92)],
+    arcsStart:  Math.floor(_t * 0.25),
+    arcsEnd:    Math.floor(_t * 0.85),
+    brandIn:    [Math.floor(_t * 0.92),  _t],
+  };
+
+  function smoothstep(edge0, edge1, x) {
+    const t = Math.min(1, Math.max(0, (x - edge0) / (edge1 - edge0)));
+    return t * t * (3 - 2 * t);
+  }
+
+  const titleEl = document.getElementById('title');
+  const catEl   = document.getElementById('cat');
+  const flagsEl = document.getElementById('flags');
+  const brandEl = document.getElementById('brand');
+  const brandSubEl = document.getElementById('brand-sub');
+
+  function renderFrame(n) {
+    // Title block opacity: fade in then hold then fade out
+    let titleOp = 0;
+    if (n <= SEG.titleIn[1]) {
+      titleOp = smoothstep(SEG.titleIn[0], SEG.titleIn[1], n);
+    } else if (n < SEG.titleOut[0]) {
+      titleOp = 1;
+    } else {
+      titleOp = 1 - smoothstep(SEG.titleOut[0], SEG.titleOut[1], n);
+    }
+    titleEl.style.opacity = titleOp.toFixed(3);
+    catEl.style.opacity   = titleOp.toFixed(3);
+    flagsEl.style.opacity = titleOp.toFixed(3);
+
+    // Brand outro fades in last segment
+    const brandOp = smoothstep(SEG.brandIn[0], SEG.brandIn[1] - 1, n);
+    brandEl.style.opacity = brandOp.toFixed(3);
+    brandSubEl.style.opacity = brandOp.toFixed(3);
+
+    // Globe rotation: continuous slow spin, full rotation across the
+    // visible portion (frames 0..titleOut[1]).
+    const spinT = n / _t;
+    globeGroup.rotation.y = spinT * Math.PI * 1.6;
+    globeGroup.rotation.x = -0.25 + Math.sin(spinT * Math.PI) * 0.10;
+
+    // Camera zoom: starts at 14, pulls in to 10 by mid-video, holds.
+    const zoomT = smoothstep(0, _t * 0.5, n);
+    camera.position.z = 14 - 4 * zoomT;
+    camera.lookAt(0, 0, 0);
+
+    // Arc progressive draw — distribute arcs across [arcsStart..arcsEnd]
+    if (arcCurves.length) {
+      const winStart = SEG.arcsStart;
+      const winEnd   = SEG.arcsEnd;
+      const perArc = (winEnd - winStart) / Math.max(1, arcCurves.length);
+      arcCurves.forEach((arc, idx) => {
+        const arcStart = winStart + idx * perArc * 0.6;  // overlap by 40%
+        const arcEnd   = arcStart + perArc * 1.3;
+        const t = smoothstep(arcStart, arcEnd, n);
+        // Opacity ramps in, holds, then slightly dims after appearance
+        const op = 0.85 * smoothstep(arcStart, arcStart + 8, n);
+        arc.mat.opacity = op;
+        // Progressive geometry — show first (t*total) points only
+        const total = arc.points.length;
+        const visible = Math.max(2, Math.floor(t * total));
+        arc.geo.setFromPoints(arc.points.slice(0, visible));
+      });
+    }
+
+    renderer.render(scene, camera);
+    window.LATEST_FRAME = n;
+  }
+
+  // Render frame 0 immediately so the page has visible content
+  renderFrame(0);
+  window.LATEST_FRAME = 0;
+  window.advanceToFrame = renderFrame;
+  window.RENDER_READY = true;
+})();
+</script>
+</body>
+</html>`;
+}
+
+const videoGenerator = require('./videoGenerator');
+// /share/thread/:id/arc.mp4 — lazy-cached arc-flyby video. First hit
+// triggers the headless render (~30–60s). Subsequent hits within 24h
+// serve the cached MP4 in milliseconds.
+app.get('/share/thread/:id/arc.mp4', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id)) return res.status(400).send('invalid id');
+    // Sanity check thread exists before kicking off a 60s render.
+    const { rows } = await pool.query('SELECT id FROM story_threads WHERE id = $1', [id]);
+    if (!rows.length) return res.status(404).send('thread not found');
+    const hostBase = `http://127.0.0.1:${process.env.PORT || 3000}`;
+    const mp4Path = await videoGenerator.composeArcVideo(id, { hostBase });
+    res.setHeader('Content-Type', 'video/mp4');
+    res.setHeader('Cache-Control', 'public, max-age=86400, s-maxage=86400');
+    res.sendFile(mp4Path);
+  } catch (err) {
+    console.error('[share/arc.mp4]', err.message);
+    res.status(500).send('arc video failed: ' + err.message);
+  }
+});
+
 // TEMPORARY Chromium probe — verifies Puppeteer can launch and render on
 // this Render instance. Used as the gating test before building out the
 // /share/thread/:id/arc.mp4 video pipeline. Will be removed after the
