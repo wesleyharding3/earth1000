@@ -55,6 +55,15 @@ async function _captureClip(threadId, threadMeta, desktopAppBase) {
       '--enable-unsafe-swiftshader',
       '--hide-scrollbars',
       '--autoplay-policy=no-user-gesture-required',
+      // Headless Chromium throttles RAF + timers when the page isn't
+      // "visible" (which is always the case in headless mode). Without
+      // these flags, __spinGlobeFor's RAF loop pauses and MediaRecorder
+      // stops with a sub-second clip. These match the recipe used by
+      // every production headless-screencap pipeline.
+      '--disable-background-timer-throttling',
+      '--disable-backgrounding-occluded-windows',
+      '--disable-renderer-backgrounding',
+      '--disable-features=IsolateOrigins,site-per-process',
     ],
     headless: 'new',
   });
@@ -92,6 +101,17 @@ async function _captureClip(threadId, threadMeta, desktopAppBase) {
       }
     }, threadId);
     await new Promise(r => setTimeout(r, 3000));
+
+    // DEBUG: Direct screenshot of the page state before recording starts.
+    // If this image shows the globe, the issue is specifically with the
+    // MediaRecorder+captureStream path in headless mode. If it's also
+    // black, the globe simply isn't rendering on the server.
+    if (process.env.ARC_DEBUG_PRESHOT) {
+      try {
+        await page.screenshot({ path: '/tmp/arc-preshot.png' });
+        console.log('[capture] pre-record screenshot → /tmp/arc-preshot.png');
+      } catch (_) {}
+    }
 
     // Drive the same recording pipeline that "Share → Clip" uses in the
     // app, but with returnBlob: true so we get the raw MP4 back instead
