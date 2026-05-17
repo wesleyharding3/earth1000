@@ -120,13 +120,17 @@ async function publish(draft, env) {
   const containerId = container.id;
   if (!containerId) return { ok: false, error: 'IG media returned no container id' };
 
-  // Step 1.5 — wait for video transcoding before publish.
-  if (usingVideo) {
-    try {
-      await _waitForContainerReady(base, containerId, token);
-    } catch (err) {
-      return { ok: false, error: err.message };
-    }
+  // Step 1.5 — wait for container to reach FINISHED before publish.
+  // Video transcoding always takes a few seconds. Image containers are
+  // usually ready immediately, BUT in practice IG sometimes returns
+  // "Media ID is not available" if media_publish fires before the
+  // container finishes its internal validation. Polling the status
+  // for images too eliminates that race; it's a no-op when FINISHED
+  // is already true on the first check.
+  try {
+    await _waitForContainerReady(base, containerId, token);
+  } catch (err) {
+    return { ok: false, error: err.message };
   }
 
   // Step 2 — publish

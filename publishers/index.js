@@ -65,7 +65,10 @@ async function publishAll(drafts, enabled, env = process.env) {
     if (enabled && enabled[platform] === false) continue;
     const draft = (drafts || {})[platform];
     if (!draft) {
-      failures.push({ platform, error: 'no draft for platform' });
+      // Silently skip — happens for legacy queue rows whose drafts JSON
+      // pre-dates a platform addition (e.g. Threads added after the row
+      // was queued). Not a real failure; the row still publishes to
+      // every other platform it has a draft for.
       continue;
     }
     const result = await publishOne(platform, draft, env);
