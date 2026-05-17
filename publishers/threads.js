@@ -70,8 +70,11 @@ async function _get(url) {
 // on the first poll.
 async function _waitForContainerReady(containerId, token, { maxAttempts = 30, intervalMs = 3000 } = {}) {
   for (let i = 0; i < maxAttempts; i++) {
-    const status = await _get(`${GRAPH_BASE}/${containerId}?fields=status,status_code&access_token=${encodeURIComponent(token)}`);
-    const code = String(status.status_code || status.status || '').toUpperCase();
+    // Threads API exposes only `status` here (IG has both status + status_code
+    // but Threads rejects the request as "nonexisting field" if status_code
+    // is in the fields list).
+    const status = await _get(`${GRAPH_BASE}/${containerId}?fields=status&access_token=${encodeURIComponent(token)}`);
+    const code = String(status.status || '').toUpperCase();
     if (code === 'FINISHED') return true;
     if (code === 'ERROR' || code === 'EXPIRED') {
       throw new Error(`Threads container ${code}: ${status.status || ''}`);

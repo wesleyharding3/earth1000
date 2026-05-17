@@ -43,6 +43,15 @@ function listConfigured(env = process.env) {
 async function publishOne(platform, draft, env = process.env) {
   const mod = REGISTRY[platform];
   if (!mod) return { ok: false, error: `Unknown platform: ${platform}` };
+  // Per-platform kill switch: set <PLATFORM>_DISABLED=1 in Render env to
+  // skip the platform without removing its OAuth credentials. Used when
+  // a platform is intentionally being posted manually (e.g. when we
+  // can't publish media there yet and a bare text/link tweet would look
+  // worse than a hand-crafted manual post).
+  const disabledFlag = env[`${platform.toUpperCase()}_DISABLED`];
+  if (disabledFlag === '1' || disabledFlag === 'true') {
+    return { ok: false, skipped: true, error: `${platform} disabled via ${platform.toUpperCase()}_DISABLED` };
+  }
   if (!mod.isConfigured(env)) return { ok: false, error: `${platform} not configured (missing env vars)` };
   try {
     return await mod.publish(draft || {}, env);
@@ -74,6 +83,11 @@ async function publishAll(drafts, enabled, env = process.env) {
     const result = await publishOne(platform, draft, env);
     if (result.ok && result.permalink) {
       permalinks[platform] = result.permalink;
+    } else if (result.skipped) {
+      // Intentionally disabled via <PLATFORM>_DISABLED env var. Don't
+      // count this as a failure — admin is handling that platform out-
+      // of-band (e.g. manual post with media we can't yet upload here).
+      continue;
     } else {
       failures.push({ platform, error: result.error || 'unknown failure' });
     }
