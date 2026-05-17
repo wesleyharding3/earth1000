@@ -57030,9 +57030,11 @@ body.ticker-active .gTickerLabel {
     }
 
     // ── Raw path (no overlay): capture globe canvas directly ────
+    // Raw path (no overlay) — match the overlay path's 12Mbps so all
+    // clip-share surfaces produce equally smooth video.
     const stream = canvas.captureStream(60);
     const chunks = [];
-    const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 6_000_000 });
+    const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 12_000_000 });
     recorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunks.push(e.data); };
 
     const stopped = new Promise((resolve) => { recorder.onstop = resolve; });

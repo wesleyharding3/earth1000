@@ -64193,9 +64193,12 @@ body.ticker-active .gTickerLabel {
       // hugs left/right edges + top/bottom corners, so width is the
       // right scale anchor).
       const paintOverlay = await _buildClipOverlayPainter({ ...overlay, size: REC_W });
-      const stream = recCanvas.captureStream(30);
+      // 60fps + 12Mbps for smoother, higher-detail clips. Was 30fps +
+      // 6Mbps — half the temporal resolution, twice the compression
+      // artifacts on the city-light gradients.
+      const stream = recCanvas.captureStream(60);
       const chunks = [];
-      const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 6_000_000 });
+      const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 12_000_000 });
       recorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunks.push(e.data); };
       const stopped = new Promise((resolve) => { recorder.onstop = resolve; });
 
@@ -64247,9 +64250,11 @@ body.ticker-active .gTickerLabel {
     }
 
     // ── Raw path (no overlay): capture globe canvas directly ────
+    // 12Mbps matches the overlay path — keeps all clip-share surfaces
+    // (in-app share-clip + Mac-worker arc renders) at consistent quality.
     const stream = canvas.captureStream(60);
     const chunks = [];
-    const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 6_000_000 });
+    const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 12_000_000 });
     recorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunks.push(e.data); };
     const stopped = new Promise((resolve) => { recorder.onstop = resolve; });
     recorder.start(250);
