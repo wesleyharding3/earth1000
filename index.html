@@ -17032,6 +17032,14 @@ window.__arcCtxSegmented = (function() {
     window.__getGlobePose = function() {
       return { yaw: globeYaw, pitch: globePitch };
     };
+    // Bridge for clip-recording setup to clear any residual drift
+    // velocities so animate()'s per-tick "globeYaw += yawVelocity * delta"
+    // pose-integration doesn't keep nudging the pose after we've
+    // explicitly placed it via __setGlobePose.
+    window.__zeroPoseVelocities = function() {
+      yawVelocity  = 0;
+      tiltVelocity = 0;
+    };
 
     // Extract yaw/pitch from a quaternion by analyzing the forward vector direction.
     // This avoids Euler decomposition issues when the quaternion has a roll component.
@@ -23619,13 +23627,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
       function animate() {
         requestAnimationFrame(animate);
         if (!window.__globeActive) return;
-        // When the deterministic clip renderer is driving frames, skip the
-        // entire animate() body — otherwise the regular RAF loop's
-        // time-based easings (earthMat.opacity → targetEarthOpacity, city
-        // tier fades, day/night terminator, etc.) would create visible
-        // flicker between the explicit renderClipFrame() calls. The
-        // clip renderer owns rendering during this window.
-        if (window.__clipRecordingActive) return;
+        // Note: deterministic clip recording does NOT pause this loop
+        // anymore. Tried doing so via an early-return guard, but it
+        // made each frame ~3× slower (985ms vs 300ms) because Chromium's
+        // task scheduler de-prioritized a "doing nothing" RAF. Instead,
+        // __setupClipRecording neutralizes time-based easings (sets
+        // earthMat.opacity = 1.0 so the eased target equation zeros
+        // out, etc) while letting animate() keep cycling normally.
 
         if (isFocused && focusTargetQuat) {
           // Skip rebuildGlobeQuat entirely during focus — it overwrites globeQuat
@@ -24694,16 +24702,21 @@ const settingsToggle     = document.getElementById("settingsToggle");
     _clipBaseYaw     = pose.yaw;
     _clipBasePitch   = pose.pitch;
     _clipSpinSeconds = Number.isFinite(opts.spinSeconds) ? opts.spinSeconds : 10;
-    // Pause the regular animate() loop's body — see the matching guard
-    // in animate() above. Without this, real-time easings (earth points
-    // opacity, city tier fades, day/night progression) run concurrently
-    // with our explicit frame stepping and produce time-locked flicker
-    // that's NOT in sync with the spin progress.
+    // Flag for any code path that wants to behave differently during
+    // clip recording. Currently informational only — animate() does
+    // NOT pause (pausing makes each frame ~3× slower as Chromium
+    // throttles inactive RAFs).
     window.__clipRecordingActive = true;
-    // Snap time-eased materials to their target settled values now that
-    // we've paused animate() — otherwise they're stuck at whatever
-    // partial-easing state they were in when we paused.
+    // Snap time-eased materials to their target settled values. The
+    // animate() easing equation `opacity += (target - opacity) * 0.018`
+    // computes a 0 delta when opacity already equals target, so this
+    // effectively freezes the value in place even though animate()
+    // keeps running.
     if (window.__earthPointsMat) window.__earthPointsMat.opacity = 1.0;
+    // Zero out residual camera-pose drift velocities so animate()'s
+    // own pose-application loop doesn't fight with __setGlobePose's
+    // explicit positioning.
+    if (typeof window.__zeroPoseVelocities === 'function') window.__zeroPoseVelocities();
     const REC_W = 1080;
     const REC_H = 1350;
     _clipRecCanvas = document.createElement('canvas');

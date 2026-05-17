@@ -57,7 +57,7 @@ const POLL_INTERVAL_MS = 60_000;     // poll every minute
 // still plays back silky-smooth at the captured ~25fps source rate.
 const DURATION_MS      = 10_000;
 const PAGE_TIMEOUT_MS  = 60_000;
-const RENDER_TIMEOUT_MS = 180_000;   // hard ceiling per render attempt.
+const RENDER_TIMEOUT_MS = 240_000;   // hard ceiling per render attempt.
                                      // Deterministic loop is ~400ms/frame
                                      // (page.evaluate + canvas.toDataURL
                                      // roundtrip), so 300 frames + ffmpeg
