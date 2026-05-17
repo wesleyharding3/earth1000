@@ -50,7 +50,12 @@ if (!RENDER_HOST || !APP_HOST || !TOKEN) {
 }
 
 const POLL_INTERVAL_MS = 60_000;     // poll every minute
-const DURATION_MS      = 10_000;     // 10s clip per __shareEntityClip default
+// 15s clip (up from 10s) — slows the globe spin so arcs/markers on
+// any given hemisphere stay visible for ~5s instead of ~3.3s. Combined
+// with the bitrate bump (20Mbps) and 60fps capture, this gives the
+// viewer enough time to actually see the origin→destination travel
+// instead of arcs sliding past too fast.
+const DURATION_MS      = 15_000;
 const PAGE_TIMEOUT_MS  = 60_000;
 const RENDER_TIMEOUT_MS = 90_000;    // hard ceiling per render attempt
 
@@ -128,22 +133,45 @@ async function renderVideo(job) {
           && !!window.__renderer;
     }, { timeout: PAGE_TIMEOUT_MS });
 
-    // Trigger the FULL flow-arc visualization for this thread (arcs
-    // animate origin → destination, primary nations light up, day/
-    // night terminator is in steady state, etc.). Earlier the worker
-    // called __openThread which only opens the side panel without
-    // touching the globe — so the recording captured an empty rotation.
+    // Trigger the FULL flow-arc visualization. showThreadFlows fetches
+    // articles, mounts arcs on the globe, lights up primary nations,
+    // etc. The function's own Promise resolves before all of that is
+    // visible on the globe though — articles are fetched async, arcs
+    // get queued for the next RAF tick.
     await page.evaluate(async (id) => {
       try { await window.showThreadFlows(id, null); }
       catch (e) { console.warn('[worker] showThreadFlows:', e.message); }
     }, job.thread_id);
 
-    // Longer settle so:
-    //   - thread articles /api fetch completes + arcs mount
-    //   - day/night terminator settles to its current-time state
-    //     (it starts at 100% day-mode and fades to default over ~2s)
-    //   - the flow clock starts advancing
-    await new Promise(r => setTimeout(r, 6000));
+    // Poll until arcs are ACTUALLY mounted on the globe. Earlier the
+    // worker just slept 6s after showThreadFlows and hoped — when the
+    // articles fetch was slow, the recording started before arcs were
+    // visible. __replayArcAnimations() returns the current arc count
+    // (closure-local arcObjects.length), so we can use it as a proxy.
+    const arcCountInScene = await page.evaluate(async () => {
+      const MAX_WAIT_MS  = 20000;
+      const POLL_MS      = 500;
+      const t0 = Date.now();
+      let count = 0;
+      while (Date.now() - t0 < MAX_WAIT_MS) {
+        try {
+          count = typeof window.__replayArcAnimations === 'function'
+            ? window.__replayArcAnimations()
+            : 0;
+        } catch (_) { count = 0; }
+        if (count > 0) return count;
+        await new Promise(r => setTimeout(r, POLL_MS));
+      }
+      return 0;
+    });
+    log(`  arcs in scene: ${arcCountInScene}`);
+
+    // Brief additional settle so the day/night terminator transitions
+    // out of its initial 100%-day-mode state and the flow clock starts
+    // advancing. Then __shareGlobeClip's internal replay will reset
+    // the draw-in counters and arcs will animate origin→destination
+    // during the recording window.
+    await new Promise(r => setTimeout(r, 2500));
 
     // Drive the same recording pipeline that "Share → Clip" uses in
     // the live app. returnBlob: true intercepts the Blob before the

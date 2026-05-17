@@ -64198,7 +64198,7 @@ body.ticker-active .gTickerLabel {
       // artifacts on the city-light gradients.
       const stream = recCanvas.captureStream(60);
       const chunks = [];
-      const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 12_000_000 });
+      const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 20_000_000 });
       recorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunks.push(e.data); };
       const stopped = new Promise((resolve) => { recorder.onstop = resolve; });
 
@@ -64254,7 +64254,7 @@ body.ticker-active .gTickerLabel {
     // (in-app share-clip + Mac-worker arc renders) at consistent quality.
     const stream = canvas.captureStream(60);
     const chunks = [];
-    const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 12_000_000 });
+    const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 20_000_000 });
     recorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunks.push(e.data); };
     const stopped = new Promise((resolve) => { recorder.onstop = resolve; });
     recorder.start(250);

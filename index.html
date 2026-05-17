@@ -56975,7 +56975,7 @@ body.ticker-active .gTickerLabel {
       // 12Mbps for higher-detail encoding — important when the scene
       // has fine wireframe + city-light gradients that compress badly
       // at the previous 6Mbps default.
-      const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 12_000_000 });
+      const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 20_000_000 });
       recorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunks.push(e.data); };
       const stopped = new Promise((resolve) => { recorder.onstop = resolve; });
 
@@ -57034,7 +57034,7 @@ body.ticker-active .gTickerLabel {
     // clip-share surfaces produce equally smooth video.
     const stream = canvas.captureStream(60);
     const chunks = [];
-    const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 12_000_000 });
+    const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 20_000_000 });
     recorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunks.push(e.data); };
 
     const stopped = new Promise((resolve) => { recorder.onstop = resolve; });
