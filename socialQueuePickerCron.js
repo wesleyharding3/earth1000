@@ -347,27 +347,33 @@ function pickBatch(candidates) {
 });
 
 // ── Phase 2 helper ─────────────────────────────────────────────────────
-// Publish any rows whose video is ready OR which have been pending
-// for longer than STALE_THRESHOLD_H (image-only fallback). Rate-limited
-// to MAX_PUBLISHES_PER_DAY so vacation backlogs don't fire 20 posts
-// at once when the picker finally catches up.
-const PUBLISH_VIDEO_CACHE_DIR = '/tmp/arc-cache';
-const MAX_PUBLISHES_PER_RUN   = 3;     // picker runs twice daily — 3 per run = 6/day max
-const MAX_PUBLISHES_PER_DAY   = 4;     // hard daily cap
-const STALE_THRESHOLD_H       = 48;    // > 48h → publish image-only fallback
+// Publish any rows that have moved to pending_approval (either the Mac
+// worker uploaded the video OR the 48-hour stale fallback below flipped
+// them). Rate-limited so vacation backlogs don't fire 20 posts at once.
+//
+// Source of truth is the status column (set by the web service's
+// /api/video-jobs/:id/result endpoint), NOT the local filesystem —
+// the cron and web service run as separate Render services with
+// separate /tmp directories, so a filesystem check would never see
+// the MP4 the Mac worker uploaded.
+const MAX_PUBLISHES_PER_RUN = 3;
+const MAX_PUBLISHES_PER_DAY = 4;
+const STALE_THRESHOLD_H     = 48;
 
 async function _publishEligibleRows() {
-  const fs = require('fs');
-  const path = require('path');
-
-  function _hasVideoFor(threadId) {
-    try {
-      const p = path.join(PUBLISH_VIDEO_CACHE_DIR, `${threadId}.mp4`);
-      return fs.statSync(p).size > 1000;
-    } catch (_) { return false; }
+  // Stale fallback: rows stuck in pending_video for > 48h get unblocked
+  // so vacation / Mac-off stretches don't permanently freeze publishing.
+  // They'll go out image-only on this run (no video URL in drafts).
+  const { rowCount: stalePromoted } = await pool.query(`
+    UPDATE social_post_queue
+       SET status = 'pending_approval'
+     WHERE status = 'pending_video'
+       AND scheduled_for < NOW() - INTERVAL '${STALE_THRESHOLD_H} hours'
+  `);
+  if (stalePromoted > 0) {
+    log(`  Stale-promoted ${stalePromoted} row${stalePromoted === 1 ? '' : 's'} from pending_video → pending_approval (>${STALE_THRESHOLD_H}h old)`);
   }
 
-  // Today-window publish count
   const { rows: [{ count }] } = await pool.query(`
     SELECT COUNT(*)::int AS count
       FROM social_post_queue
@@ -375,7 +381,7 @@ async function _publishEligibleRows() {
        AND posted_at > DATE_TRUNC('day', NOW() AT TIME ZONE 'UTC')
   `);
   const publishedToday = Number(count) || 0;
-  log(`\nPhase 2: publish backlog. Posted today: ${publishedToday} / ${MAX_PUBLISHES_PER_DAY}`);
+  log(`\nPhase 2: publish eligible rows. Posted today: ${publishedToday} / ${MAX_PUBLISHES_PER_DAY}`);
   if (publishedToday >= MAX_PUBLISHES_PER_DAY) {
     log('  Daily cap reached. Skipping publish phase.');
     return;
@@ -397,15 +403,8 @@ async function _publishEligibleRows() {
     if (publishedThisRun >= MAX_PUBLISHES_PER_RUN) break;
     if (publishedThisRun >= remainingCap) break;
 
-    const hasVideo = _hasVideoFor(row.thread_id);
     const ageHours = (row.age_seconds || 0) / 3600;
-    const isStale  = ageHours > STALE_THRESHOLD_H;
-    if (!hasVideo && !isStale) {
-      log(`  thread=${row.thread_id} age=${ageHours.toFixed(1)}h NO video, NOT stale → wait`);
-      continue;
-    }
-    const reason = hasVideo ? 'video-ready' : 'stale-image-only';
-    console.log(`  ▶ publish queue_id=${row.id} thread=${row.thread_id} (${reason}, age=${ageHours.toFixed(1)}h)`);
+    console.log(`  ▶ publish queue_id=${row.id} thread=${row.thread_id} (age=${ageHours.toFixed(1)}h)`);
 
     try {
       const { permalinks, failures } = await socialPublishers.publishAll(
