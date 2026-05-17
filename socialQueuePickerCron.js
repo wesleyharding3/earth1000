@@ -457,12 +457,19 @@ async function _publishEligibleRows() {
       const pieUrl      = `${publicHost}/share/thread/${row.thread_id}/pie.mp4`;
       const articlesUrl = `${publicHost}/share/thread/${row.thread_id}/articles.mp4`;
       if (drafts.instagram) {
+        // IG_FORCE_REELS=1 disables the 4-video carousel and posts only
+        // arc.mp4 via the REELS path. Used as a diagnostic when IG keeps
+        // rejecting carousel items with generic error code 2207077 — if
+        // REELS succeeds with the same arc.mp4, the cards are the bad
+        // item; if REELS also fails, the issue is broader (URL serving,
+        // auth, etc).
+        const forceReels = process.env.IG_FORCE_REELS === '1' || process.env.IG_FORCE_REELS === 'true';
         drafts.instagram = {
           ...drafts.instagram,
           // Order = scroll-stop priority: branded portrait card first
           // (best chance of stopping a fast scroll), then the cinematic
           // globe, then the data viz, then the article drill-down.
-          carousel_videos: [portraitUrl, arcUrl, pieUrl, articlesUrl],
+          ...(forceReels ? {} : { carousel_videos: [portraitUrl, arcUrl, pieUrl, articlesUrl] }),
           // Keep video_url for back-compat in case the publisher's
           // VIDEO_CAROUSEL path falls back to REELS on a partial outage.
           video_url:       arcUrl,
