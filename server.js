@@ -15527,12 +15527,33 @@ app.get('/api/video-jobs/pending', async (req, res) => {
        ORDER BY q.scheduled_for ASC
        LIMIT 20
     `);
+
+    // Resolve ISO codes → country display names in a single query
+    // across all jobs (rather than N queries) so the overlay's flag
+    // chip row can show "🇺🇸 United States" instead of just a flag.
+    const allIsos = new Set();
+    for (const r of rows) {
+      for (const c of (r.primary_nations || []))   allIsos.add(String(c).toLowerCase());
+      for (const c of (r.secondary_nations || [])) allIsos.add(String(c).toLowerCase());
+    }
+    const isoToName = new Map();
+    if (allIsos.size) {
+      try {
+        const { rows: nameRows } = await pool.query(
+          `SELECT iso_code, name FROM countries WHERE LOWER(iso_code) = ANY($1::text[])`,
+          [[...allIsos]]
+        );
+        for (const nr of nameRows) isoToName.set(String(nr.iso_code).toLowerCase(), nr.name);
+      } catch (e) { console.warn('[video-jobs/pending] iso→name lookup failed:', e.message); }
+    }
+
     res.json({
       jobs: rows.map(r => {
         const isos = [
           ...(Array.isArray(r.primary_nations) ? r.primary_nations : []),
           ...(Array.isArray(r.secondary_nations) ? r.secondary_nations : []),
         ].slice(0, 8);
+        const names = isos.map(c => isoToName.get(String(c).toLowerCase()) || String(c).toUpperCase());
         const subtitleBits = [];
         if (Number.isFinite(r.article_count))         subtitleBits.push(`${r.article_count} articles`);
         if (isos.length)                              subtitleBits.push(`${isos.length} countries`);
@@ -15543,7 +15564,8 @@ app.get('/api/video-jobs/pending', async (req, res) => {
           scheduled_for: r.scheduled_for,
           title:     r.title || 'Story',
           subtitle:  subtitleBits.length ? `Storyline · ${subtitleBits.join(' · ')}` : 'Storyline',
-          flag_isos: isos,
+          flag_isos:  isos,
+          flag_names: names,
           category:  r.primary_category,
         };
       }),

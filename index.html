@@ -24838,7 +24838,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
         srcW = gw; srcH = gw / TARGET_ASPECT;
         srcX = 0; srcY = (gh - srcH) / 2;
       }
-      ctx.drawImage(globeCanvas, srcX, srcY, srcW, srcH, 0, 0, REC_W, REC_H);
+      // Zoom the globe to ~85% of the frame, centered, so the flag-chip
+      // row + title overlay sits on the black padding above the globe
+      // rather than covering its top.
+      const GLOBE_SCALE = 0.85;
+      const drawW = REC_W * GLOBE_SCALE;
+      const drawH = REC_H * GLOBE_SCALE;
+      const drawX = (REC_W - drawW) / 2;
+      const drawY = (REC_H - drawH) / 2;
+      ctx.drawImage(globeCanvas, srcX, srcY, srcW, srcH, drawX, drawY, drawW, drawH);
     }
     if (_clipPaintOverlay) {
       try { _clipPaintOverlay(ctx, REC_W, REC_H); } catch (_) {}
@@ -57295,7 +57303,7 @@ body.ticker-active .gTickerLabel {
   window.__buildClipOverlayPainter = function(opts) { return _buildClipOverlayPainter(opts); };
 
   async function _buildClipOverlayPainter(opts = {}) {
-    const { title = '', subtitle = '', dateLine = '', flagIsos = [], size = 1080 } = opts;
+    const { title = '', subtitle = '', dateLine = '', flagIsos = [], flagNames = [], size = 1080 } = opts;
     // Load logo + flags in parallel. Failures degrade gracefully — the
     // text/website chrome still paints even if the icon doesn't load.
     const loadImg = (src) => new Promise((resolve) => {
@@ -57305,11 +57313,11 @@ body.ticker-active .gTickerLabel {
       img.onerror = () => resolve(null);
       img.src = src;
     });
+    const isoList = Array.isArray(flagIsos) ? flagIsos.slice(0, 8) : [];
+    const nameList = Array.isArray(flagNames) ? flagNames.slice(0, 8) : [];
     const [logoImg, ...flagImgs] = await Promise.all([
       loadImg('./apple-touch-icon.png').catch(() => null),
-      ...(Array.isArray(flagIsos) ? flagIsos.slice(0, 8).map(iso =>
-        loadImg(`https://flagcdn.com/w80/${String(iso).toLowerCase()}.png`)
-      ) : []),
+      ...isoList.map(iso => loadImg(`https://flagcdn.com/w80/${String(iso).toLowerCase()}.png`)),
     ]);
 
     // Text-wrap helper — wraps at maxWidth, returns up to maxLines.
@@ -57398,48 +57406,86 @@ body.ticker-active .gTickerLabel {
         ctx.restore();
       }
 
-      // ── Flag chip row (below title, if provided)
+      // ── Flag-chip row (below title) — flag image + country name text
+      // wrapped in a pill, sized so 4-5 chips fit horizontally without
+      // overlap. Falls back to chip-only when no name is supplied.
       if (flagImgs && flagImgs.length) {
-        const valid = flagImgs.filter(Boolean);
-        if (valid.length) {
-          const chipW = Math.round(w * 0.060);
-          const chipH = Math.round(chipW * 0.66);
-          const gap   = Math.round(w * 0.010);
-          // Anchor below the actual title block (title + optional subtitle)
-          // with a small breathing gap.
-          const flagY = titleEndY + 10;
-          valid.forEach((img, i) => {
-            const x = margin + i * (chipW + gap);
-            ctx.save();
-            // Pill background
-            ctx.fillStyle = 'rgba(0,0,0,0.45)';
-            const padX = 3, padY = 3, r = 4;
-            const px = x - padX, py = flagY - padY;
-            const pw = chipW + padX * 2, ph = chipH + padY * 2;
-            ctx.beginPath();
-            ctx.moveTo(px + r, py);
-            ctx.lineTo(px + pw - r, py);
-            ctx.quadraticCurveTo(px + pw, py, px + pw, py + r);
-            ctx.lineTo(px + pw, py + ph - r);
-            ctx.quadraticCurveTo(px + pw, py + ph, px + pw - r, py + ph);
-            ctx.lineTo(px + r, py + ph);
-            ctx.quadraticCurveTo(px, py + ph, px, py + ph - r);
-            ctx.lineTo(px, py + r);
-            ctx.quadraticCurveTo(px, py, px + r, py);
-            ctx.closePath();
-            ctx.fill();
-            ctx.drawImage(img, x, flagY, chipW, chipH);
-            ctx.restore();
-          });
-        }
+        const flagY  = titleEndY + 10;
+        const fH     = Math.round(w * 0.040);   // flag image height
+        const fW     = Math.round(fH * 1.5);    // flag image width (3:2)
+        const pillH  = fH + 12;
+        const namePx = Math.round(w * 0.020);
+        const padX   = 8;
+        const gap    = Math.round(w * 0.010);
+        ctx.save();
+        ctx.font = `600 ${namePx}px -apple-system, system-ui, "Helvetica Neue", sans-serif`;
+        ctx.textBaseline = 'middle';
+        ctx.textAlign    = 'left';
+        let cursorX = margin;
+        const maxX  = w - margin;
+        flagImgs.forEach((img, i) => {
+          if (!img) return;
+          const name = (nameList[i] || isoList[i] || '').toString();
+          const trimmed = name.length > 14 ? name.slice(0, 13) + '…' : name;
+          const textW = trimmed ? ctx.measureText(trimmed).width : 0;
+          const pillW = padX + fW + (textW ? 8 + textW : 0) + padX;
+          // Don't wrap onto a second row — just stop drawing if we'd run off.
+          if (cursorX + pillW > maxX) return;
+          const py = flagY - 6;
+          const r  = 8;
+          // Pill bg
+          ctx.fillStyle = 'rgba(0,0,0,0.55)';
+          ctx.beginPath();
+          ctx.moveTo(cursorX + r, py);
+          ctx.lineTo(cursorX + pillW - r, py);
+          ctx.quadraticCurveTo(cursorX + pillW, py, cursorX + pillW, py + r);
+          ctx.lineTo(cursorX + pillW, py + pillH - r);
+          ctx.quadraticCurveTo(cursorX + pillW, py + pillH, cursorX + pillW - r, py + pillH);
+          ctx.lineTo(cursorX + r, py + pillH);
+          ctx.quadraticCurveTo(cursorX, py + pillH, cursorX, py + pillH - r);
+          ctx.lineTo(cursorX, py + r);
+          ctx.quadraticCurveTo(cursorX, py, cursorX + r, py);
+          ctx.closePath();
+          ctx.fill();
+          // Flag image, vertically centered in the pill
+          ctx.drawImage(img, cursorX + padX, flagY, fW, fH);
+          // Country name text
+          if (trimmed) {
+            ctx.fillStyle = 'rgba(255, 240, 215, 0.97)';
+            ctx.fillText(trimmed, cursorX + padX + fW + 8, flagY + fH / 2);
+          }
+          cursorX += pillW + gap;
+        });
+        ctx.restore();
       }
 
-      // ── Logo (bottom-left, app icon)
+      // ── Logo (bottom-left, app icon) with breathing gold halo
+      // behind it — matches the slide-1/3/4 carousel cards. The halo
+      // is rendered as a radial gradient so the brand mark feels alive
+      // even while the globe is the main visual event.
       if (logoImg) {
-        const logoSize = Math.round(w * 0.085);
+        const logoSize = Math.round(w * 0.10);
+        const lx = margin;
+        const ly = h - margin - logoSize;
+        const cx = lx + logoSize / 2;
+        const cy = ly + logoSize / 2;
+        // Pulse phase — uses Date.now() so the halo continues breathing
+        // during the deterministic capture; the captured frame just
+        // samples whatever phase it lands on. Each frame ~33ms apart →
+        // ~3 full pulses across a 15s clip.
+        const pulse = (Math.sin(Date.now() * 0.004) + 1) / 2;  // 0..1
+        const haloR = logoSize / 2 + 20 + pulse * 14;
+        const haloOp = 0.16 + pulse * 0.18;
         ctx.save();
-        ctx.globalAlpha = 0.95;
-        ctx.drawImage(logoImg, margin, h - margin - logoSize, logoSize, logoSize);
+        const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, haloR);
+        grad.addColorStop(0.55, `rgba(212, 168, 67, ${haloOp.toFixed(3)})`);
+        grad.addColorStop(1.0,  `rgba(212, 168, 67, 0)`);
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(cx, cy, haloR, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.globalAlpha = 0.97;
+        ctx.drawImage(logoImg, lx, ly, logoSize, logoSize);
         ctx.restore();
       }
 

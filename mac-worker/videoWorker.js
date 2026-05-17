@@ -297,16 +297,18 @@ async function renderVideo(job) {
       return await window.__setupClipRecording({
         spinSeconds: opts.spinSeconds,
         overlay: {
-          title:    opts.title || 'Story',
-          subtitle: opts.subtitle || 'Storyline',
-          flagIsos: opts.flagIsos || [],
+          title:     opts.title || 'Story',
+          subtitle:  opts.subtitle || 'Storyline',
+          flagIsos:  opts.flagIsos  || [],
+          flagNames: opts.flagNames || [],
         },
       });
     }, {
       spinSeconds,
-      title:    job.title,
-      subtitle: job.subtitle,
-      flagIsos: job.flag_isos,
+      title:     job.title,
+      subtitle:  job.subtitle,
+      flagIsos:  job.flag_isos,
+      flagNames: job.flag_names,
     });
 
     // ── Spawn ffmpeg + frame loop ──
