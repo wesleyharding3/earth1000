@@ -203,7 +203,12 @@ async function renderVideo(job) {
       }, 1000 / 60);
     });
 
-    await page.setViewport({ width: 1080, height: 1920, deviceScaleFactor: 1 });
+    // Viewport matches the recording canvas (1080×1350, 4:5) so the
+    // WebGL globe+stars output fills the rec frame edge-to-edge — no
+    // letterbox padding. Previous 1080×1920 (9:16) left ~160px black
+    // bars on left and right after contain-fit, which user flagged as
+    // "empty space around the starfield."
+    await page.setViewport({ width: 1080, height: 1350, deviceScaleFactor: 1 });
     // Force-foreground the tab so anything that uses tab-focus state
     // (not just visibility) also reports as active.
     try { await page.bringToFront(); } catch (_) { /* best-effort */ }

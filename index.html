@@ -57501,9 +57501,18 @@ body.ticker-active .gTickerLabel {
         const rows = row2.length ? [{ segs: row1, w: row1W }, { segs: row2, w: row2W }]
                                  : [{ segs: row1, w: row1W }];
 
-        // Comet visibility — pill draws first, flow appears after.
-        const cometShown = (progress != null) && progress > 0.08;
-        const cometP     = cometShown ? ((progress - 0.08) / 0.92) : 0;
+        // Three-phase pill animation per user request:
+        //   Phase 1 (0.00 → 0.05): outline TRACES around the perimeter
+        //                          (a single self-drawing pass)
+        //   Phase 2 (0.05 → 0.12): pill solid — fully outlined, no animation
+        //   Phase 3 (0.12 → 1.00): bright comet flow begins traveling
+        const phase1End = 0.05;
+        const phase2End = 0.12;
+        const inPhase1 = progress != null && progress < phase1End;
+        const inPhase2 = progress != null && progress >= phase1End && progress < phase2End;
+        const inPhase3 = progress != null && progress >= phase2End;
+        const phase1P  = inPhase1 ? (progress / phase1End) : 1;
+        const phase3P  = inPhase3 ? ((progress - phase2End) / (1 - phase2End)) : 0;
 
         rows.forEach((row, rowIdx) => {
           const totalW = row.w;
@@ -57552,20 +57561,34 @@ body.ticker-active .gTickerLabel {
             }
           });
 
-          // 4. Dim full outline (always shown — settled border)
-          ctx.strokeStyle = 'rgba(212, 168, 67, 0.20)';
-          ctx.lineWidth   = 1;
-          drawRounded();
-          ctx.stroke();
-
-          // 5. Bright traveling comet — gated on cometShown so the
-          // pill renders cleanly at frame 0 before the flow begins.
-          if (cometShown) {
-            const perim  = 2 * (totalW + pillH) - 8 * r + 2 * Math.PI * r;
+          // ── Outline rendering (3 phases) ──
+          const perim  = 2 * (totalW + pillH) - 8 * r + 2 * Math.PI * r;
+          if (inPhase1) {
+            // Phase 1: outline traces clockwise around the perimeter,
+            // visible length grows from 0 → full as phase1P goes 0 → 1.
+            const visibleLen = perim * phase1P;
+            ctx.strokeStyle = 'rgba(212, 168, 67, 0.95)';
+            ctx.lineWidth   = 2;
+            ctx.setLineDash([visibleLen, perim]);
+            ctx.lineDashOffset = 0;
+            drawRounded();
+            ctx.stroke();
+            ctx.setLineDash([]);
+          } else if (inPhase2) {
+            // Phase 2: fully outlined, solid, no animation.
+            ctx.strokeStyle = 'rgba(212, 168, 67, 0.55)';
+            ctx.lineWidth   = 1.5;
+            drawRounded();
+            ctx.stroke();
+          } else if (inPhase3) {
+            // Phase 3: dim full outline + bright traveling comet segment.
+            ctx.strokeStyle = 'rgba(212, 168, 67, 0.20)';
+            ctx.lineWidth   = 1;
+            drawRounded();
+            ctx.stroke();
             const segLen = Math.min(110, totalW * 0.3);
-            // Offset row 2's comet by half a cycle so the two rows feel
-            // like a continuous loop rather than synchronized blinking.
-            const phase  = cometP + (rowIdx === 1 ? 0.5 : 0);
+            // Row 2 phase-offset 0.5 cycles so the loops feel continuous.
+            const phase  = phase3P + (rowIdx === 1 ? 0.5 : 0);
             const dashOffset = -((phase % 1) * perim);
             ctx.strokeStyle = 'rgba(212, 168, 67, 0.95)';
             ctx.lineWidth   = 2;
@@ -57575,6 +57598,12 @@ body.ticker-active .gTickerLabel {
             ctx.stroke();
             ctx.setLineDash([]);
             ctx.lineDashOffset = 0;
+          } else {
+            // No-progress fallback (animation undefined) — show solid outline.
+            ctx.strokeStyle = 'rgba(212, 168, 67, 0.55)';
+            ctx.lineWidth   = 1.5;
+            drawRounded();
+            ctx.stroke();
           }
         });
 
