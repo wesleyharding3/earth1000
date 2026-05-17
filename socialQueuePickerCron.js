@@ -241,19 +241,28 @@ function pickBatch(candidates) {
   log(`After cooling + title overlap filters: ${filtered.length}`);
 
   const effectiveBatchMin = TEST_MODE ? 1 : BATCH_MIN;
+  // Phase 1 skip conditions — don't exit the process here; we still want
+  // Phase 2 (publish backlog) to run on every tick regardless of whether
+  // Phase 1 finds anything pickable. Earlier these `process.exit(0)`
+  // calls killed Phase 2 too, which left video-ready rows stuck in
+  // pending_approval on quiet days.
+  let picked = [];
+  let reasons = [];
+  let distinct_regions = 0;
+  let meets_diversity = false;
   if (filtered.length < effectiveBatchMin) {
-    log(`Only ${filtered.length} threads survived constraints — skipping this batch (need ≥ ${effectiveBatchMin}).`);
-    await pool.end();
-    process.exit(0);
-  }
-
-  const { picked, reasons, distinct_regions, meets_diversity } = pickBatch(filtered);
-  log(`Picked ${picked.length} of ${BATCH_TARGET}   regions=${distinct_regions}   diversity_ok=${meets_diversity}`);
-
-  if (picked.length < effectiveBatchMin) {
-    log(`Diversity constraints blocked too many — picked ${picked.length}, need ≥ ${effectiveBatchMin}. Skipping batch.`);
-    await pool.end();
-    process.exit(0);
+    log(`Only ${filtered.length} threads survived constraints — skipping Phase 1 (need ≥ ${effectiveBatchMin}).`);
+  } else {
+    const result = pickBatch(filtered);
+    picked = result.picked;
+    reasons = result.reasons;
+    distinct_regions = result.distinct_regions;
+    meets_diversity = result.meets_diversity;
+    log(`Picked ${picked.length} of ${BATCH_TARGET}   regions=${distinct_regions}   diversity_ok=${meets_diversity}`);
+    if (picked.length < effectiveBatchMin) {
+      log(`Diversity constraints blocked too many — picked ${picked.length}, need ≥ ${effectiveBatchMin}. Skipping Phase 1.`);
+      picked = [];
+    }
   }
 
   // Compose + insert
