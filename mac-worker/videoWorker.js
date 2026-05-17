@@ -58,7 +58,7 @@ const POLL_INTERVAL_MS = 60_000;     // poll every minute
 // Math is in index.html → __renderClipFrame.
 const DURATION_MS      = 15_000;
 const PAGE_TIMEOUT_MS  = 60_000;
-const RENDER_TIMEOUT_MS = 360_000;   // hard ceiling per render attempt.
+const RENDER_TIMEOUT_MS = 600_000;   // hard ceiling per render attempt.
                                      // 450 frames × ~530ms/frame = ~240s
                                      // worker loop + ~30s server ffmpeg
                                      // normalize. 360s gives headroom
@@ -256,12 +256,13 @@ async function renderVideo(job) {
     });
     log(`  arcs in scene: ${arcCountInScene}`);
 
-    // Brief additional settle so the day/night terminator transitions
-    // out of its initial 100%-day-mode state and the flow clock starts
-    // advancing. Then __shareGlobeClip's internal replay will reset
-    // the draw-in counters and arcs will animate origin→destination
-    // during the recording window.
-    await new Promise(r => setTimeout(r, 2500));
+    // Settle wait — bumped 2.5s → 6s so the Blue Marble satellite
+    // texture (high-res async upgrade fetched after initial page load)
+    // has time to fully load. Without this, the first ~10 frames
+    // captured the globe with only country polygons visible + the
+    // surface texture mesh transparent (texture not yet loaded),
+    // causing the user-reported "globe pops in halfway through" flicker.
+    await new Promise(r => setTimeout(r, 6000));
 
     // ── Deterministic frame-by-frame rendering ──
     //

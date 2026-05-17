@@ -24718,17 +24718,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
     // own pose-application loop doesn't fight with __setGlobePose's
     // explicit positioning.
     if (typeof window.__zeroPoseVelocities === 'function') window.__zeroPoseVelocities();
-    // Pull the camera back so the globe occupies less of the WebGL
-    // viewport in the source — gives real space around the globe in
-    // the captured frame for the chip row + chrome to sit on top of.
-    // Earlier the "85% destination scale" approach kept the source
-    // image edge-clipped (downscaling preserves the cropped edges),
-    // so the globe still touched the visible boundary. Pulling the
-    // camera back fixes it at the source. position.z * 1.5 makes the
-    // globe occupy ~2/3 of its previous angular size.
+    // Just SAVE the original camera z — the per-frame __renderClipFrame
+    // sets the actual z based on progress (start 1.20× → end 1.90×).
+    // We restore the saved value in __teardownClipRecording.
     if (window.__camera && Number.isFinite(window.__camera.position?.z)) {
       _clipSavedCameraZ = window.__camera.position.z;
-      window.__camera.position.z = _clipSavedCameraZ * 1.5;
     }
     const REC_W = 1080;
     const REC_H = 1350;
@@ -24773,20 +24767,28 @@ const settingsToggle     = document.getElementById("settingsToggle");
       ? 4 * t * t * t
       : 1 - Math.pow(-2 * t + 2, 3) / 2;
 
+    // ── Camera zoom drift fix + progressive zoom-out ──
+    //
+    // animate() eases camera.position.z toward targetZoom (3.0 by
+    // default) every frame, which means the setup-time push-back from
+    // 3.0 → 4.5 would slowly drift back toward 3.0 across the clip —
+    // re-introducing the edge-clip issue user saw. Setting position.z
+    // directly every render frame overrides animate's drift.
+    //
+    // Progressive zoom: start closer (1.20× baseline) and end farther
+    // (1.90× baseline) so the clip naturally pulls back as it plays —
+    // gives the rotation a "we're leaving the planet" feel without
+    // ever clipping the globe's edges.
+    if (window.__camera && _clipSavedCameraZ !== null) {
+      const startZ = _clipSavedCameraZ * 1.20;
+      const endZ   = _clipSavedCameraZ * 1.90;
+      window.__camera.position.z = startZ + (endZ - startZ) * progress;
+    }
+
     // ── Figure-8 spin: 2 full yaw rotations with sinusoidal pitch ──
-    //
-    // Previously a single 2π rotation with a small pitch dip — only
-    // showed the equatorial band, leaving high-latitude countries
-    // (Russia, Canada, Argentina, Australia) at the edge of frame.
-    // Now: yaw rotates 4π (two complete revolutions) while pitch
-    // oscillates sin(2π·p) × 0.7 rad (~40°), which puts the camera
-    // over the NORTHERN hemisphere during the first rotation and the
-    // SOUTHERN hemisphere during the second. Net effect: every part
-    // of the globe is squarely centered at some point in the clip.
-    //
-    // Yaw uses LINEAR progress (not eased) so the figure-8 reads as
-    // continuous motion rather than two separate accelerating passes.
-    // Pitch is naturally smooth via the sin curve.
+    // Yaw rotates 4π (two complete revolutions) while pitch oscillates
+    // sin(2π·p) × 0.7 rad (~40°) — first rotation looks over the N
+    // hemisphere, second over the S. Linear yaw for continuous motion.
     const PITCH_AMP = 0.7;                       // ~40° max tilt
     const yaw   = _clipBaseYaw   + progress * Math.PI * 4;
     const pitch = _clipBasePitch + Math.sin(progress * Math.PI * 2) * PITCH_AMP;
@@ -57439,24 +57441,29 @@ body.ticker-active .gTickerLabel {
         ctx.restore();
       }
 
-      // ── Flag-chip row: ONE big pill containing all country chips,
-      // separator lines between each, animated gold comet flowing
-      // around the pill's perimeter. Replaces the previous individual-
-      // pill-per-country approach.
+      // ── Flag-chip row: encapsulating pills with internal segments,
+      // gold comet flowing around the perimeter. Wraps to a 2nd row
+      // when needed (2-row max); the 2nd row is horizontally centered
+      // if it's not full-width.
+      //
+      // Pill is drawn at full opacity from frame 0; the comet flow
+      // only begins after a short delay (progress > 0.08) so viewers
+      // see the bar settle first, then the highlight starts traveling.
       if (flagImgs && flagImgs.length) {
         const flagY  = titleEndY + 10;
-        const fH     = Math.round(w * 0.040);    // flag image height
-        const fW     = Math.round(fH * 1.5);     // flag image width (3:2)
+        const fH     = Math.round(w * 0.040);
+        const fW     = Math.round(fH * 1.5);
         const pillH  = fH + 14;
         const namePx = Math.round(w * 0.020);
-        const segPadX = 12;                      // padding inside each segment
+        const segPadX = 12;
+        const rowGap  = 8;
 
         ctx.save();
         ctx.font = `600 ${namePx}px -apple-system, system-ui, "Helvetica Neue", sans-serif`;
         ctx.textBaseline = 'middle';
         ctx.textAlign    = 'left';
 
-        // First pass: compute the width of each visible chip segment.
+        // Build segment list (image + name + measured width)
         const segs = [];
         for (let i = 0; i < flagImgs.length; i++) {
           const img = flagImgs[i];
@@ -57469,75 +57476,107 @@ body.ticker-active .gTickerLabel {
         }
         if (!segs.length) { ctx.restore(); return; }
 
-        // Big pill total width = sum of segment widths (no inter-gap, dividers
-        // sit on the seams). Anchored at margin; if it'd overflow, drop trailing.
-        let totalW = segs.reduce((a, s) => a + s.segW, 0);
         const maxRowW = w - margin * 2;
-        while (totalW > maxRowW && segs.length > 1) {
-          totalW -= segs.pop().segW;
+
+        // ── Two-row wrap layout ──
+        // Greedily fill row 1 until adding the next segment would
+        // exceed maxRowW; the remainder forms row 2 (capped at maxRowW
+        // total too — trailing segments are dropped if even 2 rows
+        // can't fit them). Row 2 is centered if shorter than row 1.
+        const row1 = [];
+        const row2 = [];
+        let row1W = 0;
+        let i = 0;
+        for (; i < segs.length; i++) {
+          if (row1W + segs[i].segW > maxRowW) break;
+          row1.push(segs[i]);
+          row1W += segs[i].segW;
         }
+        let row2W = 0;
+        for (; i < segs.length; i++) {
+          if (row2W + segs[i].segW > maxRowW) break;
+          row2.push(segs[i]);
+          row2W += segs[i].segW;
+        }
+        const rows = row2.length ? [{ segs: row1, w: row1W }, { segs: row2, w: row2W }]
+                                 : [{ segs: row1, w: row1W }];
 
-        const px = margin;
-        const py = flagY - 7;
-        const r  = pillH / 2;
+        // Comet visibility — pill draws first, flow appears after.
+        const cometShown = (progress != null) && progress > 0.08;
+        const cometP     = cometShown ? ((progress - 0.08) / 0.92) : 0;
 
-        // 1. Pill bg
-        const drawRounded = () => {
-          ctx.beginPath();
-          ctx.moveTo(px + r, py);
-          ctx.lineTo(px + totalW - r, py);
-          ctx.quadraticCurveTo(px + totalW, py, px + totalW, py + r);
-          ctx.lineTo(px + totalW, py + pillH - r);
-          ctx.quadraticCurveTo(px + totalW, py + pillH, px + totalW - r, py + pillH);
-          ctx.lineTo(px + r, py + pillH);
-          ctx.quadraticCurveTo(px, py + pillH, px, py + pillH - r);
-          ctx.lineTo(px, py + r);
-          ctx.quadraticCurveTo(px, py, px + r, py);
-          ctx.closePath();
-        };
-        ctx.fillStyle = 'rgba(0, 0, 0, 0.62)';
-        drawRounded();
-        ctx.fill();
+        rows.forEach((row, rowIdx) => {
+          const totalW = row.w;
+          // Center row 2 if shorter; row 1 always anchored at left margin
+          // unless it's the only row AND shorter than maxRowW (then center
+          // for visual balance).
+          const px = rows.length === 1
+            ? margin + (maxRowW - totalW) / 2
+            : (rowIdx === 0 ? margin : margin + (maxRowW - totalW) / 2);
+          const py = flagY - 7 + rowIdx * (pillH + rowGap);
+          const r  = pillH / 2;
 
-        // 2. Segment contents (flag image + name) + 3. vertical dividers
-        let cursorX = px;
-        segs.forEach((s, i) => {
-          const innerX = cursorX + segPadX;
-          ctx.drawImage(s.img, innerX, flagY, fW, fH);
-          if (s.name) {
-            ctx.fillStyle = 'rgba(255, 240, 215, 0.97)';
-            ctx.fillText(s.name, innerX + fW + 8, flagY + fH / 2);
-          }
-          cursorX += s.segW;
-          // Divider AFTER each segment except the last
-          if (i < segs.length - 1) {
-            ctx.fillStyle = 'rgba(212, 168, 67, 0.35)';
-            ctx.fillRect(cursorX - 0.5, py + 8, 1, pillH - 16);
+          const drawRounded = () => {
+            ctx.beginPath();
+            ctx.moveTo(px + r, py);
+            ctx.lineTo(px + totalW - r, py);
+            ctx.quadraticCurveTo(px + totalW, py, px + totalW, py + r);
+            ctx.lineTo(px + totalW, py + pillH - r);
+            ctx.quadraticCurveTo(px + totalW, py + pillH, px + totalW - r, py + pillH);
+            ctx.lineTo(px + r, py + pillH);
+            ctx.quadraticCurveTo(px, py + pillH, px, py + pillH - r);
+            ctx.lineTo(px, py + r);
+            ctx.quadraticCurveTo(px, py, px + r, py);
+            ctx.closePath();
+          };
+
+          // 1. Pill bg
+          ctx.fillStyle = 'rgba(0, 0, 0, 0.62)';
+          drawRounded();
+          ctx.fill();
+
+          // 2. Segment contents + 3. dividers
+          let cursorX = px;
+          row.segs.forEach((s, ix) => {
+            const innerX = cursorX + segPadX;
+            const flagYrow = py + (pillH - fH) / 2;
+            ctx.drawImage(s.img, innerX, flagYrow, fW, fH);
+            if (s.name) {
+              ctx.fillStyle = 'rgba(255, 240, 215, 0.97)';
+              ctx.fillText(s.name, innerX + fW + 8, py + pillH / 2);
+            }
+            cursorX += s.segW;
+            if (ix < row.segs.length - 1) {
+              ctx.fillStyle = 'rgba(212, 168, 67, 0.35)';
+              ctx.fillRect(cursorX - 0.5, py + 8, 1, pillH - 16);
+            }
+          });
+
+          // 4. Dim full outline (always shown — settled border)
+          ctx.strokeStyle = 'rgba(212, 168, 67, 0.20)';
+          ctx.lineWidth   = 1;
+          drawRounded();
+          ctx.stroke();
+
+          // 5. Bright traveling comet — gated on cometShown so the
+          // pill renders cleanly at frame 0 before the flow begins.
+          if (cometShown) {
+            const perim  = 2 * (totalW + pillH) - 8 * r + 2 * Math.PI * r;
+            const segLen = Math.min(110, totalW * 0.3);
+            // Offset row 2's comet by half a cycle so the two rows feel
+            // like a continuous loop rather than synchronized blinking.
+            const phase  = cometP + (rowIdx === 1 ? 0.5 : 0);
+            const dashOffset = -((phase % 1) * perim);
+            ctx.strokeStyle = 'rgba(212, 168, 67, 0.95)';
+            ctx.lineWidth   = 2;
+            ctx.setLineDash([segLen, perim - segLen]);
+            ctx.lineDashOffset = dashOffset;
+            drawRounded();
+            ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.lineDashOffset = 0;
           }
         });
-
-        // 4. Glowing gold comet flowing around the perimeter — matches
-        // the border-trace effect on slides 1/3/4 but scoped to the pill.
-        // Always-on dim outline + a brighter dashed segment that travels
-        // clockwise driven by `progress`.
-        const perim    = 2 * (totalW + pillH) - 8 * r + 2 * Math.PI * r;
-        const segLen   = Math.min(110, totalW * 0.3);
-        const traceP   = (progress != null) ? progress : 0;
-        const dashOffset = -(traceP * perim);
-        // Dim full outline
-        ctx.strokeStyle = 'rgba(212, 168, 67, 0.20)';
-        ctx.lineWidth   = 1;
-        drawRounded();
-        ctx.stroke();
-        // Bright traveling comet segment
-        ctx.strokeStyle = 'rgba(212, 168, 67, 0.95)';
-        ctx.lineWidth   = 2;
-        ctx.setLineDash([segLen, perim - segLen]);
-        ctx.lineDashOffset = dashOffset;
-        drawRounded();
-        ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.lineDashOffset = 0;
 
         ctx.restore();
       }
