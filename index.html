@@ -17651,6 +17651,13 @@ function computeCityTiers(cities) {
       const earthMat = new THREE.PointsMaterial({ size:0.009, map:circleGlowTexture, vertexColors:true, transparent:true, depthWrite:false, blending:THREE.AdditiveBlending, alphaTest:0.001 });
       const earthPoints = new THREE.Points(earthGeo, earthMat);
       scene.add(earthPoints);
+      // Exposed for the deterministic clip renderer — when the regular
+      // animate() loop is paused (window.__clipRecordingActive=true), we
+      // force the points material to its target opacity (1.0) so the
+      // texture stays consistently visible across all clip frames
+      // instead of being stuck wherever the asymptotic easing happened
+      // to be when the loop paused.
+      window.__earthPointsMat = earthMat;
       // Bridge for the 2D Map view — exposes the same point cloud + base
       // brightness array so the map can pre-render an equirectangular
       // canvas of identical dots, layered under the satellite imagery.
@@ -23604,6 +23611,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
       function animate() {
         requestAnimationFrame(animate);
         if (!window.__globeActive) return;
+        // When the deterministic clip renderer is driving frames, skip the
+        // entire animate() body — otherwise the regular RAF loop's
+        // time-based easings (earthMat.opacity → targetEarthOpacity, city
+        // tier fades, day/night terminator, etc.) would create visible
+        // flicker between the explicit renderClipFrame() calls. The
+        // clip renderer owns rendering during this window.
+        if (window.__clipRecordingActive) return;
 
         if (isFocused && focusTargetQuat) {
           // Skip rebuildGlobeQuat entirely during focus — it overwrites globeQuat
@@ -24672,6 +24686,16 @@ const settingsToggle     = document.getElementById("settingsToggle");
     _clipBaseYaw     = pose.yaw;
     _clipBasePitch   = pose.pitch;
     _clipSpinSeconds = Number.isFinite(opts.spinSeconds) ? opts.spinSeconds : 10;
+    // Pause the regular animate() loop's body — see the matching guard
+    // in animate() above. Without this, real-time easings (earth points
+    // opacity, city tier fades, day/night progression) run concurrently
+    // with our explicit frame stepping and produce time-locked flicker
+    // that's NOT in sync with the spin progress.
+    window.__clipRecordingActive = true;
+    // Snap time-eased materials to their target settled values now that
+    // we've paused animate() — otherwise they're stuck at whatever
+    // partial-easing state they were in when we paused.
+    if (window.__earthPointsMat) window.__earthPointsMat.opacity = 1.0;
     const REC_W = 1080;
     const REC_H = 1350;
     _clipRecCanvas = document.createElement('canvas');
@@ -24688,6 +24712,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
       _clipPaintOverlay = null;
     }
     return { ok: true, baseYaw: _clipBaseYaw, basePitch: _clipBasePitch, recW: REC_W, recH: REC_H };
+  };
+
+  // Tear-down: re-enable animate() loop after the worker's frame loop
+  // finishes. Worker should call this in finally{} so the page goes
+  // back to normal rendering for any post-record use.
+  window.__teardownClipRecording = function() {
+    window.__clipRecordingActive = false;
+    _clipRecCanvas = null;
+    _clipPaintOverlay = null;
   };
 
   // Render one frame deterministically + return its composited PNG as

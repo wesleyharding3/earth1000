@@ -57,7 +57,12 @@ const POLL_INTERVAL_MS = 60_000;     // poll every minute
 // still plays back silky-smooth at the captured ~25fps source rate.
 const DURATION_MS      = 10_000;
 const PAGE_TIMEOUT_MS  = 60_000;
-const RENDER_TIMEOUT_MS = 90_000;    // hard ceiling per render attempt
+const RENDER_TIMEOUT_MS = 180_000;   // hard ceiling per render attempt.
+                                     // Deterministic loop is ~400ms/frame
+                                     // (page.evaluate + canvas.toDataURL
+                                     // roundtrip), so 300 frames + ffmpeg
+                                     // encode ≈ 130s. 180s gives headroom
+                                     // for slow CDN load or dense scenes.
 
 const log = (m) => console.log(`[worker ${new Date().toISOString()}] ${m}`);
 const warn = (m) => console.warn(`[worker ${new Date().toISOString()}] ${m}`);
@@ -120,8 +125,11 @@ async function renderVideo(job) {
     ],
   });
   const browserLogs = [];
+  // Hoisted out of the try block so the finally{} can call
+  // __teardownClipRecording on it regardless of where the try fails.
+  let page;
   try {
-    const page = await browser.newPage();
+    page = await browser.newPage();
     page.on('console',       msg => browserLogs.push(`[${msg.type()}] ${msg.text().slice(0, 200)}`));
     page.on('pageerror',     err => browserLogs.push(`[pageerror] ${err.message}`));
     page.on('requestfailed', req => browserLogs.push(`[requestfailed] ${req.url()} — ${req.failure()?.errorText}`));
@@ -361,6 +369,11 @@ async function renderVideo(job) {
     log(`  deterministic render: ${FRAME_COUNT} frames → ${mp4.length} bytes`);
     return mp4;
   } finally {
+    // Always un-pause the page's animate() loop, even on error, so
+    // the page can recover its normal rendering state if reused.
+    if (page) {
+      try { await page.evaluate(() => window.__teardownClipRecording && window.__teardownClipRecording()); } catch (_) {}
+    }
     await browser.close().catch(() => {});
   }
 }
