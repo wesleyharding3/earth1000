@@ -56965,9 +56965,17 @@ body.ticker-active .gTickerLabel {
       // synchronous paint function for the hot loop. `size` drives
       // font/margin scaling and is keyed to the WIDTH.
       const paintOverlay = await _buildClipOverlayPainter({ ...overlay, size: REC_W });
-      const stream = recCanvas.captureStream(30);
+      // 60fps capture instead of 30 for fluid playback. The recording
+      // canvas paints in the RAF loop below, so we get the actual
+      // frame rate the renderer produces (capped at 60 by RAF). On
+      // a real Mac GPU this is consistently 60fps; on slower machines
+      // it just degrades gracefully.
+      const stream = recCanvas.captureStream(60);
       const chunks = [];
-      const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 6_000_000 });
+      // 12Mbps for higher-detail encoding — important when the scene
+      // has fine wireframe + city-light gradients that compress badly
+      // at the previous 6Mbps default.
+      const recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 12_000_000 });
       recorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunks.push(e.data); };
       const stopped = new Promise((resolve) => { recorder.onstop = resolve; });
 

@@ -116,17 +116,34 @@ async function renderVideo(job) {
 
     const url = `${APP_HOST}/?thread=${job.thread_id}`;
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: PAGE_TIMEOUT_MS });
+    // Wait for the production globe + the flow-arc trigger.
+    //   __shareGlobeClip — what we call to record
+    //   showThreadFlows  — the "Show on Globe" entry point that
+    //                      actually mounts arcs + city lights for
+    //                      a thread (NOT __openThread, which only
+    //                      opens the side panel without arcs)
     await page.waitForFunction(() => {
       return typeof window.__shareGlobeClip === 'function'
-          && typeof window.__openThread === 'function'
+          && typeof window.showThreadFlows === 'function'
           && !!window.__renderer;
     }, { timeout: PAGE_TIMEOUT_MS });
 
+    // Trigger the FULL flow-arc visualization for this thread (arcs
+    // animate origin → destination, primary nations light up, day/
+    // night terminator is in steady state, etc.). Earlier the worker
+    // called __openThread which only opens the side panel without
+    // touching the globe — so the recording captured an empty rotation.
     await page.evaluate(async (id) => {
-      try { await window.__openThread(id); }
-      catch (e) { console.warn('[worker] __openThread:', e.message); }
+      try { await window.showThreadFlows(id, null); }
+      catch (e) { console.warn('[worker] showThreadFlows:', e.message); }
     }, job.thread_id);
-    await new Promise(r => setTimeout(r, 3000));
+
+    // Longer settle so:
+    //   - thread articles /api fetch completes + arcs mount
+    //   - day/night terminator settles to its current-time state
+    //     (it starts at 100% day-mode and fades to default over ~2s)
+    //   - the flow clock starts advancing
+    await new Promise(r => setTimeout(r, 6000));
 
     // Drive the same recording pipeline that "Share → Clip" uses in
     // the live app. returnBlob: true intercepts the Blob before the

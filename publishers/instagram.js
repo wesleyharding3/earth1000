@@ -96,18 +96,108 @@ async function publish(draft, env) {
   const caption  = String(draft.caption || '').slice(0, 2200);
   const videoUrl = draft.video_url;
   const imageUrl = draft.image_url;
-  const usingVideo = !!videoUrl;
-  const mediaUrl = usingVideo ? videoUrl : imageUrl;
-  if (!mediaUrl) return { ok: false, error: 'no image_url or video_url' };
-  if (!/^https?:\/\//.test(mediaUrl)) return { ok: false, error: `media URL must be public http(s): ${mediaUrl}` };
+  const hasVideo = !!videoUrl;
+  const hasImage = !!imageUrl;
+  if (!hasVideo && !hasImage) return { ok: false, error: 'no image_url or video_url' };
+  for (const u of [videoUrl, imageUrl]) {
+    if (u && !/^https?:\/\//.test(u)) return { ok: false, error: `media URL must be public http(s): ${u}` };
+  }
 
   const base = _graphBase(env);
   const igId = env.IG_USER_ID;
   const token = env.IG_ACCESS_TOKEN;
 
-  // Step 1 — create container. Video uses media_type=REELS (post-2024
-  // Reels API; the older VIDEO type is deprecated for new content).
-  const containerParams = usingVideo
+  // Three publish modes:
+  //   CAROUSEL — image + video together (image first, video second).
+  //              Maximum engagement: viewers see the share card, then
+  //              swipe to watch the globe fly-around.
+  //   REELS    — video only (legacy fallback if image_url missing)
+  //   IMAGE    — image only (legacy fallback if video missing)
+  const mode = (hasVideo && hasImage) ? 'CAROUSEL' : (hasVideo ? 'REELS' : 'IMAGE');
+
+  // --- CAROUSEL path -------------------------------------------------
+  if (mode === 'CAROUSEL') {
+    // Step 1a — create the IMAGE item container (no caption on items,
+    // caption goes on the parent carousel container).
+    let imgItem, vidItem;
+    try {
+      imgItem = await _post(`${base}/${igId}/media`, {
+        image_url:        imageUrl,
+        is_carousel_item: 'true',
+        access_token:     token,
+      });
+    } catch (err) {
+      return { ok: false, error: `IG carousel image-item: ${err.message}` };
+    }
+    if (!imgItem.id) return { ok: false, error: 'IG carousel image-item returned no id' };
+
+    // Step 1b — create the VIDEO item container. media_type=VIDEO (not
+    // REELS) is the carousel-item variant.
+    try {
+      vidItem = await _post(`${base}/${igId}/media`, {
+        media_type:       'VIDEO',
+        video_url:        videoUrl,
+        is_carousel_item: 'true',
+        access_token:     token,
+      });
+    } catch (err) {
+      return { ok: false, error: `IG carousel video-item: ${err.message}` };
+    }
+    if (!vidItem.id) return { ok: false, error: 'IG carousel video-item returned no id' };
+
+    // Step 1c — wait for both items to finish processing.
+    try {
+      await _waitForContainerReady(base, imgItem.id, token);
+      await _waitForContainerReady(base, vidItem.id, token);
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+
+    // Step 2 — create the CAROUSEL parent container referencing both
+    // items, in display order. Caption lives here, not on items.
+    let carousel;
+    try {
+      carousel = await _post(`${base}/${igId}/media`, {
+        media_type:   'CAROUSEL',
+        children:     `${imgItem.id},${vidItem.id}`,
+        caption,
+        access_token: token,
+      });
+    } catch (err) {
+      return { ok: false, error: `IG carousel parent: ${err.message}` };
+    }
+    if (!carousel.id) return { ok: false, error: 'IG carousel parent returned no id' };
+
+    try {
+      await _waitForContainerReady(base, carousel.id, token);
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+
+    // Step 3 — publish the carousel
+    let published;
+    try {
+      published = await _post(`${base}/${igId}/media_publish`, {
+        creation_id:  carousel.id,
+        access_token: token,
+      });
+    } catch (err) {
+      return { ok: false, error: `IG carousel publish: ${err.message}` };
+    }
+    const mediaId = published.id;
+    if (!mediaId) return { ok: false, error: 'IG carousel publish returned no media id' };
+
+    let permalink = null;
+    try {
+      const meta = await _get(`${base}/${mediaId}?fields=permalink&access_token=${encodeURIComponent(token)}`);
+      permalink = meta.permalink || null;
+    } catch (_) { /* best-effort */ }
+
+    return { ok: true, permalink, media_id: mediaId, media_kind: 'CAROUSEL' };
+  }
+
+  // --- single-media path (REELS or IMAGE) ----------------------------
+  const containerParams = (mode === 'REELS')
     ? { media_type: 'REELS', video_url: videoUrl, caption, access_token: token }
     : { image_url: imageUrl, caption, access_token: token };
 
@@ -120,20 +210,12 @@ async function publish(draft, env) {
   const containerId = container.id;
   if (!containerId) return { ok: false, error: 'IG media returned no container id' };
 
-  // Step 1.5 — wait for container to reach FINISHED before publish.
-  // Video transcoding always takes a few seconds. Image containers are
-  // usually ready immediately, BUT in practice IG sometimes returns
-  // "Media ID is not available" if media_publish fires before the
-  // container finishes its internal validation. Polling the status
-  // for images too eliminates that race; it's a no-op when FINISHED
-  // is already true on the first check.
   try {
     await _waitForContainerReady(base, containerId, token);
   } catch (err) {
     return { ok: false, error: err.message };
   }
 
-  // Step 2 — publish
   let published;
   try {
     published = await _post(`${base}/${igId}/media_publish`, {
@@ -153,7 +235,7 @@ async function publish(draft, env) {
     permalink = meta.permalink || null;
   } catch (_) { /* best-effort */ }
 
-  return { ok: true, permalink, media_id: mediaId, media_kind: usingVideo ? 'REELS' : 'IMAGE' };
+  return { ok: true, permalink, media_id: mediaId, media_kind: mode };
 }
 
 module.exports = { name, isConfigured, publish };
