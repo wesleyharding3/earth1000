@@ -397,6 +397,7 @@ async function _publishEligibleRows() {
 
   const { rows: candidates } = await pool.query(`
     SELECT id, thread_id, drafts, platforms_enabled, scheduled_for,
+           (arc_video IS NOT NULL) AS has_video,
            EXTRACT(EPOCH FROM (NOW() - scheduled_for))::int AS age_seconds
       FROM social_post_queue
      WHERE status IN ('pending_approval', 'approved')
@@ -405,6 +406,11 @@ async function _publishEligibleRows() {
   `);
   if (!candidates.length) { log('  No eligible rows.'); return; }
 
+  // The base URL where publishers point Meta's servers to fetch the MP4.
+  // Default to the Render direct hostname; override via PUBLIC_HOST env
+  // when running behind a different ingress.
+  const publicHost = (process.env.PUBLIC_HOST || 'https://earth-wjr6.onrender.com').replace(/\/+$/, '');
+
   let publishedThisRun = 0;
   const remainingCap = MAX_PUBLISHES_PER_DAY - publishedToday;
   for (const row of candidates) {
@@ -412,11 +418,22 @@ async function _publishEligibleRows() {
     if (publishedThisRun >= remainingCap) break;
 
     const ageHours = (row.age_seconds || 0) / 3600;
-    console.log(`  ▶ publish queue_id=${row.id} thread=${row.thread_id} (age=${ageHours.toFixed(1)}h)`);
+    const hasVideo = !!row.has_video;
+    console.log(`  ▶ publish queue_id=${row.id} thread=${row.thread_id} (age=${ageHours.toFixed(1)}h, video=${hasVideo ? 'yes' : 'no'})`);
+
+    // Inject video_url into the drafts for platforms that support video
+    // (Instagram, Threads). Only when arc_video is present — stale-
+    // fallback rows publish image-only.
+    const drafts = { ...(row.drafts || {}) };
+    if (hasVideo) {
+      const videoUrl = `${publicHost}/share/thread/${row.thread_id}/arc.mp4`;
+      if (drafts.instagram) drafts.instagram = { ...drafts.instagram, video_url: videoUrl };
+      if (drafts.threads)   drafts.threads   = { ...drafts.threads,   video_url: videoUrl };
+    }
 
     try {
       const { permalinks, failures } = await socialPublishers.publishAll(
-        row.drafts || {},
+        drafts,
         row.platforms_enabled || {},
         process.env,
       );

@@ -75,29 +75,59 @@ async function _get(url) {
   return j;
 }
 
+// Poll container status until processing finishes. Video containers
+// need this — IG transcodes the uploaded MP4 and rejects publish while
+// the container is IN_PROGRESS. Image containers reach FINISHED almost
+// immediately so this is a no-op for them.
+async function _waitForContainerReady(base, containerId, token, { maxAttempts = 30, intervalMs = 3000 } = {}) {
+  for (let i = 0; i < maxAttempts; i++) {
+    const status = await _get(`${base}/${containerId}?fields=status_code,status&access_token=${encodeURIComponent(token)}`);
+    const code = String(status.status_code || status.status || '').toUpperCase();
+    if (code === 'FINISHED') return true;
+    if (code === 'ERROR' || code === 'EXPIRED') {
+      throw new Error(`IG container ${code}: ${status.status || ''}`);
+    }
+    await new Promise(r => setTimeout(r, intervalMs));
+  }
+  throw new Error(`IG container did not reach FINISHED after ${maxAttempts * intervalMs / 1000}s`);
+}
+
 async function publish(draft, env) {
   const caption  = String(draft.caption || '').slice(0, 2200);
+  const videoUrl = draft.video_url;
   const imageUrl = draft.image_url;
-  if (!imageUrl) return { ok: false, error: 'no image_url' };
-  if (!/^https?:\/\//.test(imageUrl)) return { ok: false, error: `image_url must be public http(s) URL: ${imageUrl}` };
+  const usingVideo = !!videoUrl;
+  const mediaUrl = usingVideo ? videoUrl : imageUrl;
+  if (!mediaUrl) return { ok: false, error: 'no image_url or video_url' };
+  if (!/^https?:\/\//.test(mediaUrl)) return { ok: false, error: `media URL must be public http(s): ${mediaUrl}` };
 
   const base = _graphBase(env);
   const igId = env.IG_USER_ID;
   const token = env.IG_ACCESS_TOKEN;
 
-  // Step 1 — create media container
+  // Step 1 — create container. Video uses media_type=REELS (post-2024
+  // Reels API; the older VIDEO type is deprecated for new content).
+  const containerParams = usingVideo
+    ? { media_type: 'REELS', video_url: videoUrl, caption, access_token: token }
+    : { image_url: imageUrl, caption, access_token: token };
+
   let container;
   try {
-    container = await _post(`${base}/${igId}/media`, {
-      image_url:    imageUrl,
-      caption,
-      access_token: token,
-    });
+    container = await _post(`${base}/${igId}/media`, containerParams);
   } catch (err) {
     return { ok: false, error: `IG media container: ${err.message}` };
   }
   const containerId = container.id;
   if (!containerId) return { ok: false, error: 'IG media returned no container id' };
+
+  // Step 1.5 — wait for video transcoding before publish.
+  if (usingVideo) {
+    try {
+      await _waitForContainerReady(base, containerId, token);
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+  }
 
   // Step 2 — publish
   let published;
@@ -117,9 +147,9 @@ async function publish(draft, env) {
   try {
     const meta = await _get(`${base}/${mediaId}?fields=permalink&access_token=${encodeURIComponent(token)}`);
     permalink = meta.permalink || null;
-  } catch (_) { /* permalink fetch is best-effort */ }
+  } catch (_) { /* best-effort */ }
 
-  return { ok: true, permalink, media_id: mediaId };
+  return { ok: true, permalink, media_id: mediaId, media_kind: usingVideo ? 'REELS' : 'IMAGE' };
 }
 
 module.exports = { name, isConfigured, publish };
