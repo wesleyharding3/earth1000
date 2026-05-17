@@ -48,6 +48,11 @@ const AUTO_PUBLISH = process.argv.includes('--auto-publish');
 // rows are inserted with status='pending_video' and only move to
 // publishable state after the Mac worker uploads the arc.mp4.
 const NO_VIDEO = process.argv.includes('--no-video');
+// --test relaxes the diversity / hotspot / batch-min guards so a single
+// thread can get picked and inserted. Use for end-to-end pipeline
+// verification (Mac-worker → upload → publish) without waiting for the
+// production picker quorum to be satisfied.
+const TEST_MODE = process.argv.includes('--test');
 // Per-platform disable. Pass --no-x to skip X (e.g. when free-tier credits
 // are exhausted). Other platforms have similar flags. Useful while one
 // platform's billing is in a bad state.
@@ -184,24 +189,26 @@ function pickBatch(candidates) {
     if (picked.length >= BATCH_TARGET) break;
 
     const lead = (Array.isArray(t.primary_nations) && t.primary_nations[0]) || null;
-    if (lead && leadCountriesUsed.has(lead)) continue;  // lead-country dedup
+    if (!TEST_MODE && lead && leadCountriesUsed.has(lead)) continue;  // lead-country dedup
 
     const region = getRegionGroup(t);
     const regionCount = regionCounts.get(region) || 0;
     const hotspotCap = HOTSPOT_REGIONS.has(region) ? MAX_PER_HOTSPOT : 2;
-    if (regionCount >= hotspotCap) continue;
+    if (!TEST_MODE && regionCount >= hotspotCap) continue;
 
     picked.push(t);
     if (lead) leadCountriesUsed.add(lead);
     regionCounts.set(region, regionCount + 1);
-    reasons.push(`importance=${Number(t.importance).toFixed(1)}, region=${region}, lead=${lead || '—'}, articles=${t.article_count}`);
+    reasons.push(`importance=${Number(t.importance).toFixed(1)}, region=${region}, lead=${lead || '—'}, articles=${t.article_count}${TEST_MODE ? ' [TEST_MODE]' : ''}`);
   }
 
-  // Diversity check: require at least MIN_REGIONS_PER_BATCH distinct regions.
-  // If we picked < MIN regions, this batch fails — caller may decide to
-  // accept anyway (e.g. when news is genuinely concentrated in one region).
   const distinctRegions = regionCounts.size;
-  const meetsDiversity = distinctRegions >= MIN_REGIONS_PER_BATCH || picked.length < MIN_REGIONS_PER_BATCH;
+  // TEST_MODE always reports diversity_ok=true so the caller doesn't
+  // abort. Production: require >= MIN_REGIONS_PER_BATCH distinct regions
+  // unless the pick was small enough that diversity is vacuous.
+  const meetsDiversity = TEST_MODE
+    ? true
+    : (distinctRegions >= MIN_REGIONS_PER_BATCH || picked.length < MIN_REGIONS_PER_BATCH);
 
   return {
     picked,
@@ -233,8 +240,9 @@ function pickBatch(candidates) {
   }
   log(`After cooling + title overlap filters: ${filtered.length}`);
 
-  if (filtered.length < BATCH_MIN) {
-    log(`Only ${filtered.length} threads survived constraints — skipping this batch (need ≥ ${BATCH_MIN}).`);
+  const effectiveBatchMin = TEST_MODE ? 1 : BATCH_MIN;
+  if (filtered.length < effectiveBatchMin) {
+    log(`Only ${filtered.length} threads survived constraints — skipping this batch (need ≥ ${effectiveBatchMin}).`);
     await pool.end();
     process.exit(0);
   }
@@ -242,8 +250,8 @@ function pickBatch(candidates) {
   const { picked, reasons, distinct_regions, meets_diversity } = pickBatch(filtered);
   log(`Picked ${picked.length} of ${BATCH_TARGET}   regions=${distinct_regions}   diversity_ok=${meets_diversity}`);
 
-  if (picked.length < BATCH_MIN) {
-    log(`Diversity constraints blocked too many — picked ${picked.length}, need ≥ ${BATCH_MIN}. Skipping batch.`);
+  if (picked.length < effectiveBatchMin) {
+    log(`Diversity constraints blocked too many — picked ${picked.length}, need ≥ ${effectiveBatchMin}. Skipping batch.`);
     await pool.end();
     process.exit(0);
   }
