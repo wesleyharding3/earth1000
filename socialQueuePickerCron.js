@@ -231,14 +231,17 @@ function pickBatch(candidates) {
 
   log(`Candidates: ${candidates.length}   in-cooling: ${recentThreadIds.size}   recent-titles: ${recentTokenSets.length}`);
 
-  // Filter cooling + title overlap
+  // Filter cooling + title overlap. TEST_MODE skips both so a manual
+  // trigger can re-pick threads picked earlier today (the whole point
+  // of --test is to verify the pipeline; the spam guards make that
+  // impossible when most candidates are already in cooling).
   const filtered = [];
   for (const t of candidates) {
-    if (recentThreadIds.has(t.id)) continue;             // 48h cooling
-    if (failsTitleOverlap(t, recentTokenSets)) continue; // re-titled spam guard
+    if (!TEST_MODE && recentThreadIds.has(t.id)) continue;             // 48h cooling
+    if (!TEST_MODE && failsTitleOverlap(t, recentTokenSets)) continue; // re-titled spam guard
     filtered.push(t);
   }
-  log(`After cooling + title overlap filters: ${filtered.length}`);
+  log(`After cooling + title overlap filters: ${filtered.length}${TEST_MODE ? ' (TEST_MODE: both filters bypassed)' : ''}`);
 
   const effectiveBatchMin = TEST_MODE ? 1 : BATCH_MIN;
   // Phase 1 skip conditions — don't exit the process here; we still want
