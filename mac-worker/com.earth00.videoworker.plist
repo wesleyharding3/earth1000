@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  launchd agent for the Earth00 video worker.
+
+  Installs to ~/Library/LaunchAgents/com.earth00.videoworker.plist
+  Load with:   launchctl load -w ~/Library/LaunchAgents/com.earth00.videoworker.plist
+  Unload with: launchctl unload    ~/Library/LaunchAgents/com.earth00.videoworker.plist
+  Status:      launchctl list | grep earth00
+
+  RunAtLoad     — start the worker when this plist is loaded (at login)
+  KeepAlive     — restart automatically if it exits (crash, kill, etc.)
+  ProcessType=Background — lowest priority; Mac OS may suspend it on
+                            heavy load, but that's fine for poll-style work
+  StandardOutPath / StandardErrorPath — both go to ~/Library/Logs
+
+  Placeholders (replaced by install.sh):
+    {{NODE_BIN}}        — absolute path to `node` (e.g. /usr/local/bin/node)
+    {{WORKER_SCRIPT}}   — absolute path to videoWorker.js
+    {{HOME}}            — $HOME
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.earth00.videoworker</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>{{NODE_BIN}}</string>
+    <string>{{WORKER_SCRIPT}}</string>
+  </array>
+
+  <key>WorkingDirectory</key>
+  <string>{{HOME}}/Library/Application Support/earth00-worker</string>
+
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key>
+    <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+    <key>NODE_ENV</key>
+    <string>production</string>
+  </dict>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <key>KeepAlive</key>
+  <dict>
+    <key>SuccessfulExit</key>
+    <false/>
+    <key>Crashed</key>
+    <true/>
+  </dict>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+
+  <key>StandardOutPath</key>
+  <string>{{HOME}}/Library/Logs/earth00-worker.log</string>
+
+  <key>StandardErrorPath</key>
+  <string>{{HOME}}/Library/Logs/earth00-worker.log</string>
+
+  <!-- Throttle restarts so a crashing worker doesn't spin endlessly.
+       30s minimum between restarts. -->
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+</dict>
+</plist>

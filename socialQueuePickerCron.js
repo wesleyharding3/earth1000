@@ -34,6 +34,11 @@ const socialPublishers = require('./publishers');
 const TAG = '[socialPicker]';
 const DRY_RUN = process.argv.includes('--dry-run');
 const AUTO_PUBLISH = process.argv.includes('--auto-publish');
+// --no-video skips the pending_video gate (e.g. for testing or when
+// the admin's Mac worker is down for an extended period). When omitted,
+// rows are inserted with status='pending_video' and only move to
+// publishable state after the Mac worker uploads the arc.mp4.
+const NO_VIDEO = process.argv.includes('--no-video');
 // Per-platform disable. Pass --no-x to skip X (e.g. when free-tier credits
 // are exhausted). Other platforms have similar flags. Useful while one
 // platform's billing is in a bad state.
@@ -260,16 +265,20 @@ function pickBatch(candidates) {
       platforms_enabled[p] = !PLATFORMS_DISABLED.has(p);
     }
 
-    // Insert as pending_approval first; flip to posted/failed below if
-    // auto-publishing.
+    // Status decision:
+    //   - default: 'pending_video' — wait for Mac worker to upload arc.mp4
+    //     before this row becomes publishable
+    //   - --no-video: 'pending_approval' (legacy behavior, no video gate)
+    //   - --auto-publish: skip the video gate AND auto-publish immediately
+    const initialStatus = (AUTO_PUBLISH || NO_VIDEO) ? 'pending_approval' : 'pending_video';
     let rowId;
     try {
       const { rows: [r] } = await pool.query(`
         INSERT INTO social_post_queue
           (thread_id, drafts, platforms_enabled, status, scheduled_for, selection_reason)
-        VALUES ($1, $2::jsonb, $3::jsonb, 'pending_approval', NOW(), $4)
+        VALUES ($1, $2::jsonb, $3::jsonb, $4, NOW(), $5)
         RETURNING id
-      `, [t.id, JSON.stringify(drafts), JSON.stringify(platforms_enabled), reasons[i]]);
+      `, [t.id, JSON.stringify(drafts), JSON.stringify(platforms_enabled), initialStatus, reasons[i]]);
       rowId = r.id;
       inserted++;
     } catch (err) {

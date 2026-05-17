@@ -15191,43 +15191,159 @@ app.get('/api/debug/recent-threads', async (req, res) => {
 });
 
 
-const videoGenerator = require('./videoGenerator');
-// /share/thread/:id/arc.mp4 — lazy-cached arc-flyby video. First hit
-// triggers the headless render (~30–60s). Subsequent hits within 24h
-// serve the cached MP4 in milliseconds.
+// ── Arc-flyby video pipeline ────────────────────────────────────────────
+// Render itself can't generate the video reliably (no GPU → SwiftShader
+// chokes on the production globe's shaders). The Mac-as-worker setup is
+// the actual generator: a launchd-managed Node worker on the admin's
+// laptop polls /api/video-jobs/pending, renders the video locally with
+// real Mac GPU, and POSTs the MP4 back to /api/video-jobs/:id/result
+// (which writes it to /tmp/arc-cache and flips the queue row out of
+// pending_video).
+//
+// /share/thread/:id/arc.mp4 just serves whatever's in /tmp/arc-cache.
+// If nothing is there (Mac worker hasn't filled this thread yet), 404.
+const VIDEO_CACHE_DIR = '/tmp/arc-cache';
 app.get('/share/thread/:id/arc.mp4', async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
     if (!Number.isFinite(id)) return res.status(400).send('invalid id');
-    // Fetch the thread's display fields so the in-page __shareGlobeClip
-    // overlay can bake title / subtitle / flag chips into the recording.
-    const { rows } = await pool.query(`
-      SELECT id, title, primary_nations, secondary_nations, article_count,
-             distinct_source_count, primary_category
-        FROM story_threads WHERE id = $1
-    `, [id]);
-    if (!rows.length) return res.status(404).send('thread not found');
-    const t = rows[0];
-    const isos = [
-      ...(Array.isArray(t.primary_nations) ? t.primary_nations : []),
-      ...(Array.isArray(t.secondary_nations) ? t.secondary_nations : []),
-    ].slice(0, 8);
-    const subtitleBits = [];
-    if (Number.isFinite(t.article_count))         subtitleBits.push(`${t.article_count} articles`);
-    if (isos.length)                              subtitleBits.push(`${isos.length} countries`);
-    if (Number.isFinite(t.distinct_source_count)) subtitleBits.push(`${t.distinct_source_count} sources`);
-    const threadMeta = {
-      title:    t.title || 'Story',
-      subtitle: subtitleBits.length ? `Storyline · ${subtitleBits.join(' · ')}` : 'Storyline',
-      flagIsos: isos,
-    };
-    const mp4Path = await videoGenerator.composeArcVideo(id, { threadMeta });
+    const mp4Path = require('path').join(VIDEO_CACHE_DIR, `${id}.mp4`);
+    const fs = require('fs');
+    if (!fs.existsSync(mp4Path)) return res.status(404).send('arc.mp4 not yet rendered');
     res.setHeader('Content-Type', 'video/mp4');
     res.setHeader('Cache-Control', 'public, max-age=86400, s-maxage=86400');
     res.sendFile(mp4Path);
   } catch (err) {
     console.error('[share/arc.mp4]', err.message);
-    res.status(500).send('arc video failed: ' + err.message);
+    res.status(500).send('arc video error: ' + err.message);
+  }
+});
+
+// ── Video-worker endpoints (token-auth, used by Mac worker) ─────────────
+// The worker polls pending → renders locally → uploads result. Token
+// auth (env: VIDEO_WORKER_TOKEN, set on Render + matched in worker
+// config) keeps these endpoints accessible to the worker without
+// admin Supabase auth. Don't expose VIDEO_WORKER_TOKEN publicly — it's
+// equivalent to an MP4-upload key.
+function _checkVideoWorkerToken(req, res) {
+  const expected = process.env.VIDEO_WORKER_TOKEN;
+  if (!expected) { res.status(503).json({ error: 'VIDEO_WORKER_TOKEN not configured' }); return false; }
+  const got = req.query.token || req.headers['x-worker-token'];
+  if (got !== expected) { res.status(401).json({ error: 'invalid worker token' }); return false; }
+  return true;
+}
+
+// GET /api/video-jobs/pending — Mac worker polls this. Returns up to
+// 20 thread IDs in pending_video status with the metadata needed to
+// drive the in-app __shareGlobeClip overlay.
+app.get('/api/video-jobs/pending', async (req, res) => {
+  if (!_checkVideoWorkerToken(req, res)) return;
+  try {
+    const { rows } = await pool.query(`
+      SELECT q.id            AS queue_id,
+             q.thread_id,
+             q.scheduled_for,
+             st.title,
+             st.primary_nations,
+             st.secondary_nations,
+             st.article_count,
+             st.distinct_source_count,
+             st.primary_category
+        FROM social_post_queue q
+        JOIN story_threads     st ON st.id = q.thread_id
+       WHERE q.status = 'pending_video'
+       ORDER BY q.scheduled_for ASC
+       LIMIT 20
+    `);
+    res.json({
+      jobs: rows.map(r => {
+        const isos = [
+          ...(Array.isArray(r.primary_nations) ? r.primary_nations : []),
+          ...(Array.isArray(r.secondary_nations) ? r.secondary_nations : []),
+        ].slice(0, 8);
+        const subtitleBits = [];
+        if (Number.isFinite(r.article_count))         subtitleBits.push(`${r.article_count} articles`);
+        if (isos.length)                              subtitleBits.push(`${isos.length} countries`);
+        if (Number.isFinite(r.distinct_source_count)) subtitleBits.push(`${r.distinct_source_count} sources`);
+        return {
+          queue_id:  r.queue_id,
+          thread_id: r.thread_id,
+          scheduled_for: r.scheduled_for,
+          title:     r.title || 'Story',
+          subtitle:  subtitleBits.length ? `Storyline · ${subtitleBits.join(' · ')}` : 'Storyline',
+          flag_isos: isos,
+          category:  r.primary_category,
+        };
+      }),
+    });
+  } catch (err) {
+    console.error('[video-jobs/pending]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/video-jobs/:thread_id/result — Mac worker uploads the
+// recorded MP4 here. Body is raw video/mp4 binary; on success, writes
+// to /tmp/arc-cache/{id}.mp4 and flips the queue row's status from
+// pending_video → pending_approval. The publisher cron then picks it
+// up as eligible.
+//
+// Why flip to pending_approval not approved: lets the admin still
+// intervene before publish if they want. For full auto-publish, the
+// publisher cron will auto-approve pending_approval rows older than
+// the rate limit allows.
+app.post('/api/video-jobs/:thread_id/result',
+  express.raw({ type: 'video/mp4', limit: '20mb' }),
+  async (req, res) => {
+    if (!_checkVideoWorkerToken(req, res)) return;
+    try {
+      const threadId = parseInt(req.params.thread_id, 10);
+      if (!Number.isFinite(threadId)) return res.status(400).json({ error: 'invalid thread_id' });
+      const body = req.body;
+      if (!Buffer.isBuffer(body) || body.length < 1000) {
+        return res.status(400).json({ error: 'expected video/mp4 body (>1KB), got ' + (body?.length || 0) + ' bytes' });
+      }
+      // Write to disk
+      const fs = require('fs');
+      const path = require('path');
+      await fs.promises.mkdir(VIDEO_CACHE_DIR, { recursive: true });
+      await fs.promises.writeFile(path.join(VIDEO_CACHE_DIR, `${threadId}.mp4`), body);
+      // Flip status: pending_video → pending_approval (so publisher cron sees it)
+      const { rowCount } = await pool.query(`
+        UPDATE social_post_queue
+           SET status = 'pending_approval'
+         WHERE thread_id = $1 AND status = 'pending_video'
+      `, [threadId]);
+      res.json({ ok: true, bytes: body.length, rows_updated: rowCount });
+    } catch (err) {
+      console.error('[video-jobs/result]', err.message);
+      res.status(500).json({ error: err.message });
+    }
+  }
+);
+
+// POST /api/video-jobs/:thread_id/skip — Mac worker reports a render
+// failure here (e.g. earth00.com unreachable, Puppeteer crashed). The
+// row gets fast-tracked to pending_approval anyway so it doesn't sit
+// in pending_video forever; the publish path will use image-only.
+app.post('/api/video-jobs/:thread_id/skip', async (req, res) => {
+  if (!_checkVideoWorkerToken(req, res)) return;
+  try {
+    const threadId = parseInt(req.params.thread_id, 10);
+    if (!Number.isFinite(threadId)) return res.status(400).json({ error: 'invalid thread_id' });
+    const reason = String(req.query.reason || 'unknown').slice(0, 120);
+    const { rowCount } = await pool.query(`
+      UPDATE social_post_queue
+         SET status = 'pending_approval',
+             failure_log = failure_log || jsonb_build_array(
+               jsonb_build_object('platform', 'video', 'error', $2, 'attempted_at', NOW())
+             )
+       WHERE thread_id = $1 AND status = 'pending_video'
+    `, [threadId, `video-render-skipped: ${reason}`]);
+    res.json({ ok: true, rows_updated: rowCount });
+  } catch (err) {
+    console.error('[video-jobs/skip]', err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 
