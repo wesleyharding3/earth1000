@@ -364,8 +364,11 @@ function pickBatch(candidates) {
 // the cron and web service run as separate Render services with
 // separate /tmp directories, so a filesystem check would never see
 // the MP4 the Mac worker uploaded.
-const MAX_PUBLISHES_PER_RUN = 3;
-const MAX_PUBLISHES_PER_DAY = 4;
+// Env-overridable so you don't need a redeploy to bump for testing.
+// SOCIAL_PUBLISH_RUN_CAP — max posts per single picker run (default 3)
+// SOCIAL_PUBLISH_DAILY_CAP — max posts across the UTC day (default 4)
+const MAX_PUBLISHES_PER_RUN = Math.max(1, parseInt(process.env.SOCIAL_PUBLISH_RUN_CAP   || '3', 10) || 3);
+const MAX_PUBLISHES_PER_DAY = Math.max(1, parseInt(process.env.SOCIAL_PUBLISH_DAILY_CAP || '4', 10) || 4);
 const STALE_THRESHOLD_H     = 48;
 
 async function _publishEligibleRows() {
