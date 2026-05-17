@@ -50,12 +50,12 @@ if (!RENDER_HOST || !APP_HOST || !TOKEN) {
 }
 
 const POLL_INTERVAL_MS = 60_000;     // poll every minute
-// 15s clip (up from 10s) — slows the globe spin so arcs/markers on
-// any given hemisphere stay visible for ~5s instead of ~3.3s. Combined
-// with the bitrate bump (20Mbps) and 60fps capture, this gives the
-// viewer enough time to actually see the origin→destination travel
-// instead of arcs sliding past too fast.
-const DURATION_MS      = 15_000;
+// 10s clip (down from 15s). The 15s spin was cinematic but read as
+// "slow motion" on social media where viewers scroll fast — 36°/sec
+// rotation feels more energetic than 24°/sec. Server-side ffmpeg
+// minterpolate adds synthetic intermediate frames so the faster spin
+// still plays back silky-smooth at the captured ~25fps source rate.
+const DURATION_MS      = 10_000;
 const PAGE_TIMEOUT_MS  = 60_000;
 const RENDER_TIMEOUT_MS = 90_000;    // hard ceiling per render attempt
 
@@ -95,11 +95,17 @@ async function reportSkip(threadId, reason) {
 // ── Video render (Mac-side Puppeteer) ──────────────────────────────────
 async function renderVideo(job) {
   const puppeteer = require('puppeteer');
+  // Headless mode: tried non-headless (real Chrome window, positioned
+  // off-screen at -4000,-4000) hoping the native display compositor
+  // would unlock 60Hz, but macOS marked the off-screen window as
+  // OCCLUDED and applied the same composite-rate throttle (19.7fps vs
+  // headless's 25.8fps with the RAF override below — strictly worse).
+  // Headless + visibility spoof + RAF override is our best perf;
+  // smoothness is finalized by a server-side ffmpeg pass that
+  // normalizes frame timing to a constant 30fps (see
+  // /api/video-jobs/:thread_id/result in server.js).
   const browser = await puppeteer.launch({
     headless: 'new',
-    // No --use-angle=swiftshader or related: on Mac, Puppeteer uses real
-    // hardware-accelerated WebGL via Apple's drivers. That's the whole
-    // reason we're rendering here instead of on Render.
     args: [
       '--no-sandbox',
       '--disable-dev-shm-usage',
@@ -108,11 +114,9 @@ async function renderVideo(job) {
       '--disable-background-timer-throttling',
       '--disable-backgrounding-occluded-windows',
       '--disable-renderer-backgrounding',
-      // Force GPU acceleration paths that headless can sometimes downgrade
-      // — these don't hurt when already on real hardware accel and help
-      // when something in the page triggers a fallback.
       '--enable-gpu-rasterization',
       '--ignore-gpu-blocklist',
+      '--disable-features=CalculateNativeWinOcclusion,IntensiveWakeUpThrottling,GlobalMediaControls',
     ],
   });
   const browserLogs = [];
@@ -150,6 +154,45 @@ async function renderVideo(job) {
       // Some throttlers check window.onblur — keep claiming focus too.
       window.dispatchEvent(new Event('focus'));
       document.dispatchEvent(new Event('visibilitychange'));
+
+      // ── Force-tick requestAnimationFrame at 60Hz via setInterval ──
+      //
+      // The visibility spoof above brought capture FPS from ~7 → ~20 by
+      // disabling the main throttler, but Chromium has OTHER RAF
+      // slowdown paths (intersection observer occlusion, idle-time
+      // throttling, GPU compositing rate caps) that we can't disable
+      // cleanly. The reliable workaround: replace native RAF with a
+      // setInterval-driven ticker that fires callbacks at 60Hz
+      // regardless of Chrome's compositor decisions.
+      //
+      // We disabled background-timer-throttling at the CLI flag level,
+      // so setInterval runs at a true 16.6ms cadence. The native RAF
+      // is still used as a fallback for vsync alignment when the page
+      // is visible, but our setInterval guarantees a minimum rate.
+      //
+      // Three.js and the recording paint loop both use requestAnimationFrame
+      // (we checked — no setTimeout fallback) so this monkey-patch
+      // covers both the globe scene render and the captureStream paint.
+      const _rafQueue = [];
+      const _origRAF  = window.requestAnimationFrame.bind(window);
+      let _rafIdCounter = 1;
+      window.requestAnimationFrame = function(cb) {
+        const id = _rafIdCounter++;
+        _rafQueue.push({ id, cb });
+        return id;
+      };
+      window.cancelAnimationFrame = function(id) {
+        const idx = _rafQueue.findIndex(e => e.id === id);
+        if (idx >= 0) _rafQueue.splice(idx, 1);
+      };
+      setInterval(() => {
+        if (!_rafQueue.length) return;
+        const queue = _rafQueue.splice(0, _rafQueue.length);
+        const t = performance.now();
+        for (const { cb } of queue) {
+          try { cb(t); } catch (_) { /* swallow per-RAF errors so the ticker keeps firing */ }
+        }
+      }, 1000 / 60);
     });
 
     await page.setViewport({ width: 1080, height: 1920, deviceScaleFactor: 1 });
@@ -166,7 +209,8 @@ async function renderVideo(job) {
     //                      a thread (NOT __openThread, which only
     //                      opens the side panel without arcs)
     await page.waitForFunction(() => {
-      return typeof window.__shareGlobeClip === 'function'
+      return typeof window.__renderClipFrame === 'function'
+          && typeof window.__setupClipRecording === 'function'
           && typeof window.showThreadFlows === 'function'
           && !!window.__renderer;
     }, { timeout: PAGE_TIMEOUT_MS });
@@ -211,66 +255,111 @@ async function renderVideo(job) {
     // during the recording window.
     await new Promise(r => setTimeout(r, 2500));
 
-    // Drive the same recording pipeline that "Share → Clip" uses in
-    // the live app. returnBlob: true intercepts the Blob before the
-    // iOS-share / web-share / download paths run.
+    // ── Deterministic frame-by-frame rendering ──
     //
-    // Arc draw-in timing override: Puppeteer headless captures the
-    // canvas at ~7-15 fps (well below the captureStream(60) target —
-    // Chrome throttles offscreen WebGL framerate even with the
-    // disable-backgrounding flags). At the in-app default (1.15-1.5s
-    // per arc, 0-0.55s stagger), the entire draw-in completes in
-    // under 2s of wallclock = ~10-15 captured frames. After MP4
-    // compression those frames blur into "arcs instantly appeared."
-    // Passing slower durations + bigger stagger here keeps arcs
-    // visibly drawing across the first ~7-9s of the 15s clip. In-app
-    // behavior is unchanged (no opts → original timings).
-    const result = await Promise.race([
-      page.evaluate(async (opts) => {
-        try {
-          if (typeof window.__replayArcAnimations === 'function') {
-            window.__replayArcAnimations({
-              drawInDurationBase:  3.5,
-              drawInDurationRange: 1.5,    // → 3.5-5.0s per arc
-              drawInDelayMax:      4.0,    // → up to 4s stagger across arcs
-            });
-          }
-          const r = await window.__shareGlobeClip({
-            returnBlob:   true,
-            durationMs:   opts.durationMs,
-            shareTitle:   `Earth00 · ${opts.title || 'Story'}`,
-            shareText:    `${opts.title || 'Story'} — on Earth00`,
-            filenameBase: `earth00-thread-${opts.threadId}-clip`,
-            overlay: {
-              title:    opts.title || 'Story',
-              subtitle: opts.subtitle || 'Storyline',
-              flagIsos: opts.flagIsos || [],
-            },
-          });
-          if (!r || !r.blob) return { ok: false, error: 'no blob' };
-          const buf = await r.blob.arrayBuffer();
-          const bytes = new Uint8Array(buf);
-          const chunk = 0x8000;
-          let bin = '';
-          for (let i = 0; i < bytes.length; i += chunk) {
-            bin += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
-          }
-          return { ok: true, base64: btoa(bin), ext: r.ext, mime: r.blob.type };
-        } catch (e) { return { ok: false, error: e.message }; }
-      }, {
-        threadId:   job.thread_id,
-        durationMs: DURATION_MS,
-        title:      job.title,
-        subtitle:   job.subtitle,
-        flagIsos:   job.flag_isos,
-      }),
-      new Promise((_, rej) => setTimeout(() => rej(new Error('render hit RENDER_TIMEOUT_MS')), RENDER_TIMEOUT_MS)),
-    ]);
+    // Replaces the realtime __shareGlobeClip + captureStream + MediaRecorder
+    // pipeline because Puppeteer headless caps framebuffer commits to
+    // ~25 Hz internally — no amount of RAF override / visibility spoof
+    // / non-headless gets us to 60fps with even timing for a complex
+    // WebGL scene. The deterministic loop bypasses all of that: we
+    // explicitly position the globe + arcs at progress p, render once
+    // synchronously, screenshot the page's recording canvas, repeat
+    // for every frame. The resulting MP4 is guaranteed silk-smooth
+    // because every frame's content is at the mathematically correct
+    // position with no timing jitter.
 
-    if (!result?.ok) {
-      throw new Error(`shareGlobeClip: ${result?.error || 'unknown'}\nlogs:\n${browserLogs.slice(-10).join('\n')}`);
+    // Configure arc draw-in timings (no live animation — these get
+    // sampled per-frame inside __renderClipFrame). Same windows as
+    // before so each arc draws in over ~2-3s of clip time.
+    await page.evaluate(() => {
+      if (typeof window.__replayArcAnimations === 'function') {
+        window.__replayArcAnimations({
+          drawInDurationBase:  2.0,
+          drawInDurationRange: 1.0,    // → 2.0-3.0s per arc
+          drawInDelayMax:      2.5,    // → up to 2.5s stagger
+        });
+      }
+    });
+
+    // Setup recording canvas + overlay painter (preloads icon + flag
+    // images, returns once they're cached). spinSeconds defines the
+    // clip's wallclock duration that arc draw-in times are relative to.
+    const spinSeconds = DURATION_MS / 1000;
+    await page.evaluate(async (opts) => {
+      return await window.__setupClipRecording({
+        spinSeconds: opts.spinSeconds,
+        overlay: {
+          title:    opts.title || 'Story',
+          subtitle: opts.subtitle || 'Storyline',
+          flagIsos: opts.flagIsos || [],
+        },
+      });
+    }, {
+      spinSeconds,
+      title:    job.title,
+      subtitle: job.subtitle,
+      flagIsos: job.flag_isos,
+    });
+
+    // ── Spawn ffmpeg + frame loop ──
+    const TARGET_FPS   = 30;
+    const FRAME_COUNT  = TARGET_FPS * spinSeconds;
+    const tmpDir       = require('os').tmpdir();
+    const tmpOut       = path.join(tmpDir, `arc-det-${process.pid}-${Date.now()}.mp4`);
+    const ffmpegPath   = require('@ffmpeg-installer/ffmpeg').path;
+    const { spawn }    = require('child_process');
+    const ffmpeg = spawn(ffmpegPath, [
+      '-y', '-hide_banner', '-loglevel', 'error',
+      '-f', 'image2pipe', '-framerate', String(TARGET_FPS), '-i', 'pipe:0',
+      // Silent audio track — some downstream consumers (IG) prefer it.
+      '-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100',
+      '-c:v', 'libx264', '-preset', 'fast', '-crf', '20',
+      '-pix_fmt', 'yuv420p', '-profile:v', 'high', '-movflags', '+faststart',
+      '-r', String(TARGET_FPS), '-t', String(spinSeconds),
+      '-c:a', 'aac', '-b:a', '128k',
+      '-f', 'mp4', tmpOut,
+    ], { stdio: ['pipe', 'ignore', 'pipe'] });
+    const ffStderr = [];
+    ffmpeg.stderr.on('data', c => ffStderr.push(c));
+    let ffmpegError = null;
+    ffmpeg.stdin.on('error', err => { ffmpegError = err; });
+    const ffmpegDone = new Promise((resolve, reject) => {
+      ffmpeg.on('close', code => {
+        if (code === 0) resolve();
+        else reject(new Error(`ffmpeg exit ${code}: ${Buffer.concat(ffStderr).toString().slice(0, 400)}`));
+      });
+      ffmpeg.on('error', reject);
+    });
+
+    // Hard timeout on the whole loop so a stuck page doesn't hang us.
+    const loopDeadline = Date.now() + RENDER_TIMEOUT_MS;
+    for (let i = 0; i < FRAME_COUNT; i++) {
+      if (Date.now() > loopDeadline) {
+        try { ffmpeg.stdin.end(); } catch (_) {}
+        throw new Error(`render hit RENDER_TIMEOUT_MS at frame ${i}/${FRAME_COUNT}`);
+      }
+      if (ffmpegError) {
+        throw new Error(`ffmpeg stdin closed early: ${ffmpegError.message}`);
+      }
+      const progress = i / (FRAME_COUNT - 1);
+      const dataB64 = await page.evaluate(p => window.__renderClipFrame(p), progress);
+      if (!dataB64) {
+        try { ffmpeg.stdin.end(); } catch (_) {}
+        throw new Error(`__renderClipFrame returned no data at frame ${i}`);
+      }
+      const png = Buffer.from(dataB64, 'base64');
+      if (!ffmpeg.stdin.write(png)) {
+        await new Promise(r => ffmpeg.stdin.once('drain', r));
+      }
     }
-    return Buffer.from(result.base64, 'base64');
+    try { ffmpeg.stdin.end(); } catch (_) {}
+    await ffmpegDone;
+
+    const fs2 = require('fs');
+    const mp4 = await fs2.promises.readFile(tmpOut);
+    try { await fs2.promises.unlink(tmpOut); } catch (_) {}
+    log(`  deterministic render: ${FRAME_COUNT} frames → ${mp4.length} bytes`);
+    return mp4;
   } finally {
     await browser.close().catch(() => {});
   }

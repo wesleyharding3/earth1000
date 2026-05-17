@@ -15564,6 +15564,72 @@ app.get('/api/video-jobs/pending', async (req, res) => {
 // intervene before publish if they want. For full auto-publish, the
 // publisher cron will auto-approve pending_approval rows older than
 // the rate limit allows.
+// FFmpeg normalize: takes the Mac worker's raw recording (variable-rate
+// MediaRecorder output — see the long throttling story in
+// mac-worker/videoWorker.js) and re-encodes to constant 30fps with even
+// frame timing. The worker captures at ~25fps on average but with uneven
+// inter-frame intervals (because Chromium's compositor commits in
+// bursts), and uneven timing plays back as "stuttery" / "laggy" even
+// when the avg rate is acceptable. ffmpeg's `fps=30` filter inserts /
+// drops frames to enforce a constant-rate timeline, and motion
+// interpolation (`minterpolate`) optionally adds synthetic intermediate
+// frames for an even smoother feel. Falls back to the raw bytes if
+// ffmpeg fails so the upload still flips the queue row.
+const _ffmpegInstaller = (() => {
+  try { return require('@ffmpeg-installer/ffmpeg'); }
+  catch (_) { return null; }
+})();
+async function _normalizeRecordedMp4(rawBuf) {
+  if (!_ffmpegInstaller) return rawBuf;
+  const { spawn } = require('child_process');
+  const fs   = require('fs');
+  const os   = require('os');
+  const path = require('path');
+  const tmpIn  = path.join(os.tmpdir(), `arc-norm-in-${process.pid}-${Date.now()}.mp4`);
+  const tmpOut = path.join(os.tmpdir(), `arc-norm-out-${process.pid}-${Date.now()}.mp4`);
+  try {
+    await fs.promises.writeFile(tmpIn, rawBuf);
+    await new Promise((resolve, reject) => {
+      // We tried `minterpolate` to synthesize intermediate frames for
+      // a buttery feel — produced bad optical-flow artifacts on the
+      // fast-rotating globe (warping, ghost trails on the arcs).
+      // Dropping it. Just doing constant-30fps normalization via fps=30
+      // — this enforces even inter-frame timing (each frame gets a
+      // matching pts step) without synthesizing visual content. Cost:
+      // ~3-5s of ffmpeg time vs. ~100s for minterpolate.
+      const args = [
+        '-y', '-hide_banner', '-loglevel', 'error',
+        '-i', tmpIn,
+        '-vf', 'fps=30',
+        '-c:v', 'libx264',
+        '-preset', 'fast',
+        '-crf', '20',
+        '-pix_fmt', 'yuv420p',
+        '-profile:v', 'high',
+        '-movflags', '+faststart',
+        '-c:a', 'copy',
+        tmpOut,
+      ];
+      const proc = spawn(_ffmpegInstaller.path, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+      const stderr = [];
+      proc.stderr.on('data', c => stderr.push(c));
+      proc.on('error', reject);
+      proc.on('close', code => {
+        if (code === 0) resolve();
+        else reject(new Error(`ffmpeg exit ${code}: ${Buffer.concat(stderr).toString('utf8').slice(0, 500)}`));
+      });
+    });
+    const out = await fs.promises.readFile(tmpOut);
+    return out;
+  } catch (err) {
+    console.warn('[video-jobs/result] ffmpeg normalize failed, falling back to raw:', err.message);
+    return rawBuf;
+  } finally {
+    try { fs.promises.unlink(tmpIn).catch(() => {}); } catch (_) {}
+    try { fs.promises.unlink(tmpOut).catch(() => {}); } catch (_) {}
+  }
+}
+
 app.post('/api/video-jobs/:thread_id/result',
   // 50MB ceiling — 20Mbps × 15s ≈ 37.5MB raw, plus container overhead.
   // Instagram itself accepts up to 100MB for Reels so we're well within
@@ -15574,10 +15640,17 @@ app.post('/api/video-jobs/:thread_id/result',
     try {
       const threadId = parseInt(req.params.thread_id, 10);
       if (!Number.isFinite(threadId)) return res.status(400).json({ error: 'invalid thread_id' });
-      const body = req.body;
-      if (!Buffer.isBuffer(body) || body.length < 1000) {
-        return res.status(400).json({ error: 'expected video/mp4 body (>1KB), got ' + (body?.length || 0) + ' bytes' });
+      const raw = req.body;
+      if (!Buffer.isBuffer(raw) || raw.length < 1000) {
+        return res.status(400).json({ error: 'expected video/mp4 body (>1KB), got ' + (raw?.length || 0) + ' bytes' });
       }
+      // Normalize the worker's raw recording to constant 30fps. Adds
+      // ~3-5s of ffmpeg time per request but pays off in playback
+      // smoothness on IG / Threads / messaging-app previews.
+      const t0 = Date.now();
+      const body = await _normalizeRecordedMp4(raw);
+      const normMs = Date.now() - t0;
+      console.log(`[video-jobs/result] thread=${threadId} normalized ${raw.length}→${body.length} bytes in ${normMs}ms`);
       // Persist to DB blob (the cross-instance source of truth). The
       // /tmp write below is just a per-instance hot cache.
       const { rowCount } = await pool.query(`
@@ -15593,7 +15666,7 @@ app.post('/api/video-jobs/:thread_id/result',
         await fs.promises.mkdir(VIDEO_CACHE_DIR, { recursive: true });
         await fs.promises.writeFile(path.join(VIDEO_CACHE_DIR, `${threadId}.mp4`), body);
       } catch (_) { /* don't fail the upload over the local cache */ }
-      res.json({ ok: true, bytes: body.length, rows_updated: rowCount });
+      res.json({ ok: true, bytes_in: raw.length, bytes_out: body.length, normalize_ms: normMs, rows_updated: rowCount });
     } catch (err) {
       console.error('[video-jobs/result]', err.message);
       res.status(500).json({ error: err.message });

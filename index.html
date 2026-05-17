@@ -17012,6 +17012,18 @@ window.__arcCtxSegmented = (function() {
       const qPitch = new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), globePitch);
       globeQuat.copy(qPitch).multiply(qYaw);
     }
+    // Bridge to set globe pose from another closure (used by the
+    // deterministic clip-frame renderer in the arc-objects closure
+    // below — globeYaw/globePitch + rebuildGlobeQuat are scoped to
+    // this closure, so we expose a setter rather than the vars).
+    window.__setGlobePose = function(yaw, pitch) {
+      globeYaw   = yaw;
+      globePitch = pitch;
+      rebuildGlobeQuat();
+    };
+    window.__getGlobePose = function() {
+      return { yaw: globeYaw, pitch: globePitch };
+    };
 
     // Extract yaw/pitch from a quaternion by analyzing the forward vector direction.
     // This avoids Euler decomposition issues when the quaternion has a roll component.
@@ -24629,6 +24641,151 @@ const settingsToggle     = document.getElementById("settingsToggle");
     }
     return n;
   };
+
+  // ── Deterministic frame-by-frame clip rendering ────────────────────
+  // Used by the Mac worker as a replacement for the realtime
+  // captureStream + MediaRecorder pipeline, which in Puppeteer headless
+  // hits ~25fps with uneven inter-frame intervals (Chromium's
+  // compositor throttles framebuffer commits regardless of any RAF
+  // overrides). Deterministic rendering bypasses captureStream
+  // entirely: the worker calls __renderClipFrame(t) for t ∈ [0,1] at
+  // exactly N frames, and each call mathematically positions the
+  // globe + arc state at that fraction of the clip, then synchronously
+  // renders. Every frame is GUARANTEED to be at the right position
+  // with no timing jitter — the resulting MP4 plays back as silk.
+  //
+  // __setupClipRecording captures the starting globeYaw/Pitch as the
+  // animation baseline + (optionally) preloads overlay assets so each
+  // frame can composite the title chrome alongside the globe pixels.
+  let _clipBaseYaw     = 0;
+  let _clipBasePitch   = 0;
+  let _clipSpinSeconds = 10;
+  let _clipRecCanvas   = null;
+  let _clipPaintOverlay = null;
+  window.__setupClipRecording = async function(opts = {}) {
+    // globeYaw/globePitch live in a different closure — pull via the
+    // window.__getGlobePose bridge (defined alongside __setGlobePose
+    // in the camera-pose closure above).
+    const pose = (typeof window.__getGlobePose === 'function')
+      ? window.__getGlobePose()
+      : { yaw: 0, pitch: 0 };
+    _clipBaseYaw     = pose.yaw;
+    _clipBasePitch   = pose.pitch;
+    _clipSpinSeconds = Number.isFinite(opts.spinSeconds) ? opts.spinSeconds : 10;
+    const REC_W = 1080;
+    const REC_H = 1350;
+    _clipRecCanvas = document.createElement('canvas');
+    _clipRecCanvas.width  = REC_W;
+    _clipRecCanvas.height = REC_H;
+    if (opts.overlay && typeof window.__buildClipOverlayPainter === 'function') {
+      try {
+        _clipPaintOverlay = await window.__buildClipOverlayPainter({ ...opts.overlay, size: REC_W });
+      } catch (e) {
+        console.warn('[clip] overlay painter failed:', e.message);
+        _clipPaintOverlay = null;
+      }
+    } else {
+      _clipPaintOverlay = null;
+    }
+    return { ok: true, baseYaw: _clipBaseYaw, basePitch: _clipBasePitch, recW: REC_W, recH: REC_H };
+  };
+
+  // Render one frame deterministically + return its composited PNG as
+  // a base64 string (returned via page.evaluate to the worker, which
+  // pipes it to ffmpeg). progress ∈ [0,1], spinSeconds matches what
+  // was passed to __setupClipRecording so arc draw-in timing is
+  // consistent.
+  window.__renderClipFrame = function(progress) {
+    progress = Math.max(0, Math.min(1, progress));
+    const easeInOutCubic = (t) => t < 0.5
+      ? 4 * t * t * t
+      : 1 - Math.pow(-2 * t + 2, 3) / 2;
+
+    // ── Spin position: full 2π yaw rotation, slight pitch dip ──
+    // globeYaw/Pitch + rebuildGlobeQuat live in another closure;
+    // window.__setGlobePose (defined alongside rebuildGlobeQuat) is
+    // the bridge.
+    const eased     = easeInOutCubic(progress);
+    const PITCH_DIP = 0.052;
+    const yaw   = _clipBaseYaw   + eased * Math.PI * 2;
+    const pitch = _clipBasePitch + PITCH_DIP * Math.sin(progress * Math.PI);
+    if (typeof window.__setGlobePose === 'function') window.__setGlobePose(yaw, pitch);
+
+    // ── Arc draw-in position ──
+    // Map progress to a synthetic elapsed time on each arc's draw-in
+    // timeline. Each arc has its own drawInDelay + drawInDuration
+    // (set by __replayArcAnimations); we compute what visEnd should
+    // be at fraction `progress` of the spin and apply directly to
+    // the shader uniform. No RAF involved.
+    const tSec = progress * _clipSpinSeconds;
+    for (const arc of arcObjects) {
+      if (!arc.isStatic || !arc.tubeMat) continue;
+      const t = tSec - (arc.drawInDelay || 0);
+      const dur = arc.drawInDuration || 1.5;
+      let visEnd, opacity;
+      if (t <= 0) {
+        visEnd = 0.001;
+        opacity = 0;
+      } else if (t >= dur) {
+        visEnd = 1;
+        opacity = arc.baseOpacity || 1;
+      } else {
+        const rawT = t / dur;
+        const eIn  = 1 - Math.pow(1 - rawT, 3);
+        visEnd     = Math.max(0.001, eIn);
+        const fadeIn = Math.min(1, rawT * 4);
+        opacity    = (arc.baseOpacity || 1) * fadeIn;
+      }
+      arc.tubeMat.uniforms.uVisibleStart.value = 0;
+      arc.tubeMat.uniforms.uVisibleEnd.value   = visEnd;
+      arc.tubeMat.uniforms.uOpacity.value      = opacity;
+      arc.drawInElapsed = tSec;
+      arc.drawInPlayed  = (t >= dur);
+      if (arc.orb && arc.orb.material) {
+        arc.orb.material.opacity = opacity;
+        arc.orb.visible          = visEnd > 0.001;
+      }
+    }
+
+    // ── Force a synchronous globe render so the WebGL framebuffer
+    // contains exactly the state we just set, with no RAF / vsync
+    // wait. captureStream is bypassed entirely. ──
+    const cam  = window.__camera;
+    const rend = window.__renderer;
+    const sc   = window.scene;
+    if (cam && rend && sc) rend.render(sc, cam);
+
+    // ── Composite onto the recording canvas + paint overlay ──
+    if (!_clipRecCanvas) return null;
+    const ctx = _clipRecCanvas.getContext('2d');
+    const REC_W = _clipRecCanvas.width;
+    const REC_H = _clipRecCanvas.height;
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, REC_W, REC_H);
+    const globeCanvas = rend ? rend.domElement : null;
+    if (globeCanvas) {
+      const gw = globeCanvas.width, gh = globeCanvas.height;
+      const TARGET_ASPECT = REC_W / REC_H;
+      const srcAspect = gw / gh;
+      let srcW, srcH, srcX, srcY;
+      if (srcAspect > TARGET_ASPECT) {
+        srcH = gh; srcW = gh * TARGET_ASPECT;
+        srcX = (gw - srcW) / 2; srcY = 0;
+      } else {
+        srcW = gw; srcH = gw / TARGET_ASPECT;
+        srcX = 0; srcY = (gh - srcH) / 2;
+      }
+      ctx.drawImage(globeCanvas, srcX, srcY, srcW, srcH, 0, 0, REC_W, REC_H);
+    }
+    if (_clipPaintOverlay) {
+      try { _clipPaintOverlay(ctx, REC_W, REC_H); } catch (_) {}
+    }
+    // Return base64 PNG (dataURL without the "data:image/png;base64," prefix)
+    // for the worker to decode + pipe to ffmpeg. PNG (not JPEG) so the
+    // text overlay stays sharp.
+    return _clipRecCanvas.toDataURL('image/png').replace(/^data:image\/png;base64,/, '');
+  };
+
   let flowPlaying     = false;
   let flowProgress    = 0;
   let flowSpeed       = 1.0;
@@ -57070,6 +57227,10 @@ body.ticker-active .gTickerLabel {
   // Builds the per-clip overlay painter. Pre-loads logo + flag images
   // once, returns a synchronous paint(ctx, w, h) for the per-frame loop.
   // opts = { title, subtitle, dateLine, flagIsos[], size }
+  // Bridge so the deterministic-clip renderer (in a different closure)
+  // can reuse the same overlay painter that __shareGlobeClip uses.
+  window.__buildClipOverlayPainter = function(opts) { return _buildClipOverlayPainter(opts); };
+
   async function _buildClipOverlayPainter(opts = {}) {
     const { title = '', subtitle = '', dateLine = '', flagIsos = [], size = 1080 } = opts;
     // Load logo + flags in parallel. Failures degrade gracefully — the
