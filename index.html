@@ -24828,28 +24828,40 @@ const settingsToggle     = document.getElementById("settingsToggle");
     const globeCanvas = rend ? rend.domElement : null;
     if (globeCanvas) {
       const gw = globeCanvas.width, gh = globeCanvas.height;
+      // ── "Contain" fit (vs. "cover" / center-crop) ──
+      //
+      // Earlier we cropped the source to match the target's aspect
+      // ratio, then scaled to 85%. But the source crop happens BEFORE
+      // the scale — so the poles got chopped at the source level, and
+      // shrinking the destination just left those chopped poles small
+      // and surrounded by black. Felt like "edges cut off".
+      //
+      // Now: take the WHOLE source canvas (no cropping), fit it
+      // inside the rec canvas with aspect preserved ("contain"),
+      // then apply the zoom-out scale. The globe is fully visible
+      // with letterboxing if aspects differ, plus extra padding
+      // around for the chip row + logo + footer to sit on.
       const TARGET_ASPECT = REC_W / REC_H;
-      const srcAspect = gw / gh;
-      let srcW, srcH, srcX, srcY;
+      const srcAspect     = gw / gh;
+      let fitW, fitH;
       if (srcAspect > TARGET_ASPECT) {
-        srcH = gh; srcW = gh * TARGET_ASPECT;
-        srcX = (gw - srcW) / 2; srcY = 0;
+        // Source wider — letterbox top/bottom
+        fitW = REC_W;
+        fitH = REC_W / srcAspect;
       } else {
-        srcW = gw; srcH = gw / TARGET_ASPECT;
-        srcX = 0; srcY = (gh - srcH) / 2;
+        // Source taller — letterbox left/right
+        fitH = REC_H;
+        fitW = REC_H * srcAspect;
       }
-      // Zoom the globe to ~85% of the frame, centered, so the flag-chip
-      // row + title overlay sits on the black padding above the globe
-      // rather than covering its top.
       const GLOBE_SCALE = 0.85;
-      const drawW = REC_W * GLOBE_SCALE;
-      const drawH = REC_H * GLOBE_SCALE;
+      const drawW = fitW * GLOBE_SCALE;
+      const drawH = fitH * GLOBE_SCALE;
       const drawX = (REC_W - drawW) / 2;
       const drawY = (REC_H - drawH) / 2;
-      ctx.drawImage(globeCanvas, srcX, srcY, srcW, srcH, drawX, drawY, drawW, drawH);
+      ctx.drawImage(globeCanvas, 0, 0, gw, gh, drawX, drawY, drawW, drawH);
     }
     if (_clipPaintOverlay) {
-      try { _clipPaintOverlay(ctx, REC_W, REC_H); } catch (_) {}
+      try { _clipPaintOverlay(ctx, REC_W, REC_H, progress); } catch (_) {}
     }
     // Return base64 PNG (dataURL without the "data:image/png;base64," prefix)
     // for the worker to decode + pipe to ffmpeg. PNG (not JPEG) so the
@@ -57345,7 +57357,7 @@ body.ticker-active .gTickerLabel {
       return lines;
     }
 
-    return function paintOverlay(ctx, w, h) {
+    return function paintOverlay(ctx, w, h, progress) {
       const margin   = Math.round(w * 0.045);
       // Base title size is 3.8% of width; shrink it down for very long
       // titles so we don't ellipsis-truncate to "Beijing Condemns
@@ -57459,24 +57471,36 @@ body.ticker-active .gTickerLabel {
         ctx.restore();
       }
 
-      // ── Logo (bottom-left, app icon) with breathing gold halo
-      // behind it — matches the slide-1/3/4 carousel cards. The halo
-      // is rendered as a radial gradient so the brand mark feels alive
-      // even while the globe is the main visual event.
+      // ── Circular logo badge + breathing gold halo (matches slides 1/3/4)
+      //
+      // Order of operations:
+      //  1. Halo (gold radial gradient, sits behind everything)
+      //  2. Black filled circle (the badge's dark interior — fills any
+      //     transparent parts of the PNG so the visible boundary is a
+      //     true circle, not the iOS rounded-rect silhouette)
+      //  3. Icon, clipped to the same circle (so the apple-touch-icon's
+      //     "nonagon" outer shape gets cut to a clean disk)
+      //  4. Thin gold rim ring on top (makes the circular silhouette
+      //     unambiguous against the dark globe behind)
+      //
+      // Halo pulse phase derives from `progress` (passed by the
+      // deterministic renderer) — 2 cycles per clip, matches the spin
+      // tempo. Falls back to a static mid-pulse value if no progress
+      // is supplied (legacy realtime-capture path).
       if (logoImg) {
         const logoSize = Math.round(w * 0.10);
         const lx = margin;
         const ly = h - margin - logoSize;
         const cx = lx + logoSize / 2;
         const cy = ly + logoSize / 2;
-        // Pulse phase — uses Date.now() so the halo continues breathing
-        // during the deterministic capture; the captured frame just
-        // samples whatever phase it lands on. Each frame ~33ms apart →
-        // ~3 full pulses across a 15s clip.
-        const pulse = (Math.sin(Date.now() * 0.004) + 1) / 2;  // 0..1
-        const haloR = logoSize / 2 + 20 + pulse * 14;
-        const haloOp = 0.16 + pulse * 0.18;
+        const r  = logoSize / 2;
+        const pulse  = (progress != null)
+          ? (Math.sin(progress * Math.PI * 2 * 2) + 1) / 2   // 0..1, 2 cycles
+          : 0.5;
+        const haloR  = r + 22 + pulse * 16;
+        const haloOp = 0.18 + pulse * 0.22;
         ctx.save();
+        // 1. Halo
         const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, haloR);
         grad.addColorStop(0.55, `rgba(212, 168, 67, ${haloOp.toFixed(3)})`);
         grad.addColorStop(1.0,  `rgba(212, 168, 67, 0)`);
@@ -57484,8 +57508,24 @@ body.ticker-active .gTickerLabel {
         ctx.beginPath();
         ctx.arc(cx, cy, haloR, 0, Math.PI * 2);
         ctx.fill();
-        ctx.globalAlpha = 0.97;
+        // 2. Black filled circle bg
+        ctx.fillStyle = '#000000';
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, 0, Math.PI * 2);
+        ctx.fill();
+        // 3. Icon clipped to circle
+        ctx.save();
+        ctx.beginPath();
+        ctx.arc(cx, cy, r, 0, Math.PI * 2);
+        ctx.clip();
         ctx.drawImage(logoImg, lx, ly, logoSize, logoSize);
+        ctx.restore();
+        // 4. Gold rim ring
+        ctx.strokeStyle = 'rgba(212, 168, 67, 0.7)';
+        ctx.lineWidth = Math.max(2, logoSize * 0.018);
+        ctx.beginPath();
+        ctx.arc(cx, cy, r - 1, 0, Math.PI * 2);
+        ctx.stroke();
         ctx.restore();
       }
 
