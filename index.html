@@ -57399,7 +57399,18 @@ body.ticker-active .gTickerLabel {
       // title lines and would overlap a 3-line title.
       let titleEndY = margin;
 
-      // ── Title (top-left, up to 3 lines, white with shadow)
+      // ── Title (top-left) + Subtitle — typewriter animation
+      //
+      // Title types in over progress 0.00 → 0.10 (~1.5s of a 15s clip).
+      // Subtitle starts right after, types in over 0.10 → 0.16 (~900ms).
+      // Both use easeOutCubic on their windowed progress so the typing
+      // feels deliberate at the start, snappy near the end. After their
+      // respective windows, full text is shown.
+      //
+      // Character-by-character via substring(0, visibleChars) on each
+      // wrapped line. Total chars are tracked across lines so the
+      // typing cascades naturally — line 2 doesn't start until line 1
+      // is fully visible.
       if (title) {
         ctx.save();
         ctx.shadowColor = 'rgba(0,0,0,0.85)';
@@ -57409,23 +57420,47 @@ body.ticker-active .gTickerLabel {
         ctx.font = `bold ${titlePx}px -apple-system, system-ui, "Helvetica Neue", sans-serif`;
         ctx.textBaseline = 'top';
         ctx.textAlign = 'left';
-        // Reserve right-edge space for the date pill.
         const titleMaxWidth = w - margin * 2 - (dateLine ? Math.round(w * 0.22) : 0);
         const lines = wrapText(ctx, title, titleMaxWidth, 3);
+
+        // Typewriter math — title window 0.00 → 0.10
+        const easeOut = (t) => 1 - Math.pow(1 - Math.max(0, Math.min(1, t)), 3);
+        const totalTitleChars = lines.reduce((a, l) => a + l.length, 0);
+        const titleP = progress != null ? Math.min(1, Math.max(0, progress / 0.10)) : 1;
+        let titleCharsBudget = Math.max(0, Math.floor(totalTitleChars * easeOut(titleP)));
+
         let y = margin;
         for (const line of lines) {
-          ctx.fillText(line, margin, y);
+          if (titleCharsBudget <= 0 && progress != null) break;
+          const slice = (progress != null)
+            ? line.substring(0, Math.min(titleCharsBudget, line.length))
+            : line;
+          ctx.fillText(slice, margin, y);
+          titleCharsBudget -= line.length;
           y += lineGap;
         }
-        // Subtitle below title (smaller, gold-cream).
+        // Compute where the title block actually ENDS visually for
+        // chip-row positioning, even when typing is mid-way.
+        const titleLinesShown = (progress != null && titleP < 1)
+          ? Math.min(lines.length, Math.ceil((totalTitleChars * easeOut(titleP)) / Math.max(1, lines[0].length)))
+          : lines.length;
+        const fullTitleEndY = margin + lines.length * lineGap;
+
+        // Subtitle — types in over 0.10 → 0.16, only after title is done
         if (subtitle) {
+          const subP = progress != null ? Math.min(1, Math.max(0, (progress - 0.10) / 0.06)) : 1;
+          const subCharsShown = (progress != null)
+            ? Math.floor(subtitle.length * easeOut(subP))
+            : subtitle.length;
           ctx.font = `${subPx}px -apple-system, system-ui, sans-serif`;
           ctx.fillStyle = 'rgba(255, 220, 180, 0.94)';
-          ctx.fillText(subtitle, margin, y + 4);
-          y += subPx + 8;
+          ctx.fillText(subtitle.substring(0, subCharsShown), margin, fullTitleEndY + 4);
         }
         ctx.restore();
-        titleEndY = y;
+        // Anchor chip row + globe-bottom layout against the FULL title
+        // height even mid-typing so the chip row doesn't jump around
+        // as text grows in.
+        titleEndY = fullTitleEndY + (subtitle ? subPx + 12 : 0);
       }
 
       // ── Date line (top-right, gold-cream)
@@ -57587,17 +57622,22 @@ body.ticker-active .gTickerLabel {
             drawRounded();
             ctx.stroke();
           } else if (inPhase3) {
-            // Phase 3: dim full outline + bright traveling comet segment.
-            ctx.strokeStyle = 'rgba(212, 168, 67, 0.20)';
-            ctx.lineWidth   = 1;
+            // Phase 3: SOLID full shell (kept visible — same intensity
+            // as Phase 2) + bright comet HIGHLIGHT traveling on top.
+            // The comet now traces the existing shell rather than
+            // replacing a dim version of it, so the pill never looks
+            // like its border is disappearing/reappearing.
+            ctx.strokeStyle = 'rgba(212, 168, 67, 0.55)';
+            ctx.lineWidth   = 1.5;
             drawRounded();
             ctx.stroke();
             const segLen = Math.min(110, totalW * 0.3);
-            // Row 2 phase-offset 0.5 cycles so the loops feel continuous.
             const phase  = phase3P + (rowIdx === 1 ? 0.5 : 0);
             const dashOffset = -((phase % 1) * perim);
-            ctx.strokeStyle = 'rgba(212, 168, 67, 0.95)';
-            ctx.lineWidth   = 2;
+            // Bright comet on top — wider stroke (2.5) so it READS as a
+            // highlight pass on the solid shell, not a separate ring.
+            ctx.strokeStyle = 'rgba(255, 230, 160, 0.98)';
+            ctx.lineWidth   = 2.5;
             ctx.setLineDash([segLen, perim - segLen]);
             ctx.lineDashOffset = dashOffset;
             drawRounded();
