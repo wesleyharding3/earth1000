@@ -324,15 +324,21 @@ async function renderVideo(job) {
     const tmpOut       = path.join(tmpDir, `arc-det-${process.pid}-${Date.now()}.mp4`);
     const ffmpegPath   = require('@ffmpeg-installer/ffmpeg').path;
     const { spawn }    = require('child_process');
+    // Morse-signal theme track — same source as the server-side card
+    // renderer so all 4 carousel slides share consistent branding audio.
+    // Was anullsrc silence, but silent AAC compresses to ~2 kbps which
+    // trips IG's carousel-item audio-bitrate floor and the entire
+    // carousel fails with error code 2207077.
+    const morsePath = path.join(__dirname, '..', 'audio', 'briefing', 'morse-room-signal.mp3');
     const ffmpeg = spawn(ffmpegPath, [
       '-y', '-hide_banner', '-loglevel', 'error',
       '-f', 'image2pipe', '-framerate', String(TARGET_FPS), '-i', 'pipe:0',
-      // Silent audio track — some downstream consumers (IG) prefer it.
-      '-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100',
+      '-stream_loop', '-1', '-i', morsePath,
+      '-map', '0:v', '-map', '1:a:0',
       '-c:v', 'libx264', '-preset', 'fast', '-crf', '20',
       '-pix_fmt', 'yuv420p', '-profile:v', 'high', '-movflags', '+faststart',
       '-r', String(TARGET_FPS), '-t', String(spinSeconds),
-      '-c:a', 'aac', '-b:a', '128k',
+      '-c:a', 'aac', '-b:a', '128k', '-ar', '44100', '-ac', '2',
       '-f', 'mp4', tmpOut,
     ], { stdio: ['pipe', 'ignore', 'pipe'] });
     const ffStderr = [];
