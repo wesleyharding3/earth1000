@@ -24755,14 +24755,23 @@ const settingsToggle     = document.getElementById("settingsToggle");
       ? 4 * t * t * t
       : 1 - Math.pow(-2 * t + 2, 3) / 2;
 
-    // ── Spin position: full 2π yaw rotation, slight pitch dip ──
-    // globeYaw/Pitch + rebuildGlobeQuat live in another closure;
-    // window.__setGlobePose (defined alongside rebuildGlobeQuat) is
-    // the bridge.
-    const eased     = easeInOutCubic(progress);
-    const PITCH_DIP = 0.052;
-    const yaw   = _clipBaseYaw   + eased * Math.PI * 2;
-    const pitch = _clipBasePitch + PITCH_DIP * Math.sin(progress * Math.PI);
+    // ── Figure-8 spin: 2 full yaw rotations with sinusoidal pitch ──
+    //
+    // Previously a single 2π rotation with a small pitch dip — only
+    // showed the equatorial band, leaving high-latitude countries
+    // (Russia, Canada, Argentina, Australia) at the edge of frame.
+    // Now: yaw rotates 4π (two complete revolutions) while pitch
+    // oscillates sin(2π·p) × 0.7 rad (~40°), which puts the camera
+    // over the NORTHERN hemisphere during the first rotation and the
+    // SOUTHERN hemisphere during the second. Net effect: every part
+    // of the globe is squarely centered at some point in the clip.
+    //
+    // Yaw uses LINEAR progress (not eased) so the figure-8 reads as
+    // continuous motion rather than two separate accelerating passes.
+    // Pitch is naturally smooth via the sin curve.
+    const PITCH_AMP = 0.7;                       // ~40° max tilt
+    const yaw   = _clipBaseYaw   + progress * Math.PI * 4;
+    const pitch = _clipBasePitch + Math.sin(progress * Math.PI * 2) * PITCH_AMP;
     if (typeof window.__setGlobePose === 'function') window.__setGlobePose(yaw, pitch);
 
     // ── Arc draw-in position ──

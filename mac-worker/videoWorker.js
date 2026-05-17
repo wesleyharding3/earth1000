@@ -50,19 +50,19 @@ if (!RENDER_HOST || !APP_HOST || !TOKEN) {
 }
 
 const POLL_INTERVAL_MS = 60_000;     // poll every minute
-// 10s clip (down from 15s). The 15s spin was cinematic but read as
-// "slow motion" on social media where viewers scroll fast — 36°/sec
-// rotation feels more energetic than 24°/sec. Server-side ffmpeg
-// minterpolate adds synthetic intermediate frames so the faster spin
-// still plays back silky-smooth at the captured ~25fps source rate.
-const DURATION_MS      = 10_000;
+// 15s clip — TWO full revolutions in a figure-8 pattern. Yaw goes
+// from 0 → 4π linearly while pitch oscillates sin(2π·p) × 0.7 rad
+// (~40°), centering the camera over the northern hemisphere during
+// the first rotation and the southern during the second. Net effect:
+// no country gets stuck at the edge of frame regardless of latitude.
+// Math is in index.html → __renderClipFrame.
+const DURATION_MS      = 15_000;
 const PAGE_TIMEOUT_MS  = 60_000;
-const RENDER_TIMEOUT_MS = 240_000;   // hard ceiling per render attempt.
-                                     // Deterministic loop is ~400ms/frame
-                                     // (page.evaluate + canvas.toDataURL
-                                     // roundtrip), so 300 frames + ffmpeg
-                                     // encode ≈ 130s. 180s gives headroom
-                                     // for slow CDN load or dense scenes.
+const RENDER_TIMEOUT_MS = 360_000;   // hard ceiling per render attempt.
+                                     // 450 frames × ~530ms/frame = ~240s
+                                     // worker loop + ~30s server ffmpeg
+                                     // normalize. 360s gives headroom
+                                     // for CDN-cold first frames.
 
 const log = (m) => console.log(`[worker ${new Date().toISOString()}] ${m}`);
 const warn = (m) => console.warn(`[worker ${new Date().toISOString()}] ${m}`);
