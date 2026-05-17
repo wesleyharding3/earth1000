@@ -17016,10 +17016,18 @@ window.__arcCtxSegmented = (function() {
     // deterministic clip-frame renderer in the arc-objects closure
     // below — globeYaw/globePitch + rebuildGlobeQuat are scoped to
     // this closure, so we expose a setter rather than the vars).
+    //
+    // CRITICAL: also applies globeQuat to scene.quaternion. The regular
+    // animate() loop normally does this each frame (line ~23707), but
+    // the clip renderer runs with animate() paused — without this
+    // explicit apply, rebuildGlobeQuat would update globeQuat in
+    // memory but the actual scene transform would never change,
+    // leaving the globe frozen across all clip frames.
     window.__setGlobePose = function(yaw, pitch) {
       globeYaw   = yaw;
       globePitch = pitch;
       rebuildGlobeQuat();
+      scene.quaternion.copy(globeQuat);
     };
     window.__getGlobePose = function() {
       return { yaw: globeYaw, pitch: globePitch };
