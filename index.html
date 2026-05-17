@@ -57439,56 +57439,106 @@ body.ticker-active .gTickerLabel {
         ctx.restore();
       }
 
-      // ── Flag-chip row (below title) — flag image + country name text
-      // wrapped in a pill, sized so 4-5 chips fit horizontally without
-      // overlap. Falls back to chip-only when no name is supplied.
+      // ── Flag-chip row: ONE big pill containing all country chips,
+      // separator lines between each, animated gold comet flowing
+      // around the pill's perimeter. Replaces the previous individual-
+      // pill-per-country approach.
       if (flagImgs && flagImgs.length) {
         const flagY  = titleEndY + 10;
-        const fH     = Math.round(w * 0.040);   // flag image height
-        const fW     = Math.round(fH * 1.5);    // flag image width (3:2)
-        const pillH  = fH + 12;
+        const fH     = Math.round(w * 0.040);    // flag image height
+        const fW     = Math.round(fH * 1.5);     // flag image width (3:2)
+        const pillH  = fH + 14;
         const namePx = Math.round(w * 0.020);
-        const padX   = 8;
-        const gap    = Math.round(w * 0.010);
+        const segPadX = 12;                      // padding inside each segment
+
         ctx.save();
         ctx.font = `600 ${namePx}px -apple-system, system-ui, "Helvetica Neue", sans-serif`;
         ctx.textBaseline = 'middle';
         ctx.textAlign    = 'left';
-        let cursorX = margin;
-        const maxX  = w - margin;
-        flagImgs.forEach((img, i) => {
-          if (!img) return;
+
+        // First pass: compute the width of each visible chip segment.
+        const segs = [];
+        for (let i = 0; i < flagImgs.length; i++) {
+          const img = flagImgs[i];
+          if (!img) continue;
           const name = (nameList[i] || isoList[i] || '').toString();
           const trimmed = name.length > 14 ? name.slice(0, 13) + '…' : name;
           const textW = trimmed ? ctx.measureText(trimmed).width : 0;
-          const pillW = padX + fW + (textW ? 8 + textW : 0) + padX;
-          // Don't wrap onto a second row — just stop drawing if we'd run off.
-          if (cursorX + pillW > maxX) return;
-          const py = flagY - 6;
-          const r  = 8;
-          // Pill bg
-          ctx.fillStyle = 'rgba(0,0,0,0.55)';
+          const segW = segPadX + fW + (textW ? 8 + textW : 0) + segPadX;
+          segs.push({ img, name: trimmed, segW });
+        }
+        if (!segs.length) { ctx.restore(); return; }
+
+        // Big pill total width = sum of segment widths (no inter-gap, dividers
+        // sit on the seams). Anchored at margin; if it'd overflow, drop trailing.
+        let totalW = segs.reduce((a, s) => a + s.segW, 0);
+        const maxRowW = w - margin * 2;
+        while (totalW > maxRowW && segs.length > 1) {
+          totalW -= segs.pop().segW;
+        }
+
+        const px = margin;
+        const py = flagY - 7;
+        const r  = pillH / 2;
+
+        // 1. Pill bg
+        const drawRounded = () => {
           ctx.beginPath();
-          ctx.moveTo(cursorX + r, py);
-          ctx.lineTo(cursorX + pillW - r, py);
-          ctx.quadraticCurveTo(cursorX + pillW, py, cursorX + pillW, py + r);
-          ctx.lineTo(cursorX + pillW, py + pillH - r);
-          ctx.quadraticCurveTo(cursorX + pillW, py + pillH, cursorX + pillW - r, py + pillH);
-          ctx.lineTo(cursorX + r, py + pillH);
-          ctx.quadraticCurveTo(cursorX, py + pillH, cursorX, py + pillH - r);
-          ctx.lineTo(cursorX, py + r);
-          ctx.quadraticCurveTo(cursorX, py, cursorX + r, py);
+          ctx.moveTo(px + r, py);
+          ctx.lineTo(px + totalW - r, py);
+          ctx.quadraticCurveTo(px + totalW, py, px + totalW, py + r);
+          ctx.lineTo(px + totalW, py + pillH - r);
+          ctx.quadraticCurveTo(px + totalW, py + pillH, px + totalW - r, py + pillH);
+          ctx.lineTo(px + r, py + pillH);
+          ctx.quadraticCurveTo(px, py + pillH, px, py + pillH - r);
+          ctx.lineTo(px, py + r);
+          ctx.quadraticCurveTo(px, py, px + r, py);
           ctx.closePath();
-          ctx.fill();
-          // Flag image, vertically centered in the pill
-          ctx.drawImage(img, cursorX + padX, flagY, fW, fH);
-          // Country name text
-          if (trimmed) {
+        };
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.62)';
+        drawRounded();
+        ctx.fill();
+
+        // 2. Segment contents (flag image + name) + 3. vertical dividers
+        let cursorX = px;
+        segs.forEach((s, i) => {
+          const innerX = cursorX + segPadX;
+          ctx.drawImage(s.img, innerX, flagY, fW, fH);
+          if (s.name) {
             ctx.fillStyle = 'rgba(255, 240, 215, 0.97)';
-            ctx.fillText(trimmed, cursorX + padX + fW + 8, flagY + fH / 2);
+            ctx.fillText(s.name, innerX + fW + 8, flagY + fH / 2);
           }
-          cursorX += pillW + gap;
+          cursorX += s.segW;
+          // Divider AFTER each segment except the last
+          if (i < segs.length - 1) {
+            ctx.fillStyle = 'rgba(212, 168, 67, 0.35)';
+            ctx.fillRect(cursorX - 0.5, py + 8, 1, pillH - 16);
+          }
         });
+
+        // 4. Glowing gold comet flowing around the perimeter — matches
+        // the border-trace effect on slides 1/3/4 but scoped to the pill.
+        // Always-on dim outline + a brighter dashed segment that travels
+        // clockwise driven by `progress`.
+        const perim    = 2 * (totalW + pillH) - 8 * r + 2 * Math.PI * r;
+        const segLen   = Math.min(110, totalW * 0.3);
+        const traceP   = (progress != null) ? progress : 0;
+        const dashOffset = -(traceP * perim);
+        // Dim full outline
+        ctx.strokeStyle = 'rgba(212, 168, 67, 0.20)';
+        ctx.lineWidth   = 1;
+        drawRounded();
+        ctx.stroke();
+        // Bright traveling comet segment
+        ctx.strokeStyle = 'rgba(212, 168, 67, 0.95)';
+        ctx.lineWidth   = 2;
+        ctx.setLineDash([segLen, perim - segLen]);
+        ctx.lineDashOffset = dashOffset;
+        drawRounded();
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.lineDashOffset = 0;
+
         ctx.restore();
       }
 
