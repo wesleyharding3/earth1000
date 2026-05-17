@@ -81,11 +81,18 @@ async function _get(url) {
 // immediately so this is a no-op for them.
 async function _waitForContainerReady(base, containerId, token, { maxAttempts = 30, intervalMs = 3000 } = {}) {
   for (let i = 0; i < maxAttempts; i++) {
-    const status = await _get(`${base}/${containerId}?fields=status_code,status&access_token=${encodeURIComponent(token)}`);
+    // status alone returns "Error: Media upload has failed with error code N"
+    // which doesn't tell us *why*. The `error` object (introduced 2024)
+    // contains the actual diagnostic — required to debug VIDEO_CAROUSEL
+    // item rejections.
+    const status = await _get(`${base}/${containerId}?fields=status_code,status,error&access_token=${encodeURIComponent(token)}`);
     const code = String(status.status_code || status.status || '').toUpperCase();
     if (code === 'FINISHED') return true;
     if (code === 'ERROR' || code === 'EXPIRED') {
-      throw new Error(`IG container ${code}: ${status.status || ''}`);
+      const errDetail = status.error
+        ? `${status.error.error_user_msg || status.error.message || ''} [type=${status.error.type || '?'} subcode=${status.error.error_subcode || '?'}]`
+        : '';
+      throw new Error(`IG container ${code} (id=${containerId}): ${status.status || ''} ${errDetail}`);
     }
     await new Promise(r => setTimeout(r, intervalMs));
   }
