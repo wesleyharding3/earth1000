@@ -15340,7 +15340,10 @@ app.get('/api/video-jobs/pending', async (req, res) => {
 // publisher cron will auto-approve pending_approval rows older than
 // the rate limit allows.
 app.post('/api/video-jobs/:thread_id/result',
-  express.raw({ type: 'video/mp4', limit: '20mb' }),
+  // 50MB ceiling — 20Mbps × 15s ≈ 37.5MB raw, plus container overhead.
+  // Instagram itself accepts up to 100MB for Reels so we're well within
+  // the downstream limit.
+  express.raw({ type: 'video/mp4', limit: '50mb' }),
   async (req, res) => {
     if (!_checkVideoWorkerToken(req, res)) return;
     try {
