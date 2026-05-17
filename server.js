@@ -11630,6 +11630,29 @@ app.get('/share/thread/:id.png', async (req, res) => {
       languageCount,
       countryCount,
     });
+
+    // ?aspect=4:5 (or =portrait) → pad-resize the landscape 1200×630 PNG
+    // into a 1080×1350 portrait frame. Used by the Instagram CAROUSEL
+    // path so the image item matches the video item's 4:5 aspect — IG
+    // carousels reject mismatched aspects by cropping the second item
+    // to the first item's aspect, which made the globe video show as
+    // a narrow center strip. Background fill matches the share-card's
+    // dark blue chrome so the bars feel intentional.
+    const aspect = String(req.query.aspect || '').toLowerCase();
+    if (aspect === '4:5' || aspect === 'portrait') {
+      const sharp = require('sharp');
+      const portrait = await sharp(png)
+        .resize(1080, 1350, {
+          fit: 'contain',
+          background: { r: 4, g: 8, b: 16 },
+        })
+        .png({ compressionLevel: 6 })
+        .toBuffer();
+      res.setHeader('Content-Type', 'image/png');
+      res.setHeader('Cache-Control', 'public, max-age=600, s-maxage=86400');
+      return res.send(portrait);
+    }
+
     res.setHeader('Content-Type', 'image/png');
     res.setHeader('Cache-Control', 'public, max-age=600, s-maxage=86400');
     res.send(png);

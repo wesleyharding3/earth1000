@@ -117,12 +117,22 @@ async function publish(draft, env) {
 
   // --- CAROUSEL path -------------------------------------------------
   if (mode === 'CAROUSEL') {
+    // Use the portrait (4:5) variant of the share image so it matches
+    // the video's aspect (1080×1350). IG carousels require all items
+    // at the same aspect — if they differ, the second item gets cropped
+    // to the first item's aspect. Earlier with a 1.91:1 landscape image
+    // + 4:5 video, the video showed as a narrow center strip with
+    // most of the globe hidden.
+    const carouselImageUrl = imageUrl.includes('?')
+      ? `${imageUrl}&aspect=4:5`
+      : `${imageUrl}?aspect=4:5`;
+
     // Step 1a — create the IMAGE item container (no caption on items,
     // caption goes on the parent carousel container).
     let imgItem, vidItem;
     try {
       imgItem = await _post(`${base}/${igId}/media`, {
-        image_url:        imageUrl,
+        image_url:        carouselImageUrl,
         is_carousel_item: 'true',
         access_token:     token,
       });
