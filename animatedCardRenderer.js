@@ -43,7 +43,12 @@ try {
 
 // ── Render parameters ────────────────────────────────────────────────
 const DEFAULT_FPS         = 30;
-const DEFAULT_DURATION_S  = 3.0;
+// IG VIDEO_CAROUSEL items must have a *track* duration ≥ 3.0s strictly.
+// ffmpeg's `-t 3.0` with image2pipe at 30fps produces 90 frames whose
+// last pts is (90-1)/30 = 2.967s — IG reads that as <3s and rejects the
+// whole carousel with error code 2207077 (Media upload has failed). 4.0s
+// gives a comfortable margin: track lands at 3.967s, well over the cap.
+const DEFAULT_DURATION_S  = 4.0;
 const VIDEO_CACHE_MAX     = 16;
 const FRAME_RENDER_TIMEOUT_MS = 30_000;
 

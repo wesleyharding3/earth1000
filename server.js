@@ -15370,7 +15370,7 @@ app.get('/share/thread/:id/portrait.mp4', async (req, res) => {
 
     const mp4 = await animCard.generateVideo({
       kind:        'thread-portrait',
-      cacheKey:    `anim-portrait:v1:${id}:${new Date(t.last_updated_at || 0).getTime()}`,
+      cacheKey:    `anim-portrait:v2:${id}:${new Date(t.last_updated_at || 0).getTime()}`,
       title:       t.title,
       description: t.description,
       isos:        (t.primary_nations || []).slice(0, 6),
@@ -15424,7 +15424,7 @@ app.get('/share/thread/:id/pie.mp4', async (req, res) => {
 
     const mp4 = await animCard.generateVideo({
       kind:      'thread-coverage',
-      cacheKey:  `anim-pie:v2:${id}:${new Date(t.last_updated_at || 0).getTime()}:${sourceCount}`,
+      cacheKey:  `anim-pie:v3:${id}:${new Date(t.last_updated_at || 0).getTime()}:${sourceCount}`,
       title:     t.title,
       category:  t.primary_category,
       countryCounts,
@@ -15477,7 +15477,7 @@ app.get('/share/thread/:id/articles.mp4', async (req, res) => {
 
     const mp4 = await animCard.generateVideo({
       kind:      'thread-articles',
-      cacheKey:  `anim-articles:v1:${id}:${new Date(t.last_updated_at || 0).getTime()}:${articles.length}`,
+      cacheKey:  `anim-articles:v2:${id}:${new Date(t.last_updated_at || 0).getTime()}:${articles.length}`,
       title:     t.title,
       category:  t.primary_category,
       articles,
