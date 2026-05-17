@@ -57474,7 +57474,13 @@ body.ticker-active .gTickerLabel {
           const segW = segPadX + fW + (textW ? 8 + textW : 0) + segPadX;
           segs.push({ img, name: trimmed, segW });
         }
-        if (!segs.length) { ctx.restore(); return; }
+        // Old code did `if (!segs.length) return` here — which exited
+        // the WHOLE paintOverlay function and silently skipped the
+        // logo + earth00.com footer drawn AFTER this block. Now we
+        // gate the entire rest of the chip-rendering in `if (segs.length)`
+        // so the painter falls through to logo + footer when flag images
+        // didn't load.
+        if (segs.length) {
 
         const maxRowW = w - margin * 2;
 
@@ -57607,6 +57613,7 @@ body.ticker-active .gTickerLabel {
           }
         });
 
+        }  // end if (segs.length)
         ctx.restore();
       }
 
