@@ -15235,8 +15235,45 @@ app.get('/share/thread/:id/arc.mp4', async (req, res) => {
     const path = require('path');
     const mp4Path = path.join(VIDEO_CACHE_DIR, `${id}.mp4`);
 
-    // Fast path: file is on this instance's /tmp from a recent serve/write.
-    if (fs.existsSync(mp4Path)) {
+    // Cache-staleness check: Render runs multiple instances and each has
+    // its own /tmp. Instance A receives a fresh upload → writes its /tmp.
+    // Instance B was warm with the OLD file from a previous serve.
+    // Without this check, B keeps serving the stale MP4 indefinitely.
+    //
+    // The fix: cheap byte-length comparison against the DB blob's
+    // octet_length on every request. If sizes differ, the cache is
+    // stale → re-fetch from DB and rewrite /tmp. octet_length() reads
+    // the bytea header (not the payload) so it's effectively free.
+    //
+    // ?fresh=1 short-circuits this and always reads from DB — used by
+    // the picker cron right after the worker uploads, to guarantee
+    // it grabs the just-uploaded render rather than a cached miss.
+    const forceFresh = req.query.fresh === '1';
+    const fileExists = fs.existsSync(mp4Path);
+    let useCache = fileExists && !forceFresh;
+    if (useCache) {
+      try {
+        const { rows: sizeRows } = await pool.query(`
+          SELECT octet_length(arc_video) AS db_sz
+            FROM social_post_queue
+           WHERE thread_id = $1 AND arc_video IS NOT NULL
+           ORDER BY id DESC LIMIT 1
+        `, [id]);
+        const dbSize = sizeRows[0]?.db_sz ?? null;
+        const fileSize = fs.statSync(mp4Path).size;
+        if (dbSize !== null && dbSize !== fileSize) {
+          // DB has different content → /tmp is stale.
+          useCache = false;
+          console.log(`[share/arc.mp4] cache stale for thread=${id} (tmp=${fileSize}b vs db=${dbSize}b) — re-fetching`);
+        }
+      } catch (e) {
+        // Size-check failure shouldn't kill the serve. Fall back to /tmp.
+        console.warn(`[share/arc.mp4] size-check failed for thread=${id}: ${e.message}`);
+      }
+    }
+
+    // Fast path: serve from /tmp.
+    if (useCache) {
       res.setHeader('Content-Type', 'video/mp4');
       res.setHeader('Cache-Control', 'public, max-age=86400, s-maxage=86400');
       return res.sendFile(mp4Path);
@@ -15263,6 +15300,194 @@ app.get('/share/thread/:id/arc.mp4', async (req, res) => {
   } catch (err) {
     console.error('[share/arc.mp4]', err.message);
     res.status(500).send('arc video error: ' + err.message);
+  }
+});
+
+// ── Animated carousel-slide MP4s (portrait card / pie / articles) ──────
+// Each of these renders an SVG-based 1080×1350 H.264 MP4 with motion
+// (typewriter title, donut sweep, bar slide-ins). Used by the Instagram
+// publisher to ship a 4-slide carousel where every slide is video —
+// motion stops the scroll where stills don't. See animatedCardRenderer.js
+// for the frame-loop + ffmpeg pipeline rationale.
+//
+// All three endpoints share a thread-data lookup (title/category/etc.).
+// To avoid three near-identical fetchers, _fetchThreadMeta() encapsulates
+// the query + returns the row plus the columns each card needs.
+const animCard = require('./animatedCardRenderer');
+
+async function _fetchThreadMeta(id) {
+  const { rows } = await pool.query(
+    `SELECT t.id, t.title, t.description, t.primary_category, t.primary_nations,
+            t.last_updated_at, t.article_count
+       FROM story_threads t
+      WHERE t.id = $1`,
+    [id]
+  );
+  return rows[0] || null;
+}
+
+// Map news_sources.bias (DB convention: 'left', 'left-center', 'center',
+// 'right-center', 'right', 'state', 'unknown') → the pie chart's keys
+// ('left', 'center_left', 'center', 'center_right', 'right', 'state',
+// 'unknown'). Anything unmappable buckets into 'unknown'.
+function _biasKey(raw) {
+  const v = String(raw || '').toLowerCase().trim();
+  if (v === 'left')         return 'left';
+  if (v === 'left-center')  return 'center_left';
+  if (v === 'center')       return 'center';
+  if (v === 'right-center') return 'center_right';
+  if (v === 'right')        return 'right';
+  if (v === 'state' || v === 'state-affiliated') return 'state';
+  return 'unknown';
+}
+
+// /share/thread/:id/portrait.mp4 — animated portrait card.
+app.get('/share/thread/:id/portrait.mp4', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!id) return res.status(400).end();
+    const t = await _fetchThreadMeta(id);
+    if (!t) return res.status(404).end();
+
+    // Coverage counts — reuse the same client-passes-or-DB-fallback
+    // pattern as /share/thread/:id.png. We don't budget a query timeout
+    // here because the endpoint is called by the IG publisher cron,
+    // which can afford a slower aggregation, but we tolerate failures
+    // and degrade to a card without the coverage line.
+    let languageCount = null, countryCount = null;
+    try {
+      const { rows } = await pool.query(
+        `SELECT
+           (SELECT COUNT(DISTINCT a.language)::int FROM story_thread_articles sta
+              JOIN news_articles a ON a.id = sta.article_id WHERE sta.thread_id = $1) AS lc,
+           (SELECT COUNT(DISTINCT a.country_id)::int FROM story_thread_articles sta
+              JOIN news_articles a ON a.id = sta.article_id WHERE sta.thread_id = $1) AS cc`,
+        [id]
+      );
+      languageCount = rows[0]?.lc ?? null;
+      countryCount  = rows[0]?.cc ?? null;
+    } catch (e) { console.warn('[anim/portrait]', e.message); }
+
+    const mp4 = await animCard.generateVideo({
+      kind:        'thread-portrait',
+      cacheKey:    `anim-portrait:v1:${id}:${new Date(t.last_updated_at || 0).getTime()}`,
+      title:       t.title,
+      description: t.description,
+      isos:        (t.primary_nations || []).slice(0, 6),
+      category:    t.primary_category,
+      articleCount: t.article_count || 0,
+      countryCount,
+      languageCount,
+    });
+    res.setHeader('Content-Type', 'video/mp4');
+    res.setHeader('Cache-Control', 'public, max-age=600, s-maxage=86400');
+    res.send(mp4);
+  } catch (err) {
+    console.error('[anim/portrait.mp4]', err.stack || err.message);
+    res.status(500).end();
+  }
+});
+
+// /share/thread/:id/pie.mp4 — animated country-spread donut.
+// "Country spread" = distinct sources per source-country, sorted desc.
+// The template collapses the long tail into "+N more" so the legend
+// stays readable (top 7 named, remainder bucketed).
+app.get('/share/thread/:id/pie.mp4', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!id) return res.status(400).end();
+    const t = await _fetchThreadMeta(id);
+    if (!t) return res.status(404).end();
+
+    let countryCounts = [];
+    let sourceCount = 0;
+    try {
+      // Source country from the article's country_id (the publisher's
+      // base country, not the article subject country). Matches the
+      // in-app "Sources From" panel.
+      const { rows } = await pool.query(
+        `SELECT LOWER(COALESCE(co.iso_code, 'xx')) AS iso,
+                COALESCE(co.name, 'Unknown') AS name,
+                COUNT(DISTINCT ns.id)::int AS n
+           FROM story_thread_articles sta
+           JOIN news_articles a   ON a.id = sta.article_id
+           JOIN news_sources  ns  ON ns.id = a.source_id
+           LEFT JOIN countries co ON co.id = a.country_id
+          WHERE sta.thread_id = $1
+          GROUP BY co.iso_code, co.name
+          ORDER BY n DESC`,
+        [id]
+      );
+      countryCounts = rows.map(r => ({ iso: r.iso, name: r.name, count: r.n }));
+      sourceCount = countryCounts.reduce((a, b) => a + b.count, 0);
+    } catch (e) { console.warn('[anim/pie]', e.message); }
+
+    const mp4 = await animCard.generateVideo({
+      kind:      'thread-coverage',
+      cacheKey:  `anim-pie:v2:${id}:${new Date(t.last_updated_at || 0).getTime()}:${sourceCount}`,
+      title:     t.title,
+      category:  t.primary_category,
+      countryCounts,
+      articleCount: t.article_count || 0,
+      sourceCount,
+    });
+    res.setHeader('Content-Type', 'video/mp4');
+    res.setHeader('Cache-Control', 'public, max-age=600, s-maxage=86400');
+    res.send(mp4);
+  } catch (err) {
+    console.error('[anim/pie.mp4]', err.stack || err.message);
+    res.status(500).end();
+  }
+});
+
+// /share/thread/:id/articles.mp4 — animated 4-bar high-signal article list.
+// Pulls the 4 most recent articles attached to the thread that have a
+// hero image (or fall back to the most-recent 4 outright). Hero images
+// are size-capped + cached in shareImageGenerator so the 90-frame render
+// doesn't re-download per frame.
+app.get('/share/thread/:id/articles.mp4', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!id) return res.status(400).end();
+    const t = await _fetchThreadMeta(id);
+    if (!t) return res.status(404).end();
+
+    let articles = [];
+    try {
+      const { rows } = await pool.query(
+        `SELECT a.title           AS headline,
+                a.published_at,
+                ns.name            AS source_name,
+                LOWER(COALESCE(co.iso_code, 'us')) AS source_iso,
+                COALESCE(a.image_url, img_a.public_url) AS hero_url,
+                img_a.public_url   AS hero_catalog_url
+           FROM story_thread_articles sta
+           JOIN news_articles a       ON a.id = sta.article_id
+           LEFT JOIN news_sources ns  ON ns.id = a.source_id
+           LEFT JOIN countries co     ON co.id = a.country_id
+           LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
+           LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
+          WHERE sta.thread_id = $1
+          ORDER BY a.published_at DESC
+          LIMIT 4`,
+        [id]
+      );
+      articles = rows;
+    } catch (e) { console.warn('[anim/articles]', e.message); }
+
+    const mp4 = await animCard.generateVideo({
+      kind:      'thread-articles',
+      cacheKey:  `anim-articles:v1:${id}:${new Date(t.last_updated_at || 0).getTime()}:${articles.length}`,
+      title:     t.title,
+      category:  t.primary_category,
+      articles,
+    });
+    res.setHeader('Content-Type', 'video/mp4');
+    res.setHeader('Cache-Control', 'public, max-age=600, s-maxage=86400');
+    res.send(mp4);
+  } catch (err) {
+    console.error('[anim/articles.mp4]', err.stack || err.message);
+    res.status(500).end();
   }
 });
 

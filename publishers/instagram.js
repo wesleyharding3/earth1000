@@ -96,9 +96,20 @@ async function publish(draft, env) {
   const caption  = String(draft.caption || '').slice(0, 2200);
   const videoUrl = draft.video_url;
   const imageUrl = draft.image_url;
+  // Optional: N-item carousel of pre-rendered MP4s (typically 4 — the
+  // animated portrait card, the globe arc fly-around, the country-
+  // spread pie chart, and the article-bar list). When the picker
+  // supplies this array, we build an all-video carousel; otherwise
+  // we fall back to the legacy image+video CAROUSEL / REELS / IMAGE
+  // shape so old-pipeline rows still publish cleanly during rollout.
+  const carouselVideos = Array.isArray(draft.carousel_videos)
+    ? draft.carousel_videos.filter(u => typeof u === 'string' && /^https?:\/\//.test(u))
+    : [];
   const hasVideo = !!videoUrl;
   const hasImage = !!imageUrl;
-  if (!hasVideo && !hasImage) return { ok: false, error: 'no image_url or video_url' };
+  if (!carouselVideos.length && !hasVideo && !hasImage) {
+    return { ok: false, error: 'no media URLs on draft (need carousel_videos, video_url, or image_url)' };
+  }
   for (const u of [videoUrl, imageUrl]) {
     if (u && !/^https?:\/\//.test(u)) return { ok: false, error: `media URL must be public http(s): ${u}` };
   }
@@ -107,15 +118,92 @@ async function publish(draft, env) {
   const igId = env.IG_USER_ID;
   const token = env.IG_ACCESS_TOKEN;
 
-  // Three publish modes:
-  //   CAROUSEL — image + video together (image first, video second).
-  //              Maximum engagement: viewers see the share card, then
-  //              swipe to watch the globe fly-around.
-  //   REELS    — video only (legacy fallback if image_url missing)
-  //   IMAGE    — image only (legacy fallback if video missing)
-  const mode = (hasVideo && hasImage) ? 'CAROUSEL' : (hasVideo ? 'REELS' : 'IMAGE');
+  // Publish modes (in priority order):
+  //   VIDEO_CAROUSEL — N-item all-video carousel from draft.carousel_videos
+  //                    (the current production pipeline: portrait + globe
+  //                    + pie + articles). Stops the scroll on each slide.
+  //   CAROUSEL       — legacy image + video (back-compat for stale drafts)
+  //   REELS          — single video (back-compat / no image)
+  //   IMAGE          — single image (back-compat / no video)
+  let mode;
+  if (carouselVideos.length >= 2)      mode = 'VIDEO_CAROUSEL';
+  else if (hasVideo && hasImage)       mode = 'CAROUSEL';
+  else if (hasVideo)                   mode = 'REELS';
+  else                                 mode = 'IMAGE';
 
-  // --- CAROUSEL path -------------------------------------------------
+  // --- VIDEO_CAROUSEL path (N up to 10 video items) ------------------
+  if (mode === 'VIDEO_CAROUSEL') {
+    // IG carousel items max out at 10. We typically ship 4. Each item
+    // must be created with media_type=VIDEO + is_carousel_item=true.
+    const items = carouselVideos.slice(0, 10);
+    const itemIds = [];
+    for (let i = 0; i < items.length; i++) {
+      let it;
+      try {
+        it = await _post(`${base}/${igId}/media`, {
+          media_type:       'VIDEO',
+          video_url:        items[i],
+          is_carousel_item: 'true',
+          access_token:     token,
+        });
+      } catch (err) {
+        return { ok: false, error: `IG video-carousel item[${i}]: ${err.message}` };
+      }
+      if (!it.id) return { ok: false, error: `IG video-carousel item[${i}] returned no id` };
+      itemIds.push(it.id);
+    }
+
+    // Wait for every item to finish transcoding. Each video container
+    // takes ~5-30s on IG's side — we poll FINISHED status before the
+    // parent carousel is created, otherwise the parent rejects.
+    try {
+      for (const id of itemIds) await _waitForContainerReady(base, id, token);
+    } catch (err) {
+      return { ok: false, error: `IG video-carousel item processing: ${err.message}` };
+    }
+
+    // Parent carousel container — caption lives here, not on items.
+    let carousel;
+    try {
+      carousel = await _post(`${base}/${igId}/media`, {
+        media_type:   'CAROUSEL',
+        children:     itemIds.join(','),
+        caption,
+        access_token: token,
+      });
+    } catch (err) {
+      return { ok: false, error: `IG video-carousel parent: ${err.message}` };
+    }
+    if (!carousel.id) return { ok: false, error: 'IG video-carousel parent returned no id' };
+
+    try {
+      await _waitForContainerReady(base, carousel.id, token);
+    } catch (err) {
+      return { ok: false, error: err.message };
+    }
+
+    let published;
+    try {
+      published = await _post(`${base}/${igId}/media_publish`, {
+        creation_id:  carousel.id,
+        access_token: token,
+      });
+    } catch (err) {
+      return { ok: false, error: `IG video-carousel publish: ${err.message}` };
+    }
+    const mediaId = published.id;
+    if (!mediaId) return { ok: false, error: 'IG video-carousel publish returned no media id' };
+
+    let permalink = null;
+    try {
+      const meta = await _get(`${base}/${mediaId}?fields=permalink&access_token=${encodeURIComponent(token)}`);
+      permalink = meta.permalink || null;
+    } catch (_) { /* best-effort */ }
+
+    return { ok: true, permalink, media_id: mediaId, media_kind: 'VIDEO_CAROUSEL', item_count: itemIds.length };
+  }
+
+  // --- legacy CAROUSEL path (image + single video) -------------------
   if (mode === 'CAROUSEL') {
     // Use the portrait (4:5) variant of the share image so it matches
     // the video's aspect (1080×1350). IG carousels require all items

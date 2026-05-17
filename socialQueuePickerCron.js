@@ -436,14 +436,39 @@ async function _publishEligibleRows() {
     const hasVideo = !!row.has_video;
     console.log(`  ▶ publish queue_id=${row.id} thread=${row.thread_id} (age=${ageHours.toFixed(1)}h, video=${hasVideo ? 'yes' : 'no'})`);
 
-    // Inject video_url into the drafts for platforms that support video
-    // (Instagram, Threads). Only when arc_video is present — stale-
-    // fallback rows publish image-only.
+    // Inject video URLs into the drafts for platforms that support video.
+    //
+    // Instagram gets a four-video CAROUSEL (animated portrait → globe
+    // arc → country pie → article bars). Each slide is rendered server-
+    // side by the animatedCardRenderer (frame loop + ffmpeg) and served
+    // from /share/thread/:id/{portrait,pie,articles}.mp4. The globe
+    // clip (arc.mp4) is still produced by the Mac worker — it needs
+    // real WebGL — and lives at the existing /arc.mp4 endpoint.
+    //
+    // Threads only supports single-media posts, so it gets the globe
+    // arc.mp4 as its single video.
+    //
+    // Stale-fallback rows (no arc_video yet — Mac worker hasn't filled
+    // them after 48h) publish image-only via the legacy path.
     const drafts = { ...(row.drafts || {}) };
     if (hasVideo) {
-      const videoUrl = `${publicHost}/share/thread/${row.thread_id}/arc.mp4`;
-      if (drafts.instagram) drafts.instagram = { ...drafts.instagram, video_url: videoUrl };
-      if (drafts.threads)   drafts.threads   = { ...drafts.threads,   video_url: videoUrl };
+      const portraitUrl = `${publicHost}/share/thread/${row.thread_id}/portrait.mp4`;
+      const arcUrl      = `${publicHost}/share/thread/${row.thread_id}/arc.mp4`;
+      const pieUrl      = `${publicHost}/share/thread/${row.thread_id}/pie.mp4`;
+      const articlesUrl = `${publicHost}/share/thread/${row.thread_id}/articles.mp4`;
+      if (drafts.instagram) {
+        drafts.instagram = {
+          ...drafts.instagram,
+          // Order = scroll-stop priority: branded portrait card first
+          // (best chance of stopping a fast scroll), then the cinematic
+          // globe, then the data viz, then the article drill-down.
+          carousel_videos: [portraitUrl, arcUrl, pieUrl, articlesUrl],
+          // Keep video_url for back-compat in case the publisher's
+          // VIDEO_CAROUSEL path falls back to REELS on a partial outage.
+          video_url:       arcUrl,
+        };
+      }
+      if (drafts.threads)   drafts.threads   = { ...drafts.threads,   video_url: arcUrl };
     }
 
     try {

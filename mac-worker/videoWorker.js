@@ -108,6 +108,11 @@ async function renderVideo(job) {
       '--disable-background-timer-throttling',
       '--disable-backgrounding-occluded-windows',
       '--disable-renderer-backgrounding',
+      // Force GPU acceleration paths that headless can sometimes downgrade
+      // — these don't hurt when already on real hardware accel and help
+      // when something in the page triggers a fallback.
+      '--enable-gpu-rasterization',
+      '--ignore-gpu-blocklist',
     ],
   });
   const browserLogs = [];
@@ -117,7 +122,40 @@ async function renderVideo(job) {
     page.on('pageerror',     err => browserLogs.push(`[pageerror] ${err.message}`));
     page.on('requestfailed', req => browserLogs.push(`[requestfailed] ${req.url()} — ${req.failure()?.errorText}`));
 
+    // ── Force the page to report itself as VISIBLE.
+    //
+    // Root cause of the choppy ~7fps capture (vs. the smooth in-app
+    // share-button output): Chromium's Page Visibility API reports the
+    // page as `visibilityState='hidden'` in headless mode (and even
+    // some background-tab cases), and the renderer responsively
+    // throttles requestAnimationFrame down to ~1Hz–10Hz to save CPU.
+    // That's invisible to the page's JS — RAF callbacks still fire,
+    // just much less often than the 60fps we expect.
+    //
+    // The `--disable-background-timer-throttling` flag only governs
+    // setTimeout/setInterval, NOT rAF. There's no Chrome flag that
+    // disables rAF throttling cleanly. The reliable fix is to override
+    // document.visibilityState + document.hidden BEFORE any of the
+    // app's JS runs, and re-dispatch the visibilitychange event so
+    // anything listening recomputes (in our case, Chromium's own
+    // throttling logic checks visibilityState directly per frame).
+    //
+    // evaluateOnNewDocument injects this into EVERY page (incl. iframes
+    // and subsequent navigations) before any user-script execution.
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' });
+      Object.defineProperty(document, 'hidden',          { configurable: true, get: () => false });
+      Object.defineProperty(document, 'webkitVisibilityState', { configurable: true, get: () => 'visible' });
+      Object.defineProperty(document, 'webkitHidden',          { configurable: true, get: () => false });
+      // Some throttlers check window.onblur — keep claiming focus too.
+      window.dispatchEvent(new Event('focus'));
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+
     await page.setViewport({ width: 1080, height: 1920, deviceScaleFactor: 1 });
+    // Force-foreground the tab so anything that uses tab-focus state
+    // (not just visibility) also reports as active.
+    try { await page.bringToFront(); } catch (_) { /* best-effort */ }
 
     const url = `${APP_HOST}/?thread=${job.thread_id}`;
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: PAGE_TIMEOUT_MS });
@@ -176,11 +214,26 @@ async function renderVideo(job) {
     // Drive the same recording pipeline that "Share → Clip" uses in
     // the live app. returnBlob: true intercepts the Blob before the
     // iOS-share / web-share / download paths run.
+    //
+    // Arc draw-in timing override: Puppeteer headless captures the
+    // canvas at ~7-15 fps (well below the captureStream(60) target —
+    // Chrome throttles offscreen WebGL framerate even with the
+    // disable-backgrounding flags). At the in-app default (1.15-1.5s
+    // per arc, 0-0.55s stagger), the entire draw-in completes in
+    // under 2s of wallclock = ~10-15 captured frames. After MP4
+    // compression those frames blur into "arcs instantly appeared."
+    // Passing slower durations + bigger stagger here keeps arcs
+    // visibly drawing across the first ~7-9s of the 15s clip. In-app
+    // behavior is unchanged (no opts → original timings).
     const result = await Promise.race([
       page.evaluate(async (opts) => {
         try {
           if (typeof window.__replayArcAnimations === 'function') {
-            window.__replayArcAnimations();
+            window.__replayArcAnimations({
+              drawInDurationBase:  3.5,
+              drawInDurationRange: 1.5,    // → 3.5-5.0s per arc
+              drawInDelayMax:      4.0,    // → up to 4s stagger across arcs
+            });
           }
           const r = await window.__shareGlobeClip({
             returnBlob:   true,

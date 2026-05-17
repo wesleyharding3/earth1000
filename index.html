@@ -24603,11 +24603,25 @@ const settingsToggle     = document.getElementById("settingsToggle");
   // .drawInPlayed=true). Calling this resets each arc's drawIn state so
   // the recording captures origin→destination travel rather than just
   // a static set of pre-drawn arcs. No-op when no arcs are mounted.
-  window.__replayArcAnimations = function() {
+  window.__replayArcAnimations = function(opts = {}) {
+    // Optional timing overrides. The Mac-side share-clip worker passes
+    // longer durations + bigger stagger so the arc draw-in is perceivable
+    // at the ~7fps capture rate Puppeteer headless produces — at default
+    // (1.15-1.5s), each arc draws in over ~8 captured frames, which
+    // visually reads as "instantly appeared" after MP4 compression.
+    const durBase  = Number.isFinite(opts.drawInDurationBase)  ? opts.drawInDurationBase  : null;
+    const durRange = Number.isFinite(opts.drawInDurationRange) ? opts.drawInDurationRange : null;
+    const delayMax = Number.isFinite(opts.drawInDelayMax)      ? opts.drawInDelayMax      : null;
     let n = 0;
     for (const arc of arcObjects) {
       arc.drawInPlayed   = false;
       arc.drawInElapsed  = 0;
+      if (durBase !== null) {
+        arc.drawInDuration = durBase + Math.random() * (durRange ?? 0);
+      }
+      if (delayMax !== null) {
+        arc.drawInDelay = Math.random() * delayMax;
+      }
       // Some arcs use drawDuration / waveStart for the wave-batched
       // aggregate flow. Resetting those too so wave replay is consistent.
       if ('waveStart' in arc) arc.waveStart = null;
