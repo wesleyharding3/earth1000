@@ -15207,12 +15207,36 @@ app.get('/share/thread/:id/arc.mp4', async (req, res) => {
   try {
     const id = parseInt(req.params.id, 10);
     if (!Number.isFinite(id)) return res.status(400).send('invalid id');
-    const mp4Path = require('path').join(VIDEO_CACHE_DIR, `${id}.mp4`);
+
     const fs = require('fs');
-    if (!fs.existsSync(mp4Path)) return res.status(404).send('arc.mp4 not yet rendered');
+    const path = require('path');
+    const mp4Path = path.join(VIDEO_CACHE_DIR, `${id}.mp4`);
+
+    // Fast path: file is on this instance's /tmp from a recent serve/write.
+    if (fs.existsSync(mp4Path)) {
+      res.setHeader('Content-Type', 'video/mp4');
+      res.setHeader('Cache-Control', 'public, max-age=86400, s-maxage=86400');
+      return res.sendFile(mp4Path);
+    }
+
+    // Slow path (and source of truth across replicas): DB blob.
+    const { rows } = await pool.query(`
+      SELECT arc_video FROM social_post_queue
+       WHERE thread_id = $1 AND arc_video IS NOT NULL
+       ORDER BY id DESC LIMIT 1
+    `, [id]);
+    if (!rows.length || !rows[0].arc_video) {
+      return res.status(404).send('arc.mp4 not yet rendered');
+    }
+    const buf = Buffer.isBuffer(rows[0].arc_video) ? rows[0].arc_video : Buffer.from(rows[0].arc_video);
+    // Repopulate the per-instance hot cache for subsequent serves.
+    try {
+      await fs.promises.mkdir(VIDEO_CACHE_DIR, { recursive: true });
+      await fs.promises.writeFile(mp4Path, buf);
+    } catch (_) { /* best-effort cache */ }
     res.setHeader('Content-Type', 'video/mp4');
     res.setHeader('Cache-Control', 'public, max-age=86400, s-maxage=86400');
-    res.sendFile(mp4Path);
+    res.send(buf);
   } catch (err) {
     console.error('[share/arc.mp4]', err.message);
     res.status(500).send('arc video error: ' + err.message);
@@ -15303,17 +15327,21 @@ app.post('/api/video-jobs/:thread_id/result',
       if (!Buffer.isBuffer(body) || body.length < 1000) {
         return res.status(400).json({ error: 'expected video/mp4 body (>1KB), got ' + (body?.length || 0) + ' bytes' });
       }
-      // Write to disk
-      const fs = require('fs');
-      const path = require('path');
-      await fs.promises.mkdir(VIDEO_CACHE_DIR, { recursive: true });
-      await fs.promises.writeFile(path.join(VIDEO_CACHE_DIR, `${threadId}.mp4`), body);
-      // Flip status: pending_video → pending_approval (so publisher cron sees it)
+      // Persist to DB blob (the cross-instance source of truth). The
+      // /tmp write below is just a per-instance hot cache.
       const { rowCount } = await pool.query(`
         UPDATE social_post_queue
-           SET status = 'pending_approval'
+           SET arc_video = $2,
+               status   = 'pending_approval'
          WHERE thread_id = $1 AND status = 'pending_video'
-      `, [threadId]);
+      `, [threadId, body]);
+      // Best-effort local cache so the next GET on THIS instance is fast.
+      try {
+        const fs = require('fs');
+        const path = require('path');
+        await fs.promises.mkdir(VIDEO_CACHE_DIR, { recursive: true });
+        await fs.promises.writeFile(path.join(VIDEO_CACHE_DIR, `${threadId}.mp4`), body);
+      } catch (_) { /* don't fail the upload over the local cache */ }
       res.json({ ok: true, bytes: body.length, rows_updated: rowCount });
     } catch (err) {
       console.error('[video-jobs/result]', err.message);
