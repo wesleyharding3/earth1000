@@ -1,26 +1,35 @@
 #!/usr/bin/env node
 /**
- * socialQueuePickerCron.js — twice-daily picker that selects 2-3 threads
- * for social posting and queues them as draft-then-approve rows.
+ * socialQueuePickerCron.js — twice-daily picker AND publisher in one
+ * cron. Runs at 06:30 + 16:30 UTC.
  *
- * Schedule via Render Cron Jobs at 06:30 UTC + 16:30 UTC (= 23:30 + 09:30
- * PT). Approximate global news cadence: morning catches commute, late
- * afternoon catches end-of-workday.
+ * Two phases per run:
  *
- * Selection algorithm (in order):
- *   1. Pull top 30 active threads ordered by importance × recency.
- *   2. Apply dedup filters:
- *        - thread_id NOT in social_post_queue within 48h          (cooling)
- *        - title word-set overlap < 50% vs any post in last 14d  (retitled-story guard)
- *   3. Apply diversity filters within the SELECTED BATCH:
- *        - at most 1 thread per `primary_nations[0]`              (lead-country dedup)
- *        - at least 3 distinct region buckets covered             (geographic diversity)
- *        - at most 1 thread from `mideast` or `russia_cis`        (hotspot cap)
- *   4. Pick 2-3 winners. Compose drafts. Insert into queue.
+ *   Phase 1 — PICK
+ *     1. Pull top 30 active threads ordered by importance × recency.
+ *     2. Apply dedup filters:
+ *          - thread_id NOT in social_post_queue within 48h         (cooling)
+ *          - title word-set overlap < 50% vs any post in last 14d (retitled-story guard)
+ *     3. Apply diversity filters within the SELECTED BATCH:
+ *          - at most 1 thread per `primary_nations[0]`              (lead-country dedup)
+ *          - at least 3 distinct region buckets covered             (geographic diversity)
+ *          - at most 1 thread from `mideast` or `russia_cis`        (hotspot cap)
+ *     4. Pick 2-3 winners. Compose drafts. Insert with status='pending_video'.
  *
- * Each row lands with status='pending_approval'. Approval happens in the
- * earth-editor Social Queue tab. Auto-publish (the future cron) only
- * acts on status='approved' rows — never on pending ones.
+ *   Phase 2 — PUBLISH BACKLOG
+ *     5. Find rows in pending_approval / approved status.
+ *     6. Eligible to publish if EITHER:
+ *          - /tmp/arc-cache/{thread_id}.mp4 exists (Mac worker uploaded
+ *            the video), OR
+ *          - row has been pending > STALE_THRESHOLD_H (image-only fallback
+ *            so a vacation doesn't permanently block publishing)
+ *     7. Rate-limited to MAX_PUBLISHES_PER_DAY to keep catch-up batches
+ *        from spamming after a Mac-off stretch.
+ *     8. Publish via socialPublishers.publishAll → flip status to 'posted'.
+ *
+ * Why one cron instead of two: posts go out at picker tick times anyway
+ * (06:30 / 16:30 UTC). Polling for newly-eligible publishes more often
+ * doesn't shift the post times. Single cron = simpler ops.
  */
 
 'use strict';
@@ -318,6 +327,17 @@ function pickBatch(candidates) {
     }
   }
 
+  // ── Phase 2: publish backlog ─────────────────────────────────────────
+  // After picking new threads, also drain any earlier rows that have
+  // since become publishable (Mac worker filled their video, or the
+  // 48-hour stale fallback kicked in). One cron, two phases.
+  //
+  // Skipped on --dry-run and --auto-publish (auto-publish already
+  // posted the rows in Phase 1, no separate publish step needed).
+  if (!DRY_RUN && !AUTO_PUBLISH) {
+    await _publishEligibleRows();
+  }
+
   log(`\nDone in ${((Date.now() - t0) / 1000).toFixed(1)}s. Queued ${inserted} row${inserted === 1 ? '' : 's'}${DRY_RUN ? ' (dry-run)' : ''}${AUTO_PUBLISH ? ' + auto-published' : ''}.`);
   if (PLATFORMS_DISABLED.size) log(`Disabled platforms: ${[...PLATFORMS_DISABLED].join(', ')}`);
   await pool.end();
@@ -325,3 +345,96 @@ function pickBatch(candidates) {
   console.error(`${TAG} fatal:`, err);
   process.exit(1);
 });
+
+// ── Phase 2 helper ─────────────────────────────────────────────────────
+// Publish any rows whose video is ready OR which have been pending
+// for longer than STALE_THRESHOLD_H (image-only fallback). Rate-limited
+// to MAX_PUBLISHES_PER_DAY so vacation backlogs don't fire 20 posts
+// at once when the picker finally catches up.
+const PUBLISH_VIDEO_CACHE_DIR = '/tmp/arc-cache';
+const MAX_PUBLISHES_PER_RUN   = 3;     // picker runs twice daily — 3 per run = 6/day max
+const MAX_PUBLISHES_PER_DAY   = 4;     // hard daily cap
+const STALE_THRESHOLD_H       = 48;    // > 48h → publish image-only fallback
+
+async function _publishEligibleRows() {
+  const fs = require('fs');
+  const path = require('path');
+
+  function _hasVideoFor(threadId) {
+    try {
+      const p = path.join(PUBLISH_VIDEO_CACHE_DIR, `${threadId}.mp4`);
+      return fs.statSync(p).size > 1000;
+    } catch (_) { return false; }
+  }
+
+  // Today-window publish count
+  const { rows: [{ count }] } = await pool.query(`
+    SELECT COUNT(*)::int AS count
+      FROM social_post_queue
+     WHERE status = 'posted'
+       AND posted_at > DATE_TRUNC('day', NOW() AT TIME ZONE 'UTC')
+  `);
+  const publishedToday = Number(count) || 0;
+  log(`\nPhase 2: publish backlog. Posted today: ${publishedToday} / ${MAX_PUBLISHES_PER_DAY}`);
+  if (publishedToday >= MAX_PUBLISHES_PER_DAY) {
+    log('  Daily cap reached. Skipping publish phase.');
+    return;
+  }
+
+  const { rows: candidates } = await pool.query(`
+    SELECT id, thread_id, drafts, platforms_enabled, scheduled_for,
+           EXTRACT(EPOCH FROM (NOW() - scheduled_for))::int AS age_seconds
+      FROM social_post_queue
+     WHERE status IN ('pending_approval', 'approved')
+     ORDER BY scheduled_for ASC
+     LIMIT 20
+  `);
+  if (!candidates.length) { log('  No eligible rows.'); return; }
+
+  let publishedThisRun = 0;
+  const remainingCap = MAX_PUBLISHES_PER_DAY - publishedToday;
+  for (const row of candidates) {
+    if (publishedThisRun >= MAX_PUBLISHES_PER_RUN) break;
+    if (publishedThisRun >= remainingCap) break;
+
+    const hasVideo = _hasVideoFor(row.thread_id);
+    const ageHours = (row.age_seconds || 0) / 3600;
+    const isStale  = ageHours > STALE_THRESHOLD_H;
+    if (!hasVideo && !isStale) {
+      log(`  thread=${row.thread_id} age=${ageHours.toFixed(1)}h NO video, NOT stale → wait`);
+      continue;
+    }
+    const reason = hasVideo ? 'video-ready' : 'stale-image-only';
+    console.log(`  ▶ publish queue_id=${row.id} thread=${row.thread_id} (${reason}, age=${ageHours.toFixed(1)}h)`);
+
+    try {
+      const { permalinks, failures } = await socialPublishers.publishAll(
+        row.drafts || {},
+        row.platforms_enabled || {},
+        process.env,
+      );
+      const anySuccess = Object.keys(permalinks).length > 0;
+      const nextStatus = anySuccess ? 'posted' : (failures.length ? 'failed' : 'approved');
+      await pool.query(`
+        UPDATE social_post_queue
+           SET status      = $1,
+               posted_at   = CASE WHEN $5::boolean THEN NOW() ELSE posted_at END,
+               permalinks  = COALESCE(permalinks, '{}'::jsonb) || $2::jsonb,
+               failure_log = failure_log || $3::jsonb
+         WHERE id = $4
+      `, [
+        nextStatus,
+        JSON.stringify(permalinks),
+        JSON.stringify(failures.map(f => ({ ...f, attempted_at: new Date().toISOString() }))),
+        row.id,
+        anySuccess,
+      ]);
+      console.log(`         → ${nextStatus} permalinks=${Object.keys(permalinks).join(',') || 'none'} failures=${failures.length}`);
+      if (failures.length) for (const f of failures) console.log(`             ✗ ${f.platform}: ${f.error}`);
+      if (anySuccess) publishedThisRun++;
+    } catch (err) {
+      warn(`publish failed for queue_id=${row.id}: ${err.message}`);
+    }
+  }
+  log(`  Phase 2 done. Published ${publishedThisRun} row${publishedThisRun === 1 ? '' : 's'}.`);
+}

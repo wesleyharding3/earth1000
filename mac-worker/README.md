@@ -40,4 +40,20 @@ That's it. The worker now runs invisibly. It generates videos for any pending th
 
 ## What happens when you go on vacation
 
-Picker cron on Render keeps picking threads and queueing them in `pending_video` status. Posts don't go out (publisher cron only acts on threads whose videos are ready OR which have been pending > 48h, in which case they go out image-only). When you come back and your Mac wakes up, the worker drains the queue. Publisher cron has a daily cap (default 4 posts/day) so you don't get a backlog flood.
+Picker cron on Render keeps picking threads and queueing them in `pending_video` status. The picker's second phase (which also publishes any eligible rows) only acts on threads whose videos are ready OR which have been pending > 48h (in which case they go out image-only). When you come back and your Mac wakes up, the worker drains the queue. The cron has a daily cap (default 4 posts/day) so you don't get a backlog flood.
+
+## Architecture (one cron, two phases)
+
+Posts only go out at the same times the picker runs (06:30 and 16:30 UTC). The picker now does both: picks new threads (Phase 1) AND publishes anything previously queued whose video is ready (Phase 2). No separate publisher cron.
+
+```
+06:30 UTC — picker runs
+            Phase 1: picks 2-3 threads → pending_video
+            Phase 2: publishes any rows from yesterday whose video came in
+            ↓
+~9 AM      — your Mac wakes, worker generates videos, marks them pending_approval
+            ↓
+16:30 UTC — picker runs
+            Phase 1: picks new threads
+            Phase 2: publishes the morning's threads (video now ready)
+```
