@@ -24692,6 +24692,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
   let _clipSpinSeconds = 10;
   let _clipRecCanvas   = null;
   let _clipPaintOverlay = null;
+  let _clipSavedCameraZ = null;
   window.__setupClipRecording = async function(opts = {}) {
     // globeYaw/globePitch live in a different closure — pull via the
     // window.__getGlobePose bridge (defined alongside __setGlobePose
@@ -24717,6 +24718,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
     // own pose-application loop doesn't fight with __setGlobePose's
     // explicit positioning.
     if (typeof window.__zeroPoseVelocities === 'function') window.__zeroPoseVelocities();
+    // Pull the camera back so the globe occupies less of the WebGL
+    // viewport in the source — gives real space around the globe in
+    // the captured frame for the chip row + chrome to sit on top of.
+    // Earlier the "85% destination scale" approach kept the source
+    // image edge-clipped (downscaling preserves the cropped edges),
+    // so the globe still touched the visible boundary. Pulling the
+    // camera back fixes it at the source. position.z * 1.5 makes the
+    // globe occupy ~2/3 of its previous angular size.
+    if (window.__camera && Number.isFinite(window.__camera.position?.z)) {
+      _clipSavedCameraZ = window.__camera.position.z;
+      window.__camera.position.z = _clipSavedCameraZ * 1.5;
+    }
     const REC_W = 1080;
     const REC_H = 1350;
     _clipRecCanvas = document.createElement('canvas');
@@ -24742,6 +24755,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
     window.__clipRecordingActive = false;
     _clipRecCanvas = null;
     _clipPaintOverlay = null;
+    // Restore camera z so the page's live globe view returns to normal.
+    if (_clipSavedCameraZ !== null && window.__camera) {
+      window.__camera.position.z = _clipSavedCameraZ;
+      _clipSavedCameraZ = null;
+    }
   };
 
   // Render one frame deterministically + return its composited PNG as
@@ -24841,21 +24859,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // then apply the zoom-out scale. The globe is fully visible
       // with letterboxing if aspects differ, plus extra padding
       // around for the chip row + logo + footer to sit on.
+      // Contain-fit (no destination downscale): the camera pull-back
+      // in __setupClipRecording already gives us real space around the
+      // globe at the SOURCE level. Just scale the full source canvas
+      // to fit the rec canvas preserving aspect — letterbox if needed.
       const TARGET_ASPECT = REC_W / REC_H;
       const srcAspect     = gw / gh;
-      let fitW, fitH;
+      let drawW, drawH;
       if (srcAspect > TARGET_ASPECT) {
-        // Source wider — letterbox top/bottom
-        fitW = REC_W;
-        fitH = REC_W / srcAspect;
+        drawW = REC_W;
+        drawH = REC_W / srcAspect;
       } else {
-        // Source taller — letterbox left/right
-        fitH = REC_H;
-        fitW = REC_H * srcAspect;
+        drawH = REC_H;
+        drawW = REC_H * srcAspect;
       }
-      const GLOBE_SCALE = 0.85;
-      const drawW = fitW * GLOBE_SCALE;
-      const drawH = fitH * GLOBE_SCALE;
       const drawX = (REC_W - drawW) / 2;
       const drawY = (REC_H - drawH) / 2;
       ctx.drawImage(globeCanvas, 0, 0, gw, gh, drawX, drawY, drawW, drawH);
