@@ -57327,8 +57327,12 @@ body.ticker-active .gTickerLabel {
     });
     const isoList = Array.isArray(flagIsos) ? flagIsos.slice(0, 8) : [];
     const nameList = Array.isArray(flagNames) ? flagNames.slice(0, 8) : [];
+    // share-icon-circle.png is the alpha-masked-to-a-circle variant
+    // used by slides 1/3/4 in shareImageGenerator.js — load it here
+    // so the globe overlay logo matches EXACTLY (same source file,
+    // not a runtime clip of the squircle apple-touch-icon).
     const [logoImg, ...flagImgs] = await Promise.all([
-      loadImg('./apple-touch-icon.png').catch(() => null),
+      loadImg('./share-icon-circle.png').catch(() => null),
       ...isoList.map(iso => loadImg(`https://flagcdn.com/w80/${String(iso).toLowerCase()}.png`)),
     ]);
 
@@ -57488,19 +57492,28 @@ body.ticker-active .gTickerLabel {
       // tempo. Falls back to a static mid-pulse value if no progress
       // is supplied (legacy realtime-capture path).
       if (logoImg) {
-        const logoSize = Math.round(w * 0.10);
+        // Match slide-1 exactly: same source (share-icon-circle.png, the
+        // alpha-pre-masked circular variant of the app icon), same draw
+        // order (halo → black bg disc → icon → gold rim ring), same
+        // proportions (halo radius/opacity match _renderLogoHalo in
+        // shareImageGenerator.js).
+        const logoSize = Math.round(w * 0.11);
         const lx = margin;
         const ly = h - margin - logoSize;
         const cx = lx + logoSize / 2;
         const cy = ly + logoSize / 2;
         const r  = logoSize / 2;
+        // Halo phase from progress for deterministic capture; same
+        // frequency=2 used by slides 1/3/4.
         const pulse  = (progress != null)
-          ? (Math.sin(progress * Math.PI * 2 * 2) + 1) / 2   // 0..1, 2 cycles
+          ? (Math.sin(progress * Math.PI * 2 * 2) + 1) / 2
           : 0.5;
-        const haloR  = r + 22 + pulse * 16;
+        // Slide-1's halo: radius = size/2 + 30 + phase*18; opacity = 0.18 + phase*0.22
+        // (see _renderLogoHalo in shareImageGenerator.js).
+        const haloR  = r + 30 + pulse * 18;
         const haloOp = 0.18 + pulse * 0.22;
         ctx.save();
-        // 1. Halo
+        // 1. Halo radial gradient (behind everything)
         const grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, haloR);
         grad.addColorStop(0.55, `rgba(212, 168, 67, ${haloOp.toFixed(3)})`);
         grad.addColorStop(1.0,  `rgba(212, 168, 67, 0)`);
@@ -57508,21 +57521,18 @@ body.ticker-active .gTickerLabel {
         ctx.beginPath();
         ctx.arc(cx, cy, haloR, 0, Math.PI * 2);
         ctx.fill();
-        // 2. Black filled circle bg
+        // 2. Black filled circle bg — fills any anti-aliased edges of
+        //    the alpha-masked icon so the boundary reads as a clean disc
         ctx.fillStyle = '#000000';
         ctx.beginPath();
         ctx.arc(cx, cy, r, 0, Math.PI * 2);
         ctx.fill();
-        // 3. Icon clipped to circle
-        ctx.save();
-        ctx.beginPath();
-        ctx.arc(cx, cy, r, 0, Math.PI * 2);
-        ctx.clip();
+        // 3. The pre-masked circular icon (no runtime ctx.clip() needed —
+        //    the PNG's alpha channel already cuts to a perfect circle)
         ctx.drawImage(logoImg, lx, ly, logoSize, logoSize);
-        ctx.restore();
-        // 4. Gold rim ring
+        // 4. Gold rim ring on top — makes the disc silhouette unambiguous
         ctx.strokeStyle = 'rgba(212, 168, 67, 0.7)';
-        ctx.lineWidth = Math.max(2, logoSize * 0.018);
+        ctx.lineWidth = 2;
         ctx.beginPath();
         ctx.arc(cx, cy, r - 1, 0, Math.PI * 2);
         ctx.stroke();
