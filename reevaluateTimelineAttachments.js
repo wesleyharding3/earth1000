@@ -485,18 +485,22 @@ async function runUmbrellaPass() {
   console.log(`\n${TAG} ═══ PASS 2: Article → Timeline (umbrella only) ═══`);
 
   const limitClause = LIMIT > 0 ? `LIMIT ${LIMIT}` : '';
+  // iso_code lives on the countries table (joined via news_articles.country_id),
+  // not directly on news_articles — match the umbrella scorer's source of
+  // truth in storyTimelineBuilder.js:1875.
   const { rows: pairs } = await pool.query(`
     SELECT sta.timeline_id,
            sta.article_id,
            a.title         AS article_title,
-           a.iso_code      AS article_iso,
+           co.iso_code     AS article_iso,
            tl.title        AS timeline_title,
            tl.keywords     AS timeline_keywords,
            tl.primary_nations AS timeline_nations,
            tl.core_phrases AS timeline_core_phrases,
            tl.status       AS timeline_status
       FROM story_timeline_articles sta
-      JOIN news_articles a   ON a.id  = sta.article_id
+      JOIN news_articles a    ON a.id  = sta.article_id
+      LEFT JOIN countries co  ON co.id = a.country_id
       JOIN story_timelines tl ON tl.id = sta.timeline_id
      WHERE NOT EXISTS (
        SELECT 1
