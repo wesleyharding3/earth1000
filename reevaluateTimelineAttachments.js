@@ -4,11 +4,20 @@
 /**
  * reevaluateTimelineAttachments.js
  *
- * Periodic self-healing cron. Walks every existing
- * (thread_id, timeline_id) pair where timeline_id IS NOT NULL,
- * re-scores the pair under the CURRENT storyTimelineBuilder.js
- * weights and entity/core-phrase gate, and detaches any pair
- * that wouldn't pass the gate today.
+ * Periodic self-healing cron with two passes:
+ *
+ *   PASS 1: (thread_id, timeline_id) pairs from story_threads.timeline_id.
+ *           Re-scores under decideAttachOrCreate's weights and the
+ *           entity/core-phrase gate (ATTACH_THRESHOLD=6.0).
+ *
+ *   PASS 2: PURE-UMBRELLA (article_id, timeline_id) pairs from
+ *           story_timeline_articles where the article isn't already
+ *           justified by a thread attached to the same timeline.
+ *           Re-scores under the umbrella weights and gate
+ *           (UMBRELLA_ATTACH_THRESHOLD=2.5 + entity-or-phrase
+ *           requirement). Catches the pre-fix leak where a pure
+ *           publisher-nation match (2.5 pts alone) attached every
+ *           US-wire article to every US-tagged Line.
  *
  * Why it exists:
  *
@@ -74,6 +83,13 @@ const NATION_CAP         = 2;
 const KEYWORD_CAP        = 8;
 const ATTACH_THRESHOLD   = 6.0;
 
+// Umbrella article-attach (pass 2). Lower threshold than thread→line
+// because single articles are lighter signal. Phrase bonus is the
+// per-article core-phrase title-hit reward. KEEP IN SYNC with the
+// matching constants in storyTimelineBuilder.js.
+const UMBRELLA_ATTACH_THRESHOLD = 2.5;
+const UMBRELLA_PHRASE_BONUS     = 2.0;
+
 const TAG = '[reeval-timeline-attach]';
 const APPLY = process.env.REEVAL_APPLY === '1';
 const BATCH_SIZE = Math.max(50, parseInt(process.env.REEVAL_BATCH_SIZE || '200', 10));
@@ -136,10 +152,9 @@ async function loadContextForArticles(articleIds) {
   return out;
 }
 
-// ─── Main re-evaluation ────────────────────────────────────────────────────
-async function run() {
-  const t0 = Date.now();
-  console.log(`${TAG} start ${new Date().toISOString()} apply=${APPLY ? 'YES (writes will happen)' : 'NO (dry run)'} batch=${BATCH_SIZE} limit=${LIMIT || 'all'}`);
+// ─── Pass 1: Thread → Timeline re-evaluation ──────────────────────────────
+async function runThreadPass() {
+  console.log(`\n${TAG} ═══ PASS 1: Thread → Timeline ═══`);
 
   // 1. Pull every (thread, timeline) pair where timeline_id IS NOT NULL.
   //    Also pull per-timeline thread-count so we can preserve single-
@@ -447,9 +462,274 @@ async function run() {
   } else if (toDetach.length) {
     console.log(`\n${TAG} DRY RUN — no changes applied. Set REEVAL_APPLY=1 to detach.`);
   }
+}
 
-  console.log(`\n${TAG} done in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
-  await pool.end();
+// ─── Pass 2: Pure-umbrella Article → Timeline re-evaluation ───────────────
+//
+// Mirrors the structure of pass 1 but for direct article→timeline
+// attachments via story_timeline_articles. We ONLY target "pure umbrella"
+// attachments — pairs where the article isn't also justified by a thread
+// that's attached to the same timeline (thread propagation auto-inserts
+// into this table; we leave those alone because pass 1 already governs
+// the thread→timeline decision).
+//
+// Scoring + gate use the umbrella-specific constants
+// (UMBRELLA_ATTACH_THRESHOLD=2.5 + UMBRELLA_PHRASE_BONUS) plus the same
+// entity-or-phrase requirement the builder now enforces at the umbrella
+// attach point. The leak this pass cleans up: pre-fix, a single nation
+// match (2.5 pts) cleared the threshold on its own, and since
+// article.iso_code is the publisher country (not the subject), every
+// US-wire article attached to every US-tagged Line. The new gate
+// requires entity overlap OR a core-phrase title hit.
+async function runUmbrellaPass() {
+  console.log(`\n${TAG} ═══ PASS 2: Article → Timeline (umbrella only) ═══`);
+
+  const limitClause = LIMIT > 0 ? `LIMIT ${LIMIT}` : '';
+  const { rows: pairs } = await pool.query(`
+    SELECT sta.timeline_id,
+           sta.article_id,
+           a.title         AS article_title,
+           a.iso_code      AS article_iso,
+           tl.title        AS timeline_title,
+           tl.keywords     AS timeline_keywords,
+           tl.primary_nations AS timeline_nations,
+           tl.core_phrases AS timeline_core_phrases,
+           tl.status       AS timeline_status
+      FROM story_timeline_articles sta
+      JOIN news_articles a   ON a.id  = sta.article_id
+      JOIN story_timelines tl ON tl.id = sta.timeline_id
+     WHERE NOT EXISTS (
+       SELECT 1
+         FROM story_thread_articles sta_th
+         JOIN story_threads st ON st.id = sta_th.thread_id
+        WHERE sta_th.article_id = sta.article_id
+          AND st.timeline_id    = sta.timeline_id
+     )
+     ORDER BY sta.timeline_id, sta.article_id
+     ${limitClause}
+  `);
+  console.log(`${TAG} ${pairs.length} pure-umbrella (article, timeline) pairs to re-evaluate.`);
+
+  if (!pairs.length) return;
+
+  // Build per-timeline feature map (top-10 articles' entities + keywords/
+  // nations/core_phrases from the timeline itself). Same shape as pass 1.
+  const timelineIds = [...new Set(pairs.map(p => p.timeline_id))];
+  const { rows: tlArticleLinks } = await pool.query(`
+    SELECT timeline_id, article_id
+    FROM (
+      SELECT sta.timeline_id, sta.article_id,
+             ROW_NUMBER() OVER (
+               PARTITION BY sta.timeline_id
+               ORDER BY sta.relevance_score DESC NULLS LAST, sta.added_at DESC
+             ) AS rn
+      FROM story_timeline_articles sta
+      WHERE sta.timeline_id = ANY($1::int[])
+    ) ranked
+    WHERE rn <= 10
+  `, [timelineIds]);
+  const articlesByTimeline = new Map();
+  const allTlArticleIds = new Set();
+  for (const r of tlArticleLinks) {
+    if (!articlesByTimeline.has(r.timeline_id)) articlesByTimeline.set(r.timeline_id, []);
+    articlesByTimeline.get(r.timeline_id).push(Number(r.article_id));
+    allTlArticleIds.add(Number(r.article_id));
+  }
+  const tlCtxMap = await loadContextForArticles([...allTlArticleIds]);
+  const timelineFeatures = new Map();
+  const tlMetaById = new Map();
+  for (const p of pairs) {
+    if (timelineFeatures.has(p.timeline_id)) continue;
+    const arts = articlesByTimeline.get(p.timeline_id) || [];
+    const entitySet = new Set();
+    for (const id of arts) {
+      const ctx = tlCtxMap.get(id);
+      if (!ctx) continue;
+      for (const e of (ctx.entities || [])) {
+        if (!e?.text) continue;
+        entitySet.add(String(e.text).toLowerCase().trim());
+      }
+    }
+    timelineFeatures.set(p.timeline_id, {
+      entities:    entitySet,
+      nations:     new Set((p.timeline_nations || []).map(n => String(n).toUpperCase())),
+      keywords:    new Set((p.timeline_keywords || []).map(normalizeKeyword).filter(Boolean)),
+      titleTokens: tokenizeTitle(p.timeline_title),
+      corePhrases: Array.isArray(p.timeline_core_phrases) ? p.timeline_core_phrases : [],
+    });
+    tlMetaById.set(p.timeline_id, {
+      title:  p.timeline_title,
+      status: p.timeline_status,
+    });
+  }
+
+  // Score each (article, timeline) pair. Batches keep DB roundtrips low.
+  const toDetach = [];
+  const kept     = [];
+  for (let i = 0; i < pairs.length; i += BATCH_SIZE) {
+    const batch = pairs.slice(i, i + BATCH_SIZE);
+    const articleIds = batch.map(p => p.article_id);
+
+    // Article entities (single source: article_deep_context).
+    const artCtxMap = await loadContextForArticles(articleIds);
+
+    // Article keywords from article_keywords table.
+    const { rows: akRows } = await pool.query(`
+      SELECT article_id, COALESCE(normalized_keyword, LOWER(keyword)) AS kw
+      FROM article_keywords
+      WHERE article_id = ANY($1::int[])
+    `, [articleIds]);
+    const kwByArticle = new Map();
+    for (const r of akRows) {
+      if (!kwByArticle.has(r.article_id)) kwByArticle.set(r.article_id, new Set());
+      kwByArticle.get(r.article_id).add(r.kw);
+    }
+
+    for (const p of batch) {
+      const feat = timelineFeatures.get(p.timeline_id);
+      if (!feat) continue;
+
+      // Article-side features.
+      const ctx = artCtxMap.get(Number(p.article_id));
+      const artEntities = new Set();
+      if (ctx) {
+        for (const e of (ctx.entities || [])) {
+          if (e?.text) artEntities.add(String(e.text).toLowerCase().trim());
+        }
+      }
+      const artNations  = new Set(p.article_iso ? [String(p.article_iso).toUpperCase()] : []);
+      const artKeywords = kwByArticle.get(Number(p.article_id)) || new Set();
+      const artTitleTok = tokenizeTitle(p.article_title);
+
+      const entShared = Math.min(ENTITY_CAP,  intersectCount(artEntities,  feat.entities));
+      const natShared = Math.min(NATION_CAP,  intersectCount(artNations,   feat.nations));
+      const kwShared  = Math.min(KEYWORD_CAP, intersectCount(artKeywords,  feat.keywords));
+      const ttkShared = intersectCount(artTitleTok, feat.titleTokens);
+
+      const titleLower = String(p.article_title || '').toLowerCase();
+      const phraseHit = feat.corePhrases.some(phrase => {
+        if (!phrase) return false;
+        const rx = new RegExp(
+          `(^|\\W)${String(phrase).replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&')}(\\W|$)`,
+          'i'
+        );
+        return rx.test(titleLower);
+      });
+      const phraseBonus = phraseHit ? UMBRELLA_PHRASE_BONUS : 0;
+
+      const score =
+        entShared  * W_ENTITY_OVERLAP +
+        natShared  * W_NATION_OVERLAP +
+        kwShared   * W_KEYWORD_OVERLAP +
+        ttkShared  * W_TITLE_TOKEN +
+        phraseBonus;
+
+      // Same conservative-cron stance as pass 1: if the timeline's
+      // entity feature set is empty (deep-context not loaded for any
+      // of its top-10 articles), skip the gate to avoid false-positive
+      // detaches on legit attachments to unenriched timelines.
+      const timelineHasEntities = feat.entities.size > 0;
+      const passesGate = !timelineHasEntities || entShared > 0 || phraseHit;
+
+      const breakdown = { ent: entShared, nat: natShared, kw: kwShared, ttk: ttkShared, ph: phraseBonus };
+
+      let reason = null;
+      if (score < UMBRELLA_ATTACH_THRESHOLD) {
+        reason = `below_threshold (score=${score.toFixed(1)} < ${UMBRELLA_ATTACH_THRESHOLD})`;
+      } else if (!passesGate) {
+        reason = `failed_gate (no entity or core_phrase title-hit)`;
+      }
+
+      if (reason) {
+        toDetach.push({
+          article_id:    p.article_id,
+          timeline_id:   p.timeline_id,
+          score,
+          breakdown,
+          reason,
+          article_title: p.article_title,
+          timeline_title: p.timeline_title,
+        });
+      } else {
+        kept.push({ article_id: p.article_id, timeline_id: p.timeline_id, score });
+      }
+    }
+
+    if ((i / BATCH_SIZE) % 5 === 0) {
+      console.log(`${TAG} progress: scored ${Math.min(i + BATCH_SIZE, pairs.length)}/${pairs.length}, queued ${toDetach.length} for detach so far`);
+    }
+  }
+
+  console.log(`\n${TAG} pass 2 complete: ${kept.length} kept, ${toDetach.length} flagged for detach`);
+
+  // Print proposed detaches grouped by timeline.
+  if (toDetach.length) {
+    const byTimeline = new Map();
+    for (const d of toDetach) {
+      if (!byTimeline.has(d.timeline_id)) byTimeline.set(d.timeline_id, []);
+      byTimeline.get(d.timeline_id).push(d);
+    }
+    console.log(`\n${TAG} pass 2 — proposed article detaches by timeline:\n`);
+    for (const [tlId, items] of byTimeline) {
+      const tlMeta = tlMetaById.get(tlId);
+      console.log(`──── Timeline #${tlId} "${tlMeta?.title || '?'}" — ${items.length} article(s) to detach`);
+      for (const d of items) {
+        const bd = d.breakdown;
+        console.log(`     # ${String(d.article_id).padStart(8)}  score=${d.score.toFixed(1)} (e=${bd.ent} n=${bd.nat} k=${bd.kw} t=${bd.ttk} ph=${bd.ph}) ${d.reason}`);
+        console.log(`                                       "${(d.article_title || '').slice(0, 100)}"`);
+      }
+      console.log('');
+    }
+  }
+
+  // Apply detaches in batches if APPLY mode. Updates the timeline's
+  // article_count so the line's UI counter stays consistent.
+  if (toDetach.length && APPLY) {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      const pairKeys = toDetach.map(d => `(${d.timeline_id},${d.article_id})`).join(',');
+      // unnest two parallel arrays — efficient for ~thousands of pairs.
+      const tlIds  = toDetach.map(d => d.timeline_id);
+      const artIds = toDetach.map(d => d.article_id);
+      const res = await client.query(`
+        DELETE FROM story_timeline_articles
+         USING (SELECT unnest($1::int[]) AS tl, unnest($2::int[]) AS ar) AS pairs
+         WHERE story_timeline_articles.timeline_id = pairs.tl
+           AND story_timeline_articles.article_id  = pairs.ar
+      `, [tlIds, artIds]);
+      // Refresh article_count for affected timelines.
+      const uniqueTlIds = [...new Set(tlIds)];
+      await client.query(`
+        UPDATE story_timelines
+           SET article_count = (SELECT COUNT(*) FROM story_timeline_articles WHERE timeline_id = story_timelines.id)
+         WHERE id = ANY($1::int[])
+      `, [uniqueTlIds]);
+      await client.query('COMMIT');
+      console.log(`${TAG} ✓ pass 2 committed: detached ${res.rowCount} article→timeline rows, refreshed counts on ${uniqueTlIds.length} timelines.`);
+    } catch (e) {
+      await client.query('ROLLBACK').catch(() => {});
+      console.error(`${TAG} pass 2 apply failed: ${e.message}`);
+      process.exitCode = 1;
+    } finally {
+      client.release();
+    }
+  } else if (toDetach.length) {
+    console.log(`\n${TAG} DRY RUN — no changes applied. Set REEVAL_APPLY=1 to detach.`);
+  }
+}
+
+// ─── Driver: run both passes, then close the pool ─────────────────────────
+async function run() {
+  const t0 = Date.now();
+  console.log(`${TAG} start ${new Date().toISOString()} apply=${APPLY ? 'YES (writes will happen)' : 'NO (dry run)'} batch=${BATCH_SIZE} limit=${LIMIT || 'all'}`);
+  try {
+    await runThreadPass();
+    await runUmbrellaPass();
+  } finally {
+    console.log(`\n${TAG} done in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+    await pool.end();
+  }
 }
 
 run().catch(err => {
