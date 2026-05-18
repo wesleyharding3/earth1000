@@ -754,16 +754,39 @@ function planBatches(clusters, singletons, size) {
   }
   batches.push(...clusterBatches);
 
-  // Singletons: topic-grouped ordering instead of country round-robin.
-  // See groupSingletonsByTopic for full rationale — short version: country
-  // round-robin scattered topical convergence across batches, and Claude
-  // can't surface multi-source moments out of 100 unrelated articles. The
-  // new ordering puts singletons sharing a distinctive keyword (their best
-  // cluster-anchor candidate) into the same batch so weak signals get
-  // their day in court.
-  const ordered = groupSingletonsByTopic(singletons);
-  for (let i = 0; i < ordered.length; i += size) {
-    batches.push(ordered.slice(i, i + size));
+  // Singletons: by default, NOT sent to Claude.
+  //
+  // 2026-05-18 analysis (analyzeThreadOrigins.js): of 123 threads created
+  // in a 7-day window, 70 (68.6%) were singleton-batch-discovered (Claude
+  // bridging weak 1-2-keyword overlaps that sqlCluster's MIN_SHARED_KW=3
+  // floor rejects). Spot-check found those threads break into:
+  //   • Coherent-looking pollution that the audit can't detect
+  //     (e.g. a "Cuba Protests" thread whose anchor includes a Lebanon
+  //     ceasefire article — internally inconsistent but uniformly enough
+  //     that Claude's per-thread audit redefines the subject as a generic
+  //     geopolitical bucket and ejects nothing).
+  //   • Empty husks: ≥5 threads/week have 100% of their articles ejected
+  //     by the subsequent auditThreadArticles run — literal Claude-paid-
+  //     to-attach, Claude-paid-to-detach waste.
+  // Net: ~$5/day was being spent on the singleton-batch Claude calls for
+  // questionable yield. Disabled by default; SEND_SINGLETONS_TO_CLAUDE=1
+  // re-enables for testing or rollback.
+  //
+  // Articles that didn't cluster this run aren't lost — they remain
+  // unthreaded in news_articles and get picked up by the next run, where
+  // they'll cluster naturally once enough peer coverage has accumulated
+  // to clear the SQL Jaccard floor.
+  const sendSingletons = process.env.SEND_SINGLETONS_TO_CLAUDE === '1';
+  if (sendSingletons) {
+    const ordered = groupSingletonsByTopic(singletons);
+    for (let i = 0; i < ordered.length; i += size) {
+      batches.push(ordered.slice(i, i + size));
+    }
+  } else if (singletons.length) {
+    console.log(
+      `   ⚡ Skipping ${singletons.length} singleton article(s) — singleton-batch ` +
+      `Claude path disabled. Set SEND_SINGLETONS_TO_CLAUDE=1 to re-enable.`
+    );
   }
 
   return batches;
