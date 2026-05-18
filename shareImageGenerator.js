@@ -614,6 +614,34 @@ function _renderScanLine({ p, windowStart = 0.50, windowEnd = 0.85 }) {
   `;
 }
 
+// ─── Particle dust drift ────────────────────────────────────────────
+// 22 deterministic dots scattered across the canvas, each drifting
+// upward + slight horizontal sway. Originally inline in slide 1
+// (portrait card), extracted here so slides 3 + 4 can share the same
+// ambient field for a unified carousel atmosphere.
+//
+// `p`  — global progress 0..1
+// All positions/opacities are deterministic functions of (i, p), so
+// the field looks identical across renders for a given frame.
+function _renderParticleDust({ p }) {
+  const dots = [];
+  for (let i = 0; i < 22; i++) {
+    // Deterministic pseudo-random positions via sin hashing
+    const seed = i * 73.7;
+    const baseX = ((Math.sin(seed) * 10000) % 1 + 1) % 1 * W_P;
+    const phase = ((Math.cos(seed) * 10000) % 1 + 1) % 1;
+    // Loop vertically over the clip (1.5 cycles per clip)
+    const yTotal = (phase + p) * 1.5;
+    const y = (1 - (yTotal % 1)) * (H_P + 100) - 50;
+    const x = baseX + Math.sin(p * Math.PI * 2 + i) * 8;
+    const r = 1 + (i % 3) * 0.7;
+    // Twinkle opacity
+    const opacity = 0.20 + Math.sin(p * Math.PI * 4 + i * 1.3) * 0.18;
+    dots.push(`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r}" fill="${BRAND.cream}" opacity="${Math.max(0, opacity).toFixed(3)}"/>`);
+  }
+  return dots.join('\n');
+}
+
 // ─── Border-trace comet ─────────────────────────────────────────────
 // Thin gold dim outline around the 1080×1350 perimeter + a brighter
 // "comet" segment of dashed stroke that travels clockwise once per
@@ -964,28 +992,9 @@ async function _renderThreadPortraitSvg({ title, description, isos, category, ar
   `;
 
   // ── Effect #5: particle dust drifting up. ──
-  // 22 deterministic dots scattered across the canvas, each drifting
-  // upward + slight horizontal sway. Loops vertically (wraps from top
-  // back to bottom) so the field stays full across the 3s clip.
-  const dustSvg = (() => {
-    const dots = [];
-    for (let i = 0; i < 22; i++) {
-      // Deterministic pseudo-random positions via sin hashing
-      const seed = i * 73.7;
-      const baseX = ((Math.sin(seed) * 10000) % 1 + 1) % 1 * W_P;
-      const phase = ((Math.cos(seed) * 10000) % 1 + 1) % 1;
-      const speed = 280 + i * 7;
-      // Loop vertically over the clip
-      const yTotal = (phase + p) * 1.5;            // 1.5 cycles per clip
-      const y = (1 - (yTotal % 1)) * (H_P + 100) - 50;
-      const x = baseX + Math.sin(p * Math.PI * 2 + i) * 8;
-      const r = 1 + (i % 3) * 0.7;
-      // Twinkle opacity
-      const opacity = 0.20 + Math.sin(p * Math.PI * 4 + i * 1.3) * 0.18;
-      dots.push(`<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="${r}" fill="${BRAND.cream}" opacity="${Math.max(0, opacity).toFixed(3)}"/>`);
-    }
-    return dots.join('\n');
-  })();
+  // Extracted to _renderParticleDust() so slides 3 + 4 can share the same
+  // ambient field for a unified carousel atmosphere.
+  const dustSvg = _renderParticleDust({ p });
 
   // ── Effect #8: pulsing gold halo around the app icon. ──
   // Circle behind logo whose radius + opacity oscillate. Sits between
@@ -1600,11 +1609,12 @@ async function _renderThreadCoveragePieSvg({ title, category, countryCounts, art
     <rect width="${W_P}" height="${H_P}" fill="url(#bgGradC)"/>
   `;
 
-  // Z-order: bg → globe wireframe → chrome → title → subtitle →
-  // donut (rotated group includes slices + trace dot) → center label →
-  // legend (per-row underline embedded) → footer.
+  // Z-order: bg → globe wireframe → particle dust → chrome → title →
+  // subtitle → donut (rotated group includes slices + trace dot) →
+  // center label → legend (per-row underline embedded) → footer.
   // Scan-line passes BEHIND the donut + legend so it frames the data
   // viz rather than covering it. Border-trace stays on top.
+  const dustSvg          = _renderParticleDust({ p });
   const scanLineGlobalSvg = _renderScanLine({ p });
   const borderTraceSvg    = _renderBorderTrace({ p });
 
@@ -1612,6 +1622,7 @@ async function _renderThreadCoveragePieSvg({ title, category, countryCounts, art
     <svg xmlns="http://www.w3.org/2000/svg" width="${W_P}" height="${H_P}" viewBox="0 0 ${W_P} ${H_P}">
       ${bg}
       ${globeBgSvg}
+      ${dustSvg}
       ${haloSvg}
       ${iconBlock}
       ${catSvg}
@@ -2009,15 +2020,19 @@ async function _renderThreadArticlesSvg({ title, category, articles, animation }
   `;
 
   // Scan-line + border-trace on top of everything else (matches slide 1).
+  const dustSvg          = _renderParticleDust({ p });
   const scanLineGlobalSvg = _renderScanLine({ p });
   const borderTraceSvg    = _renderBorderTrace({ p });
 
   // Scan-line is rendered BEFORE the bars so it passes behind them —
   // the gold line peeks out between rows, framing the bars instead of
-  // covering their content. Border-trace stays on top.
+  // covering their content. Border-trace stays on top. Particle dust
+  // sits behind everything (just above the bg) for an ambient field
+  // that ties slide 4 visually to slides 1 + 3.
   return `<?xml version="1.0" encoding="UTF-8"?>
     <svg xmlns="http://www.w3.org/2000/svg" width="${W_P}" height="${H_P}" viewBox="0 0 ${W_P} ${H_P}">
       ${bg}
+      ${dustSvg}
       ${haloSvg}
       ${iconBlock}
       ${eyebrowSvg}
