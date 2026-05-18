@@ -55,6 +55,7 @@ async function main() {
   let flaggedCount = 0;
   let detachedCount = 0;
   let deletedThreads = 0;
+  let renamedThreads = 0;
 
   // After outlier detach, a thread that falls below this article floor is
   // deleted outright — too few articles to constitute a "story". The same
@@ -79,11 +80,20 @@ async function main() {
       // happen. Next run will retry this thread.
       continue;
     }
-    const { outliers, dominantTopic } = auditResult;
+    const { outliers, dominantTopic, titleVerdict, recommendedTitle } = auditResult;
 
     if (!outliers.length) {
       console.log(`✓ clean${dominantTopic ? ` (story: "${dominantTopic.slice(0, 70)}")` : ''}`);
     } else {
+      // (logging the per-outlier list happens below)
+    }
+    // Log title verdict in BOTH dry-run and detach modes so the operator
+    // can see which threads Claude flagged as dual/drifted before any
+    // writes happen.
+    if (titleVerdict && titleVerdict !== 'matches' && recommendedTitle) {
+      console.log(`       ✏ title-verdict=${titleVerdict}  recommended="${recommendedTitle}"`);
+    }
+    if (outliers.length) {
       flaggedCount += outliers.length;
       console.log(`🚩 ${outliers.length} outlier(s)${dominantTopic ? ` — story: "${dominantTopic.slice(0, 70)}"` : ''}`);
       for (const o of outliers) {
@@ -160,6 +170,24 @@ async function main() {
       }
     }
 
+    // Title rename — applied even when no outliers were detached, because
+    // a title can be a dual-story merger while every article still
+    // matches one of the two halves (e.g. "Russia-Ukraine Prisoner Swap,
+    // US-Iran Tensions" — only 1 article was an outlier, but the title
+    // still misrepresents the dominant story). Runs in DETACH mode only.
+    if (DETACH && titleVerdict !== 'matches' && recommendedTitle && recommendedTitle !== t.title) {
+      try {
+        await pool.query(
+          `UPDATE story_threads SET title = $1, last_updated_at = NOW() WHERE id = $2`,
+          [recommendedTitle, t.id]
+        );
+        renamedThreads++;
+        console.log(`       ✏ renamed (${titleVerdict}): "${(t.title || '').slice(0, 60)}" → "${recommendedTitle.slice(0, 60)}"`);
+      } catch (err) {
+        console.warn(`       ⚠ rename failed (thread=${t.id}): ${err.message}`);
+      }
+    }
+
     // Stamp last_audited_at AFTER any other writes to this row so the
     // timestamp wins the race against the detach branch's last_updated_at
     // bump (NOW() returns a slightly later value here than there). The
@@ -174,7 +202,7 @@ async function main() {
   }
 
   console.log(`\n${DETACH ? '✅ Detach complete' : '✅ Dry run complete'} in ${el()}.`);
-  console.log(`   threads_audited=${auditedThreads} outliers_flagged=${flaggedCount}${DETACH ? ` detach_rows=${detachedCount} deleted_threads=${deletedThreads}` : ''}`);
+  console.log(`   threads_audited=${auditedThreads} outliers_flagged=${flaggedCount}${DETACH ? ` detach_rows=${detachedCount} deleted_threads=${deletedThreads} renamed_threads=${renamedThreads}` : ''}`);
   await pool.end();
 }
 
@@ -291,9 +319,20 @@ Read every article. The "dominant story" is the single concrete event/actor/deci
 STEP 2 — Flag outliers.
 For each article, decide if it belongs to the dominant story or is an outlier.
 
+STEP 3 — Judge the stored title.
+After identifying the dominant story, decide if the stored title accurately and ONLY describes that story.
+- "matches"     → title is a fair summary of the dominant story alone.
+- "dual_story"  → title contains TWO distinct stories joined by a comma, "and", "amid", "as", "while", "&", etc. (e.g. "Iraq Sites, Hamas Chief Killed" — two events; "Baltic Airspace Breaches Amid Turkic Summit" — two events).
+- "drifted"     → title describes a different story than the dominant cluster, OR is too broad / off-topic.
+
+STEP 4 — Recommend a clean title.
+Propose a 5-9 word title that captures ONLY the dominant story. Title case. No colons, commas, ampersands, or "and"/"amid"/"as"/"while" connectors between distinct events. If "matches", recommended_title may equal the existing title verbatim.
+
 Return ONLY valid JSON matching this schema:
 {
   "dominant_topic": "one-sentence description of the actual story you inferred from the articles",
+  "title_verdict": "matches" | "dual_story" | "drifted",
+  "recommended_title": "5-9 word title describing only the dominant story",
   "outliers": [
     { "article_id": 12345, "reason": "one-line reason (<20 words)" }
   ]
@@ -307,6 +346,7 @@ Rules:
 - An article that only mentions the subject in passing IS an outlier.
 - Cross-topic surface noise — articles that share an actor name (e.g. "Trump") but are about a totally different decision/event — ARE outliers.
 - If every article truly belongs to one story, return outliers: [].
+- recommended_title is REQUIRED in every response, even when title_verdict is "matches".
 
 ${threadBlock}
 
@@ -359,8 +399,18 @@ ${articleBlock}`;
   // and tombstone reason both make clear WHY (the thread's actual story
   // wasn't this article's topic), not just "doesn't match title".
   const dominantTopic = String(parsed?.dominant_topic || '').trim().slice(0, 200);
+  // Title verdict + recommended title — the caller uses these to rename
+  // threads whose title is a dual-story merger or has drifted from the
+  // dominant cluster (the "Russia-Ukraine Prisoner Swap, US-Iran Tensions"
+  // and "Israel's Covert Iraq Sites, Hamas Chief Killed" failure mode).
+  const titleVerdict = ['matches', 'dual_story', 'drifted'].includes(parsed?.title_verdict)
+    ? parsed.title_verdict
+    : 'matches';
+  const recommendedTitle = String(parsed?.recommended_title || '').trim().slice(0, 120);
   return {
     dominantTopic,
+    titleVerdict,
+    recommendedTitle,
     outliers: list
       .map(o => ({ article_id: parseInt(o.article_id, 10), reason: String(o.reason || '').trim().slice(0, 160) }))
       .filter(o => Number.isFinite(o.article_id) && articles.some(a => a.id === o.article_id))
