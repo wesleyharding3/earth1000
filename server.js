@@ -4150,7 +4150,12 @@ app.get("/api/flows", heavyLimiter, async (req, res) => {
 
   } catch (err) {
     console.error("Flows error:", err.message);
-    res.status(500).json({ error: "Failed to fetch flows", detail: req.user?.is_admin ? err.message : undefined });
+    // Expose detail to admin users AND to prewarm cron requests
+    // (prewarm=1). The cron has no auth context but needs to see the
+    // underlying error message — otherwise its log just shows "HTTP 500"
+    // and we have to manually grep Render logs to diagnose.
+    const showDetail = req.user?.is_admin || req.query.prewarm === '1';
+    res.status(500).json({ error: "Failed to fetch flows", detail: showDetail ? err.message : undefined });
   }
 });
 

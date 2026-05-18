@@ -210,10 +210,23 @@ async function warmFlow(direction, country, mode) {
       return { ms: Date.now() - t0, err: e.message, status: null };
     }
     const ms = Date.now() - t0;
-    // Cancel body — server cache is populated before res.json() runs,
-    // so we don't need to download the (large) flow payload.
+    if (!res.ok) {
+      // On error responses, try to read the JSON body so we surface
+      // the underlying error message (e.g. "statement timeout",
+      // "out of shared memory") in the cron log instead of a bare
+      // HTTP 500. The server exposes `detail` for prewarm=1 requests
+      // (see server.js /api/flows 500 path).
+      let detail = '';
+      try {
+        const body = await res.json();
+        if (body && body.detail) detail = `: ${String(body.detail).slice(0, 200)}`;
+      } catch { /* body not JSON; ignore */ }
+      return { ms, err: `HTTP ${res.status}${detail}`, status: res.status };
+    }
+    // Cancel body on success — server cache is populated before res.json()
+    // runs, so we don't need to download the (large) flow payload.
     try { await res.body?.cancel?.(); } catch {}
-    return { ms, err: res.ok ? null : `HTTP ${res.status}`, status: res.status };
+    return { ms, err: null, status: res.status };
   };
 
   let r = await _attempt();
