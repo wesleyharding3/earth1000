@@ -475,7 +475,17 @@ async function _publishEligibleRows() {
           video_url:       arcUrl,
         };
       }
-      if (drafts.threads)   drafts.threads   = { ...drafts.threads,   video_url: arcUrl };
+      if (drafts.threads) {
+        // Threads also supports CAROUSEL (up to 10 items, added 2024).
+        // Same 4 URLs as IG go through here; the threads publisher
+        // builds a CAROUSEL when carousel_videos.length >= 2, else
+        // falls back to single VIDEO using video_url.
+        drafts.threads = {
+          ...drafts.threads,
+          carousel_videos: [portraitUrl, arcUrl, pieUrl, articlesUrl],
+          video_url:       arcUrl,
+        };
+      }
     }
 
     try {
