@@ -324,27 +324,20 @@ async function renderVideo(job) {
     const tmpOut       = path.join(tmpDir, `arc-det-${process.pid}-${Date.now()}.mp4`);
     const ffmpegPath   = require('@ffmpeg-installer/ffmpeg').path;
     const { spawn }    = require('child_process');
-    // Morse-signal theme track — same source as the server-side card
-    // renderer so all 4 carousel slides share consistent branding audio.
-    // Was anullsrc silence, but silent AAC compresses to ~2 kbps which
-    // trips IG's carousel-item audio-bitrate floor and the entire
-    // carousel fails with error code 2207077.
-    //
-    // File lives as a SIBLING of this script (not in the repo's
-    // audio/briefing/ dir) because install.sh copies videoWorker.js to
-    // ~/Library/Application Support/earth00-worker/ and the worker
-    // runs from there — the repo's audio/ tree isn't present on the
-    // installed worker. install.sh copies the mp3 alongside.
-    const morsePath = path.join(__dirname, 'morse-room-signal.mp3');
+    // Silent audio track — anullsrc. Tried using the morse-room-signal
+    // theme for branding but Meta's audio fingerprinting flagged it and
+    // BOTH Threads and IG started rejecting the result (Threads had
+    // been happily accepting silent arc.mp4 for the prior 6 hours).
+    // Reverted. Real-bitrate audio still pending an alternative
+    // non-fingerprinted source.
     const ffmpeg = spawn(ffmpegPath, [
       '-y', '-hide_banner', '-loglevel', 'error',
       '-f', 'image2pipe', '-framerate', String(TARGET_FPS), '-i', 'pipe:0',
-      '-stream_loop', '-1', '-i', morsePath,
-      '-map', '0:v', '-map', '1:a:0',
+      '-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100',
       '-c:v', 'libx264', '-preset', 'fast', '-crf', '20',
       '-pix_fmt', 'yuv420p', '-profile:v', 'high', '-movflags', '+faststart',
       '-r', String(TARGET_FPS), '-t', String(spinSeconds),
-      '-c:a', 'aac', '-b:a', '128k', '-ar', '44100', '-ac', '2',
+      '-c:a', 'aac', '-b:a', '128k',
       '-f', 'mp4', tmpOut,
     ], { stdio: ['pipe', 'ignore', 'pipe'] });
     const ffStderr = [];
