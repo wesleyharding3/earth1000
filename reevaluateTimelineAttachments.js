@@ -723,13 +723,21 @@ async function runUmbrellaPass() {
   }
 }
 
-// ─── Driver: run both passes, then close the pool ─────────────────────────
+// ─── Driver: run pass(es), then close the pool ────────────────────────────
+// REEVAL_PASS=all (default) runs both. =1 runs only thread→line. =2 runs
+// only article-umbrella. Useful when you've validated one pass and want
+// to apply it independently of the other.
 async function run() {
   const t0 = Date.now();
-  console.log(`${TAG} start ${new Date().toISOString()} apply=${APPLY ? 'YES (writes will happen)' : 'NO (dry run)'} batch=${BATCH_SIZE} limit=${LIMIT || 'all'}`);
+  const passSel = (process.env.REEVAL_PASS || 'all').toLowerCase();
+  if (!['all','1','2'].includes(passSel)) {
+    console.error(`${TAG} invalid REEVAL_PASS=${passSel} (expected: all | 1 | 2)`);
+    process.exit(2);
+  }
+  console.log(`${TAG} start ${new Date().toISOString()} apply=${APPLY ? 'YES (writes will happen)' : 'NO (dry run)'} batch=${BATCH_SIZE} limit=${LIMIT || 'all'} pass=${passSel}`);
   try {
-    await runThreadPass();
-    await runUmbrellaPass();
+    if (passSel === 'all' || passSel === '1') await runThreadPass();
+    if (passSel === 'all' || passSel === '2') await runUmbrellaPass();
   } finally {
     console.log(`\n${TAG} done in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
     await pool.end();
