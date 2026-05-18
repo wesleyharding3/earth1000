@@ -486,6 +486,28 @@ async function _publishEligibleRows() {
           video_url:       arcUrl,
         };
       }
+
+      // ── Pre-warm the cards so Meta's transcoder fetches them from a
+      // populated DB cache instead of triggering a 20-30s cold render
+      // on the Render instance it happens to land on. Each card endpoint
+      // checks the DB first; on cache miss it renders + writes the
+      // BYTEA back to social_post_queue. After this Promise.all resolves,
+      // every Render instance will serve the cards from shared DB
+      // (instant) — so Meta's parallel container-create fetches all
+      // succeed inside their transcoder timeout window.
+      //
+      // The arc.mp4 already lives in the DB (Mac worker uploads it via
+      // /api/video-jobs/:thread_id/result) so we don't refetch that one.
+      const t0Cards = Date.now();
+      const warmRes = await Promise.allSettled([
+        fetch(portraitUrl).then(r => r.arrayBuffer()),
+        fetch(pieUrl).then(r => r.arrayBuffer()),
+        fetch(articlesUrl).then(r => r.arrayBuffer()),
+      ]);
+      const warmFails = warmRes
+        .map((r, i) => r.status === 'rejected' ? ['portrait','pie','articles'][i] : null)
+        .filter(Boolean);
+      console.log(`         pre-warmed cards in ${((Date.now() - t0Cards) / 1000).toFixed(1)}s${warmFails.length ? ` (failed: ${warmFails.join(',')})` : ''}`);
     }
 
     try {
