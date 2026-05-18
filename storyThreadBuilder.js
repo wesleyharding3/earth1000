@@ -334,6 +334,29 @@ When deciding whether an article extends an existing thread, READ the \`members\
 ═══ THE TWO-VAGUE-NOUNS TEST ═══
 If a proposed title is just "[Place] [Abstract Noun] and [Abstract Noun]" (e.g. "Mexico Health Crisis and Economic Inequality", "Indonesia Industrial Safety and Transportation Incidents") — that is a topic bucket, not a story. Reject it. A real thread title names a concrete event, actor, or decision: "Mexico cartel offensive in Sinaloa", "Indonesia ferry capsizes off Java killing 40", etc.
 
+═══ THE SPECIFIC-INCIDENT TEST (CRITICAL — RUN THIS LAST) ═══
+Before you finalize any title, ask yourself: "Can I name ONE specific incident — with a date, a location, and named actors — that this title describes?"
+
+If the answer is "this title describes a pattern, a reaction, a situation, or a category" rather than a single concrete event, **REJECT the cluster**. There is no story; there is only a topic with topic-aligned articles.
+
+These titles all FAIL the specific-incident test and MUST be rejected:
+  ✗ "Regional Condemnation Grows Over Nuclear, Drone Attacks"
+       — what specific condemnation, when, where, by whom? "Regional" is not a place, "Condemnation Grows" is not an event, and "Nuclear, Drone Attacks" is a category not a single incident.
+  ✗ "Nuclear Escalation Amid Intensifying Warfare"
+       — no named actors, no specific event, no specific location. "Escalation" + "Warfare" are abstract; "Intensifying" is filler. This is a STATE OF AFFAIRS, not a STORY.
+  ✗ "Diplomatic Tensions Rise Over Middle East Crisis"
+       — same shape. "Diplomatic Tensions Rise" is a pattern, not an event.
+  ✗ "Economic Uncertainty Mounts as Trade War Escalates"
+       — pattern stacking, no incident.
+
+These PASS the specific-incident test:
+  ✓ "Iran Strikes UAE Barakah Nuclear Plant With Drones"  — actor, place, action
+  ✓ "Saudi Arabia Hits Iran-Backed Targets in Western Iraq" — actor, place, action
+  ✓ "Trump Signs Executive Order Halting Iranian Oil Exports" — actor, action, decision
+  ✓ "Turkey Withdraws Ambassador from Israel Over Gaza Strike" — actor, place, action, cause
+
+When in doubt, return an EMPTY array. It is correct and expected to skip clustering when no single concrete incident has enough article coverage. A missed thread is recoverable next run; a topic-bucket thread is not.
+
 ═══ NO DUAL-STORY TITLES ═══
 A thread is ONE story. NEVER write a title that bundles TWO DISTINCT EVENTS using a comma, "amid", "amidst", "while", "as", or "&". This is the single most common quality failure on this platform and your title WILL BE AUTOMATICALLY REJECTED if it matches the pattern.
 
@@ -1213,6 +1236,29 @@ When deciding whether an article extends an existing thread, READ the \`members\
 ═══ THE TWO-VAGUE-NOUNS TEST ═══
 If a proposed title is just "[Place] [Abstract Noun] and [Abstract Noun]" (e.g. "Mexico Health Crisis and Economic Inequality", "Indonesia Industrial Safety and Transportation Incidents") — that is a topic bucket, not a story. Reject it. A real thread title names a concrete event, actor, or decision: "Mexico cartel offensive in Sinaloa", "Indonesia ferry capsizes off Java killing 40", etc.
 
+═══ THE SPECIFIC-INCIDENT TEST (CRITICAL — RUN THIS LAST) ═══
+Before you finalize any title, ask yourself: "Can I name ONE specific incident — with a date, a location, and named actors — that this title describes?"
+
+If the answer is "this title describes a pattern, a reaction, a situation, or a category" rather than a single concrete event, **REJECT the cluster**. There is no story; there is only a topic with topic-aligned articles.
+
+These titles all FAIL the specific-incident test and MUST be rejected:
+  ✗ "Regional Condemnation Grows Over Nuclear, Drone Attacks"
+       — what specific condemnation, when, where, by whom? "Regional" is not a place, "Condemnation Grows" is not an event, and "Nuclear, Drone Attacks" is a category not a single incident.
+  ✗ "Nuclear Escalation Amid Intensifying Warfare"
+       — no named actors, no specific event, no specific location. "Escalation" + "Warfare" are abstract; "Intensifying" is filler. This is a STATE OF AFFAIRS, not a STORY.
+  ✗ "Diplomatic Tensions Rise Over Middle East Crisis"
+       — same shape. "Diplomatic Tensions Rise" is a pattern, not an event.
+  ✗ "Economic Uncertainty Mounts as Trade War Escalates"
+       — pattern stacking, no incident.
+
+These PASS the specific-incident test:
+  ✓ "Iran Strikes UAE Barakah Nuclear Plant With Drones"  — actor, place, action
+  ✓ "Saudi Arabia Hits Iran-Backed Targets in Western Iraq" — actor, place, action
+  ✓ "Trump Signs Executive Order Halting Iranian Oil Exports" — actor, action, decision
+  ✓ "Turkey Withdraws Ambassador from Israel Over Gaza Strike" — actor, place, action, cause
+
+When in doubt, return an EMPTY array. It is correct and expected to skip clustering when no single concrete incident has enough article coverage. A missed thread is recoverable next run; a topic-bucket thread is not.
+
 ═══ NO DUAL-STORY TITLES ═══
 A thread is ONE story. NEVER write a title that bundles TWO DISTINCT EVENTS using a comma, "amid", "amidst", "while", "as", or "&". This is the single most common quality failure on this platform and your title WILL BE AUTOMATICALLY REJECTED if it matches the pattern.
 
@@ -1672,8 +1718,25 @@ async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()
 
     const parts = cleaned.split(',').map(s => s.trim()).filter(Boolean);
     if (parts.length >= 2) {
-      const allSubstantive = parts.every(p => p.split(/\s+/).length >= 3);
-      if (allSubstantive) return 'comma_split';
+      const wordCounts = parts.map(p => p.split(/\s+/).length);
+      const totalWords = wordCounts.reduce((s, n) => s + n, 0);
+      // Two acceptance gates:
+      //   (a) all parts ≥3 words (the classic dual: "X event A, Y event B")
+      //   (b) all parts ≥2 words AND total ≥7 words (catches list-comma
+      //       topic buckets like "Regional Condemnation Grows Over
+      //       Nuclear, Drone Attacks" — 6+2=8 total, second half only
+      //       2 words but the overall shape is still a topic bucket).
+      const everyPartHas3 = wordCounts.every(n => n >= 3);
+      const listCommaPattern = wordCounts.every(n => n >= 2) && totalWords >= 7;
+
+      // Fact-continuation bypass: if any part AFTER the first comma
+      // contains a digit, treat the comma as a same-event statistic
+      // separator and DON'T flag. Catches "Earthquake Kills Two,
+      // Evacuates 7,000" / "Strike Kills 12, Wounds 24" patterns where
+      // the comma joins multiple facts about ONE event.
+      const tailHasDigit = parts.slice(1).some(p => /\d/.test(p));
+
+      if ((everyPartHas3 || listCommaPattern) && !tailHasDigit) return 'comma_split';
     }
 
     return null;
