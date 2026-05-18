@@ -54,6 +54,13 @@ async function main() {
   let auditedThreads = 0;
   let flaggedCount = 0;
   let detachedCount = 0;
+  let deletedThreads = 0;
+
+  // After outlier detach, a thread that falls below this article floor is
+  // deleted outright — too few articles to constitute a "story". The same
+  // floor as storyThreadBuilder uses when forming new clusters, applied on
+  // the back end so detach-driven attrition doesn't leave orphan stubs.
+  const MIN_ARTICLES_AFTER_DETACH = 3;
 
   for (const t of threadRows) {
     if (auditedThreads >= MAX_THREADS) break;
@@ -121,13 +128,34 @@ async function main() {
             }
           }
           // Recompute article_count so the thread's badge stays truthful.
-          await pool.query(
+          const { rows: [{ new_count }] } = await pool.query(
             `UPDATE story_threads
                 SET article_count = (SELECT COUNT(*) FROM story_thread_articles WHERE thread_id = $1),
                     last_updated_at = NOW()
-              WHERE id = $1`,
+              WHERE id = $1
+            RETURNING article_count AS new_count`,
             [t.id]
           );
+
+          // Low-signal kill: if outlier detach drops the thread below the
+          // minimum-cluster floor, it's no longer a story — delete it. Same
+          // FK-cleanup pattern as auditJunkThreads.js: drop the briefing
+          // links first (won't cascade), then the join rows (would cascade
+          // but explicit is safer for high-cardinality joins), then the
+          // thread itself.
+          if (new_count < MIN_ARTICLES_AFTER_DETACH) {
+            try {
+              await pool.query(`DELETE FROM segment_story_links WHERE thread_id = $1`, [t.id]);
+              await pool.query(`DELETE FROM story_thread_articles WHERE thread_id = $1`, [t.id]);
+              await pool.query(`DELETE FROM story_threads WHERE id = $1`, [t.id]);
+              deletedThreads++;
+              console.log(`       💀 deleted: ${new_count} article(s) left — below floor of ${MIN_ARTICLES_AFTER_DETACH}`);
+              // Skip the last_audited_at stamp below — thread is gone.
+              continue;
+            } catch (err) {
+              console.warn(`       ⚠ low-signal delete failed (thread=${t.id}): ${err.message}`);
+            }
+          }
         }
       }
     }
@@ -146,7 +174,7 @@ async function main() {
   }
 
   console.log(`\n${DETACH ? '✅ Detach complete' : '✅ Dry run complete'} in ${el()}.`);
-  console.log(`   threads_audited=${auditedThreads} outliers_flagged=${flaggedCount}${DETACH ? ` detach_rows=${detachedCount}` : ''}`);
+  console.log(`   threads_audited=${auditedThreads} outliers_flagged=${flaggedCount}${DETACH ? ` detach_rows=${detachedCount} deleted_threads=${deletedThreads}` : ''}`);
   await pool.end();
 }
 
