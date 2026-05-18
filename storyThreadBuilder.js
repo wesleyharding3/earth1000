@@ -1632,21 +1632,29 @@ async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()
   }
   // Dual-story detector. A real thread is ONE story; titles like
   //   "Israel's Covert Iraq Sites, Hamas Chief Killed"
-  //   "Russia-Ukraine Prisoner Swap, US-Iran Tensions"
   // are frankensteins — two distinct events joined by a comma. The audit
   // script renames these post-hoc via title_verdict, but it's cheaper to
   // reject at birth than to create + audit + rename.
   //
   // Deliberately CONSERVATIVE — only the clearest cases. The audit is the
-  // safety net for the rest. Specifically we do NOT flag "X amid Y"
-  // patterns: in production most of those are legit single stories with
-  // a contextual backdrop ("Brent Crude Surges Past $111 Amid Iran
-  // Tensions", "Museveni Inaugurated Amid Corruption Skepticism") and
-  // the false-positive rate was 13% of recent threads.
+  // safety net for the rest. Notes on what we deliberately DON'T flag:
+  //   - "X amid Y" / "X while Y" — in production most are legit single
+  //     stories with a backdrop ("Brent Crude Surges Past $111 Amid Iran
+  //     Tensions"); false-positive rate was 13%.
+  //   - Semicolon splits — "kills six; suspect at large" reads as a list
+  //     continuation in the same event ("Armed Attack Near Mersin, Turkey
+  //     Kills Six; Suspect At Large" production false positive 2026-05-18).
+  //     Audit's title_verdict handles real semicolon-duals via Claude.
   //
   // Rule: a comma separating two clauses, each at least 3 words long,
-  // and the comma is NOT between digits (skips number-internal commas
-  // like "5,300" or "$1,176").
+  // where the comma is NOT between digits and NOT a "city, Country"
+  // place qualifier.
+  //
+  // Common country names that frequently appear in city,country format
+  // — comma + this word should NOT count as a clause break. We don't
+  // try to be exhaustive; just hit the most common false-positive sources.
+  const COUNTRY_QUALIFIER = /,\s+(Turkey|Russia|China|India|France|Germany|Mexico|Italy|Iran|Iraq|Japan|Egypt|Spain|Korea|Sweden|Norway|Greece|Brazil|Cuba|Yemen|Kenya|Sudan|Libya|Indonesia|Thailand|Vietnam|Pakistan|Afghanistan|Lebanon|Syria|Jordan|Israel|Palestine|Ukraine|Belarus|Poland|Romania|Hungary|Bulgaria|Serbia|Croatia|Slovakia|Austria|Belgium|Portugal|Ireland|Finland|Denmark|Estonia|Latvia|Lithuania|Argentina|Colombia|Venezuela|Bolivia|Paraguay|Uruguay|Nicaragua|Honduras|Guatemala|Panama|Jamaica|Haiti|Mongolia|Nepal|Cambodia|Laos|Myanmar|Philippines|Singapore|Malaysia|Australia|Nigeria|Ghana|Senegal|Mali|Cameroon|Uganda|Tanzania|Zambia|Zimbabwe|Botswana|Namibia|Angola|Congo|Rwanda|Madagascar|Mozambique|Eritrea|Somalia|Ethiopia|Tunisia|Algeria|Morocco|Iceland|Slovenia|Bangladesh|Qatar|Kuwait|Oman|Bahrain|Canada|Brazil)\b/g;
+
   function looksLikeDualStory(title) {
     const t = String(title || '').trim();
     if (!t) return null;
@@ -1655,19 +1663,17 @@ async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()
     // Talks", not the parent theme that precedes the colon.
     const main = t.includes(':') ? t.slice(t.indexOf(':') + 1).trim() : t;
 
-    // Skip number-internal commas: "Haiti Displaces 5,300 in Three Days"
-    // is one story, not two. Replace digit,digit with digit-digit so the
-    // split below ignores them.
-    const noNumCommas = main.replace(/(\d),(\d)/g, '$1$2');
+    // Strip number-internal commas first.
+    let cleaned = main.replace(/(\d),(\d)/g, '$1$2');
+    // Then strip "city, Country" place qualifiers so the comma stops
+    // looking like a clause break. The country is preserved as part of
+    // the place phrase.
+    cleaned = cleaned.replace(COUNTRY_QUALIFIER, ' $1');
 
-    // Split on EITHER comma or semicolon — the production sweep found
-    // semicolon-dual titles like "Trump-Xi Beijing Summit Affirms North
-    // Korea Denuclearization Goal; Taiwan Tensions Rise" that the
-    // comma-only check missed.
-    const parts = noNumCommas.split(/[,;]/).map(s => s.trim()).filter(Boolean);
+    const parts = cleaned.split(',').map(s => s.trim()).filter(Boolean);
     if (parts.length >= 2) {
       const allSubstantive = parts.every(p => p.split(/\s+/).length >= 3);
-      if (allSubstantive) return 'split';
+      if (allSubstantive) return 'comma_split';
     }
 
     return null;
