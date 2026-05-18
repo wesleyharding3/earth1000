@@ -226,9 +226,10 @@ async function run() {
   // Rules below are the same as the standalone pruneKeywords.js, folded in
   // here so the weekly cron handles everything in one pass.
   // Some rules seq-scan a 90M+ row table (no index on frequency/length/
-  // regex). Bump the session-level statement_timeout so they don't get
-  // killed mid-DELETE by the pool's default 45s.
-  await pool.query(`SET statement_timeout = '30min'`);
+  // regex). Use a dedicated client connection so SET statement_timeout
+  // sticks for the whole phase — pool.query() picks whatever connection
+  // is free, so the SET wasn't being honored on subsequent queries (the
+  // first attempted run hit the pool's default 45s on the orphan delete).
   const KW_MIN_LEN = 3;
   const KW_MIN_FREQ = 1;
   const KW_MIN_GLOBAL = 2;
@@ -236,69 +237,81 @@ async function run() {
   const KW_BATCH = 10000;
 
   if (!DRY_RUN) {
-    // 3a. orphans (article gone, keyword left behind)
-    const { rowCount: kw0 } = await pool.query(`
-      DELETE FROM article_keywords
-       WHERE article_id NOT IN (SELECT id FROM news_articles)
-    `);
-    log(`  3a orphans (article missing): ${kw0.toLocaleString()} rows`);
+    const kwClient = await pool.connect();
+    try {
+      await kwClient.query(`SET statement_timeout = '60min'`);
 
-    // 3b. pure-numeric keywords
-    const { rowCount: kw1 } = await pool.query(`
-      DELETE FROM article_keywords WHERE keyword ~ '^[0-9]+$'
-    `);
-    log(`  3b pure numeric: ${kw1.toLocaleString()} rows`);
+      // 3a. orphans (article gone, keyword left behind). Rewritten from
+      // NOT IN to NOT EXISTS — the planner picks an anti-join over the
+      // (article_id) index instead of a hash-of-all-articles, which is
+      // what hung the previous run.
+      const { rowCount: kw0 } = await kwClient.query(`
+        DELETE FROM article_keywords ak
+         WHERE NOT EXISTS (
+           SELECT 1 FROM news_articles a WHERE a.id = ak.article_id
+         )
+      `);
+      log(`  3a orphans (article missing): ${kw0.toLocaleString()} rows`);
 
-    // 3c. short keywords
-    const { rowCount: kw2 } = await pool.query(`
-      DELETE FROM article_keywords WHERE LENGTH(keyword) < $1
-    `, [KW_MIN_LEN]);
-    log(`  3c length < ${KW_MIN_LEN} chars: ${kw2.toLocaleString()} rows`);
+      // 3b. pure-numeric keywords
+      const { rowCount: kw1 } = await kwClient.query(`
+        DELETE FROM article_keywords WHERE keyword ~ '^[0-9]+$'
+      `);
+      log(`  3b pure numeric: ${kw1.toLocaleString()} rows`);
 
-    // 3d. frequency <= 1
-    const { rowCount: kw3 } = await pool.query(`
-      DELETE FROM article_keywords WHERE frequency <= $1
-    `, [KW_MIN_FREQ]);
-    log(`  3d frequency <= ${KW_MIN_FREQ}: ${kw3.toLocaleString()} rows`);
+      // 3c. short keywords
+      const { rowCount: kw2 } = await kwClient.query(`
+        DELETE FROM article_keywords WHERE LENGTH(keyword) < $1
+      `, [KW_MIN_LEN]);
+      log(`  3c length < ${KW_MIN_LEN} chars: ${kw2.toLocaleString()} rows`);
 
-    // 3e. global rare (< MIN_GLOBAL occurrences) — batched to avoid long locks
-    let kw4Total = 0;
-    while (true) {
-      const { rowCount } = await pool.query(`
+      // 3d. frequency <= 1
+      const { rowCount: kw3 } = await kwClient.query(`
+        DELETE FROM article_keywords WHERE frequency <= $1
+      `, [KW_MIN_FREQ]);
+      log(`  3d frequency <= ${KW_MIN_FREQ}: ${kw3.toLocaleString()} rows`);
+
+      // 3e. global rare (< MIN_GLOBAL occurrences) — batched to avoid long locks
+      let kw4Total = 0;
+      while (true) {
+        const { rowCount } = await kwClient.query(`
+          DELETE FROM article_keywords
+           WHERE id IN (
+             SELECT ak.id
+               FROM article_keywords ak
+               JOIN (
+                 SELECT keyword
+                   FROM article_keywords
+                  GROUP BY keyword
+                 HAVING COUNT(*) < $1
+                  LIMIT $2
+               ) low ON low.keyword = ak.keyword
+           )
+        `, [KW_MIN_GLOBAL, KW_BATCH]);
+        if (rowCount === 0) break;
+        kw4Total += rowCount;
+      }
+      log(`  3e global < ${KW_MIN_GLOBAL} occurrences: ${kw4Total.toLocaleString()} rows`);
+
+      // 3f. trim per-article tail to top-N by frequency
+      const { rowCount: kw5 } = await kwClient.query(`
         DELETE FROM article_keywords
          WHERE id IN (
-           SELECT ak.id
-             FROM article_keywords ak
-             JOIN (
-               SELECT keyword
-                 FROM article_keywords
-                GROUP BY keyword
-               HAVING COUNT(*) < $1
-                LIMIT $2
-             ) low ON low.keyword = ak.keyword
+           SELECT id FROM (
+             SELECT id,
+                    ROW_NUMBER() OVER (PARTITION BY article_id ORDER BY frequency DESC) AS rn
+               FROM article_keywords
+           ) ranked
+          WHERE rn > $1
          )
-      `, [KW_MIN_GLOBAL, KW_BATCH]);
-      if (rowCount === 0) break;
-      kw4Total += rowCount;
+      `, [KW_MAX_PER_ARTICLE]);
+      log(`  3f beyond top ${KW_MAX_PER_ARTICLE} per article: ${kw5.toLocaleString()} rows`);
+
+      const totalKw = kw0 + kw1 + kw2 + kw3 + kw4Total + kw5;
+      log(`  Total article_keywords purged: ${totalKw.toLocaleString()} rows`);
+    } finally {
+      kwClient.release();
     }
-    log(`  3e global < ${KW_MIN_GLOBAL} occurrences: ${kw4Total.toLocaleString()} rows`);
-
-    // 3f. trim per-article tail to top-N by frequency
-    const { rowCount: kw5 } = await pool.query(`
-      DELETE FROM article_keywords
-       WHERE id IN (
-         SELECT id FROM (
-           SELECT id,
-                  ROW_NUMBER() OVER (PARTITION BY article_id ORDER BY frequency DESC) AS rn
-             FROM article_keywords
-         ) ranked
-        WHERE rn > $1
-       )
-    `, [KW_MAX_PER_ARTICLE]);
-    log(`  3f beyond top ${KW_MAX_PER_ARTICLE} per article: ${kw5.toLocaleString()} rows`);
-
-    const totalKw = kw0 + kw1 + kw2 + kw3 + kw4Total + kw5;
-    log(`  Total article_keywords purged: ${totalKw.toLocaleString()} rows`);
   } else {
     // Dry-run: just count what each rule would remove (additive, so an
     // upper bound — rules overlap, e.g. a numeric short keyword counts in

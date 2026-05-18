@@ -334,6 +334,27 @@ When deciding whether an article extends an existing thread, READ the \`members\
 ═══ THE TWO-VAGUE-NOUNS TEST ═══
 If a proposed title is just "[Place] [Abstract Noun] and [Abstract Noun]" (e.g. "Mexico Health Crisis and Economic Inequality", "Indonesia Industrial Safety and Transportation Incidents") — that is a topic bucket, not a story. Reject it. A real thread title names a concrete event, actor, or decision: "Mexico cartel offensive in Sinaloa", "Indonesia ferry capsizes off Java killing 40", etc.
 
+═══ NO DUAL-STORY TITLES ═══
+A thread is ONE story. NEVER write a title that bundles TWO DISTINCT EVENTS using a comma, "amid", "amidst", "while", "as", or "&". This is the single most common quality failure on this platform and your title WILL BE AUTOMATICALLY REJECTED if it matches the pattern.
+
+BAD (reject — two distinct events crammed together):
+  • "Israel's Covert Iraq Sites, Hamas Chief Killed" → Iraq base story + Gaza assassination = TWO stories
+  • "Baltic Airspace Breaches Amid Turkic Summit" → Latvia drones + OTS summit = TWO stories
+  • "Russia-Ukraine Prisoner Swap, US-Iran Tensions" → POW exchange + Iran standoff = TWO stories
+  • "Hormuz Blockade and Ceasefire Negotiations" → blockade + diplomacy = TWO events
+  • "Modi's Europe Tour Amid UAE Mediation" → state visit + separate mediation = TWO stories
+
+ALLOWED (single story with co-actors or causal chain):
+  • "Russia and China Block UN Hormuz Resolution" → ONE event, two co-actors joined by "and"
+  • "Armenia-Azerbaijan Transit Corridor Opens After Ceasefire" → cause/effect of ONE story
+  • "Israeli Consulate Attacked in Istanbul: Iran Links Suspected" → ONE event, supplementary claim
+
+If the candidate articles describe TWO distinct events, do NOT bundle them into one thread. Instead:
+  1. Pick the dominant event with the most articles and create a thread containing ONLY those articles, OR
+  2. Return an empty array if no single event has ≥3 articles of clear convergence.
+
+It is ALWAYS better to leave articles as singletons and let them re-cluster next run than to ship a dual-title thread.
+
 If an article doesn't fit the inclusion criteria above, OMIT it entirely. Do not invent a thread to hold it. It is correct and expected to return an empty array if none of the articles qualify.
 
 ═══ GROUPING RULES ═══
@@ -1192,6 +1213,27 @@ When deciding whether an article extends an existing thread, READ the \`members\
 ═══ THE TWO-VAGUE-NOUNS TEST ═══
 If a proposed title is just "[Place] [Abstract Noun] and [Abstract Noun]" (e.g. "Mexico Health Crisis and Economic Inequality", "Indonesia Industrial Safety and Transportation Incidents") — that is a topic bucket, not a story. Reject it. A real thread title names a concrete event, actor, or decision: "Mexico cartel offensive in Sinaloa", "Indonesia ferry capsizes off Java killing 40", etc.
 
+═══ NO DUAL-STORY TITLES ═══
+A thread is ONE story. NEVER write a title that bundles TWO DISTINCT EVENTS using a comma, "amid", "amidst", "while", "as", or "&". This is the single most common quality failure on this platform and your title WILL BE AUTOMATICALLY REJECTED if it matches the pattern.
+
+BAD (reject — two distinct events crammed together):
+  • "Israel's Covert Iraq Sites, Hamas Chief Killed" → Iraq base story + Gaza assassination = TWO stories
+  • "Baltic Airspace Breaches Amid Turkic Summit" → Latvia drones + OTS summit = TWO stories
+  • "Russia-Ukraine Prisoner Swap, US-Iran Tensions" → POW exchange + Iran standoff = TWO stories
+  • "Hormuz Blockade and Ceasefire Negotiations" → blockade + diplomacy = TWO events
+  • "Modi's Europe Tour Amid UAE Mediation" → state visit + separate mediation = TWO stories
+
+ALLOWED (single story with co-actors or causal chain):
+  • "Russia and China Block UN Hormuz Resolution" → ONE event, two co-actors joined by "and"
+  • "Armenia-Azerbaijan Transit Corridor Opens After Ceasefire" → cause/effect of ONE story
+  • "Israeli Consulate Attacked in Istanbul: Iran Links Suspected" → ONE event, supplementary claim
+
+If the candidate articles describe TWO distinct events, do NOT bundle them into one thread. Instead:
+  1. Pick the dominant event with the most articles and create a thread containing ONLY those articles, OR
+  2. Return an empty array if no single event has ≥3 articles of clear convergence.
+
+It is ALWAYS better to leave articles as singletons and let them re-cluster next run than to ship a dual-title thread.
+
 If an article doesn't fit the inclusion criteria above, OMIT it entirely. Do not invent a thread to hold it. It is correct and expected to return an empty array if none of the articles qualify.
 
 ═══ GROUPING RULES ═══
@@ -1588,6 +1630,45 @@ async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()
     if (tokens.length <= 6 && abstractCount / tokens.length >= 0.4) return true;
     return false;
   }
+  // Dual-story detector. A real thread is ONE story; titles like
+  //   "Israel's Covert Iraq Sites, Hamas Chief Killed"
+  //   "Russia-Ukraine Prisoner Swap, US-Iran Tensions"
+  // are frankensteins — two distinct events joined by a comma. The audit
+  // script renames these post-hoc via title_verdict, but it's cheaper to
+  // reject at birth than to create + audit + rename.
+  //
+  // Deliberately CONSERVATIVE — only the clearest cases. The audit is the
+  // safety net for the rest. Specifically we do NOT flag "X amid Y"
+  // patterns: in production most of those are legit single stories with
+  // a contextual backdrop ("Brent Crude Surges Past $111 Amid Iran
+  // Tensions", "Museveni Inaugurated Amid Corruption Skepticism") and
+  // the false-positive rate was 13% of recent threads.
+  //
+  // Rule: a comma separating two clauses, each at least 3 words long,
+  // and the comma is NOT between digits (skips number-internal commas
+  // like "5,300" or "$1,176").
+  function looksLikeDualStory(title) {
+    const t = String(title || '').trim();
+    if (!t) return null;
+    // Evaluate the part after any colon — "Trump-Iran War: Hormuz Blockade,
+    // Ceasefire Talks" should be judged on "Hormuz Blockade, Ceasefire
+    // Talks", not the parent theme that precedes the colon.
+    const main = t.includes(':') ? t.slice(t.indexOf(':') + 1).trim() : t;
+
+    // Skip number-internal commas: "Haiti Displaces 5,300 in Three Days"
+    // is one story, not two. Replace digit,digit with digit-digit so the
+    // split below ignores them.
+    const noNumCommas = main.replace(/(\d),(\d)/g, '$1$2');
+
+    const commaParts = noNumCommas.split(',').map(s => s.trim()).filter(Boolean);
+    if (commaParts.length >= 2) {
+      const allSubstantive = commaParts.every(p => p.split(/\s+/).length >= 3);
+      if (allSubstantive) return 'comma_split';
+    }
+
+    return null;
+  }
+
   function isJunkThreadDef(def) {
     const cat = String(def.primary_category || '').toLowerCase();
     // Off-topic categories: Claude tagged this honestly as sports /
@@ -1602,6 +1683,8 @@ async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()
       if (re.test(title)) return `title-pattern:${re.source.slice(0,40)}`;
     }
     if (looksLikeTopicBucket(title)) return `topic-bucket`;
+    const dualReason = looksLikeDualStory(title);
+    if (dualReason) return `dual-story:${dualReason}`;
     return null;
   }
 
