@@ -1704,6 +1704,18 @@ async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()
   function looksLikeDualStory(title) {
     const t = String(title || '').trim();
     if (!t) return null;
+    // Semicolons in titles almost always signal a hierarchical
+    // structure where the SEMICOLON is the major break (event;
+    // fact-list) and commas inside are fact separators, not clause
+    // breaks. Examples that are ONE event:
+    //   "San Diego Islamic Center Shooting; Multiple Dead, Suspects Neutralized"
+    //   "Armed Attack Near Mersin, Turkey Kills Six; Suspect At Large"
+    //   "Bombing in Mali; 20 dead, dozens wounded"
+    // The comma-split heuristic misfires on these (commas look like
+    // clause breaks). Defer semicolon titles to the audit — its
+    // title_verdict (Claude reading the articles) correctly
+    // distinguishes real semicolon-duals from fact continuation.
+    if (t.includes(';')) return null;
     // Evaluate the part after any colon — "Trump-Iran War: Hormuz Blockade,
     // Ceasefire Talks" should be judged on "Hormuz Blockade, Ceasefire
     // Talks", not the parent theme that precedes the colon.
