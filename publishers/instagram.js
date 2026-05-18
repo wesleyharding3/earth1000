@@ -156,10 +156,21 @@ async function publish(draft, env) {
     // Wait for every item to finish transcoding. Each video container
     // takes ~5-30s on IG's side — we poll FINISHED status before the
     // parent carousel is created, otherwise the parent rejects.
-    try {
-      for (const id of itemIds) await _waitForContainerReady(base, id, token);
-    } catch (err) {
-      return { ok: false, error: `IG video-carousel item processing: ${err.message}` };
+    //
+    // Per-item try/catch so the error tells us WHICH slide failed
+    // (index + source video URL). The IG error code 2207077 is a
+    // catch-all for media-upload failures, so we need the slide
+    // identifier to diagnose (was it the portrait, arc, pie, or
+    // articles slide?).
+    for (let i = 0; i < itemIds.length; i++) {
+      try {
+        await _waitForContainerReady(base, itemIds[i], token);
+      } catch (err) {
+        return {
+          ok: false,
+          error: `IG video-carousel item[${i}] (${items[i]}): ${err.message}`,
+        };
+      }
     }
 
     // Parent carousel container — caption lives here, not on items.
