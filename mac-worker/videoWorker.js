@@ -329,7 +329,13 @@ async function renderVideo(job) {
     // Was anullsrc silence, but silent AAC compresses to ~2 kbps which
     // trips IG's carousel-item audio-bitrate floor and the entire
     // carousel fails with error code 2207077.
-    const morsePath = path.join(__dirname, '..', 'audio', 'briefing', 'morse-room-signal.mp3');
+    //
+    // File lives as a SIBLING of this script (not in the repo's
+    // audio/briefing/ dir) because install.sh copies videoWorker.js to
+    // ~/Library/Application Support/earth00-worker/ and the worker
+    // runs from there — the repo's audio/ tree isn't present on the
+    // installed worker. install.sh copies the mp3 alongside.
+    const morsePath = path.join(__dirname, 'morse-room-signal.mp3');
     const ffmpeg = spawn(ffmpegPath, [
       '-y', '-hide_banner', '-loglevel', 'error',
       '-f', 'image2pipe', '-framerate', String(TARGET_FPS), '-i', 'pipe:0',
