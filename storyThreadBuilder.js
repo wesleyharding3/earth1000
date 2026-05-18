@@ -1660,10 +1660,14 @@ async function persistThreadDefs(defs, validIdSet, existingThreadMap = new Map()
     // split below ignores them.
     const noNumCommas = main.replace(/(\d),(\d)/g, '$1$2');
 
-    const commaParts = noNumCommas.split(',').map(s => s.trim()).filter(Boolean);
-    if (commaParts.length >= 2) {
-      const allSubstantive = commaParts.every(p => p.split(/\s+/).length >= 3);
-      if (allSubstantive) return 'comma_split';
+    // Split on EITHER comma or semicolon — the production sweep found
+    // semicolon-dual titles like "Trump-Xi Beijing Summit Affirms North
+    // Korea Denuclearization Goal; Taiwan Tensions Rise" that the
+    // comma-only check missed.
+    const parts = noNumCommas.split(/[,;]/).map(s => s.trim()).filter(Boolean);
+    if (parts.length >= 2) {
+      const allSubstantive = parts.every(p => p.split(/\s+/).length >= 3);
+      if (allSubstantive) return 'split';
     }
 
     return null;

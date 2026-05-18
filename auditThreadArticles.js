@@ -322,7 +322,7 @@ For each article, decide if it belongs to the dominant story or is an outlier.
 STEP 3 — Judge the stored title.
 After identifying the dominant story, decide if the stored title accurately and ONLY describes that story.
 - "matches"     → title is a fair summary of the dominant story alone.
-- "dual_story"  → title contains TWO distinct stories joined by a comma, "and", "amid", "as", "while", "&", etc. (e.g. "Iraq Sites, Hamas Chief Killed" — two events; "Baltic Airspace Breaches Amid Turkic Summit" — two events).
+- "dual_story"  → title contains TWO distinct stories joined by a comma, semicolon, "and", "amid", "as", "while", "&", etc. (e.g. "Iraq Sites, Hamas Chief Killed" — two events; "Baltic Airspace Breaches Amid Turkic Summit" — two events; "Beijing Summit Affirms Denuclearization; Taiwan Tensions Rise" — two events).
 - "drifted"     → title describes a different story than the dominant cluster, OR is too broad / off-topic.
 
 STEP 4 — Recommend a clean title.
