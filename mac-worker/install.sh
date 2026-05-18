@@ -36,11 +36,10 @@ echo "==> Copying videoWorker.js to $WORKER_HOME"
 cp "$SCRIPT_DIR/videoWorker.js" "$WORKER_HOME/videoWorker.js"
 
 # Audio track for arc.mp4 — the worker resolves it as a sibling of
-# videoWorker.js. Without this, ffmpeg falls back to no-audio output
-# (silent) and IG carousel items get rejected with error 2207077
-# because silent AAC compresses below the platform's bitrate floor.
-echo "==> Copying morse-room-signal.mp3 alongside videoWorker.js"
-cp "$SCRIPT_DIR/../audio/briefing/morse-room-signal.mp3" "$WORKER_HOME/morse-room-signal.mp3"
+# videoWorker.js. Same portrait.mp3 the server-side card renderer uses,
+# so all 4 IG carousel slides share one unified audio motif.
+echo "==> Copying portrait.mp3 alongside videoWorker.js"
+cp "$SCRIPT_DIR/../audio/carousel/portrait.mp3" "$WORKER_HOME/portrait.mp3"
 
 echo "==> Installing puppeteer into $WORKER_HOME (will download Chromium ~170MB)"
 cd "$WORKER_HOME"

@@ -339,20 +339,25 @@ async function renderVideo(job) {
     const tmpOut       = path.join(tmpDir, `arc-det-${process.pid}-${Date.now()}.mp4`);
     const ffmpegPath   = require('@ffmpeg-installer/ffmpeg').path;
     const { spawn }    = require('child_process');
-    // Silent audio track — anullsrc. Tried using the morse-room-signal
-    // theme for branding but Meta's audio fingerprinting flagged it and
-    // BOTH Threads and IG started rejecting the result (Threads had
-    // been happily accepting silent arc.mp4 for the prior 6 hours).
-    // Reverted. Real-bitrate audio still pending an alternative
-    // non-fingerprinted source.
+    // Audio: same portrait.mp3 loop the server-side card renderer uses,
+    // so the whole 4-slide IG carousel shares one unified motif. The 4s
+    // loop plays ~3.75 times across the arc's 15s duration; the final
+    // cycle gets cut mid-phrase at 15s. Masking that with a 0.5s
+    // fade-out so the truncation isn't audible.
+    //
+    // File ships as a sibling of videoWorker.js (install.sh copies it
+    // from the repo's audio/carousel/portrait.mp3 to the install dir).
+    const audioPath = path.join(__dirname, 'portrait.mp3');
     const ffmpeg = spawn(ffmpegPath, [
       '-y', '-hide_banner', '-loglevel', 'error',
       '-f', 'image2pipe', '-framerate', String(TARGET_FPS), '-i', 'pipe:0',
-      '-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100',
+      '-stream_loop', '-1', '-i', audioPath,
+      '-map', '0:v', '-map', '1:a:0',
       '-c:v', 'libx264', '-preset', 'fast', '-crf', '20',
       '-pix_fmt', 'yuv420p', '-profile:v', 'high', '-movflags', '+faststart',
       '-r', String(TARGET_FPS), '-t', String(spinSeconds),
-      '-c:a', 'aac', '-b:a', '128k',
+      '-af', 'afade=t=out:st=14.5:d=0.5',
+      '-c:a', 'aac', '-b:a', '128k', '-ar', '44100', '-ac', '2',
       '-f', 'mp4', tmpOut,
     ], { stdio: ['pipe', 'ignore', 'pipe'] });
     const ffStderr = [];

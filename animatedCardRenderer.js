@@ -93,23 +93,27 @@ function _spawnEncoder({ fps, durationS, width, height }) {
   const tmpDir = require('os').tmpdir();
   const tmpPath = path.join(tmpDir, `earth00-card-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.mp4`);
 
-  // Silent audio track — anullsrc. Tried using morse-room-signal for
-  // branding but Meta's audio fingerprinting flagged it (both IG AND
-  // Threads regressed from previously-passing silent arcs). Reverted.
-  // The remaining IG carousel rejection (error 2207077) is suspected to
-  // be card *video bitrate* (cards are ~500 kbps; arc is ~3 Mbps and
-  // arc passes REELS validation cleanly) — addressed separately by
-  // dropping CRF.
+  // Audio: portrait.mp3 (a 4s segment cut from the user's own wes.wav).
+  // Same loop plays under every carousel slide — unified motif across
+  // the post. Card duration matches the audio's 4s, so it plays exactly
+  // one cycle with the file's own 50ms boundary fades hiding any seam.
+  // Using the user's own audio (not AI-generated like the morse track
+  // that Meta fingerprinted) so the upload won't get flagged.
+  const audioPath = path.join(__dirname, 'audio', 'carousel', 'portrait.mp3');
+
   const args = [
     '-y',
     '-hide_banner', '-loglevel', 'error',
-    // Image input over stdin (concatenated PNG frames)
+    // Image input (input 0): PNG frames over stdin.
     '-f', 'image2pipe',
     '-framerate', String(fps),
     '-i', 'pipe:0',
-    // Silent audio track — anullsrc generates zero-PCM stereo audio at 44.1kHz.
-    '-f', 'lavfi',
-    '-i', `anullsrc=channel_layout=stereo:sample_rate=44100`,
+    // Audio input (input 1): portrait.mp3 loop. stream_loop -1 just for
+    // safety in case durationS ever exceeds 4s.
+    '-stream_loop', '-1',
+    '-i', audioPath,
+    '-map', '0:v',
+    '-map', '1:a:0',
     // H.264 video, yuv420p for universal player compat. CRF 17 (was 22) —
     // pushes the encoded video bitrate up from ~500 kbps to ~2-3 Mbps so
     // IG carousel-item validation passes (lower-bitrate items had been
@@ -121,12 +125,12 @@ function _spawnEncoder({ fps, durationS, width, height }) {
     '-crf', '17',
     '-profile:v', 'high',
     '-movflags', '+faststart',
-    // Match the input fps + cap duration so the silent audio track
-    // doesn't extend the file beyond the last frame.
     '-r', String(fps),
     '-t', String(durationS),
     '-c:a', 'aac',
     '-b:a', '128k',
+    '-ar', '44100',
+    '-ac', '2',
     // Output to a seekable tmpfile (see header rationale above).
     '-f', 'mp4',
     tmpPath,

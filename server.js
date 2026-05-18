@@ -15473,7 +15473,7 @@ app.get('/share/thread/:id/portrait.mp4', async (req, res) => {
         } catch (e) { console.warn('[anim/portrait]', e.message); }
         return await animCard.generateVideo({
           kind:        'thread-portrait',
-          cacheKey:    `anim-portrait:v5:${id}:${new Date(t.last_updated_at || 0).getTime()}`,
+          cacheKey:    `anim-portrait:v6:${id}:${new Date(t.last_updated_at || 0).getTime()}`,
           title:       t.title,
           description: t.description,
           isos:        (t.primary_nations || []).slice(0, 6),
@@ -15528,7 +15528,7 @@ app.get('/share/thread/:id/pie.mp4', async (req, res) => {
         } catch (e) { console.warn('[anim/pie]', e.message); }
         return await animCard.generateVideo({
           kind:      'thread-coverage',
-          cacheKey:  `anim-pie:v5:${id}:${new Date(t.last_updated_at || 0).getTime()}:${sourceCount}`,
+          cacheKey:  `anim-pie:v6:${id}:${new Date(t.last_updated_at || 0).getTime()}:${sourceCount}`,
           title:     t.title,
           category:  t.primary_category,
           countryCounts,
@@ -15582,7 +15582,7 @@ app.get('/share/thread/:id/articles.mp4', async (req, res) => {
         } catch (e) { console.warn('[anim/articles]', e.message); }
         return await animCard.generateVideo({
           kind:      'thread-articles',
-          cacheKey:  `anim-articles:v4:${id}:${new Date(t.last_updated_at || 0).getTime()}:${articles.length}`,
+          cacheKey:  `anim-articles:v5:${id}:${new Date(t.last_updated_at || 0).getTime()}:${articles.length}`,
           title:     t.title,
           category:  t.primary_category,
           articles,
