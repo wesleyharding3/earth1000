@@ -17510,6 +17510,14 @@ function computeCityTiers(cities) {
               surfaceMat.map = satTex;
               surfaceMat.needsUpdate = true;
             }
+            // Signal for the Mac video worker. NASA's CDN is slow + variable
+            // (1-12s typical), and heavier threads (e.g. Taiwan w/ 875 arcs)
+            // delay the loader further because the page is busy mounting
+            // arcs. The worker's fixed 6s settle was too short on those —
+            // first ~10 frames captured the globe with country polygons
+            // visible but the surface mesh still un-textured (transparent).
+            // Worker now polls this flag instead.
+            window.__blueMarbleLoaded = true;
           }
         );
       })();

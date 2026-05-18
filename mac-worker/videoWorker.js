@@ -261,13 +261,28 @@ async function renderVideo(job) {
     });
     log(`  arcs in scene: ${arcCountInScene}`);
 
-    // Settle wait — bumped 2.5s → 6s so the Blue Marble satellite
-    // texture (high-res async upgrade fetched after initial page load)
-    // has time to fully load. Without this, the first ~10 frames
-    // captured the globe with only country polygons visible + the
-    // surface texture mesh transparent (texture not yet loaded),
-    // causing the user-reported "globe pops in halfway through" flicker.
-    await new Promise(r => setTimeout(r, 6000));
+    // Wait for the Blue Marble satellite texture to actually finish
+    // loading. Previously this was a fixed 6s sleep but heavier threads
+    // (e.g. Taiwan w/ 875 articles) keep the page busier mounting arcs,
+    // delaying the async NASA-CDN texture load past 6s — first ~10
+    // frames captured the globe with only country polygons visible
+    // (untextured surface mesh = transparent), causing the user-reported
+    // "globe pops in" flicker on that thread specifically.
+    //
+    // index.html sets window.__blueMarbleLoaded = true in the texture
+    // load callback. 15s ceiling guards against CDN failures so the
+    // worker never hangs — on timeout we proceed anyway (the globe
+    // falls back to the bundled low-res baseline texture, still better
+    // than not rendering at all).
+    try {
+      await page.waitForFunction(() => window.__blueMarbleLoaded === true, { timeout: 15000 });
+      log('  Blue Marble texture ready');
+    } catch (_) {
+      warn('  Blue Marble timeout (>15s) — proceeding with fallback texture');
+    }
+    // Small additional settle for any per-thread state still resolving
+    // after the texture lands (arc opacity easings, etc).
+    await new Promise(r => setTimeout(r, 1500));
 
     // ── Deterministic frame-by-frame rendering ──
     //
