@@ -428,10 +428,35 @@ async function run() {
   if (!articles.length) { console.log("   Nothing to thread. Done."); await pool.end(); return; }
 
   console.log(`   [${elapsed()}] Running SQL keyword clustering...`);
-  const clusters   = sqlCluster(articles);
-  const assigned   = new Set(clusters.flat().map(a => a.id));
-  const singletons = articles.filter(a => !assigned.has(a.id));
-  console.log(`   [${elapsed()}] Clusters: ${clusters.length} | Singletons: ${singletons.length}`);
+  const sqlClusters = sqlCluster(articles);
+  const sqlAssigned = new Set(sqlClusters.flat().map(a => a.id));
+  const sqlSingletons = articles.filter(a => !sqlAssigned.has(a.id));
+  console.log(`   [${elapsed()}] SQL clusters: ${sqlClusters.length} | SQL singletons: ${sqlSingletons.length}`);
+
+  // Embedding-based second pass: catches semantically-equivalent stories
+  // (same event, different vocabulary or different languages) that SQL's
+  // keyword-Jaccard floor (MIN_SHARED_KW=3) misses. Runs in-process,
+  // ~$0/run (cosine over already-stored embeddings). See
+  // embeddingClusterSingletons() above for the algorithm. Articles
+  // without an embedding (pre-backfill rows) pass through as
+  // singletons untouched.
+  console.log(`   [${elapsed()}] Running embedding clustering on SQL singletons...`);
+  const embClusters = embeddingClusterSingletons(sqlSingletons);
+  const embAssigned = new Set(embClusters.flat().map(a => a.id));
+  const trueSingletons = sqlSingletons.filter(a => !embAssigned.has(a.id));
+  const embeddedCount = sqlSingletons.filter(a => a.embedding).length;
+  console.log(
+    `   [${elapsed()}] Embedding clusters: ${embClusters.length} (from ${embeddedCount}/${sqlSingletons.length} embedded singletons) | ` +
+    `Articles clustered by embeddings: ${embAssigned.size} | True singletons: ${trueSingletons.length}`
+  );
+
+  // Merge both cluster sources. Claude can't tell them apart and
+  // doesn't need to — same prompt path serves both. SQL clusters
+  // tend to be wire-news with strong word overlap; embedding
+  // clusters tend to be cross-language same-event reports.
+  const clusters = [...sqlClusters, ...embClusters];
+  const singletons = trueSingletons;
+  console.log(`   [${elapsed()}] Total clusters into Claude: ${clusters.length} | Singletons: ${singletons.length}`);
 
   console.log(`   [${elapsed()}] Loading existing active threads...`);
   const existingThreads = await getActiveThreads();
@@ -597,6 +622,133 @@ function sqlCluster(articles) {
   }
 
   return Array.from(clusters.values()).filter(c => c.length >= MIN_CLUSTER);
+}
+
+// ─── Embedding-based clustering for SQL singletons ────────────────────────────
+//
+// sqlCluster's keyword-Jaccard floor (MIN_SHARED_KW=3) catches strongly-
+// overlapping word clusters but misses semantically-equivalent stories
+// that use different vocabulary or different languages. Example: a French
+// "séisme magnitude 5.2 frappe la Chine" article and a Thai "แผ่นดินไหว
+// 5.2 ถล่มกวางซี" article have 0 shared normalized keywords but are
+// reporting the same earthquake. SQL drops both as singletons; embeddings
+// cluster them at cosine 0.80+.
+//
+// This function runs after sqlCluster has had its pick. Inputs are the
+// "SQL singletons" — articles that couldn't be grouped on keyword
+// overlap. We compute pairwise cosine similarity over the embeddings
+// already on each article row, union-find pairs above EMBEDDING_SIM_THRESH,
+// then apply an avg-pairwise-sim guard so transitive chains
+// (a-b=0.65, b-c=0.65, a-c=0.05) don't produce frankenstein clusters.
+//
+// Returns clusters in the same shape sqlCluster returns: an array of
+// arrays of article objects. Callers merge these into the cluster pool
+// passed to planBatches/Claude. Articles WITHOUT embeddings (e.g. very
+// old rows pre-backfill) pass through unchanged as singletons.
+//
+// Tuning knobs (env vars):
+//   EMBEDDING_SIM_THRESHOLD   default 0.60   per-pair edge threshold
+//   EMBEDDING_AVG_THRESHOLD   default 0.60   cluster avg-sim post-pass guard
+//   EMBEDDING_RECENCY_DAYS    default 14     skip pairs from articles >N days apart
+//   EMBEDDING_MIN_CLUSTER     default 2      pairs are valid; Claude validates
+const EMBEDDING_SIM_THRESHOLD =
+  parseFloat(process.env.EMBEDDING_SIM_THRESHOLD || '0.60');
+const EMBEDDING_AVG_THRESHOLD =
+  parseFloat(process.env.EMBEDDING_AVG_THRESHOLD || '0.60');
+const EMBEDDING_RECENCY_DAYS  =
+  parseInt(process.env.EMBEDDING_RECENCY_DAYS    || '14', 10);
+const EMBEDDING_MIN_CLUSTER   =
+  parseInt(process.env.EMBEDDING_MIN_CLUSTER     || '2', 10);
+
+function _parseEmbedding(raw) {
+  // pgvector columns serialize as text '[0.1,-0.2,...]' by default in
+  // node-postgres. Handle either text or array if the driver upgrades.
+  if (!raw) return null;
+  if (raw instanceof Float32Array) return raw;
+  if (Array.isArray(raw)) return Float32Array.from(raw);
+  if (typeof raw !== 'string') return null;
+  const inner = raw.replace(/^\[/, '').replace(/\]$/, '');
+  if (!inner) return null;
+  const parts = inner.split(',');
+  const out = new Float32Array(parts.length);
+  for (let i = 0; i < parts.length; i++) out[i] = parseFloat(parts[i]);
+  return out;
+}
+
+function _cosine(a, b) {
+  // Inputs are L2-normalized by the embedder (normalize: true), so
+  // cosine_similarity = dot product. No magnitude division needed.
+  let s = 0;
+  for (let i = 0; i < a.length; i++) s += a[i] * b[i];
+  return s;
+}
+
+function embeddingClusterSingletons(singletons) {
+  // Index only the singletons that actually have embeddings. Older rows
+  // pre-backfill won't have one and remain as singletons untouched.
+  const indexed = [];
+  for (const a of singletons) {
+    const vec = _parseEmbedding(a.embedding);
+    if (!vec || vec.length === 0) continue;
+    indexed.push({
+      article: a,
+      vec,
+      time: new Date(a.published_at).getTime(),
+    });
+  }
+  if (indexed.length < 2) return [];
+
+  const RECENCY_MS = EMBEDDING_RECENCY_DAYS * 86400 * 1000;
+
+  // Union-find for cluster discovery.
+  const parent = indexed.map((_, i) => i);
+  const find = (x) => {
+    while (parent[x] !== x) { parent[x] = parent[parent[x]]; x = parent[x]; }
+    return x;
+  };
+  const union = (a, b) => { const r1 = find(a), r2 = find(b); if (r1 !== r2) parent[r1] = r2; };
+
+  // All-pairs cosine — O(n²). For ~1000 singletons that's 500k dot
+  // products of 384-dim vectors = a few hundred ms on a CPU.
+  for (let i = 0; i < indexed.length; i++) {
+    for (let j = i + 1; j < indexed.length; j++) {
+      const sim = _cosine(indexed[i].vec, indexed[j].vec);
+      if (sim < EMBEDDING_SIM_THRESHOLD) continue;
+      if (Math.abs(indexed[i].time - indexed[j].time) > RECENCY_MS) continue;
+      union(i, j);
+    }
+  }
+
+  // Collect candidates.
+  const groups = new Map();
+  for (let i = 0; i < indexed.length; i++) {
+    const root = find(i);
+    if (!groups.has(root)) groups.set(root, []);
+    groups.get(root).push(i);
+  }
+
+  // Frankenstein guard. Naive union-find chains: pair (a,b)=0.65 and
+  // (b,c)=0.65 unionize {a,b,c} even when (a,c) is 0.05. Reject any
+  // cluster of 3+ where the average pairwise similarity falls below
+  // EMBEDDING_AVG_THRESHOLD — that catches the worst transitive
+  // false-merges while leaving genuine multi-article clusters intact.
+  const result = [];
+  for (const cluster of groups.values()) {
+    if (cluster.length < EMBEDDING_MIN_CLUSTER) continue;
+    if (cluster.length >= 3) {
+      let sum = 0, count = 0;
+      for (let a = 0; a < cluster.length; a++) {
+        for (let b = a + 1; b < cluster.length; b++) {
+          sum += _cosine(indexed[cluster[a]].vec, indexed[cluster[b]].vec);
+          count++;
+        }
+      }
+      const avg = count ? sum / count : 0;
+      if (avg < EMBEDDING_AVG_THRESHOLD) continue;
+    }
+    result.push(cluster.map(idx => indexed[idx].article));
+  }
+  return result;
 }
 
 function chunkSingletons(singletons, size) {
@@ -2304,6 +2456,7 @@ async function getUnthreadedArticles(hours) {
         co.iso_code AS country_iso,
         co.name AS country_name,
         ci.name AS city_name,
+        a.embedding,
         ROW_NUMBER() OVER (
           PARTITION BY COALESCE(a.source_id::text, a.youtube_source_id::text, 'unknown')
           ORDER BY a.published_at DESC
@@ -2321,7 +2474,7 @@ async function getUnthreadedArticles(hours) {
         )
     )
     SELECT id, title, summary, translated_summary, published_at,
-           source_name, country_iso, country_name, city_name
+           source_name, country_iso, country_name, city_name, embedding
     FROM ranked
     WHERE source_rank <= 5
     ORDER BY published_at DESC
