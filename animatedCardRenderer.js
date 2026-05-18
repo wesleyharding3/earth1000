@@ -209,10 +209,28 @@ async function generateVideo(entity, opts = {}) {
     writeError = err;
   });
 
+  // Cover-flash mode: IG VIDEO_CAROUSEL uses the first frame of the
+  // first carousel item as the post's cover thumbnail. If the portrait
+  // card animates in from blank, the cover ends up a half-rendered
+  // mess. By rendering frame 0 at progress=1 (fully-drawn finished
+  // state), the cover thumbnail is the polished card. Frames 1..N then
+  // play the normal animation from progress=0→1 — viewers see a tiny
+  // (~33ms at 30fps) flicker on playback, near the threshold of human
+  // perception. Only applied to 'thread-portrait' (= slide 1 of the IG
+  // carousel) since the other kinds aren't the cover.
+  const coverFlash = entity.kind === 'thread-portrait';
+
   try {
     for (let i = 0; i < frameCount; i++) {
       if (writeError) break;
-      const progress = i / Math.max(1, frameCount - 1);
+      let progress;
+      if (coverFlash && i === 0) {
+        progress = 1;
+      } else if (coverFlash) {
+        progress = (i - 1) / Math.max(1, frameCount - 2);
+      } else {
+        progress = i / Math.max(1, frameCount - 1);
+      }
       const png = await shareImg.generateFrame(entity, progress);
       // Back-pressure aware write — pause the loop if stdin's buffer is
       // full until 'drain' fires, otherwise high-frame-count renders

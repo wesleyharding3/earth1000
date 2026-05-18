@@ -15473,7 +15473,7 @@ app.get('/share/thread/:id/portrait.mp4', async (req, res) => {
         } catch (e) { console.warn('[anim/portrait]', e.message); }
         return await animCard.generateVideo({
           kind:        'thread-portrait',
-          cacheKey:    `anim-portrait:v4:${id}:${new Date(t.last_updated_at || 0).getTime()}`,
+          cacheKey:    `anim-portrait:v5:${id}:${new Date(t.last_updated_at || 0).getTime()}`,
           title:       t.title,
           description: t.description,
           isos:        (t.primary_nations || []).slice(0, 6),
