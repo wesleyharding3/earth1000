@@ -56,12 +56,30 @@ async function main() {
   let detachedCount = 0;
   let deletedThreads = 0;
   let renamedThreads = 0;
+  let singleSourceKills = 0;
+  let outlierRatioKills = 0;
 
   // After outlier detach, a thread that falls below this article floor is
   // deleted outright — too few articles to constitute a "story". The same
   // floor as storyThreadBuilder uses when forming new clusters, applied on
   // the back end so detach-driven attrition doesn't leave orphan stubs.
   const MIN_ARTICLES_AFTER_DETACH = 3;
+  // Single-source quality floor — a thread with only one source publishing
+  // >=5 articles is republish-spam, not a story. Killed pre-Claude (no
+  // API call wasted).
+  const SINGLE_SOURCE_MIN_ARTICLES = 5;
+  // Outlier-ratio kill — if Claude flags >50% of audited articles as
+  // outliers, the cluster is fundamentally broken (not just contaminated).
+  // Delete the whole thread instead of leaving the surviving half as an
+  // orphan stub with a now-misleading title.
+  const OUTLIER_RATIO_KILL = 0.50;
+
+  async function killThread(threadId, reason) {
+    await pool.query(`DELETE FROM segment_story_links WHERE thread_id = $1`, [threadId]);
+    await pool.query(`DELETE FROM story_thread_articles WHERE thread_id = $1`, [threadId]);
+    await pool.query(`DELETE FROM story_threads WHERE id = $1`, [threadId]);
+    console.log(`       💀 deleted: ${reason}`);
+  }
 
   for (const t of threadRows) {
     if (auditedThreads >= MAX_THREADS) break;
@@ -70,6 +88,25 @@ async function main() {
     if (articles.length < MIN_ARTICLES) continue;
 
     auditedThreads++;
+
+    // Pre-Claude single-source kill. A thread with only one source
+    // publishing >=5 articles is the same wire-service republished N
+    // times — not a story by any meaningful definition. Skip the Claude
+    // call entirely; delete and move on.
+    if (DETACH
+        && Number(t.distinct_source_count || 0) === 1
+        && articles.length >= SINGLE_SOURCE_MIN_ARTICLES) {
+      console.log(`   [${el()}] Thread ${t.id} "${(t.title || '').slice(0, 60)}" → 💀 single-source (${articles.length} arts / 1 src)`);
+      try {
+        await killThread(t.id, `single-source republish (${articles.length} arts / 1 src)`);
+        deletedThreads++;
+        singleSourceKills++;
+      } catch (err) {
+        console.warn(`       ⚠ single-source delete failed: ${err.message}`);
+      }
+      continue;
+    }
+
     process.stdout.write(`   [${el()}] Thread ${t.id} (${articles.length} arts) "${(t.title || '').slice(0, 60)}" → Claude... `);
     let auditResult;
     try {
@@ -100,6 +137,23 @@ async function main() {
         const art = articles.find(a => a.id === o.article_id);
         const title = (art?.title || '').slice(0, 80);
         console.log(`       - #${o.article_id} "${title}"  reason: ${o.reason}`);
+      }
+
+      // Outlier-ratio kill — if Claude flagged more than half the audited
+      // articles as outliers, the cluster is fundamentally broken (not
+      // just contaminated). The surviving half would be an orphan stub
+      // with a now-misleading title (Thread #10661 case: 34/80 outliers,
+      // would leave a 46-article remnant with a stale title). Kill it.
+      const outlierRatio = outliers.length / articles.length;
+      if (DETACH && outlierRatio > OUTLIER_RATIO_KILL) {
+        try {
+          await killThread(t.id, `outlier ratio ${(outlierRatio*100).toFixed(0)}% (${outliers.length}/${articles.length}) above kill threshold`);
+          deletedThreads++;
+          outlierRatioKills++;
+          continue; // skip last_audited_at stamp — thread is gone
+        } catch (err) {
+          console.warn(`       ⚠ outlier-ratio delete failed: ${err.message}`);
+        }
       }
 
       if (DETACH) {
@@ -148,20 +202,12 @@ async function main() {
           );
 
           // Low-signal kill: if outlier detach drops the thread below the
-          // minimum-cluster floor, it's no longer a story — delete it. Same
-          // FK-cleanup pattern as auditJunkThreads.js: drop the briefing
-          // links first (won't cascade), then the join rows (would cascade
-          // but explicit is safer for high-cardinality joins), then the
-          // thread itself.
+          // minimum-cluster floor, it's no longer a story — delete it.
           if (new_count < MIN_ARTICLES_AFTER_DETACH) {
             try {
-              await pool.query(`DELETE FROM segment_story_links WHERE thread_id = $1`, [t.id]);
-              await pool.query(`DELETE FROM story_thread_articles WHERE thread_id = $1`, [t.id]);
-              await pool.query(`DELETE FROM story_threads WHERE id = $1`, [t.id]);
+              await killThread(t.id, `${new_count} article(s) left — below floor of ${MIN_ARTICLES_AFTER_DETACH}`);
               deletedThreads++;
-              console.log(`       💀 deleted: ${new_count} article(s) left — below floor of ${MIN_ARTICLES_AFTER_DETACH}`);
-              // Skip the last_audited_at stamp below — thread is gone.
-              continue;
+              continue; // skip last_audited_at stamp — thread is gone
             } catch (err) {
               console.warn(`       ⚠ low-signal delete failed (thread=${t.id}): ${err.message}`);
             }
@@ -202,7 +248,7 @@ async function main() {
   }
 
   console.log(`\n${DETACH ? '✅ Detach complete' : '✅ Dry run complete'} in ${el()}.`);
-  console.log(`   threads_audited=${auditedThreads} outliers_flagged=${flaggedCount}${DETACH ? ` detach_rows=${detachedCount} deleted_threads=${deletedThreads} renamed_threads=${renamedThreads}` : ''}`);
+  console.log(`   threads_audited=${auditedThreads} outliers_flagged=${flaggedCount}${DETACH ? ` detach_rows=${detachedCount} deleted_threads=${deletedThreads} renamed_threads=${renamedThreads} (single_source_kills=${singleSourceKills} outlier_ratio_kills=${outlierRatioKills})` : ''}`);
   await pool.end();
 }
 
@@ -212,7 +258,9 @@ async function loadThreads() {
     // --thread=X,Y,Z bypasses the last_audited_at gate so the user
     // can force a re-audit of a specific thread on demand.
     const { rows } = await pool.query(
-      `SELECT id, title, description, keywords, primary_category
+      `SELECT id, title, description, keywords, primary_category,
+              article_count, distinct_source_count,
+              primary_nations, secondary_nations
          FROM story_threads
         WHERE id = ANY($1::int[])`,
       [THREAD_FILTER]
@@ -233,6 +281,12 @@ async function loadThreads() {
   //      1+2 stay false, and the thread is locked out forever even as
   //      its article set drifts further off-topic with each match
   //      cycle.
+  //   4. Nation count is 3× or more the article count (and >6 nations
+  //      absolute). These are over-tagged frankenstein indicators —
+  //      e.g. thread #10761 had 3 articles but 33 nations because the
+  //      tagging system inflated. The audit forces re-evaluation so
+  //      Claude can confirm outliers + a downstream pass can recompute
+  //      nation tags.
   //
   // At 2×/day cadence + ~300 active+cooling threads the typical run
   // touches ~75 (clauses 1+2). The 7-day backstop adds ~43/run amortized
@@ -242,7 +296,9 @@ async function loadThreads() {
   // Index that backs this query: idx_story_threads_audit_gate (migration
   // 20260430_add_last_audited_at_to_story_threads.sql).
   const { rows } = await pool.query(`
-    SELECT id, title, description, keywords, primary_category
+    SELECT id, title, description, keywords, primary_category,
+           article_count, distinct_source_count,
+           primary_nations, secondary_nations
       FROM story_threads
      WHERE status IN ('active','cooling')
        AND article_count >= ${MIN_ARTICLES}
@@ -250,6 +306,15 @@ async function loadThreads() {
          last_audited_at IS NULL
          OR last_updated_at > last_audited_at
          OR last_audited_at < NOW() - INTERVAL '7 days'
+         OR (
+           COALESCE(array_length(primary_nations,1),0)
+             + COALESCE(array_length(secondary_nations,1),0)
+           > 3 * GREATEST(article_count, 1)
+           AND
+           COALESCE(array_length(primary_nations,1),0)
+             + COALESCE(array_length(secondary_nations,1),0)
+           > 6
+         )
        )
      ORDER BY
        -- Prioritize threads with new content first, then forced re-audits
