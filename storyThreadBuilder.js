@@ -650,7 +650,19 @@ function sqlCluster(articles) {
 //   EMBEDDING_SIM_THRESHOLD   default 0.60   per-pair edge threshold
 //   EMBEDDING_AVG_THRESHOLD   default 0.60   cluster avg-sim post-pass guard
 //   EMBEDDING_RECENCY_DAYS    default 14     skip pairs from articles >N days apart
-//   EMBEDDING_MIN_CLUSTER     default 2      pairs are valid; Claude validates
+//   EMBEDDING_MIN_CLUSTER     default 3      matches sqlCluster's MIN_CLUSTER
+//                                            floor. Was 2 (allowing pairs)
+//                                            but 2-article embedding pairs
+//                                            were producing low-signal
+//                                            "glorified singleton" threads —
+//                                            same false-positive shape as
+//                                            the Cuba+Lebanon merge we
+//                                            saw at threshold 0.60. 3+
+//                                            requires cross-validation
+//                                            (each pair independently
+//                                            passes the threshold) so
+//                                            transitive single-edge
+//                                            chains get rejected.
 const EMBEDDING_SIM_THRESHOLD =
   parseFloat(process.env.EMBEDDING_SIM_THRESHOLD || '0.60');
 const EMBEDDING_AVG_THRESHOLD =
@@ -658,7 +670,7 @@ const EMBEDDING_AVG_THRESHOLD =
 const EMBEDDING_RECENCY_DAYS  =
   parseInt(process.env.EMBEDDING_RECENCY_DAYS    || '14', 10);
 const EMBEDDING_MIN_CLUSTER   =
-  parseInt(process.env.EMBEDDING_MIN_CLUSTER     || '2', 10);
+  parseInt(process.env.EMBEDDING_MIN_CLUSTER     || '3', 10);
 
 function _parseEmbedding(raw) {
   // pgvector columns serialize as text '[0.1,-0.2,...]' by default in
