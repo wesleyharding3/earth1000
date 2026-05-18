@@ -1985,9 +1985,22 @@ async function runArticleUmbrellaPhase(metrics, elapsed) {
           ttkShared  * W_TITLE_TOKEN +
           phraseBonus;
 
-        if (score >= UMBRELLA_ATTACH_THRESHOLD) {
-          scored.push({ articleId: Number(c.id), score });
-        }
+        if (score < UMBRELLA_ATTACH_THRESHOLD) continue;
+
+        // Mirror the thread→line gate at L793: a high score alone isn't
+        // enough — require either at least one shared entity (proper
+        // noun) or a core-phrase title hit. Without this, a single
+        // nation match (2.5pts) clears UMBRELLA_ATTACH_THRESHOLD (2.5)
+        // on its own, and since artNations comes from the article's
+        // publisher iso_code (not the subject country), every US-wire
+        // article scores 2.5 against every Line whose nations include
+        // US — pure geographic coincidence with zero subject overlap.
+        // The same path leaked 176 bad thread attachments before the
+        // L793 gate was added; this guard closes the parallel leak on
+        // the article-umbrella path.
+        if (entShared === 0 && !phraseHit) continue;
+
+        scored.push({ articleId: Number(c.id), score });
       }
 
       if (!scored.length) continue;
