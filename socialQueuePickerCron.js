@@ -273,10 +273,34 @@ function pickBatch(candidates) {
     }
   }
 
+  // Pick alternation: each new queue row toggles between 'carousel'
+  // and 'reel' so the operator's feed has rhythm rather than
+  // back-to-back-same-format posts. The seed comes from the most
+  // recent posted row (any kind), so cross-run alternation also
+  // holds. Failure to read defaults to 'carousel' — safer fallback
+  // since carousel uses the older, more battle-tested pipeline.
+  let nextKind;
+  try {
+    const { rows: [lastPosted] } = await pool.query(
+      `SELECT post_kind FROM social_post_queue
+        WHERE status = 'posted'
+        ORDER BY posted_at DESC NULLS LAST
+        LIMIT 1`
+    );
+    nextKind = lastPosted?.post_kind === 'carousel' ? 'reel' : 'carousel';
+  } catch (e) {
+    warn(`alternation lookup failed (defaulting to carousel): ${e.message}`);
+    nextKind = 'carousel';
+  }
+  log(`Alternation: next pick will be '${nextKind}'`);
+
   // Compose + insert
   let inserted = 0;
   for (let i = 0; i < picked.length; i++) {
     const t = picked[i];
+    const postKind = nextKind;
+    // Toggle so the *next* pick in this same run gets the other kind.
+    nextKind = nextKind === 'carousel' ? 'reel' : 'carousel';
     let drafts;
     try {
       drafts = composeDrafts(t);
@@ -285,7 +309,7 @@ function pickBatch(candidates) {
       continue;
     }
 
-    console.log(`\n  [${i + 1}/${picked.length}] thread=${t.id} "${(t.title || '').slice(0, 70)}"`);
+    console.log(`\n  [${i + 1}/${picked.length}] thread=${t.id} kind=${postKind} "${(t.title || '').slice(0, 70)}"`);
     console.log(`         reason: ${reasons[i]}`);
     console.log(`         X:        ${drafts.x.body.replace(/\n/g, ' ⏎ ').slice(0, 100)}…`);
 
@@ -309,10 +333,10 @@ function pickBatch(candidates) {
     try {
       const { rows: [r] } = await pool.query(`
         INSERT INTO social_post_queue
-          (thread_id, drafts, platforms_enabled, status, scheduled_for, selection_reason)
-        VALUES ($1, $2::jsonb, $3::jsonb, $4, NOW(), $5)
+          (thread_id, drafts, platforms_enabled, status, scheduled_for, selection_reason, post_kind)
+        VALUES ($1, $2::jsonb, $3::jsonb, $4, NOW(), $5, $6)
         RETURNING id
-      `, [t.id, JSON.stringify(drafts), JSON.stringify(platforms_enabled), initialStatus, reasons[i]]);
+      `, [t.id, JSON.stringify(drafts), JSON.stringify(platforms_enabled), initialStatus, reasons[i], postKind]);
       rowId = r.id;
       inserted++;
     } catch (err) {
@@ -421,6 +445,7 @@ async function _publishEligibleRows() {
   // this query until their staggered moment arrives.
   const { rows: candidates } = await pool.query(`
     SELECT id, thread_id, drafts, platforms_enabled, scheduled_for,
+           post_kind,
            (arc_video IS NOT NULL) AS has_video,
            EXTRACT(EPOCH FROM (NOW() - scheduled_for))::int AS age_seconds
       FROM social_post_queue
@@ -444,24 +469,24 @@ async function _publishEligibleRows() {
 
     const ageHours = (row.age_seconds || 0) / 3600;
     const hasVideo = !!row.has_video;
-    console.log(`  ▶ publish queue_id=${row.id} thread=${row.thread_id} (age=${ageHours.toFixed(1)}h, video=${hasVideo ? 'yes' : 'no'})`);
+    const postKind = row.post_kind || 'carousel';
+    console.log(`  ▶ publish queue_id=${row.id} thread=${row.thread_id} kind=${postKind} (age=${ageHours.toFixed(1)}h, video=${hasVideo ? 'yes' : 'no'})`);
 
-    // Inject video URLs into the drafts for platforms that support video.
+    // Inject video URLs into drafts. Two pipelines:
     //
-    // Instagram gets a four-video CAROUSEL (animated portrait → globe
-    // arc → country pie → article bars). Each slide is rendered server-
-    // side by the animatedCardRenderer (frame loop + ffmpeg) and served
-    // from /share/thread/:id/{portrait,pie,articles}.mp4. The globe
-    // clip (arc.mp4) is still produced by the Mac worker — it needs
-    // real WebGL — and lives at the existing /arc.mp4 endpoint.
+    //   carousel: 4 separate per-slide MP4s (portrait, arc, pie,
+    //     articles) — IG VIDEO_CAROUSEL + Threads CAROUSEL.
     //
-    // Threads only supports single-media posts, so it gets the globe
-    // arc.mp4 as its single video.
+    //   reel: ONE stitched 9:16 MP4 at /share/thread/:id/reel.mp4
+    //     that concatenates the four card MP4s end-to-end into a
+    //     single Reel. IG posts it as media_type=REELS; Threads
+    //     posts the same MP4 as a single VIDEO; Bluesky uses the
+    //     existing single-video path.
     //
     // Stale-fallback rows (no arc_video yet — Mac worker hasn't filled
     // them after 48h) publish image-only via the legacy path.
     const drafts = { ...(row.drafts || {}) };
-    if (hasVideo) {
+    if (hasVideo && postKind === 'carousel') {
       const portraitUrl = `${publicHost}/share/thread/${row.thread_id}/portrait.mp4`;
       const arcUrl      = `${publicHost}/share/thread/${row.thread_id}/arc.mp4`;
       const pieUrl      = `${publicHost}/share/thread/${row.thread_id}/pie.mp4`;
@@ -518,6 +543,26 @@ async function _publishEligibleRows() {
         .map((r, i) => r.status === 'rejected' ? ['portrait','pie','articles'][i] : null)
         .filter(Boolean);
       console.log(`         pre-warmed cards in ${((Date.now() - t0Cards) / 1000).toFixed(1)}s${warmFails.length ? ` (failed: ${warmFails.join(',')})` : ''}`);
+    } else if (hasVideo && postKind === 'reel') {
+      // Single stitched 9:16 video. The reel endpoint internally
+      // renders the 3 card segments + concatenates the arc, then
+      // caches the result back to social_post_queue.reel_mp4 — so a
+      // cold render here can take up to ~60s. We pre-warm before
+      // publishing so Meta fetches from a populated DB cache.
+      const reelUrl = `${publicHost}/share/thread/${row.thread_id}/reel.mp4`;
+      if (drafts.instagram) {
+        drafts.instagram = { ...drafts.instagram, video_url: reelUrl, reel_url: reelUrl };
+      }
+      if (drafts.threads) {
+        drafts.threads = { ...drafts.threads, video_url: reelUrl };
+      }
+      if (drafts.bluesky) {
+        drafts.bluesky = { ...drafts.bluesky, video_url: reelUrl };
+      }
+      const t0Reel = Date.now();
+      const warmRes = await Promise.allSettled([fetch(reelUrl).then(r => r.arrayBuffer())]);
+      const warmOk  = warmRes[0].status === 'fulfilled';
+      console.log(`         pre-warmed reel in ${((Date.now() - t0Reel) / 1000).toFixed(1)}s${warmOk ? '' : ` (failed: ${warmRes[0].reason?.message || 'unknown'})`}`);
     }
 
     try {

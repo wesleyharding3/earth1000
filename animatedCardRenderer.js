@@ -215,10 +215,19 @@ async function generateVideo(entity, opts = {}) {
     new Promise((_, rej) => setTimeout(() => rej(new Error('frame probe timeout')), FRAME_RENDER_TIMEOUT_MS)),
   ]);
 
+  // Pick canvas dims from the entity's aspect. Default 'portrait' = 4:5
+  // (1080×1350) for the IG carousel. 'reel' = 9:16 (1080×1920) for the
+  // stitched Reel pipeline. The dims need to match what shareImg's
+  // generateFrame is going to emit, otherwise ffmpeg gets PNGs that
+  // don't fit the encoder's declared size.
+  const isReel = entity.aspect === 'reel';
+  const width  = isReel ? shareImg.W_R : shareImg.W_P;
+  const height = isReel ? shareImg.H_R : shareImg.H_P;
+
   // Spawn ffmpeg, then sequentially render & write each frame to stdin.
   const { child, done } = _spawnEncoder({
     fps, durationS,
-    width: shareImg.W_P, height: shareImg.H_P,
+    width, height,
   });
 
   let writeError = null;
@@ -286,4 +295,111 @@ async function generateVideo(entity, opts = {}) {
 
 function bustCache(cacheKey) { _mp4Cache.delete(cacheKey); }
 
-module.exports = { generateVideo, bustCache };
+/**
+ * Stitch N MP4 buffers end-to-end into a single MP4. Each input is
+ * scaled+padded into a `width × height` canvas (preserving aspect, with
+ * black bars if needed), normalized to the same fps + audio sample rate,
+ * then concatenated. Output uses the same H.264 + AAC + faststart +
+ * no-edit-list settings as the carousel encoder so Meta's ingester
+ * accepts it cleanly.
+ *
+ * Used by the Reels pipeline: portrait + arc + pie + articles → one
+ * 1080×1920 vertical video.
+ *
+ * @param {Buffer[]} buffers — ordered MP4 buffers
+ * @param {Object} opts — { width, height, fps, audioRate }
+ * @returns {Promise<Buffer>}
+ */
+async function concatMp4s(buffers, opts = {}) {
+  if (!Array.isArray(buffers) || buffers.length === 0) {
+    throw new Error('concatMp4s: need at least one input buffer');
+  }
+  const width     = opts.width     || 1080;
+  const height    = opts.height    || 1920;
+  const fps       = opts.fps       || 30;
+  const audioRate = opts.audioRate || 48000;
+
+  const tmpDir = require('os').tmpdir();
+  const stamp  = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
+  const inputPaths = buffers.map((_, i) => path.join(tmpDir, `concat-${stamp}-in${i}.mp4`));
+  const outPath    = path.join(tmpDir, `concat-${stamp}-out.mp4`);
+
+  // Write all inputs
+  for (let i = 0; i < buffers.length; i++) {
+    fs.writeFileSync(inputPaths[i], buffers[i]);
+  }
+
+  // Build the filter_complex. For each input:
+  //   [iv] = scale to fit within target then pad with black to target
+  //   [ia] = resample audio to target rate, stereo
+  // Then concat all of them.
+  const N = buffers.length;
+  const padScale = (idx) =>
+    `[${idx}:v]scale=${width}:${height}:force_original_aspect_ratio=decrease,` +
+    `pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=black,` +
+    `setsar=1,fps=${fps},setpts=PTS-STARTPTS[v${idx}]`;
+  const audioPrep = (idx) =>
+    `[${idx}:a]aresample=${audioRate}:async=1:first_pts=0,asetpts=PTS-STARTPTS[a${idx}]`;
+  const videoLabels = Array.from({ length: N }, (_, i) => `[v${i}]`).join('');
+  const audioLabels = Array.from({ length: N }, (_, i) => `[a${i}]`).join('');
+  const concatStr   = `${videoLabels}${audioLabels}concat=n=${N}:v=1:a=1[outv][outa]`;
+  const filter = [
+    ...buffers.map((_, i) => padScale(i)),
+    ...buffers.map((_, i) => audioPrep(i)),
+    concatStr,
+  ].join(';');
+
+  const args = [
+    '-y',
+    '-hide_banner', '-loglevel', 'error',
+    ...buffers.flatMap((_, i) => ['-i', inputPaths[i]]),
+    '-filter_complex', filter,
+    '-map', '[outv]',
+    '-map', '[outa]',
+    '-c:v', 'libx264',
+    '-preset', 'medium',
+    '-pix_fmt', 'yuv420p',
+    '-crf', '17',
+    '-profile:v', 'main',
+    '-level', '4.0',
+    '-g', String(fps * 2),
+    '-keyint_min', String(fps * 2),
+    '-sc_threshold', '0',
+    '-bf', '2',
+    '-r', String(fps),
+    '-video_track_timescale', '30000',
+    '-c:a', 'aac',
+    '-b:a', '128k',
+    '-ar', String(audioRate),
+    '-ac', '2',
+    '-map_metadata', '-1',
+    '-map_chapters', '-1',
+    '-avoid_negative_ts', 'make_zero',
+    '-movflags', '+faststart',
+    '-use_editlist', '0',
+    '-f', 'mp4',
+    outPath,
+  ];
+
+  const proc = spawn(_ffmpegPath, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+  const stderrChunks = [];
+  proc.stderr.on('data', c => stderrChunks.push(c));
+  const t0 = Date.now();
+  await new Promise((resolve, reject) => {
+    proc.on('error', reject);
+    proc.on('close', (code) => {
+      if (code === 0) return resolve();
+      const msg = Buffer.concat(stderrChunks).toString('utf8').slice(0, 1500);
+      reject(new Error(`ffmpeg concat exit ${code}: ${msg}`));
+    });
+  });
+  const buf = fs.readFileSync(outPath);
+  // Best-effort cleanup; safe even if a path failed mid-write.
+  for (const p of [...inputPaths, outPath]) {
+    try { fs.unlinkSync(p); } catch (_) { /* noop */ }
+  }
+  console.log(`[anim-card] concat ${N} clips → ${buf.length} bytes in ${Date.now() - t0}ms`);
+  return buf;
+}
+
+module.exports = { generateVideo, concatMp4s, bustCache };

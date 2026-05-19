@@ -15088,6 +15088,55 @@ Aim for high recall on clear positives and strict exclusion of vague matches.`;
 // the earth-editor Social Queue tab. Auto-publishing (the future
 // socialPublisherCron.js) acts ONLY on status='approved' rows.
 
+// GET /api/admin/social-queue/reels — recent reel-kind rows with direct
+// download URLs for the operator to manually cross-post to TikTok (or
+// anywhere else that doesn't have an API integration yet). Returns the
+// 30 most recent rows where post_kind='reel', regardless of status, so
+// you can pull both freshly-posted Reels AND ones still in the queue
+// (useful if you want to grab the MP4 before the IG post goes live).
+app.get('/api/admin/social-queue/reels', requireAdmin, async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit, 10) || 30, 100);
+    const { rows } = await pool.query(`
+      SELECT q.id, q.thread_id, q.status, q.scheduled_for,
+             q.posted_at, q.permalinks,
+             octet_length(q.reel_mp4) AS reel_bytes,
+             st.title, st.primary_category, st.importance,
+             st.primary_nations, st.article_count
+        FROM social_post_queue q
+        LEFT JOIN story_threads st ON st.id = q.thread_id
+       WHERE q.post_kind = 'reel'
+       ORDER BY q.id DESC
+       LIMIT $1
+    `, [limit]);
+    const publicHost = (req.protocol + '://' + req.get('host')).replace(/\/+$/, '');
+    res.json({
+      rows: rows.map(r => ({
+        queue_id:        r.id,
+        thread_id:       r.thread_id,
+        status:          r.status,
+        title:           r.title,
+        category:        r.primary_category,
+        importance:      r.importance,
+        primary_nations: r.primary_nations,
+        article_count:   r.article_count,
+        scheduled_for:   r.scheduled_for,
+        posted_at:       r.posted_at,
+        permalinks:      r.permalinks,
+        reel_bytes:      r.reel_bytes,
+        // Direct download URL. The reel.mp4 endpoint serves the
+        // cached blob if reel_bytes is non-null, or renders on
+        // demand otherwise. Either way the operator can curl/
+        // browser-download in one click for manual TikTok upload.
+        reel_url:        r.reel_bytes ? `${publicHost}/share/thread/${r.thread_id}/reel.mp4` : null,
+      })),
+    });
+  } catch (err) {
+    console.error('[admin/social-queue/reels]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/admin/social-queue', requireAdmin, async (req, res) => {
   try {
     const status = String(req.query.status || 'pending_approval');
@@ -15596,6 +15645,177 @@ app.get('/share/thread/:id/articles.mp4', async (req, res) => {
     });
   } catch (err) {
     console.error('[anim/articles.mp4]', err.stack || err.message);
+    res.status(500).end();
+  }
+});
+
+// /share/thread/:id/reel.mp4 — stitched 1080×1920 vertical Reel:
+// portrait → arc → pie → articles, concatenated end-to-end.
+//
+// Each card is rendered fresh at aspect='reel' (9:16). The arc video
+// is reused from social_post_queue.arc_video (currently 4:5 from the
+// mac-worker; it gets letterboxed into the 9:16 canvas by the concat
+// step's scale+pad filter). The stitched result is cached in
+// social_post_queue.reel_mp4 keyed by thread_id; ?fresh=1 re-renders.
+//
+// Used by the Reel branch of socialQueuePickerCron + the IG REELS
+// publisher flow.
+app.get('/share/thread/:id/reel.mp4', async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!id) return res.status(400).end();
+    const forceFresh = req.query.fresh === '1';
+
+    // Cache check: serve the existing stitched blob unless forceFresh.
+    if (!forceFresh) {
+      const cached = await pool.query(
+        `SELECT reel_mp4 FROM social_post_queue
+          WHERE thread_id = $1 AND reel_mp4 IS NOT NULL
+          ORDER BY id DESC LIMIT 1`,
+        [id]
+      );
+      if (cached.rows.length && cached.rows[0].reel_mp4) {
+        const buf = Buffer.isBuffer(cached.rows[0].reel_mp4)
+          ? cached.rows[0].reel_mp4
+          : Buffer.from(cached.rows[0].reel_mp4);
+        res.setHeader('Content-Type', 'video/mp4');
+        res.setHeader('Cache-Control', 'public, max-age=86400, s-maxage=86400');
+        return res.send(buf);
+      }
+    }
+
+    // Fresh render path.
+    const t = await _fetchThreadMeta(id);
+    if (!t) return res.status(404).end();
+    const ver = `v1:${id}:${new Date(t.last_updated_at || 0).getTime()}`;
+
+    // Same data queries as the per-card endpoints, in parallel so the
+    // three card renders + arc lookup overlap rather than serialize.
+    const [
+      coverageRow,
+      pieRows,
+      articleRows,
+      arcRow,
+    ] = await Promise.all([
+      pool.query(
+        `SELECT
+           (SELECT COUNT(DISTINCT a.language)::int FROM story_thread_articles sta
+              JOIN news_articles a ON a.id = sta.article_id WHERE sta.thread_id = $1) AS lc,
+           (SELECT COUNT(DISTINCT a.country_id)::int FROM story_thread_articles sta
+              JOIN news_articles a ON a.id = sta.article_id WHERE sta.thread_id = $1) AS cc`,
+        [id]
+      ).then(r => r.rows[0] || {}).catch(() => ({})),
+      pool.query(
+        `SELECT LOWER(COALESCE(co.iso_code, 'xx')) AS iso,
+                COALESCE(co.name, 'Unknown') AS name,
+                COUNT(DISTINCT ns.id)::int AS n
+           FROM story_thread_articles sta
+           JOIN news_articles a   ON a.id = sta.article_id
+           JOIN news_sources  ns  ON ns.id = a.source_id
+           LEFT JOIN countries co ON co.id = a.country_id
+          WHERE sta.thread_id = $1
+          GROUP BY co.iso_code, co.name
+          ORDER BY n DESC`,
+        [id]
+      ).then(r => r.rows).catch(() => []),
+      pool.query(
+        `SELECT a.title           AS headline,
+                a.published_at,
+                ns.name            AS source_name,
+                LOWER(COALESCE(co.iso_code, 'us')) AS source_iso,
+                COALESCE(a.image_url, img_a.public_url) AS hero_url,
+                img_a.public_url   AS hero_catalog_url
+           FROM story_thread_articles sta
+           JOIN news_articles a       ON a.id = sta.article_id
+           LEFT JOIN news_sources ns  ON ns.id = a.source_id
+           LEFT JOIN countries co     ON co.id = a.country_id
+           LEFT JOIN article_image_assignments aia ON aia.article_id = a.id
+           LEFT JOIN image_assets img_a ON img_a.id = aia.image_id
+          WHERE sta.thread_id = $1
+          ORDER BY a.published_at DESC
+          LIMIT 4`,
+        [id]
+      ).then(r => r.rows).catch(() => []),
+      pool.query(
+        `SELECT arc_video FROM social_post_queue
+          WHERE thread_id = $1 AND arc_video IS NOT NULL
+          ORDER BY id DESC LIMIT 1`,
+        [id]
+      ).then(r => r.rows[0]?.arc_video || null).catch(() => null),
+    ]);
+
+    const countryCounts = pieRows.map(r => ({ iso: r.iso, name: r.name, count: r.n }));
+    const sourceCount   = countryCounts.reduce((a, b) => a + b.count, 0);
+
+    // Render the 3 cards at 9:16 in parallel. Each is its own ffmpeg
+    // process — total wall time ~= slowest single card.
+    const [portraitMp4, pieMp4, articlesMp4] = await Promise.all([
+      animCard.generateVideo({
+        kind: 'thread-portrait',
+        aspect: 'reel',
+        cacheKey: `anim-portrait-reel:${ver}`,
+        title:       t.title,
+        description: t.description,
+        isos:        (t.primary_nations || []).slice(0, 6),
+        category:    t.primary_category,
+        articleCount: t.article_count || 0,
+        countryCount: coverageRow.cc ?? null,
+        languageCount: coverageRow.lc ?? null,
+      }),
+      animCard.generateVideo({
+        kind: 'thread-coverage',
+        aspect: 'reel',
+        cacheKey: `anim-pie-reel:${ver}:${sourceCount}`,
+        title: t.title,
+        category: t.primary_category,
+        countryCounts,
+        articleCount: t.article_count || 0,
+        sourceCount,
+      }),
+      animCard.generateVideo({
+        kind: 'thread-articles',
+        aspect: 'reel',
+        cacheKey: `anim-articles-reel:${ver}:${articleRows.length}`,
+        title: t.title,
+        category: t.primary_category,
+        articles: articleRows,
+      }),
+    ]);
+
+    // Concat order matches the carousel slide order: portrait → arc →
+    // pie → articles. If no arc MP4 has been uploaded yet for this
+    // thread, skip the arc segment (reel will just be 3 cards = ~12s,
+    // still well above IG Reel's 3s minimum).
+    const segments = [portraitMp4];
+    if (arcRow) {
+      const arcBuf = Buffer.isBuffer(arcRow) ? arcRow : Buffer.from(arcRow);
+      segments.push(arcBuf);
+    }
+    segments.push(pieMp4, articlesMp4);
+
+    const reelMp4 = await animCard.concatMp4s(segments, {
+      width: 1080, height: 1920, fps: 30, audioRate: 48000,
+    });
+
+    // Cache to DB. Only updates the most-recent queue row for the
+    // thread; if no row exists (thread never queued for social), the
+    // UPDATE is a no-op and we just stream the result.
+    try {
+      await pool.query(
+        `UPDATE social_post_queue SET reel_mp4 = $1
+          WHERE id = (
+            SELECT id FROM social_post_queue WHERE thread_id = $2
+              ORDER BY id DESC LIMIT 1
+          )`,
+        [reelMp4, id]
+      );
+    } catch (e) { console.warn(`[anim/reel.mp4] cache-back failed: ${e.message}`); }
+
+    res.setHeader('Content-Type', 'video/mp4');
+    res.setHeader('Cache-Control', 'public, max-age=600, s-maxage=86400');
+    res.send(reelMp4);
+  } catch (err) {
+    console.error('[anim/reel.mp4]', err.stack || err.message);
     res.status(500).end();
   }
 });
