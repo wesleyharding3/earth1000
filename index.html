@@ -24701,6 +24701,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
   let _clipRecCanvas   = null;
   let _clipPaintOverlay = null;
   let _clipSavedCameraZ = null;
+  // Camera-zoom progression captured at setup time (was hardcoded
+  // 1.20× → 1.45× inside __renderClipFrame). Now configurable so the
+  // mac worker can pick tighter values for 9:16 reel-mode rendering
+  // (where a 1.20× start leaves the globe small inside the taller
+  // canvas — we want it to fill more of the frame).
+  let _clipZoomStart = 1.20;
+  let _clipZoomEnd   = 1.45;
   window.__setupClipRecording = async function(opts = {}) {
     // globeYaw/globePitch live in a different closure — pull via the
     // window.__getGlobePose bridge (defined alongside __setGlobePose
@@ -24732,8 +24739,15 @@ const settingsToggle     = document.getElementById("settingsToggle");
     if (window.__camera && Number.isFinite(window.__camera.position?.z)) {
       _clipSavedCameraZ = window.__camera.position.z;
     }
-    const REC_W = 1080;
-    const REC_H = 1350;
+    // Canvas dims + camera zoom progression are now opts-driven so the
+    // mac worker can render 9:16 reels with a tighter zoom (globe fills
+    // the taller canvas instead of getting letterboxed at 4:5 ratios).
+    // Defaults preserve the original 4:5 carousel-arc behavior so any
+    // unmodified caller still gets the same output.
+    const REC_W = Number.isFinite(opts.width)  ? opts.width  : 1080;
+    const REC_H = Number.isFinite(opts.height) ? opts.height : 1350;
+    _clipZoomStart = Number.isFinite(opts.zoomStart) ? opts.zoomStart : 1.20;
+    _clipZoomEnd   = Number.isFinite(opts.zoomEnd)   ? opts.zoomEnd   : 1.45;
     _clipRecCanvas = document.createElement('canvas');
     _clipRecCanvas.width  = REC_W;
     _clipRecCanvas.height = REC_H;
@@ -24783,15 +24797,14 @@ const settingsToggle     = document.getElementById("settingsToggle");
     // re-introducing the edge-clip issue user saw. Setting position.z
     // directly every render frame overrides animate's drift.
     //
-    // Progressive zoom: start closer (1.20× baseline — proven safe, no
-    // edge clipping) and end at 1.45× baseline (reduced from prior
-    // 1.90× per user feedback that the end was "too zoomed out"). Net
-    // effect: globe stays a meaningful presence in the frame all the
-    // way through, instead of pulling back into a small disc at the
-    // tail. Floor stays at 1.20× so edges remain safely inside-frame.
+    // Multipliers (_clipZoomStart / _clipZoomEnd) are captured at
+    // __setupClipRecording time from opts. Defaults 1.20× → 1.45×
+    // are tuned for the 4:5 carousel-arc canvas. 9:16 reel mode passes
+    // smaller multipliers (e.g. 0.95× → 1.15×) so the globe fills more
+    // of the taller frame.
     if (window.__camera && _clipSavedCameraZ !== null) {
-      const startZ = _clipSavedCameraZ * 1.20;
-      const endZ   = _clipSavedCameraZ * 1.45;
+      const startZ = _clipSavedCameraZ * _clipZoomStart;
+      const endZ   = _clipSavedCameraZ * _clipZoomEnd;
       window.__camera.position.z = startZ + (endZ - startZ) * progress;
     }
 

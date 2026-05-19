@@ -203,12 +203,14 @@ async function renderVideo(job) {
       }, 1000 / 60);
     });
 
-    // Viewport matches the recording canvas (1080×1350, 4:5) so the
-    // WebGL globe+stars output fills the rec frame edge-to-edge — no
-    // letterbox padding. Previous 1080×1920 (9:16) left ~160px black
-    // bars on left and right after contain-fit, which user flagged as
-    // "empty space around the starfield."
-    await page.setViewport({ width: 1080, height: 1350, deviceScaleFactor: 1 });
+    // Viewport matches the Reel recording canvas (1080×1920, 9:16) so
+    // the WebGL globe+stars output fills the rec frame edge-to-edge —
+    // starfield spans the entire back of the frame instead of being
+    // letterboxed. Earlier we'd flipped to 4:5 (1080×1350) for the IG
+    // carousel slot, but the reel pipeline now stitches arc.mp4 into a
+    // 9:16 stack with the cards, so we want the arc rendered natively
+    // at 9:16 — no concat-time letterbox during the middle 15s.
+    await page.setViewport({ width: 1080, height: 1920, deviceScaleFactor: 1 });
     // Force-foreground the tab so anything that uses tab-focus state
     // (not just visibility) also reports as active.
     try { await page.bringToFront(); } catch (_) { /* best-effort */ }
@@ -317,6 +319,18 @@ async function renderVideo(job) {
     await page.evaluate(async (opts) => {
       return await window.__setupClipRecording({
         spinSeconds: opts.spinSeconds,
+        // Reel-mode canvas: 9:16 (1080×1920) matches the viewport,
+        // so the renderer's domElement fills the rec frame edge-to-
+        // edge with no letterboxing.
+        width:       opts.width,
+        height:      opts.height,
+        // Tighter camera multipliers for the taller canvas — the
+        // 1.20× → 1.45× defaults are tuned for 4:5 where the globe
+        // already fills the shorter axis. At 9:16 the same zoom
+        // leaves a small globe in a tall frame. 0.95× → 1.15× pulls
+        // the camera in so the globe owns the visual center.
+        zoomStart:   opts.zoomStart,
+        zoomEnd:     opts.zoomEnd,
         overlay: {
           title:     opts.title || 'Story',
           subtitle:  opts.subtitle || 'Storyline',
@@ -326,6 +340,10 @@ async function renderVideo(job) {
       });
     }, {
       spinSeconds,
+      width:     1080,
+      height:    1920,
+      zoomStart: 0.95,
+      zoomEnd:   1.15,
       title:     job.title,
       subtitle:  job.subtitle,
       flagIsos:  job.flag_isos,
