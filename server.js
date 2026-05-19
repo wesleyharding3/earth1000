@@ -15795,6 +15795,11 @@ app.get('/share/thread/:id/reel.mp4', async (req, res) => {
 
     const reelMp4 = await animCard.concatMp4s(segments, {
       width: 1080, height: 1920, fps: 30, audioRate: 48000,
+      // One continuous track from the source song, trimmed to the
+      // exact stitched-video duration with an 0.8s fade-out — so the
+      // viewer doesn't hear 3-4 abrupt 4-second loops snapping at
+      // every slide boundary.
+      musicPath: require('path').join(__dirname, 'audio', 'carousel', 'reel.mp3'),
     });
 
     // Cache to DB. Only updates the most-recent queue row for the

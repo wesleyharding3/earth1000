@@ -244,23 +244,24 @@ async function generateVideo(entity, opts = {}) {
   // playback — near the threshold of human perception — but the
   // first frame is the polished, fully-loaded card.
   //
-  // Why this matters:
-  //   • slide 1 (thread-portrait) — IG VIDEO_CAROUSEL uses the first
-  //     frame of the first item as the post's cover thumbnail. Without
-  //     this, the cover would be a blank/half-rendered card.
-  //   • slides 3 (thread-coverage) + 4 (thread-articles) — applied for
-  //     visual consistency: every slide in the carousel briefly shows
-  //     its completed form before the load-in animation, giving the
-  //     viewer a glimpse of what they're about to see assemble.
+  // In CAROUSEL mode all 3 animated kinds get the flash: it gives the
+  // IG VIDEO_CAROUSEL a polished cover thumbnail on slide 1 AND a
+  // unified "every slide briefly previews itself" feel across slides
+  // 3 and 4.
   //
-  // Slide 2 (arc.mp4) is rendered by the mac-worker via Puppeteer, not
-  // through this pipeline, so it isn't affected.
+  // In REEL mode, only the first slide (thread-portrait) gets the
+  // flash. The Reel is one continuous video, so flashing the pie /
+  // articles mid-playback reads as a glitch rather than a deliberate
+  // preview. Portrait still flashes because it's the Reel's cover
+  // thumbnail (IG uses frame 0 of the Reel video).
   const COVER_FLASH_KINDS = new Set([
     'thread-portrait',
     'thread-coverage',
     'thread-articles',
   ]);
-  const coverFlash = COVER_FLASH_KINDS.has(entity.kind);
+  const isReelKind = entity.aspect === 'reel';
+  const coverFlash = COVER_FLASH_KINDS.has(entity.kind) &&
+                     (!isReelKind || entity.kind === 'thread-portrait');
 
   try {
     for (let i = 0; i < frameCount; i++) {
@@ -296,6 +297,29 @@ async function generateVideo(entity, opts = {}) {
 function bustCache(cacheKey) { _mp4Cache.delete(cacheKey); }
 
 /**
+ * Probe an MP4 file's duration in seconds. Parses ffmpeg's own
+ * stderr instead of relying on ffprobe — @ffmpeg-installer doesn't
+ * ship ffprobe so this works on Render too.
+ */
+function _probeDurationSec(filePath) {
+  return new Promise((resolve, reject) => {
+    const proc = spawn(_ffmpegPath, ['-hide_banner', '-i', filePath, '-f', 'null', '-'], {
+      stdio: ['ignore', 'ignore', 'pipe'],
+    });
+    let stderr = '';
+    proc.stderr.on('data', d => stderr += d.toString());
+    proc.on('error', reject);
+    proc.on('close', () => {
+      // Stderr contains a line like "Duration: 00:00:15.20, ..."
+      const m = stderr.match(/Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/);
+      if (!m) return reject(new Error(`duration not found in stderr: ${stderr.slice(-300)}`));
+      const sec = parseInt(m[1], 10) * 3600 + parseInt(m[2], 10) * 60 + parseFloat(m[3]);
+      resolve(sec);
+    });
+  });
+}
+
+/**
  * Stitch N MP4 buffers end-to-end into a single MP4. Each input is
  * scaled+padded into a `width × height` canvas (preserving aspect, with
  * black bars if needed), normalized to the same fps + audio sample rate,
@@ -307,17 +331,26 @@ function bustCache(cacheKey) { _mp4Cache.delete(cacheKey); }
  * 1080×1920 vertical video.
  *
  * @param {Buffer[]} buffers — ordered MP4 buffers
- * @param {Object} opts — { width, height, fps, audioRate }
+ * @param {Object} opts —
+ *   { width, height, fps, audioRate,
+ *     musicPath?,   // optional: replace per-segment audios with one continuous
+ *                   //   track from a single audio file (e.g. a wes.wav cut).
+ *                   //   The track is trimmed to the total stitched-video
+ *                   //   duration with an 0.8s fade-out at the end.
+ *     musicStart?,  // optional: seconds into musicPath to start from (default 0)
+ *   }
  * @returns {Promise<Buffer>}
  */
 async function concatMp4s(buffers, opts = {}) {
   if (!Array.isArray(buffers) || buffers.length === 0) {
     throw new Error('concatMp4s: need at least one input buffer');
   }
-  const width     = opts.width     || 1080;
-  const height    = opts.height    || 1920;
-  const fps       = opts.fps       || 30;
-  const audioRate = opts.audioRate || 48000;
+  const width      = opts.width      || 1080;
+  const height     = opts.height     || 1920;
+  const fps        = opts.fps        || 30;
+  const audioRate  = opts.audioRate  || 48000;
+  const musicPath  = opts.musicPath  || null;
+  const musicStart = Number(opts.musicStart) || 0;
 
   const tmpDir = require('os').tmpdir();
   const stamp  = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2,8)}`;
@@ -340,24 +373,75 @@ async function concatMp4s(buffers, opts = {}) {
     `setsar=1,fps=${fps},setpts=PTS-STARTPTS[v${idx}]`;
   const audioPrep = (idx) =>
     `[${idx}:a]aresample=${audioRate}:async=1:first_pts=0,asetpts=PTS-STARTPTS[a${idx}]`;
-  // ffmpeg's concat filter requires INTERLEAVED stream labels — for
-  // every segment, video then audio, repeating. Concatenating with
-  // "all videos then all audios" produces a media-type-mismatch error.
-  const interleaved = Array.from({ length: N }, (_, i) => `[v${i}][a${i}]`).join('');
-  const concatStr   = `${interleaved}concat=n=${N}:v=1:a=1[outv][outa]`;
-  const filter = [
-    ...buffers.map((_, i) => padScale(i)),
-    ...buffers.map((_, i) => audioPrep(i)),
-    concatStr,
-  ].join(';');
 
-  const args = [
-    '-y',
-    '-hide_banner', '-loglevel', 'error',
-    ...buffers.flatMap((_, i) => ['-i', inputPaths[i]]),
-    '-filter_complex', filter,
-    '-map', '[outv]',
-    '-map', '[outa]',
+  let filter, args;
+  if (musicPath) {
+    // ── Music-override mode: ignore per-segment audios, replace with
+    // a single trimmed cut from `musicPath` so the reel plays one
+    // continuous soundtrack instead of a 4s loop per slide.
+    //
+    // Need total stitched duration to size the music. Probe each
+    // input's duration via ffmpeg-stderr (works on Render where
+    // ffprobe isn't installed).
+    const segDurs = await Promise.all(inputPaths.map(_probeDurationSec));
+    const totalDur = segDurs.reduce((a, b) => a + b, 0);
+    const fadeStart = Math.max(0, totalDur - 0.8);
+
+    // Video-only concat — labels are now just [v0][v1]...[vN-1].
+    const videoLabels = Array.from({ length: N }, (_, i) => `[v${i}]`).join('');
+    const concatStr   = `${videoLabels}concat=n=${N}:v=1:a=0[outv]`;
+
+    // Music is input N (after the N video inputs). Trim to exact reel
+    // duration; fade out 0.8s before the cut so it doesn't slam shut.
+    const musicFilter =
+      `[${N}:a]aresample=${audioRate}:async=1:first_pts=0,` +
+      `atrim=duration=${totalDur.toFixed(3)},` +
+      `afade=t=out:st=${fadeStart.toFixed(3)}:d=0.8,` +
+      `asetpts=PTS-STARTPTS[outa]`;
+
+    filter = [
+      ...buffers.map((_, i) => padScale(i)),
+      concatStr,
+      musicFilter,
+    ].join(';');
+
+    args = [
+      '-y',
+      '-hide_banner', '-loglevel', 'error',
+      ...buffers.flatMap((_, i) => ['-i', inputPaths[i]]),
+      ...(musicStart > 0 ? ['-ss', String(musicStart)] : []),
+      '-i', musicPath,
+      '-filter_complex', filter,
+      '-map', '[outv]',
+      '-map', '[outa]',
+    ];
+  } else {
+    // ── Per-segment audio mode (legacy): each segment keeps its own
+    // 4-second portrait.mp3 loop, concatenated alongside the video.
+    // ffmpeg's concat filter requires INTERLEAVED stream labels —
+    // [v0][a0][v1][a1]... — concatenating "all videos then all audios"
+    // triggers a media-type-mismatch error.
+    const interleaved = Array.from({ length: N }, (_, i) => `[v${i}][a${i}]`).join('');
+    const concatStr   = `${interleaved}concat=n=${N}:v=1:a=1[outv][outa]`;
+
+    filter = [
+      ...buffers.map((_, i) => padScale(i)),
+      ...buffers.map((_, i) => audioPrep(i)),
+      concatStr,
+    ].join(';');
+
+    args = [
+      '-y',
+      '-hide_banner', '-loglevel', 'error',
+      ...buffers.flatMap((_, i) => ['-i', inputPaths[i]]),
+      '-filter_complex', filter,
+      '-map', '[outv]',
+      '-map', '[outa]',
+    ];
+  }
+
+  // Encoder settings — identical in both modes (Meta-acceptance fix).
+  args.push(
     '-c:v', 'libx264',
     '-preset', 'medium',
     '-pix_fmt', 'yuv420p',
@@ -381,7 +465,7 @@ async function concatMp4s(buffers, opts = {}) {
     '-use_editlist', '0',
     '-f', 'mp4',
     outPath,
-  ];
+  );
 
   const proc = spawn(_ffmpegPath, args, { stdio: ['ignore', 'ignore', 'pipe'] });
   const stderrChunks = [];
