@@ -544,6 +544,27 @@ const W_P = 1080;
 const H_P = 1350;
 const PAD_P = 64;
 
+// ─── Reel variant (1080×1920, 9:16) ───────────────────────────────────
+// Used when the same content needs to be stitched into an IG Reel /
+// TikTok-friendly vertical video. Same width as the carousel portrait
+// so flag chips, icon, etc. can render unchanged; just more vertical
+// room for breathing space + bigger type so the design reads on a
+// full-bleed Reel feed instead of being read-stopped on a carousel
+// thumbnail. PAD_R kept identical to PAD_P so columnar alignment
+// across slides stays uniform when stitched.
+const W_R = 1080;
+const H_R = 1920;
+const PAD_R = 64;
+
+// Helper: pick W / H / PAD for an aspect string. Tolerates undefined
+// (= 'portrait' for back-compat with existing callers that don't pass
+// an aspect argument).
+function _dims(aspect) {
+  return aspect === 'reel'
+    ? { W: W_R, H: H_R, PAD: PAD_R }
+    : { W: W_P, H: H_P, PAD: PAD_P };
+}
+
 // ─── Animation helpers ────────────────────────────────────────────────
 // All animated templates accept an `animation = { progress: 0..1 }`
 // parameter. When undefined or progress >= 1, the rendered SVG is the
@@ -597,10 +618,10 @@ function _fitTitle(text, sizes) {
 // `p`              — global progress 0..1
 // `windowStart/End`— optional override of the [0.50, 0.85] default
 //                    pass window
-function _renderScanLine({ p, windowStart = 0.50, windowEnd = 0.85 }) {
+function _renderScanLine({ p, windowStart = 0.50, windowEnd = 0.85, W = W_P, H = H_P }) {
   const w = _windowed(p, windowStart, windowEnd);
   if (w <= 0 || w >= 1) return '';
-  const scanY = w * H_P;
+  const scanY = w * H;
   return `
     <defs>
       <linearGradient id="scanGrad" x1="0" x2="0" y1="0" y2="1">
@@ -609,8 +630,8 @@ function _renderScanLine({ p, windowStart = 0.50, windowEnd = 0.85 }) {
         <stop offset="1"   stop-color="${BRAND.gold}" stop-opacity="0"/>
       </linearGradient>
     </defs>
-    <rect x="0" y="${scanY - 30}" width="${W_P}" height="60" fill="url(#scanGrad)"/>
-    <rect x="0" y="${scanY - 0.5}" width="${W_P}" height="1" fill="${BRAND.gold}" opacity="0.45"/>
+    <rect x="0" y="${scanY - 30}" width="${W}" height="60" fill="url(#scanGrad)"/>
+    <rect x="0" y="${scanY - 0.5}" width="${W}" height="1" fill="${BRAND.gold}" opacity="0.45"/>
   `;
 }
 
@@ -623,16 +644,19 @@ function _renderScanLine({ p, windowStart = 0.50, windowEnd = 0.85 }) {
 // `p`  — global progress 0..1
 // All positions/opacities are deterministic functions of (i, p), so
 // the field looks identical across renders for a given frame.
-function _renderParticleDust({ p }) {
+function _renderParticleDust({ p, W = W_P, H = H_P }) {
   const dots = [];
-  for (let i = 0; i < 22; i++) {
+  // Scale particle count with canvas area so reel (1.42× area) gets
+  // ~31 dots instead of 22 — keeps perceived density consistent.
+  const N = Math.round(22 * (W * H) / (W_P * H_P));
+  for (let i = 0; i < N; i++) {
     // Deterministic pseudo-random positions via sin hashing
     const seed = i * 73.7;
-    const baseX = ((Math.sin(seed) * 10000) % 1 + 1) % 1 * W_P;
+    const baseX = ((Math.sin(seed) * 10000) % 1 + 1) % 1 * W;
     const phase = ((Math.cos(seed) * 10000) % 1 + 1) % 1;
     // Loop vertically over the clip (1.5 cycles per clip)
     const yTotal = (phase + p) * 1.5;
-    const y = (1 - (yTotal % 1)) * (H_P + 100) - 50;
+    const y = (1 - (yTotal % 1)) * (H + 100) - 50;
     const x = baseX + Math.sin(p * Math.PI * 2 + i) * 8;
     const r = 1 + (i % 3) * 0.7;
     // Twinkle opacity
@@ -652,11 +676,11 @@ function _renderParticleDust({ p }) {
 // `p` is global progress (0..1). Trace travels clockwise during
 // p=[0.08, 0.88], fades in over [0.08, 0.18] and fades out over
 // [0.85, 0.97].
-function _renderBorderTrace({ p, inset = 28, rx = 22 }) {
+function _renderBorderTrace({ p, inset = 28, rx = 22, W = W_P, H = H_P }) {
   const x = inset;
   const y = inset;
-  const w = W_P - inset * 2;
-  const h = H_P - inset * 2;
+  const w = W - inset * 2;
+  const h = H - inset * 2;
   // Perimeter of a rounded rect ≈ straight runs + corner arcs.
   const perim  = 2 * (w + h) - 8 * rx + 2 * Math.PI * rx;
   const segLen = 110;
@@ -764,10 +788,23 @@ function _renderInlineLogo({ cx, cy, size, scale = 1, opacity = 1 }) {
   `;
 }
 
-async function _renderThreadPortraitSvg({ title, description, isos, category, articleCount, languageCount, countryCount, animation }) {
+async function _renderThreadPortraitSvg({ title, description, isos, category, articleCount, languageCount, countryCount, animation, aspect }) {
   // Animation state. `progress` 0..1 drives every dynamic element.
   // Treat undefined / >=1 as the static final frame.
   const p = animation ? _clamp(animation.progress, 0, 1) : 1;
+  // Canvas dims. Default 'portrait' = 4:5 (1080×1350) for the IG
+  // carousel slide. 'reel' = 9:16 (1080×1920) for the stitched Reel
+  // pipeline. Width is identical so flag chip / icon dimensions look
+  // the same; the extra ~570 px of height is used by `S` below to
+  // proportionally scale typography so the title fills the canvas
+  // rather than leaving a void mid-frame.
+  const { W, H, PAD } = _dims(aspect);
+  // Vertical scale factor: 1.0 for 4:5, ~1.42 for 9:16. Multiplied
+  // into title/description font sizes + line heights so the text
+  // block grows to fill the taller reel canvas. Top-anchored elements
+  // (icon, category eyebrow) stay at their fixed-px positions.
+  const S = H / H_P;
+  const titleStartY = Math.round(320 * S);
   // Front-loaded timeline so the brand + title are already visible
   // within the first ~0.3s — viewers who scroll within 1.5s still get
   // the hook. Chrome is always-on (no fade); the timing windows pack
@@ -785,16 +822,22 @@ async function _renderThreadPortraitSvg({ title, description, isos, category, ar
   const coverageP = _easeOutCubic(_windowed(p, 0.70, 0.85));
 
   // ── Title: auto-shrink to avoid ellipsis; per-line clip-path wipe ──
+  // Font sizes + lineHs scaled by S so reel mode (S≈1.42) gets a
+  // commensurately bigger title that fills the 1920px canvas. Since
+  // W is unchanged but font grew by S, charsPerLine must DROP by S so
+  // the rendered line width still fits within the canvas. The wrap
+  // produces more lines, which is fine — those extra lines occupy the
+  // vertical space the bigger canvas opened up.
   const titleFit = _fitTitle(title || 'Untitled story', [
-    { size: 68, lineH: 80, charsPerLine: 24, maxLines: 3 },
-    { size: 60, lineH: 72, charsPerLine: 27, maxLines: 4 },
-    { size: 54, lineH: 64, charsPerLine: 30, maxLines: 5 },
-    { size: 48, lineH: 58, charsPerLine: 34, maxLines: 5 },
+    { size: Math.round(68 * S), lineH: Math.round(80 * S), charsPerLine: Math.round(24 / S), maxLines: 3 },
+    { size: Math.round(60 * S), lineH: Math.round(72 * S), charsPerLine: Math.round(27 / S), maxLines: 4 },
+    { size: Math.round(54 * S), lineH: Math.round(64 * S), charsPerLine: Math.round(30 / S), maxLines: 5 },
+    { size: Math.round(48 * S), lineH: Math.round(58 * S), charsPerLine: Math.round(34 / S), maxLines: 6 },
   ]);
   const titleLines  = titleFit.lines;
   const titleSize   = titleFit.size;
   const titleLineH  = titleFit.lineH;
-  const titleStartY = 320;
+  // (titleStartY declared above near _dims block, already scaled by S)
 
   // Title animation: each line wipes in left-to-right via a clipPath
   // whose width grows from 0 → full. Slowed from 0.18 → 0.55 so the
@@ -810,15 +853,15 @@ async function _renderThreadPortraitSvg({ title, description, isos, category, ar
     const lp = _easeOutCubic(_windowed(titleP, localStart, localEnd));
     const y = titleStartY + i * titleLineH;
     const clipId = `titleClip${i}`;
-    // Clip rectangle grows from x=PAD_P to x=PAD_P + W_P * lp (covers full width).
-    const clipW = (W_P - PAD_P * 2) * lp + 4;
+    // Clip rectangle grows from x=PAD to x=PAD + W * lp (covers full width).
+    const clipW = (W - PAD * 2) * lp + 4;
     return `
       <defs>
         <clipPath id="${clipId}">
-          <rect x="${PAD_P - 4}" y="${y - titleSize}" width="${clipW}" height="${titleSize + 20}"/>
+          <rect x="${PAD - 4}" y="${y - titleSize}" width="${clipW}" height="${titleSize + 20}"/>
         </clipPath>
       </defs>
-      <text x="${PAD_P}" y="${y}"
+      <text x="${PAD}" y="${y}"
             clip-path="url(#${clipId})"
             font-family="${FONT_FAMILY}"
             font-weight="800" font-size="${titleSize}" letter-spacing="-2"
@@ -837,7 +880,7 @@ async function _renderThreadPortraitSvg({ title, description, isos, category, ar
       if (titleP > localEnd) activeLine = i;
     }
     const lp = _easeOutCubic(_windowed(titleP, activeLine * titleLineStagger, activeLine * titleLineStagger + titleLineDuration));
-    const cursorX = PAD_P + (W_P - PAD_P * 2) * lp;
+    const cursorX = PAD + (W - PAD * 2) * lp;
     const cursorY = titleStartY + activeLine * titleLineH;
     titleSvgFragments.push(`
       <rect x="${cursorX}" y="${cursorY - titleSize + 8}" width="3" height="${titleSize - 6}"
@@ -853,22 +896,22 @@ async function _renderThreadPortraitSvg({ title, description, isos, category, ar
     ? descTrimmed.slice(0, 357).replace(/\s+\S*$/, '') + '…'
     : descTrimmed;
   const descLines = _wrapLines(descCapped, 38, 6);
-  const descSize  = 30;
-  const descLineH = 42;
-  const descStartY = titleBottomY + 64;
+  const descSize  = Math.round(30 * S);
+  const descLineH = Math.round(42 * S);
+  const descStartY = titleBottomY + Math.round(64 * S);
   const descOpacity = _easeOutCubic(descP) * 0.78; // cap at 0.78 (matches final fill alpha)
   const descSlideY  = (1 - _easeOutCubic(descP)) * 16; // 16px → 0
   const descSvg = descLines.map((line, i) => {
     const y = descStartY + i * descLineH + descSlideY;
-    return `<text x="${PAD_P}" y="${y}"
+    return `<text x="${PAD}" y="${y}"
                   font-family="${FONT_FAMILY}"
                   font-weight="500" font-size="${descSize}" letter-spacing="-0.2"
                   fill="rgba(255,255,255,${descOpacity.toFixed(3)})">${_esc(line)}</text>`;
   }).join('\n');
 
   // ── Flag chips: each chip slides in from x=-30 + fades in, staggered ──
-  const chipsY = H_P - 280;
-  const chipsBaseSvg = await _flagChips(isos, PAD_P, chipsY);
+  const chipsY = H - 280;
+  const chipsBaseSvg = await _flagChips(isos, PAD, chipsY);
   // Wrap each chip's `<g>` in a per-chip animated transform + opacity.
   // _flagChips returns a sequence of <g transform="translate(...)">...
   // We post-process to add animation. Stagger: 70ms each.
@@ -893,19 +936,19 @@ async function _renderThreadPortraitSvg({ title, description, isos, category, ar
   // ── Coverage line: simple fade-in ──
   const coverageText = _coverageLine({ articleCount, languageCount, countryCount });
   const coverageSvg = coverageText ? `
-    <text x="${PAD_P}" y="${chipsY - 28}"
+    <text x="${PAD}" y="${chipsY - 28}"
           font-family="${FONT_FAMILY}"
           font-weight="600" font-size="24" letter-spacing="1.8"
           fill="${BRAND.goldSoft}" opacity="${coverageP.toFixed(3)}">${_esc(coverageText.toUpperCase())}</text>
   ` : '';
 
   // ── Category eyebrow: always visible ──
-  // x shifted to PAD_P+32 to make room for the pulsing dot (effect #12)
-  // that lives at PAD_P+10, vertically aligned with the eyebrow's
+  // x shifted to PAD+32 to make room for the pulsing dot (effect #12)
+  // that lives at PAD+10, vertically aligned with the eyebrow's
   // cap-mid so dot + text read as one inline element.
   const catLabel = (category || 'Story').toUpperCase();
   const catSvg = `
-    <text x="${PAD_P + 32}" y="240"
+    <text x="${PAD + 32}" y="240"
           font-family="${FONT_FAMILY}"
           font-weight="800" font-size="26" letter-spacing="5"
           fill="${BRAND.gold}">${_esc(catLabel)} · STORY THREAD</text>
@@ -918,7 +961,7 @@ async function _renderThreadPortraitSvg({ title, description, isos, category, ar
   // still provides the breathing motion. ──
   const ICON_SIZE_P = 120;
   const iconY = 80;
-  const iconCx = PAD_P + ICON_SIZE_P / 2;
+  const iconCx = PAD + ICON_SIZE_P / 2;
   const iconCy = iconY + ICON_SIZE_P / 2;
   const iconBlock = _renderInlineLogo({
     cx: iconCx, cy: iconCy, size: ICON_SIZE_P,
@@ -926,7 +969,7 @@ async function _renderThreadPortraitSvg({ title, description, isos, category, ar
 
   // Brand footer (always visible — it's the wordmark, not animated).
   const footerSvg = `
-    <text x="${PAD_P}" y="${H_P - 80}"
+    <text x="${PAD}" y="${H - 80}"
           font-family="${FONT_FAMILY}"
           font-weight="700" font-size="30" letter-spacing="2"
           fill="${BRAND.goldSoft}">earth00.com</text>
@@ -946,7 +989,7 @@ async function _renderThreadPortraitSvg({ title, description, isos, category, ar
       const amp = 18 + (i % 3) * 6;
       // Build a smooth quadratic-segmented wave across the whole canvas.
       const segs = [];
-      for (let x = -200; x <= W_P + 200; x += 120) {
+      for (let x = -200; x <= W + 200; x += 120) {
         const phase = (x + drift) * 0.015 + i * 0.7;
         const y = baseY + Math.sin(phase) * amp;
         if (x === -200) segs.push(`M ${x.toFixed(1)} ${y.toFixed(1)}`);
@@ -966,13 +1009,13 @@ async function _renderThreadPortraitSvg({ title, description, isos, category, ar
   const pulseOpacity = 0.04 + pulsePhase * 0.06; // peak 0.10
   const radialPulseSvg = `
     <defs>
-      <radialGradient id="radialPulseP" cx="${PAD_P + ICON_SIZE_P / 2}" cy="${iconY + ICON_SIZE_P / 2}" r="${pulseR * W_P}"
+      <radialGradient id="radialPulseP" cx="${PAD + ICON_SIZE_P / 2}" cy="${iconY + ICON_SIZE_P / 2}" r="${pulseR * W}"
                       gradientUnits="userSpaceOnUse">
         <stop offset="0" stop-color="${BRAND.gold}" stop-opacity="${pulseOpacity.toFixed(3)}"/>
         <stop offset="1" stop-color="${BRAND.gold}" stop-opacity="0"/>
       </radialGradient>
     </defs>
-    <rect width="${W_P}" height="${H_P}" fill="url(#radialPulseP)"/>
+    <rect width="${W}" height="${H}" fill="url(#radialPulseP)"/>
   `;
 
   // ── Effect #2: bottom-edge horizon arc (sunrise glow). ──
@@ -988,7 +1031,7 @@ async function _renderThreadPortraitSvg({ title, description, isos, category, ar
         <stop offset="1"   stop-color="${BRAND.gold}" stop-opacity="0"/>
       </radialGradient>
     </defs>
-    <rect x="0" y="${H_P - 320}" width="${W_P}" height="320" fill="url(#horizonP)"/>
+    <rect x="0" y="${H - 320}" width="${W}" height="320" fill="url(#horizonP)"/>
   `;
 
   // ── Effect #5: particle dust drifting up. ──
@@ -1007,10 +1050,10 @@ async function _renderThreadPortraitSvg({ title, description, isos, category, ar
   // Dot is centered vertically with the eyebrow text's cap-height
   // (text baseline = 240, font-size 26 weight 800 → cap-top ~221,
   // cap-mid ~230). Sits inline with the eyebrow to its left at
-  // PAD_P+10; the eyebrow's x is shifted to PAD_P+32 (see catSvg)
+  // PAD+10; the eyebrow's x is shifted to PAD+32 (see catSvg)
   // to leave breathing room around the dot.
   const eyebrowDotSvg = `
-    <circle cx="${PAD_P + 10}" cy="230" r="5" fill="${BRAND.gold}" opacity="${dotOpacity.toFixed(3)}"/>
+    <circle cx="${PAD + 10}" cy="230" r="5" fill="${BRAND.gold}" opacity="${dotOpacity.toFixed(3)}"/>
   `;
 
   // ── Effect #11: chromatic shimmer on title at completion. ──
@@ -1026,11 +1069,11 @@ async function _renderThreadPortraitSvg({ title, description, isos, category, ar
   const chromaticShimmerSvg = shimmerOpacity > 0 ? titleLines.map((line, i) => {
     const y = titleStartY + i * titleLineH;
     return `
-      <text x="${PAD_P - 2}" y="${y}"
+      <text x="${PAD - 2}" y="${y}"
             font-family="${FONT_FAMILY}"
             font-weight="800" font-size="${titleSize}" letter-spacing="-2"
             fill="#7ec8ff" opacity="${shimmerOpacity.toFixed(3)}">${_esc(line)}</text>
-      <text x="${PAD_P + 2}" y="${y}"
+      <text x="${PAD + 2}" y="${y}"
             font-family="${FONT_FAMILY}"
             font-weight="800" font-size="${titleSize}" letter-spacing="-2"
             fill="#ff8b7a" opacity="${shimmerOpacity.toFixed(3)}">${_esc(line)}</text>
@@ -1076,8 +1119,8 @@ async function _renderThreadPortraitSvg({ title, description, isos, category, ar
         <stop offset="1" stop-color="rgba(212,168,67,0)"/>
       </radialGradient>
     </defs>
-    <rect width="${W_P}" height="${H_P}" fill="url(#bgGradP)"/>
-    <rect width="${W_P}" height="${H_P}" fill="url(#glowP)"/>
+    <rect width="${W}" height="${H}" fill="url(#bgGradP)"/>
+    <rect width="${W}" height="${H}" fill="url(#glowP)"/>
   `;
 
   // Z-order, back→front: bg → contours → radial pulse → horizon →
@@ -1085,7 +1128,7 @@ async function _renderThreadPortraitSvg({ title, description, isos, category, ar
   // chromatic shimmer overlay → desc → coverage → chips (with float)
   // → scan-line → border trace → footer.
   return `<?xml version="1.0" encoding="UTF-8"?>
-    <svg xmlns="http://www.w3.org/2000/svg" width="${W_P}" height="${H_P}" viewBox="0 0 ${W_P} ${H_P}">
+    <svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
       ${bg}
       ${contourSvg}
       ${radialPulseSvg}
@@ -1149,8 +1192,9 @@ function _donutSlicePath(cx, cy, rOuter, rInner, startAngle, endAngle) {
   ].join(' ');
 }
 
-async function _renderThreadCoveragePieSvg({ title, category, countryCounts, articleCount, sourceCount, animation }) {
+async function _renderThreadCoveragePieSvg({ title, category, countryCounts, articleCount, sourceCount, animation, aspect }) {
   const p = animation ? _clamp(animation.progress, 0, 1) : 1;
+  const { W, H, PAD } = _dims(aspect);
   // Front-loaded timeline so the first ~1s already shows the brand +
   // typing title — prevents the "blank first half-second" that lets
   // viewers scroll past before anything registers.
@@ -1207,14 +1251,14 @@ async function _renderThreadCoveragePieSvg({ title, category, countryCounts, art
   // motion for visual continuity across the carousel.
   const ICON_SIZE_P = 120;
   const iconY = 80;
-  const iconCx = PAD_P + ICON_SIZE_P / 2;
+  const iconCx = PAD + ICON_SIZE_P / 2;
   const iconCy = iconY + ICON_SIZE_P / 2;
   const haloSvg = _renderLogoHalo({ cx: iconCx, cy: iconCy, size: ICON_SIZE_P, p, frequency: 2 });
   const iconBlock = _renderInlineLogo({ cx: iconCx, cy: iconCy, size: ICON_SIZE_P });
 
   const catLabel = (category || 'Story').toUpperCase();
   const catSvg = `
-    <text x="${PAD_P}" y="240"
+    <text x="${PAD}" y="240"
           font-family="${FONT_FAMILY}"
           font-weight="800" font-size="26" letter-spacing="5"
           fill="${BRAND.gold}">${_esc(catLabel)} · COVERAGE BY COUNTRY</text>
@@ -1243,14 +1287,14 @@ async function _renderThreadCoveragePieSvg({ title, category, countryCounts, art
     const lp = _easeOutCubic(_windowed(titleP, localStart, localEnd));
     const y = titleStartY + i * titleLineH;
     const clipId = `pieTitleClip${i}`;
-    const clipW = (W_P - PAD_P * 2) * lp + 4;
+    const clipW = (W - PAD * 2) * lp + 4;
     return `
       <defs>
         <clipPath id="${clipId}">
-          <rect x="${PAD_P - 4}" y="${y - titleSize}" width="${clipW}" height="${titleSize + 20}"/>
+          <rect x="${PAD - 4}" y="${y - titleSize}" width="${clipW}" height="${titleSize + 20}"/>
         </clipPath>
       </defs>
-      <text x="${PAD_P}" y="${y}"
+      <text x="${PAD}" y="${y}"
             clip-path="url(#${clipId})"
             font-family="${FONT_FAMILY}"
             font-weight="800" font-size="${titleSize}" letter-spacing="-1.5"
@@ -1268,14 +1312,14 @@ async function _renderThreadCoveragePieSvg({ title, category, countryCounts, art
   const subText = subBits.join(' · ');
   const subY = titleBottomY + 46;
   const subSvg = subText ? `
-    <text x="${PAD_P}" y="${subY}"
+    <text x="${PAD}" y="${subY}"
           font-family="${FONT_FAMILY}"
           font-weight="600" font-size="22" letter-spacing="2"
           fill="${BRAND.goldSoft}" opacity="${subP.toFixed(3)}">${_esc(subText)}</text>
   ` : '';
 
   // ── Donut geometry ──
-  const cx = W_P / 2;
+  const cx = W / 2;
   const cy = 720;
   const rOuter = 210;
   const rInner = 115;
@@ -1514,7 +1558,7 @@ async function _renderThreadCoveragePieSvg({ title, category, countryCounts, art
   const legendSvg = legendItems.map((s, i) => {
     const col = i % 2;
     const row = Math.floor(i / 2);
-    const x = PAD_P + col * 460;
+    const x = PAD + col * 460;
     const baseY = legendY + row * 50;
     const localStart = i * legendStagger;
     const localEnd   = localStart + legendDuration;
@@ -1593,7 +1637,7 @@ async function _renderThreadCoveragePieSvg({ title, category, countryCounts, art
   }).join('\n');
 
   const footerSvg = `
-    <text x="${PAD_P}" y="${H_P - 80}"
+    <text x="${PAD}" y="${H - 80}"
           font-family="${FONT_FAMILY}"
           font-weight="700" font-size="30" letter-spacing="2"
           fill="${BRAND.goldSoft}">earth00.com</text>
@@ -1606,7 +1650,7 @@ async function _renderThreadCoveragePieSvg({ title, category, countryCounts, art
         <stop offset="1" stop-color="${BRAND.bgBot}"/>
       </linearGradient>
     </defs>
-    <rect width="${W_P}" height="${H_P}" fill="url(#bgGradC)"/>
+    <rect width="${W}" height="${H}" fill="url(#bgGradC)"/>
   `;
 
   // Z-order: bg → globe wireframe → particle dust → chrome → title →
@@ -1619,7 +1663,7 @@ async function _renderThreadCoveragePieSvg({ title, category, countryCounts, art
   const borderTraceSvg    = _renderBorderTrace({ p });
 
   return `<?xml version="1.0" encoding="UTF-8"?>
-    <svg xmlns="http://www.w3.org/2000/svg" width="${W_P}" height="${H_P}" viewBox="0 0 ${W_P} ${H_P}">
+    <svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
       ${bg}
       ${globeBgSvg}
       ${dustSvg}
@@ -1693,7 +1737,8 @@ function _relativeTime(iso) {
   return t.toISOString().slice(0, 10).toUpperCase();
 }
 
-async function _renderThreadArticlesSvg({ title, category, articles, animation }) {
+async function _renderThreadArticlesSvg({ title, category, articles, animation, aspect }) {
+  const { W, H, PAD } = _dims(aspect);
   const p = animation ? _clamp(animation.progress, 0, 1) : 1;
   // Front-loaded: chrome always on, title types in fast, bars start sliding
   // by t=0.25 so a viewer who scrolls within 1.5s sees at least 2 bars.
@@ -1708,14 +1753,14 @@ async function _renderThreadArticlesSvg({ title, category, articles, animation }
   // continuity across the carousel.
   const ICON_SIZE_P = 120;
   const iconY = 80;
-  const iconCx = PAD_P + ICON_SIZE_P / 2;
+  const iconCx = PAD + ICON_SIZE_P / 2;
   const iconCy = iconY + ICON_SIZE_P / 2;
   const haloSvg = _renderLogoHalo({ cx: iconCx, cy: iconCy, size: ICON_SIZE_P, p, frequency: 2 });
   const iconBlock = _renderInlineLogo({ cx: iconCx, cy: iconCy, size: ICON_SIZE_P });
 
   const catLabel = (category || 'Story').toUpperCase();
   const eyebrowSvg = `
-    <text x="${PAD_P}" y="240"
+    <text x="${PAD}" y="240"
           font-family="${FONT_FAMILY}"
           font-weight="800" font-size="26" letter-spacing="5"
           fill="${BRAND.gold}">${_esc(catLabel)} · STORY THREAD</text>
@@ -1734,14 +1779,14 @@ async function _renderThreadArticlesSvg({ title, category, articles, animation }
     const lp = _easeOutCubic(_windowed(titleP, i * 0.08, i * 0.08 + titleLineDuration));
     const y = titleStartY + i * titleFit.lineH;
     const clipId = `artTitleClip${i}`;
-    const clipW = (W_P - PAD_P * 2) * lp + 4;
+    const clipW = (W - PAD * 2) * lp + 4;
     return `
       <defs>
         <clipPath id="${clipId}">
-          <rect x="${PAD_P - 4}" y="${y - titleFit.size}" width="${clipW}" height="${titleFit.size + 20}"/>
+          <rect x="${PAD - 4}" y="${y - titleFit.size}" width="${clipW}" height="${titleFit.size + 20}"/>
         </clipPath>
       </defs>
-      <text x="${PAD_P}" y="${y}"
+      <text x="${PAD}" y="${y}"
             clip-path="url(#${clipId})"
             font-family="${FONT_FAMILY}"
             font-weight="800" font-size="${titleFit.size}" letter-spacing="-1.2"
@@ -1758,11 +1803,11 @@ async function _renderThreadArticlesSvg({ title, category, articles, animation }
   const headerY  = titleBottomY + 56;
   const headerSvg = `
     <g opacity="${headerP.toFixed(3)}">
-      <text x="${PAD_P}" y="${headerY}"
+      <text x="${PAD}" y="${headerY}"
             font-family="${FONT_FAMILY}"
             font-weight="800" font-size="22" letter-spacing="4"
             fill="${BRAND.gold}">TOP COVERAGE</text>
-      <rect x="${PAD_P}" y="${headerY + 12}" width="160" height="2" rx="1"
+      <rect x="${PAD}" y="${headerY + 12}" width="160" height="2" rx="1"
             fill="${BRAND.gold}" opacity="0.7"/>
     </g>
   `;
@@ -1796,7 +1841,7 @@ async function _renderThreadArticlesSvg({ title, category, articles, animation }
     const lp = _easeOutCubic(_windowed(barsP, i * barStagger, i * barStagger + barDuration));
     const slideX = (1 - lp) * 80; // slide in from right
     const barY = barAreaTop + i * (barHeight + barGap);
-    const barW = W_P - PAD_P * 2;
+    const barW = W - PAD * 2;
 
     // Per-bar "settled" timeline: how far past landing we are, in the
     // remaining clip space. Drives all post-land effects (scan-line,
@@ -1807,7 +1852,7 @@ async function _renderThreadArticlesSvg({ title, category, articles, animation }
 
     // ── Hero thumb (left) — 140×140 rounded ──
     const thumbSize = Math.min(140, barHeight - 16);
-    const thumbX = PAD_P + 12;
+    const thumbX = PAD + 12;
     const thumbY = barY + (barHeight - thumbSize) / 2;
     const thumbR = 16;
     const thumbClipId = `thumbClip${i}`;
@@ -1866,7 +1911,7 @@ async function _renderThreadArticlesSvg({ title, category, articles, animation }
 
     // ── Effect #13: headline appears word-by-word — full text, no truncation.
     //
-    // The right column has ~766px of horizontal space (W_P - PAD_P*2 -
+    // The right column has ~766px of horizontal space (W - PAD*2 -
     // thumbSize - gaps). The old 30-char wrap was leaving most of that
     // empty + truncating real headlines (typical 80-130 chars) at line 2.
     // _fitTitle ladder: try 26px @ 48 chars × 3 lines (covers ~144 chars),
@@ -1953,16 +1998,16 @@ async function _renderThreadArticlesSvg({ title, category, articles, animation }
     // then fades back to invisible during settledG 0→0.4.
     const stripePulseOpacity = _easeOutCubic(_clamp(1 - settledG / 0.35, 0, 1));
     const accentStripe = `
-      <rect x="${PAD_P}" y="${barY}" width="3" height="${barHeight}" rx="1.5"
+      <rect x="${PAD}" y="${barY}" width="3" height="${barHeight}" rx="1.5"
             fill="${BRAND.gold}" opacity="0.7"/>
-      <rect x="${PAD_P - 2}" y="${barY}" width="7" height="${barHeight}" rx="3.5"
+      <rect x="${PAD - 2}" y="${barY}" width="7" height="${barHeight}" rx="3.5"
             fill="${BRAND.gold}" opacity="${(stripePulseOpacity * 0.55).toFixed(3)}"/>
     `;
 
     // ── Bar bg + Effect #2 border glow + Effect #10 edge glow lines + Effect #9 gradient sweep ──
     // Bar background card
     const barBg = `
-      <rect x="${PAD_P}" y="${barY}" width="${barW}" height="${barHeight}" rx="14"
+      <rect x="${PAD}" y="${barY}" width="${barW}" height="${barHeight}" rx="14"
             fill="${BRAND.card}" stroke="${BRAND.cardLine}" stroke-width="1"/>
     `;
     // #2 border glow flash on landing: peaks at lp~0.85 and fades through settledG 0→0.3
@@ -1970,16 +2015,16 @@ async function _renderThreadArticlesSvg({ title, category, articles, animation }
       ? _easeOutCubic(_clamp(1 - settledG / 0.30, 0, 1)) * 0.60
       : _easeOutCubic(_clamp((lp - 0.65) / 0.20, 0, 1)) * 0.60;
     const borderGlow = `
-      <rect x="${PAD_P}" y="${barY}" width="${barW}" height="${barHeight}" rx="14"
+      <rect x="${PAD}" y="${barY}" width="${barW}" height="${barHeight}" rx="14"
             fill="none" stroke="${BRAND.gold}" stroke-width="2.5"
             opacity="${borderGlowOpacity.toFixed(3)}"/>
     `;
     // #10 thin glow lines along top + bottom inner edges (always visible
     // once bar lands, gives the row a "lit-up" feel).
     const edgeGlowLines = `
-      <rect x="${PAD_P + 8}" y="${barY + 1.5}" width="${barW - 16}" height="0.8"
+      <rect x="${PAD + 8}" y="${barY + 1.5}" width="${barW - 16}" height="0.8"
             fill="${BRAND.gold}" opacity="0.32"/>
-      <rect x="${PAD_P + 8}" y="${barY + barHeight - 2.3}" width="${barW - 16}" height="0.8"
+      <rect x="${PAD + 8}" y="${barY + barHeight - 2.3}" width="${barW - 16}" height="0.8"
             fill="${BRAND.gold}" opacity="0.18"/>
     `;
     // (Effect #9 gold gradient sweep removed — read as a "shimmer badge"
@@ -2003,7 +2048,7 @@ async function _renderThreadArticlesSvg({ title, category, articles, animation }
 
   // Footer
   const footerSvg = `
-    <text x="${PAD_P}" y="${H_P - 80}"
+    <text x="${PAD}" y="${H - 80}"
           font-family="${FONT_FAMILY}"
           font-weight="700" font-size="30" letter-spacing="2"
           fill="${BRAND.goldSoft}">earth00.com</text>
@@ -2016,7 +2061,7 @@ async function _renderThreadArticlesSvg({ title, category, articles, animation }
         <stop offset="1" stop-color="${BRAND.bgBot}"/>
       </linearGradient>
     </defs>
-    <rect width="${W_P}" height="${H_P}" fill="url(#bgGradA)"/>
+    <rect width="${W}" height="${H}" fill="url(#bgGradA)"/>
   `;
 
   // Scan-line + border-trace on top of everything else (matches slide 1).
@@ -2030,7 +2075,7 @@ async function _renderThreadArticlesSvg({ title, category, articles, animation }
   // sits behind everything (just above the bg) for an ambient field
   // that ties slide 4 visually to slides 1 + 3.
   return `<?xml version="1.0" encoding="UTF-8"?>
-    <svg xmlns="http://www.w3.org/2000/svg" width="${W_P}" height="${H_P}" viewBox="0 0 ${W_P} ${H_P}">
+    <svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
       ${bg}
       ${dustSvg}
       ${haloSvg}
@@ -2397,4 +2442,4 @@ async function generateFrame(entity, progress) {
   return _toPng(svg);
 }
 
-module.exports = { generate, generateFrame, bustCache, BRAND, W, H, W_P, H_P };
+module.exports = { generate, generateFrame, bustCache, BRAND, W, H, W_P, H_P, W_R, H_R };
