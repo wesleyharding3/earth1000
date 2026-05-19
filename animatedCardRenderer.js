@@ -114,23 +114,39 @@ function _spawnEncoder({ fps, durationS, width, height }) {
     '-i', audioPath,
     '-map', '0:v',
     '-map', '1:a:0',
-    // H.264 video, yuv420p for universal player compat. CRF 17 (was 22) —
-    // pushes the encoded video bitrate up from ~500 kbps to ~2-3 Mbps so
-    // IG carousel-item validation passes (lower-bitrate items had been
-    // failing with the generic error code 2207077; arc at 3.3 Mbps
-    // passes REELS fine, so the bitrate floor is plausible).
+    // H.264 + AAC tuned to Meta carousel ingester requirements. Bitrate
+    // alone (CRF 17 → ~2-3 Mbps) wasn't enough to clear 2207077; the
+    // ingester was also rejecting MP4s with AAC-priming `elst` edit
+    // list atoms. Below: Main profile (broader compat than High), closed
+    // GOP with a keyframe every 2s, 48 kHz audio (Meta's preferred rate),
+    // and `aresample=async=1:first_pts=0` to flatten AAC priming so no
+    // `elst` is written. `-avoid_negative_ts make_zero` is belt+braces.
     '-c:v', 'libx264',
     '-preset', 'medium',
     '-pix_fmt', 'yuv420p',
     '-crf', '17',
-    '-profile:v', 'high',
-    '-movflags', '+faststart',
+    '-profile:v', 'main',
+    '-level', '4.0',
+    '-g', String(fps * 2),
+    '-keyint_min', String(fps * 2),
+    '-sc_threshold', '0',
+    '-bf', '2',
     '-r', String(fps),
-    '-t', String(durationS),
+    '-video_track_timescale', '30000',
     '-c:a', 'aac',
     '-b:a', '128k',
-    '-ar', '44100',
+    '-ar', '48000',
     '-ac', '2',
+    '-af', 'aresample=async=1:first_pts=0',
+    '-map_metadata', '-1',
+    '-map_chapters', '-1',
+    '-avoid_negative_ts', 'make_zero',
+    '-movflags', '+faststart',
+    // Disable mov-muxer's edit-list (elst) writes. Without this, ffmpeg
+    // emits an `elst` atom for AAC priming offset, which the Meta
+    // ingester rejects with error code 2207077.
+    '-use_editlist', '0',
+    '-t', String(durationS),
     // Output to a seekable tmpfile (see header rationale above).
     '-f', 'mp4',
     tmpPath,
