@@ -1195,6 +1195,11 @@ function _donutSlicePath(cx, cy, rOuter, rInner, startAngle, endAngle) {
 async function _renderThreadCoveragePieSvg({ title, category, countryCounts, articleCount, sourceCount, animation, aspect }) {
   const p = animation ? _clamp(animation.progress, 0, 1) : 1;
   const { W, H, PAD } = _dims(aspect);
+  // Vertical scale factor: 1.0 for 4:5 portrait carousel mode, ~1.42
+  // for 9:16 reel mode. Scales title typography + the donut's vertical
+  // center so the donut sits in the same proportional position on
+  // either canvas instead of being top-anchored at y=720.
+  const S = H / H_P;
   // Front-loaded timeline so the first ~1s already shows the brand +
   // typing title — prevents the "blank first half-second" that lets
   // viewers scroll past before anything registers.
@@ -1265,15 +1270,18 @@ async function _renderThreadCoveragePieSvg({ title, category, countryCounts, art
   `;
 
   // ── Title: auto-shrink + per-line wipe ──
+  // Fonts + lineH scaled by S (1.42 in reel). charsPerLine divided by
+  // S so the rendered line width still fits within the unchanged
+  // canvas width.
   const titleFit = _fitTitle(title || 'Coverage', [
-    { size: 50, lineH: 64, charsPerLine: 26, maxLines: 2 },
-    { size: 44, lineH: 56, charsPerLine: 30, maxLines: 3 },
-    { size: 38, lineH: 50, charsPerLine: 36, maxLines: 3 },
+    { size: Math.round(50 * S), lineH: Math.round(64 * S), charsPerLine: Math.round(26 / S), maxLines: 2 },
+    { size: Math.round(44 * S), lineH: Math.round(56 * S), charsPerLine: Math.round(30 / S), maxLines: 3 },
+    { size: Math.round(38 * S), lineH: Math.round(50 * S), charsPerLine: Math.round(36 / S), maxLines: 4 },
   ]);
   const titleLines  = titleFit.lines;
   const titleSize   = titleFit.size;
   const titleLineH  = titleFit.lineH;
-  const titleStartY = 340;
+  const titleStartY = Math.round(340 * S);
 
   // Slowed: per-line wipe duration 0.22 → 0.40, stagger 0.10 → 0.16
   // (in titleP-space). At the previous speed the title finished
@@ -1310,17 +1318,21 @@ async function _renderThreadCoveragePieSvg({ title, category, countryCounts, art
   if (Number.isFinite(articleCount) && articleCount > 0) subBits.push(`${articleCount} ARTICLES`);
   if (allCountries.length > 0)                            subBits.push(`${allCountries.length} COUNTR${allCountries.length === 1 ? 'Y' : 'IES'}`);
   const subText = subBits.join(' · ');
-  const subY = titleBottomY + 46;
+  const subY = titleBottomY + Math.round(46 * S);
   const subSvg = subText ? `
     <text x="${PAD}" y="${subY}"
           font-family="${FONT_FAMILY}"
-          font-weight="600" font-size="22" letter-spacing="2"
+          font-weight="600" font-size="${Math.round(22 * S)}" letter-spacing="2"
           fill="${BRAND.goldSoft}" opacity="${subP.toFixed(3)}">${_esc(subText)}</text>
   ` : '';
 
   // ── Donut geometry ──
+  // cy scaled by S so the donut sits at the same proportional vertical
+  // position on either canvas (centered-low). rOuter/rInner unchanged
+  // because canvas width is the same; the donut visually fills the
+  // same horizontal footprint either way.
   const cx = W / 2;
-  const cy = 720;
+  const cy = Math.round(720 * S);
   const rOuter = 210;
   const rInner = 115;
 
@@ -1538,10 +1550,10 @@ async function _renderThreadCoveragePieSvg({ title, category, countryCounts, art
   const centerOpacity = _easeOutCubic(_windowed(p, 0.30, 0.45));
   const centerLabel = `
     <text x="${cx}" y="${(cy - 6 + counterBounce).toFixed(2)}" text-anchor="middle"
-          font-family="${FONT_FAMILY}" font-weight="800" font-size="72"
+          font-family="${FONT_FAMILY}" font-weight="800" font-size="${Math.round(72 * S)}"
           fill="${BRAND.cream}" opacity="${centerOpacity.toFixed(3)}">${liveCountryCount || 0}</text>
-    <text x="${cx}" y="${cy + 34}" text-anchor="middle"
-          font-family="${FONT_FAMILY}" font-weight="700" font-size="18"
+    <text x="${cx}" y="${cy + Math.round(34 * S)}" text-anchor="middle"
+          font-family="${FONT_FAMILY}" font-weight="700" font-size="${Math.round(18 * S)}"
           letter-spacing="3" fill="${BRAND.goldSoft}" opacity="${centerOpacity.toFixed(3)}">${allCountries.length === 1 ? 'COUNTRY' : 'COUNTRIES'}</text>
   `;
 
@@ -1740,6 +1752,10 @@ function _relativeTime(iso) {
 async function _renderThreadArticlesSvg({ title, category, articles, animation, aspect }) {
   const { W, H, PAD } = _dims(aspect);
   const p = animation ? _clamp(animation.progress, 0, 1) : 1;
+  // Vertical scale factor: 1.0 for 4:5, ~1.42 for 9:16. Scales title
+  // typography + the bar-area's vertical extent so the 4 bars spread
+  // proportionally to fill whichever canvas they're on.
+  const S = H / H_P;
   // Front-loaded: chrome always on, title types in fast, bars start sliding
   // by t=0.25 so a viewer who scrolls within 1.5s sees at least 2 bars.
   const titleP   = _windowed(p, 0.00, 0.30);
@@ -1768,12 +1784,14 @@ async function _renderThreadArticlesSvg({ title, category, articles, animation, 
 
   // ── Title: 2 lines max, smaller than the portrait card so the bar
   // list owns the visual weight. Wipes in left-to-right per line. ──
+  // Fonts scaled by S; charsPerLine inversely (same rationale as the
+  // other cards — keep rendered line width fitting in the canvas).
   const titleFit = _fitTitle(title || 'Top Coverage', [
-    { size: 40, lineH: 50, charsPerLine: 32, maxLines: 2 },
-    { size: 34, lineH: 44, charsPerLine: 38, maxLines: 2 },
-    { size: 28, lineH: 38, charsPerLine: 46, maxLines: 2 },
+    { size: Math.round(40 * S), lineH: Math.round(50 * S), charsPerLine: Math.round(32 / S), maxLines: 2 },
+    { size: Math.round(34 * S), lineH: Math.round(44 * S), charsPerLine: Math.round(38 / S), maxLines: 2 },
+    { size: Math.round(28 * S), lineH: Math.round(38 * S), charsPerLine: Math.round(46 / S), maxLines: 3 },
   ]);
-  const titleStartY = 320;
+  const titleStartY = Math.round(320 * S);
   const titleLineDuration = 0.22;
   const titleSvgFragments = titleFit.lines.map((line, i) => {
     const lp = _easeOutCubic(_windowed(titleP, i * 0.08, i * 0.08 + titleLineDuration));
@@ -1800,14 +1818,14 @@ async function _renderThreadArticlesSvg({ title, category, articles, animation, 
   // Sits between the thread title and the first article row, so the
   // bars feel grouped under their own visual label. Gold underline
   // matches the chrome accent.
-  const headerY  = titleBottomY + 56;
+  const headerY  = titleBottomY + Math.round(56 * S);
   const headerSvg = `
     <g opacity="${headerP.toFixed(3)}">
       <text x="${PAD}" y="${headerY}"
             font-family="${FONT_FAMILY}"
-            font-weight="800" font-size="22" letter-spacing="4"
+            font-weight="800" font-size="${Math.round(22 * S)}" letter-spacing="4"
             fill="${BRAND.gold}">TOP COVERAGE</text>
-      <rect x="${PAD}" y="${headerY + 12}" width="160" height="2" rx="1"
+      <rect x="${PAD}" y="${headerY + Math.round(12 * S)}" width="${Math.round(160 * S)}" height="2" rx="1"
             fill="${BRAND.gold}" opacity="0.7"/>
     </g>
   `;
@@ -1821,11 +1839,15 @@ async function _renderThreadArticlesSvg({ title, category, articles, animation, 
   ]);
 
   // ── 4 bars stacked vertically, below the "TOP COVERAGE" header ──
-  const barAreaTop    = headerY + 36;
-  const barAreaBottom = 1230;
+  // barAreaBottom scales with S so the bars fill ~91% of the canvas
+  // vertically on either aspect (1230/1350 ≈ 1748/1920). Max bar
+  // height also scales so bars grow taller proportionally in reel
+  // mode; otherwise the 170-cap leaves dead space at the bottom.
+  const barAreaTop    = headerY + Math.round(36 * S);
+  const barAreaBottom = Math.round(1230 * S);
   const barCount      = Math.max(1, arts.length);
-  const barGap        = 16;
-  const barHeight     = Math.min(170, (barAreaBottom - barAreaTop - (barCount - 1) * barGap) / barCount);
+  const barGap        = Math.round(16 * S);
+  const barHeight     = Math.min(Math.round(170 * S), (barAreaBottom - barAreaTop - (barCount - 1) * barGap) / barCount);
 
   const barStagger  = 0.16;
   const barDuration = 0.40;
@@ -1850,8 +1872,8 @@ async function _renderThreadArticlesSvg({ title, category, articles, animation, 
     const barLandG = (i * barStagger + barDuration);                   // local g_p where this bar finishes landing
     const settledG = _windowed(barsP, barLandG, 1.0);                  // 0..1 over the rest of the bars-window
 
-    // ── Hero thumb (left) — 140×140 rounded ──
-    const thumbSize = Math.min(140, barHeight - 16);
+    // ── Hero thumb (left) — 140×140 rounded (scales with S in reel) ──
+    const thumbSize = Math.min(Math.round(140 * S), barHeight - 16);
     const thumbX = PAD + 12;
     const thumbY = barY + (barHeight - thumbSize) / 2;
     const thumbR = 16;
