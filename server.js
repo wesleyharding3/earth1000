@@ -15784,10 +15784,16 @@ app.post('/api/video-jobs/:thread_id/result',
       console.log(`[video-jobs/result] thread=${threadId} normalized ${raw.length}→${body.length} bytes in ${normMs}ms`);
       // Persist to DB blob (the cross-instance source of truth). The
       // /tmp write below is just a per-instance hot cache.
+      //
+      // scheduled_for jitter: NOW() + random(0..10 min) — anti-bot-pattern
+      // jitter so the actual social-post timestamp isn't a perfect fixed
+      // offset from the cron schedule. The PUBLISH phase honors this via
+      // `AND scheduled_for <= NOW()`.
       const { rowCount } = await pool.query(`
         UPDATE social_post_queue
-           SET arc_video = $2,
-               status   = 'pending_approval'
+           SET arc_video     = $2,
+               status        = 'pending_approval',
+               scheduled_for = NOW() + (random() * INTERVAL '10 minutes')
          WHERE thread_id = $1 AND status = 'pending_video'
       `, [threadId, body]);
       // Best-effort local cache so the next GET on THIS instance is fast.
@@ -15815,9 +15821,12 @@ app.post('/api/video-jobs/:thread_id/skip', async (req, res) => {
     const threadId = parseInt(req.params.thread_id, 10);
     if (!Number.isFinite(threadId)) return res.status(400).json({ error: 'invalid thread_id' });
     const reason = String(req.query.reason || 'unknown').slice(0, 120);
+    // Same scheduled_for jitter as /result so a video failure doesn't
+    // produce a recognizable always-at-cron-time anti-pattern either.
     const { rowCount } = await pool.query(`
       UPDATE social_post_queue
          SET status = 'pending_approval',
+             scheduled_for = NOW() + (random() * INTERVAL '10 minutes'),
              failure_log = failure_log || jsonb_build_array(
                jsonb_build_object('platform', 'video', 'error', $2, 'attempted_at', NOW())
              )

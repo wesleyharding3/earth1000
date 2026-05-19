@@ -63,8 +63,13 @@ for (const arg of process.argv) {
 }
 
 // ── Selection constants ───────────────────────────────────────────────────
-const BATCH_TARGET            = 3;    // post 2-3 per session; we aim for 3 and accept down to 2 if constraints bite
-const BATCH_MIN               = 2;
+// MAX_PICKS_PER_RUN env override: lets the operator throttle picks per
+// cron firing without touching code. Set on Render to MAX_PICKS_PER_RUN=1
+// when running on a 4×/day cron (4 picks/day spread). Default 0 = use the
+// legacy BATCH_TARGET=3 / BATCH_MIN=2 (3 picks per 2×/day cron).
+const MAX_PICKS_PER_RUN       = Math.max(0, parseInt(process.env.MAX_PICKS_PER_RUN || '0', 10) || 0);
+const BATCH_TARGET            = MAX_PICKS_PER_RUN > 0 ? MAX_PICKS_PER_RUN : 3;
+const BATCH_MIN               = MAX_PICKS_PER_RUN > 0 ? 1                  : 2;
 const CANDIDATE_POOL_SIZE     = 30;   // top-N by importance × recency
 const COOLING_HOURS           = 48;   // per-thread cooling
 const TITLE_OVERLAP_WINDOW_DAYS = 14;
@@ -410,12 +415,17 @@ async function _publishEligibleRows() {
     return;
   }
 
+  // scheduled_for <= NOW() gate honors the anti-flag jitter set by the
+  // mac-worker upload handler (server.js /api/video-jobs/:id/result). Rows
+  // whose jittered scheduled_for is still in the future stay invisible to
+  // this query until their staggered moment arrives.
   const { rows: candidates } = await pool.query(`
     SELECT id, thread_id, drafts, platforms_enabled, scheduled_for,
            (arc_video IS NOT NULL) AS has_video,
            EXTRACT(EPOCH FROM (NOW() - scheduled_for))::int AS age_seconds
       FROM social_post_queue
      WHERE status IN ('pending_approval', 'approved')
+       AND scheduled_for <= NOW()
      ORDER BY scheduled_for ASC
      LIMIT 20
   `);
