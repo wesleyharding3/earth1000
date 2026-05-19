@@ -340,9 +340,11 @@ async function concatMp4s(buffers, opts = {}) {
     `setsar=1,fps=${fps},setpts=PTS-STARTPTS[v${idx}]`;
   const audioPrep = (idx) =>
     `[${idx}:a]aresample=${audioRate}:async=1:first_pts=0,asetpts=PTS-STARTPTS[a${idx}]`;
-  const videoLabels = Array.from({ length: N }, (_, i) => `[v${i}]`).join('');
-  const audioLabels = Array.from({ length: N }, (_, i) => `[a${i}]`).join('');
-  const concatStr   = `${videoLabels}${audioLabels}concat=n=${N}:v=1:a=1[outv][outa]`;
+  // ffmpeg's concat filter requires INTERLEAVED stream labels — for
+  // every segment, video then audio, repeating. Concatenating with
+  // "all videos then all audios" produces a media-type-mismatch error.
+  const interleaved = Array.from({ length: N }, (_, i) => `[v${i}][a${i}]`).join('');
+  const concatStr   = `${interleaved}concat=n=${N}:v=1:a=1[outv][outa]`;
   const filter = [
     ...buffers.map((_, i) => padScale(i)),
     ...buffers.map((_, i) => audioPrep(i)),
