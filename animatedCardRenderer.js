@@ -229,16 +229,29 @@ async function generateVideo(entity, opts = {}) {
     writeError = err;
   });
 
-  // Cover-flash mode: IG VIDEO_CAROUSEL uses the first frame of the
-  // first carousel item as the post's cover thumbnail. If the portrait
-  // card animates in from blank, the cover ends up a half-rendered
-  // mess. By rendering frame 0 at progress=1 (fully-drawn finished
-  // state), the cover thumbnail is the polished card. Frames 1..N then
-  // play the normal animation from progress=0→1 — viewers see a tiny
-  // (~33ms at 30fps) flicker on playback, near the threshold of human
-  // perception. Only applied to 'thread-portrait' (= slide 1 of the IG
-  // carousel) since the other kinds aren't the cover.
-  const coverFlash = entity.kind === 'thread-portrait';
+  // Cover-flash mode: render frame 0 at progress=1 (fully-drawn finished
+  // state) before frames 1..N play the normal animation from
+  // progress=0→1. Viewers see a tiny (~33ms at 30fps) flicker on
+  // playback — near the threshold of human perception — but the
+  // first frame is the polished, fully-loaded card.
+  //
+  // Why this matters:
+  //   • slide 1 (thread-portrait) — IG VIDEO_CAROUSEL uses the first
+  //     frame of the first item as the post's cover thumbnail. Without
+  //     this, the cover would be a blank/half-rendered card.
+  //   • slides 3 (thread-coverage) + 4 (thread-articles) — applied for
+  //     visual consistency: every slide in the carousel briefly shows
+  //     its completed form before the load-in animation, giving the
+  //     viewer a glimpse of what they're about to see assemble.
+  //
+  // Slide 2 (arc.mp4) is rendered by the mac-worker via Puppeteer, not
+  // through this pipeline, so it isn't affected.
+  const COVER_FLASH_KINDS = new Set([
+    'thread-portrait',
+    'thread-coverage',
+    'thread-articles',
+  ]);
+  const coverFlash = COVER_FLASH_KINDS.has(entity.kind);
 
   try {
     for (let i = 0; i < frameCount; i++) {
