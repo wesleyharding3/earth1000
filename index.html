@@ -45689,6 +45689,7 @@ body.ticker-active .gTickerLabel {
       <button class="bControlBtn" id="bNext" title="Next">&#8594;</button>
       <button class="bControlBtn speed" id="bSpeed" title="Playback speed">1x</button>
       <button class="bControlBtn cc" id="bCCToggle" title="Toggle captions">CC</button>
+      <button class="bControlBtn cc" id="bLabelsToggle" title="Toggle location labels on the globe">LBL</button>
       <!-- Briefing volume — click icon to open a vertical glowing-gold
            slider popover above the button. Composes with the global
            master volume; effective audio = master × briefing × ducking.
@@ -45801,6 +45802,17 @@ body.ticker-active .gTickerLabel {
   let briefingTimers    = [];
   let activeTUListeners = [];
   let captionsOn    = false;
+  // Location-labels toggle — when OFF, the per-segment country/city name
+  // chips no longer paint on the globe during briefing playback. Defaults
+  // to ON; persisted under earth00:briefingLabels so it sticks across
+  // sessions. Composed with the existing briefingShowLabel/At gates at
+  // each call site below.
+  let labelsOn = (() => {
+    try {
+      const v = localStorage.getItem('earth00:briefingLabels');
+      return v == null ? true : v === 'on';
+    } catch (_) { return true; }
+  })();
   let playbackRate  = 1;       // 1, 1.5, or 2
   let _panelsBySeg  = {};      // { segment_index: [panel rows] } — fetched on briefing open
 
@@ -47326,13 +47338,13 @@ body.ticker-active .gTickerLabel {
           window.focusCity(seg.primary_city);
           // Show hover label once globe finishes panning (~1s)
           addBTimer(setTimeout(() => {
-            if (segIdx !== idx || !window.briefingShowLabel) return;
+            if (segIdx !== idx || !window.briefingShowLabel || !labelsOn) return;
             window.briefingShowLabel(seg.primary_city, true);
           }, 1000));
         } else if (seg.primary_country && window.focusCountry) {
           window.focusCountry(seg.primary_country);
           addBTimer(setTimeout(() => {
-            if (segIdx !== idx || !window.briefingShowLabel) return;
+            if (segIdx !== idx || !window.briefingShowLabel || !labelsOn) return;
             window.briefingShowLabel(seg.primary_country, false);
           }, 1000));
         } else if (seg.globe_focus && window.startFocus) {
@@ -47390,7 +47402,7 @@ body.ticker-active .gTickerLabel {
             if (segIdx !== idx || !window.briefingPulseAt) return;
             window.briefingPulseAt(loc.lat, loc.lon);
             // Show hover card for this pulsed node
-            if (window.briefingShowLabelAt) window.briefingShowLabelAt(loc.lat, loc.lon, loc.name);
+            if (labelsOn && window.briefingShowLabelAt) window.briefingShowLabelAt(loc.lat, loc.lon, loc.name);
           }, i * 350));
         });
       }, arcDrawOffsetMs));
@@ -47406,7 +47418,7 @@ body.ticker-active .gTickerLabel {
             if (segIdx !== idx || !window.startFocus) return;
             window.startFocus(node.lat, node.lon);
             if (window.briefingPulseAt) window.briefingPulseAt(node.lat, node.lon);
-            if (window.briefingShowLabelAt) window.briefingShowLabelAt(node.lat, node.lon, node.name);
+            if (labelsOn && window.briefingShowLabelAt) window.briefingShowLabelAt(node.lat, node.lon, node.name);
           }, ms(frac)));
         }
       } else if (tourNodes.length === 1) {
@@ -47416,7 +47428,7 @@ body.ticker-active .gTickerLabel {
           addBTimer(setTimeout(() => {
             if (segIdx !== idx || !window.briefingPulseAt) return;
             window.briefingPulseAt(tourNodes[0].lat, tourNodes[0].lon);
-            if (window.briefingShowLabelAt) window.briefingShowLabelAt(tourNodes[0].lat, tourNodes[0].lon, tourNodes[0].name);
+            if (labelsOn && window.briefingShowLabelAt) window.briefingShowLabelAt(tourNodes[0].lat, tourNodes[0].lon, tourNodes[0].name);
           }, ms(frac)));
         }
       }
@@ -50059,6 +50071,19 @@ body.ticker-active .gTickerLabel {
     updateCaptions(seg);
   }
 
+  // Labels toggle — when OFF, hide any visible label immediately AND
+  // gate future briefingShowLabel*() calls so they no-op for the rest
+  // of the playback. Persisted under earth00:briefingLabels.
+  function setLabels(on) {
+    labelsOn = !!on;
+    try { localStorage.setItem('earth00:briefingLabels', labelsOn ? 'on' : 'off'); } catch (_) {}
+    const btn = document.getElementById('bLabelsToggle');
+    if (btn) btn.classList.toggle('active', labelsOn);
+    if (!labelsOn) {
+      try { window.briefingHideLabel?.(); } catch (_) {}
+    }
+  }
+
   // ── Briefing Launcher ─────────────────────────────────────────────────────
   async function openBriefingLauncher() {
     // FIRST: silence + suspend the procedural engine immediately.
@@ -50150,6 +50175,19 @@ body.ticker-active .gTickerLabel {
         }
       } catch (_) {}
     }
+    // CRITICAL: bail if no token. Creating the audio element with an
+    // empty `at=` param hits the API's 401 path, which puts the audio
+    // element in MediaError state code 4 (SRC_NOT_SUPPORTED). Once we
+    // assign that poisoned element to audioNext, goToSegment(0) reuses
+    // it and the click-time retry can't recover from the cached bad
+    // src. On iOS Capacitor cold-start the launcher can open before
+    // Supabase has populated window.__authToken — skip the preload
+    // there and let _warmupBriefing fetch at click-time instead.
+    if (!window.__authToken) {
+      console.warn('[launcher] preload skipped — no auth token yet');
+      setBtn('Start Briefing →', false);
+      return;
+    }
     try {
       const segs = Array.isArray(ep.segments) ? ep.segments : null;
       if (!segs || segs[0]?.start_ms == null) {
@@ -50158,25 +50196,30 @@ body.ticker-active .gTickerLabel {
         return;
       }
       const sa = new Audio(
-        `${API}/api/briefing/audio/${ep.id}/0?at=${encodeURIComponent(window.__authToken || '')}`
+        `${API}/api/briefing/audio/${ep.id}/0?at=${encodeURIComponent(window.__authToken)}`
       );
       sa.preload = 'auto';
       sa._segIdx = 0;
       _bgRegisterNarration(sa);
-      audioNext = sa;
       sa.load();
-      // 15s generous timeout — slow networks + cold Render dyno can
-      // take 8-10s on the first request. Fall through on either
-      // canplaythrough OR timeout so the button never sticks.
-      await new Promise(resolve => {
+      // ONLY assign audioNext when canplaythrough fires successfully.
+      // On error/timeout leave audioNext alone so click-time can
+      // recreate with whatever token state is current then.
+      const result = await new Promise(resolve => {
         let done = false;
-        const finish = () => { if (!done) { done = true; resolve(); } };
-        sa.addEventListener('canplaythrough', finish, { once: true });
-        sa.addEventListener('error',          finish, { once: true });
-        setTimeout(finish, 15000);
+        const finish = (r) => { if (!done) { done = true; resolve(r); } };
+        sa.addEventListener('canplaythrough', () => finish('ok'),    { once: true });
+        sa.addEventListener('error',          () => finish('error'), { once: true });
+        setTimeout(() => finish('timeout'), 15000);
       });
       // If user switched to a different episode mid-preload, abandon.
       if (_launcherPreloadEpId !== ep.id) return;
+      if (result === 'ok') {
+        audioNext = sa;
+      } else {
+        console.warn(`[launcher] preload seg-0 audio result=${result} — leaving audioNext null for click-time retry`);
+        try { sa.src = ''; sa.load(); } catch (_) {}
+      }
       setBtn('Start Briefing →', false);
     } catch (e) {
       console.warn('[launcher] preload seg-0 audio failed:', e.message);
@@ -50324,6 +50367,14 @@ body.ticker-active .gTickerLabel {
   document.getElementById('bNext')?.addEventListener('click', () => { _resumeSingle = false; goToSegment(segIdx + 1, true); });
   document.getElementById('bPrev')?.addEventListener('click', () => { _resumeSingle = false; goToSegment(Math.max(0, segIdx - 1), true); });
   document.getElementById('bCCToggle')?.addEventListener('click', () => setCaptions(!captionsOn));
+  document.getElementById('bLabelsToggle')?.addEventListener('click', () => setLabels(!labelsOn));
+  // Sync the button's .active class to the persisted state (the DOM
+  // for the button always exists, but its class was rendered without
+  // knowing labelsOn).
+  {
+    const _lblBtn = document.getElementById('bLabelsToggle');
+    if (_lblBtn) _lblBtn.classList.toggle('active', labelsOn);
+  }
   document.getElementById('bSpeed')?.addEventListener('click', cycleSpeed);
   // Briefing volume slider — see __earthVolume above. Reflects the
   // persisted briefing value on init, updates it on every input event,

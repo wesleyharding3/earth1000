@@ -55135,6 +55135,23 @@ body.ticker-active .gTickerLabel {
         }
       } catch (_) {}
     }
+    // CRITICAL: bail if no token yet. Creating an audio element with
+    // an empty `at=` param hits the API's 401 path; the audio element
+    // lands in MediaError state code 4 (SRC_NOT_SUPPORTED). Once that
+    // poisoned element is assigned to audioNext, goToSegment(0) reuses
+    // it and the retry path can't recover from the cached bad src.
+    //
+    // On iOS Capacitor cold-start (especially after reinstall) this
+    // race is common: launcher opens before the Supabase auth init
+    // populates window.__authToken. Better to skip the preload here
+    // and let openBriefing's _warmupBriefing fetch the audio at click
+    // time when the token is reliably available (slower first segment
+    // but always works).
+    if (!window.__authToken) {
+      console.warn('[launcher] preload skipped — no auth token yet');
+      setBtn('Start Briefing →', false);
+      return;
+    }
     try {
       const segs = Array.isArray(ep.segments) ? ep.segments : null;
       if (!segs || segs[0]?.start_ms == null) {
@@ -55142,21 +55159,30 @@ body.ticker-active .gTickerLabel {
         return;
       }
       const sa = new Audio(
-        `${API}/api/briefing/audio/${ep.id}/0?at=${encodeURIComponent(window.__authToken || '')}`
+        `${API}/api/briefing/audio/${ep.id}/0?at=${encodeURIComponent(window.__authToken)}`
       );
       sa.preload = 'auto';
       sa._segIdx = 0;
       _bgRegisterNarration(sa);
-      audioNext = sa;
       sa.load();
-      await new Promise(resolve => {
+      // ONLY assign audioNext if canplaythrough fires (load succeeded).
+      // On error or timeout, leave audioNext untouched so openBriefing
+      // creates a fresh element at click-time. Poisoning audioNext
+      // with a broken src defeats the click-time retry path.
+      const result = await new Promise(resolve => {
         let done = false;
-        const finish = () => { if (!done) { done = true; resolve(); } };
-        sa.addEventListener('canplaythrough', finish, { once: true });
-        sa.addEventListener('error',          finish, { once: true });
-        setTimeout(finish, 15000);
+        const finish = (r) => { if (!done) { done = true; resolve(r); } };
+        sa.addEventListener('canplaythrough', () => finish('ok'),    { once: true });
+        sa.addEventListener('error',          () => finish('error'), { once: true });
+        setTimeout(() => finish('timeout'), 15000);
       });
       if (_launcherPreloadEpId !== ep.id) return;
+      if (result === 'ok') {
+        audioNext = sa;
+      } else {
+        console.warn(`[launcher] preload seg-0 audio result=${result} — leaving audioNext null for click-time retry`);
+        try { sa.src = ''; sa.load(); } catch (_) {}
+      }
       setBtn('Start Briefing →', false);
     } catch (e) {
       console.warn('[launcher] preload seg-0 audio failed:', e.message);
