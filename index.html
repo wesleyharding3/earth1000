@@ -22780,13 +22780,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // event time, and sets camera.position.z by lerp.
       window.__computeFocusQuat   = computeFocusQuat;
       window.__getGlobeQuat       = () => globeQuat.clone();
-      // CRITICAL: ALSO apply to scene.quaternion. animate() normally
-      // copies globeQuat → scene.quaternion every frame (line ~23707),
-      // but the briefing scrub renderer pauses animate() (sets
-      // __globeActive=false) so the in-memory globeQuat write would
-      // never reach the scene transform without this explicit copy.
-      // Same trick the arc-clip renderer's __setGlobePose uses.
-      window.__setGlobeQuat       = (q) => { globeQuat.copy(q); scene.quaternion.copy(globeQuat); };
+      // CRITICAL: ALSO apply to scene.quaternion AND force-update the
+      // matrix-world cache. animate() normally does:
+      //   scene.quaternion.copy(globeQuat);
+      //   scene.updateMatrixWorld(true);
+      // every frame (lines 23768-23769). With animate() paused for
+      // briefing scrub the matrix-world cache stays stale even though
+      // scene.quaternion changed, so Three.js's renderer continues to
+      // render with the OLD world transform. Symptom: globe rotates
+      // in memory but the captured frame shows no movement.
+      window.__setGlobeQuat       = (q) => {
+        globeQuat.copy(q);
+        scene.quaternion.copy(globeQuat);
+        scene.updateMatrixWorld(true);
+      };
       window.__getCameraZ         = () => window.__camera ? window.__camera.position.z : 0;
       window.__setCameraZ         = (z) => { if (window.__camera) window.__camera.position.z = z; };
       window.__getBriefingWideZ   = () => _isMobileView ? 4.2 : 3.4;
@@ -49194,6 +49201,14 @@ body.ticker-active .gTickerLabel {
   }
   // Expose so segment teardown (when user skips/closes) can hide the map
   window.__focalMapCleanup = _focalMapCleanup;
+  // Cancel the real-time cleanup setTimeout that startFocalMap installs.
+  // Used by the briefing-segment scrub renderer, which fires the
+  // cleanup itself at the correct scrub-time position rather than
+  // letting the wall-clock setTimeout fire (which would dismiss the
+  // map after ~0.5s of captured video at our ~3fps capture rate).
+  window.__cancelFocalMapEnd = function () {
+    if (_focalMapEndTimer) { clearTimeout(_focalMapEndTimer); _focalMapEndTimer = null; }
+  };
 
   // Apply a square circle in km using a turf-like polygon approximation
   // so we don't need turf as a dep. 64-sided ring → looks circular at
@@ -51018,6 +51033,24 @@ body.ticker-active .gTickerLabel {
   let _scrubCamTargetZ       = 0;
   const SCRUB_CAM_TRANSITION_MS  = 1500;   // matches the live briefing's camera ease
   const SCRUB_ARC_REVEAL_MS      = 1000;   // matches BRIEFING_ARC_REVEAL_SECS
+  // Focal-map scrub-time tracking. The map fires at _scrubFocalMapStartedAtMs
+  // and should cleanup at _scrubFocalMapEndsAtMs (durSec later, in scrub
+  // clock — not real wall-clock).
+  let _scrubFocalMapStartedAtMs = -1;
+  let _scrubFocalMapEndsAtMs    = -1;
+  let _scrubFocalMapEnded       = false;
+
+  function _scrubAdvanceFocalMap(tMs) {
+    if (_scrubFocalMapEndsAtMs < 0 || _scrubFocalMapEnded) return;
+    if (tMs >= _scrubFocalMapEndsAtMs) {
+      _scrubFocalMapEnded = true;
+      try {
+        if (typeof window.__focalMapCleanup === 'function') {
+          window.__focalMapCleanup();
+        }
+      } catch (e) { console.warn('[scrub] focal_map cleanup failed:', e.message); }
+    }
+  }
 
   // Map a segment's seg.script + primary location into a flat list of
   // absolute-ms events we can apply in order. Returns [] if the
@@ -51232,6 +51265,9 @@ body.ticker-active .gTickerLabel {
     _scrubArcSpawnAt = null;
     _scrubCamTransitionAtMs = -1;
     _scrubCamTargetQuat = null;
+    _scrubFocalMapStartedAtMs = -1;
+    _scrubFocalMapEndsAtMs = -1;
+    _scrubFocalMapEnded = false;
     _scrubCamInitialQuat = (typeof window.__getGlobeQuat === 'function')
       ? window.__getGlobeQuat() : null;
     _scrubCamInitialZ = (typeof window.__getCameraZ === 'function')
@@ -51281,17 +51317,30 @@ body.ticker-active .gTickerLabel {
         _scrubArcSpawnAt = ev.msAbs;
       } else if (ev.kind === 'focal_map') {
         // Fire the 2D map takeover. MapLibre animates camera fly-in
-        // on its own RAF (which we DID pause via __globeActive=false,
-        // but that only stops the THREE.js globe loop — MapLibre has
-        // its own internal animation timer using real wall-clock time).
-        // So the map's zoom-in completes in real time while our scrub
-        // captures move slowly through that period — captured frames
-        // mostly show the post-zoom settled state, which is fine for
-        // featured-media moments.
+        // on its own RAF (real wall-clock time) — we accept that the
+        // zoom-in completes near-instantly in captured time.
+        //
+        // CRITICAL: startFocalMap also schedules _focalMapCleanup via
+        // setTimeout(..., durMs). In scrub mode those setTimeouts run
+        // in real wall-clock time, so at ~3fps capture rate the map
+        // gets cleaned up after only ~0.5s of CAPTURED video (durMs/
+        // captureFps ≈ 10000/3000 ≈ 0.5s) — the user reported "map
+        // flashed by". We immediately cancel that real-time cleanup
+        // here and rely on scrub-time advancement to fire the cleanup
+        // at the right captured-frame position (see _scrubAdvanceFocalMap).
         try {
           if (typeof startFocalMap === 'function') {
             startFocalMap(ev.mapCfg, ev.durSec);
           }
+          // Cancel the real-time cleanup setTimeout that startFocalMap
+          // installed; the closure-local var _focalMapEndTimer holds
+          // the id. Use the window-level wrapper if available; else
+          // best-effort clearTimeout in case the id leaked.
+          if (typeof window.__cancelFocalMapEnd === 'function') {
+            window.__cancelFocalMapEnd();
+          }
+          _scrubFocalMapStartedAtMs = ev.msAbs;
+          _scrubFocalMapEndsAtMs    = ev.msAbs + (ev.durSec * 1000);
         } catch (e) { console.warn('[scrub] focal_map failed:', e.message); }
       }
       ev.applied = true;
@@ -51301,6 +51350,7 @@ body.ticker-active .gTickerLabel {
     // Per-frame continuous state.
     _scrubAdvanceCamera(target);
     _scrubAdvanceArcs(target);
+    _scrubAdvanceFocalMap(target);
 
     // Synchronous globe render — worker calls Page.captureScreenshot
     // next, which reads the framebuffer + the surrounding DOM.
