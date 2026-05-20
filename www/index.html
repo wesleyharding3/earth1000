@@ -55001,8 +55001,13 @@ body.ticker-active .gTickerLabel {
     if (todayEp && todayEp.status === 'ready') {
       document.getElementById('bLauncherTodayHeadline').textContent = todayEp.headline || '';
       document.getElementById('bLauncherTodayDate').textContent = fmtDate(todayEp.target_date);
-      if (startBtn) { startBtn.style.display = ''; startBtn.disabled = false; }
+      if (startBtn) { startBtn.style.display = ''; startBtn.disabled = false; startBtn.textContent = 'Start Briefing →'; }
       if (el) el.style.display = '';
+      // Pre-fetch seg-0 audio while the user reads the headline — see
+      // helper below for the full iOS-gesture + slow-network rationale.
+      if (startBtn && todayEp.has_audio) {
+        _preloadLauncherSegZeroAudio(todayEp, startBtn);
+      }
     } else {
       document.getElementById('bLauncherTodayHeadline').textContent = 'Check back tomorrow for your daily briefing';
       document.getElementById('bLauncherTodayDate').textContent = '';
@@ -55014,6 +55019,87 @@ body.ticker-active .gTickerLabel {
     // this function, before the tier-await — so by the time we get
     // here they've been quiet for the whole launcher-render time.
     loadArchive();
+  }
+
+  // Pre-fetch the FIRST segment's narration audio while the user is
+  // still reading the headline. Buffers audioNext + gates the Start
+  // Briefing button with a "Loading audio…" state. Without this, the
+  // 4s intro-music lead expired before the audio arrived on slow
+  // networks, and on iOS WKWebView the gesture-bound play() never
+  // fires (autoplay block). The companion _primeNarrationAudioSync
+  // call from the click handler unlocks the iOS audio session inside
+  // the user gesture.
+  let _launcherPreloadEpId = null;
+  async function _preloadLauncherSegZeroAudio(ep, startBtn) {
+    if (!ep || !ep.has_audio || ep.id == null) return;
+    if (_launcherPreloadEpId === ep.id && audioNext?._segIdx === 0 && audioNext?.readyState >= 4) return;
+    _launcherPreloadEpId = ep.id;
+    const setBtn = (txt, disabled) => {
+      if (!startBtn) return;
+      startBtn.textContent = txt;
+      startBtn.disabled = !!disabled;
+    };
+    setBtn('Loading audio…', true);
+    if (!window.__authToken) {
+      try {
+        const supa = window.sb || window.__supabase || null;
+        if (supa?.auth?.getSession) {
+          const session = await Promise.race([
+            supa.auth.getSession(),
+            new Promise(r => setTimeout(() => r(null), 3000)),
+          ]);
+          const tok = session?.data?.session?.access_token || '';
+          if (tok) window.__authToken = tok;
+        }
+      } catch (_) {}
+    }
+    try {
+      const segs = Array.isArray(ep.segments) ? ep.segments : null;
+      if (!segs || segs[0]?.start_ms == null) {
+        setBtn('Start Briefing →', false);
+        return;
+      }
+      const sa = new Audio(
+        `${API}/api/briefing/audio/${ep.id}/0?at=${encodeURIComponent(window.__authToken || '')}`
+      );
+      sa.preload = 'auto';
+      sa._segIdx = 0;
+      _bgRegisterNarration(sa);
+      audioNext = sa;
+      sa.load();
+      await new Promise(resolve => {
+        let done = false;
+        const finish = () => { if (!done) { done = true; resolve(); } };
+        sa.addEventListener('canplaythrough', finish, { once: true });
+        sa.addEventListener('error',          finish, { once: true });
+        setTimeout(finish, 15000);
+      });
+      if (_launcherPreloadEpId !== ep.id) return;
+      setBtn('Start Briefing →', false);
+    } catch (e) {
+      console.warn('[launcher] preload seg-0 audio failed:', e.message);
+      setBtn('Start Briefing →', false);
+    }
+  }
+
+  // Synchronous iOS audio-session unlock — call inside the click
+  // gesture, BEFORE any awaits, so iOS sees play() within the gesture
+  // window. The element is paused immediately; goToSegment(0) re-plays
+  // it for real once openBriefing's intro lead expires.
+  function _primeNarrationAudioSync() {
+    if (!audioNext || audioNext._segIdx !== 0) return;
+    try {
+      audioNext.muted = true;
+      const p = audioNext.play();
+      if (p && typeof p.then === 'function') {
+        p.then(() => {
+          try { audioNext.pause(); audioNext.currentTime = 0; } catch (_) {}
+          try { audioNext.muted = false; } catch (_) {}
+        }).catch(() => {
+          try { audioNext.muted = false; } catch (_) {}
+        });
+      }
+    } catch (_) {}
   }
 
   // ── Past Briefings Archive ────────────────────────────────────────────────
@@ -55123,6 +55209,12 @@ body.ticker-active .gTickerLabel {
   document.getElementById('bLauncherStartToday')?.addEventListener('click', () => {
     // Restore today's episode before opening (in case a past briefing was viewed)
     if (_todayEpisode) episode = _todayEpisode;
+    // Prime the iOS audio session SYNCHRONOUSLY inside the click
+    // gesture. Must fire before openBriefing() because openBriefing
+    // awaits (warmup, token refresh, AudioContext resume) which let
+    // iOS lose the gesture. With the prime in place, narration plays
+    // correctly when goToSegment(0) calls .play() later.
+    _primeNarrationAudioSync();
     // openBriefing FIRST — see the archive-load handler above for full
     // rationale (briefingActive flag must be set before closeBriefingLauncher
     // runs so its restore-music branch is skipped).
