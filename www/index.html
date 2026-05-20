@@ -14262,7 +14262,13 @@ window.__deferUntilLoaded = function(fn) {
 (function() {
   const _origFetch = window.fetch;
   const DEFAULT_TIMEOUT = 20000;
-  const LONG_TIMEOUT = 45000;
+  // 60s headroom for Render cold-start races. Was 45s and got hit on
+  // iOS Capacitor fresh-install bootstraps where /api/cities and
+  // /api/countries (both in LONG_TIMEOUT_PATTERNS) fired in parallel
+  // with WKWebView still warming and the Render dyno still cold —
+  // exceeded 45s and aborted on attempt 1. fetchWithRetry recovered
+  // on retry but the log noise was confusing.
+  const LONG_TIMEOUT = 60000;
   // Claude-call endpoints have a wider tail than long-SQL endpoints —
   // Render cold-start (5-30s) + Claude generation (3-15s) can pass 45s.
   // Give them headroom; the user-facing failure mode for an over-eager
@@ -49784,9 +49790,18 @@ body.ticker-active .gTickerLabel {
     _bgMusicLoaded = false;
     _bgMusicSegmentPaused = false;
 
+    // Track whether THIS audio element ever reached a playable state.
+    // Captured in the closure so the 'error' listener below can tell
+    // an initial-load failure (wasReady === false) from a teardown
+    // 'error' triggered by destroyBgMusic setting src='' (wasReady === true).
+    // Without this, every clean briefing close logged a misleading
+    // "[bgMusic] failed to load — briefing will play without music"
+    // even though the audio loaded + played fine.
+    let wasReady = false;
     _bgMusic.addEventListener('canplaythrough', () => {
       if (_bgMusicLoaded) return;
       _bgMusicLoaded = true;
+      wasReady = true;
       try {
         // Reuse the audioEngine context when it exists. iOS WKWebView
         // can only have one AudioContext effectively claim the audio
@@ -49817,6 +49832,14 @@ body.ticker-active .gTickerLabel {
     }, { once: true });
 
     _bgMusic.addEventListener('error', () => {
+      if (wasReady) {
+        // Audio already loaded + canplaythrough fired earlier — this
+        // 'error' is from destroyBgMusic setting src='' (a deliberate
+        // teardown) or a transient runtime decoder hiccup. Briefing
+        // continues to work; the original "failed to load" wording
+        // was wrong + alarming. Suppress.
+        return;
+      }
       console.warn('[bgMusic] failed to load — briefing will play without music');
       _bgMusic = null;
     });

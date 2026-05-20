@@ -13089,7 +13089,13 @@ window.fmtDate = function(d) {
 (function() {
   const _origFetch = window.fetch;
   const DEFAULT_TIMEOUT = 20000;
-  const LONG_TIMEOUT = 45000;
+  // 60s headroom for Render cold-start races. Was 45s and got hit
+  // on iOS Capacitor fresh-install bootstraps where /api/cities and
+  // /api/countries (both in LONG_TIMEOUT_PATTERNS) fired in parallel
+  // with WKWebView still warming and the Render dyno still cold —
+  // exceeded 45s and aborted on attempt 1. fetchWithRetry recovered
+  // on retry but the log noise was confusing.
+  const LONG_TIMEOUT = 60000;
   // Claude-call endpoints get a wider ceiling — see www/index.html.
   // Bumped to 95s after enabling Anthropic web_search on /api/heatmap/ask
   // (up to 6 search calls + final generation ≈ 60s tail). Comfortably
