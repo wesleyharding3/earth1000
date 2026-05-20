@@ -50903,76 +50903,133 @@ body.ticker-active .gTickerLabel {
     return true;
   }
 
-  // ── In-page MediaRecorder capture (GPU-accelerated, ~60fps) ──────────
-  // The Mac worker's previous capture mechanisms (Page.startScreencast,
-  // then Page.captureScreenshot in a loop) both topped out at 2-9 fps
-  // because every frame round-trips through CDP + JPEG encode + disk
-  // write while also competing with the page's own WebGL rendering.
+  // ── Deterministic briefing-segment scrub mode ────────────────────
+  // Mirrors the pattern that makes __renderClipFrame produce silk-
+  // smooth carousel arc MP4s: pause real-time, drive a manual clock,
+  // call rend.render() + toDataURL() per frame at the worker's pace.
   //
-  // This function uses the browser's native canvas.captureStream() →
-  // MediaRecorder pipeline instead. The compositor streams frames
-  // directly to a hardware-accelerated VP9 encoder; no CDP overhead,
-  // no per-frame JPEG hit. We end up at the canvas's actual render
-  // rate (typically 60 fps with --disable-gpu-vsync).
+  // The briefing's choreography is data-driven by startGlobeTimers,
+  // which schedules everything via setTimeout. We hijack setTimeout +
+  // setInterval while scrubbing — events go into a sorted queue keyed
+  // by their scheduled fire-time. Each frame request fires all queued
+  // events with fire-time ≤ tMs, then renders the globe once and
+  // returns the canvas as base64 JPEG. The DOM chrome (title, flags,
+  // captions) is hidden by briefing-capture-mode CSS — we only need
+  // the globe canvas to be correct per frame.
   //
-  // Returns the WebM blob via a synthesized download — the worker pre-
-  // configures Browser.setDownloadBehavior to write to its tmpdir and
-  // intercepts the file there. WAY faster than serializing 10 MB of
-  // bytes back through page.evaluate().
-  window.__captureBriefingClip = async function () {
-    if (!window.__briefingCapture) throw new Error('not in capture mode');
-    const canvas = window.__renderer?.domElement;
-    if (!canvas || typeof canvas.captureStream !== 'function') {
-      throw new Error('no globe canvas / captureStream unsupported');
-    }
-    if (typeof MediaRecorder === 'undefined') throw new Error('MediaRecorder unavailable');
-    // Try VP9 → VP8 → default. VP9 gives the best quality/size; if not
-    // supported the browser still has webm/vp8.
-    const pickMime = () => {
-      for (const m of [
-        'video/webm;codecs=vp9',
-        'video/webm;codecs=vp8',
-        'video/webm',
-      ]) {
-        try { if (MediaRecorder.isTypeSupported(m)) return m; } catch (_) {}
-      }
-      return '';
-    };
-    const mime = pickMime();
-    const stream = canvas.captureStream(60);
-    const rec = new MediaRecorder(stream, mime ? {
-      mimeType: mime,
-      videoBitsPerSecond: 8_000_000, // 8 Mbps — high-quality 1080×1920 60fps
-    } : undefined);
-    const chunks = [];
-    rec.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunks.push(e.data); };
-    const stopped = new Promise(r => { rec.onstop = r; });
-    rec.start(1000); // request a chunk every 1s so we don't hold one giant buffer
+  // Audio is muted + paused (we set audio.currentTime per frame so any
+  // code reading it sees the scrub time, but audio doesn't actually
+  // play). The narration MP3 + music bed are muxed into the final MP4
+  // server-side by the worker after all frames are captured.
 
-    // Wait for the segment-done flag the briefing playback flips when
-    // narration ends. Same flag the worker was polling before. Add a
-    // safety ceiling so a stuck briefing can't hang the recorder forever.
-    const deadline = Date.now() + 5 * 60 * 1000; // 5 min hard cap
-    while (!window.__briefingCaptureSegmentDone && Date.now() < deadline) {
-      await new Promise(r => setTimeout(r, 100));
+  let _scrubMode = false;
+  let _scrubQueue = [];                // [{ fireAt, fn, _id }]
+  let _scrubClock = 0;
+  let _scrubNextId = 0;
+  let _scrubSavedFns = null;           // { setTimeout, clearTimeout, setInterval, clearInterval }
+
+  function _scrubInstallTimerHooks() {
+    _scrubSavedFns = {
+      setTimeout:    window.setTimeout,
+      clearTimeout:  window.clearTimeout,
+      setInterval:   window.setInterval,
+      clearInterval: window.clearInterval,
+    };
+    window.setTimeout = function (fn, ms, ...args) {
+      if (!_scrubMode) return _scrubSavedFns.setTimeout.call(window, fn, ms, ...args);
+      const id = ++_scrubNextId;
+      _scrubQueue.push({ fireAt: _scrubClock + (Number(ms) || 0), fn: () => fn(...args), _id: id });
+      return id;
+    };
+    window.clearTimeout = function (id) {
+      if (!_scrubMode) return _scrubSavedFns.clearTimeout.call(window, id);
+      const i = _scrubQueue.findIndex(e => e._id === id);
+      if (i >= 0) _scrubQueue.splice(i, 1);
+    };
+    window.setInterval = function (fn, ms, ...args) {
+      if (!_scrubMode) return _scrubSavedFns.setInterval.call(window, fn, ms, ...args);
+      const id = ++_scrubNextId;
+      const period = Math.max(16, Number(ms) || 16);
+      const reschedule = () => {
+        _scrubQueue.push({
+          fireAt: _scrubClock + period,
+          fn: () => { try { fn(...args); } catch (_) {} reschedule(); },
+          _id: id,
+        });
+      };
+      reschedule();
+      return id;
+    };
+    window.clearInterval = function (id) {
+      if (!_scrubMode) return _scrubSavedFns.clearInterval.call(window, id);
+      const i = _scrubQueue.findIndex(e => e._id === id);
+      if (i >= 0) _scrubQueue.splice(i, 1);
+    };
+  }
+
+  function _scrubRestoreTimerHooks() {
+    if (!_scrubSavedFns) return;
+    window.setTimeout    = _scrubSavedFns.setTimeout;
+    window.clearTimeout  = _scrubSavedFns.clearTimeout;
+    window.setInterval   = _scrubSavedFns.setInterval;
+    window.clearInterval = _scrubSavedFns.clearInterval;
+    _scrubSavedFns = null;
+  }
+
+  window.__beginBriefingScrub = function (segmentIdx) {
+    if (_scrubMode) throw new Error('already scrubbing');
+    if (!window.__briefingCapture) throw new Error('not in capture mode');
+    if (!episode || !Array.isArray(episode.segments) || !episode.segments[segmentIdx]) {
+      throw new Error(`no segment ${segmentIdx}`);
     }
-    rec.stop();
-    await stopped;
-    const blob = new Blob(chunks, { type: mime || 'video/webm' });
-    // Synthesize a download so the worker's pre-configured download
-    // behavior writes it to disk. The filename includes the capture
-    // descriptor so the worker can find the exact file even if Chrome
-    // disambiguates concurrent downloads.
-    const fname = `briefing-cap-${window.__briefingCapture.episodeId}-${window.__briefingCapture.segmentIdx}.webm`;
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.style.display = 'none';
-    a.href = url;
-    a.download = fname;
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 5000);
-    return { bytes: blob.size, mime: mime || 'video/webm', filename: fname };
+    _scrubMode = true;
+    _scrubQueue = [];
+    _scrubClock = 0;
+    _scrubNextId = 0;
+    _scrubInstallTimerHooks();
+
+    // Mute the current audio so its real-time playback can't influence
+    // the choreography we're about to schedule into the scrub queue.
+    if (audio) {
+      try { audio.muted = true; audio.pause(); } catch (_) {}
+    }
+    // Drive the segment open. goToSegment fires startGlobeTimers which
+    // populates _scrubQueue with every camera-focus / arc-draw / pulse
+    // / label event. The audio element setup inside will fail (no real
+    // network play), but the visual choreography is what we care about.
+    try { goToSegment(segmentIdx); } catch (e) { console.warn('[scrub] goToSegment failed:', e.message); }
+    return { ok: true, queued: _scrubQueue.length };
+  };
+
+  window.__renderBriefingFrameAt = function (tMs) {
+    if (!_scrubMode) throw new Error('not in scrub mode');
+    const target = Math.max(0, Number(tMs) || 0);
+    // Drain everything up to target time. Sort first so we fire in
+    // chronological order (events can schedule more events).
+    _scrubQueue.sort((a, b) => a.fireAt - b.fireAt);
+    while (_scrubQueue.length && _scrubQueue[0].fireAt <= target) {
+      const ev = _scrubQueue.shift();
+      try { ev.fn(); } catch (_) {}
+      _scrubQueue.sort((a, b) => a.fireAt - b.fireAt);
+    }
+    _scrubClock = target;
+    // Surface our clock to any code that reads audio.currentTime.
+    if (audio) { try { audio.currentTime = target / 1000; } catch (_) {} }
+    // Synchronous render — same pattern as __renderClipFrame. We do
+    // toDataURL right after so the framebuffer hasn't been overwritten
+    // by the live animate() RAF.
+    if (window.__renderer && window.scene && window.__camera) {
+      window.__renderer.render(window.scene, window.__camera);
+    }
+    const c = window.__renderer?.domElement;
+    return c?.toDataURL ? c.toDataURL('image/jpeg', 0.92) : null;
+  };
+
+  window.__endBriefingScrub = function () {
+    _scrubRestoreTimerHooks();
+    _scrubMode = false;
+    _scrubQueue = [];
+    return { ok: true };
   };
 
   if (document.readyState === 'complete') {

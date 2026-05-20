@@ -821,102 +821,106 @@ async function renderBriefingSegment(job) {
       throw new Error('capture mode did not become ready within 60s' + (readyState.err ? ` (${readyState.err})` : ''));
     }
 
-    // Real capture: ask the PAGE to record its own globe canvas via
-    // canvas.captureStream(60) + MediaRecorder. Chrome's compositor
-    // hands frames directly to a hardware-accelerated VP9 encoder —
-    // no per-frame CDP roundtrip, no JPEG encode, no disk write loop.
-    // We just receive one ~10 MB WebM blob at the end.
-    //
-    // The blob comes back via a synthesized <a download="…"> click that
-    // Chrome turns into a real file write into framesDir (configured
-    // via Browser.setDownloadBehavior just before we kick off capture).
-    // That's the only fast way to move 10+ MB out of the page — passing
-    // it through page.evaluate would serialize the bytes through CDP
-    // and take 20-30 seconds.
+    // Deterministic frame-by-frame capture. The page's
+    // __renderBriefingFrameAt(tMs) hijacks setTimeout/setInterval so
+    // every choreography event for the segment goes into a sorted
+    // queue. Each call fires all events with fireAt ≤ tMs, then
+    // renders the globe synchronously and returns the canvas as
+    // base64 JPEG. No real-time playback, no MediaRecorder, no
+    // audio→visual race. The same proven pattern as the arc-clip
+    // renderer's __renderClipFrame.
     client = await page.target().createCDPSession();
-    await client.send('Browser.setDownloadBehavior', {
-      behavior: 'allowAndName',
-      downloadPath: framesDir,
-      eventsEnabled: true,
-    });
 
-    // Defensive: poll up to 30s for window.__captureBriefingClip to
-    // actually be a function. _maybeRunCaptureMode flips Ready=true
-    // synchronously inside the same IIFE that exposes the function,
-    // so they should land together — but if the page is served from
-    // a stale CDN cache without the function, surface a clear error
-    // instead of "is not a function".
+    // Defensive: poll up to 30s for the scrub API to come online.
     const fnDeadline = Date.now() + 30_000;
     let fnReady = false;
     while (Date.now() < fnDeadline) {
-      fnReady = await page.evaluate(() => typeof window.__captureBriefingClip === 'function').catch(() => false);
+      fnReady = await page.evaluate(() =>
+        typeof window.__beginBriefingScrub === 'function' &&
+        typeof window.__renderBriefingFrameAt === 'function' &&
+        typeof window.__endBriefingScrub === 'function'
+      ).catch(() => false);
       if (fnReady) break;
       await new Promise(r => setTimeout(r, 250));
     }
-    if (!fnReady) throw new Error('window.__captureBriefingClip never became a function (stale cache or page error)');
+    if (!fnReady) throw new Error('scrub API never became available (stale cache or page error)');
 
-    // Fire the in-page capture function. It returns once the segment-
-    // done flag flips (set by _onSegmentEnded when narration ends).
-    // Don't await it inline — that'd block until the segment finishes
-    // and we want the worker to be able to observe the download
-    // completing in parallel.
-    let captureMeta = null;
-    let captureError = null;
-    const captureP = page.evaluate(() => window.__captureBriefingClip())
-      .then(m => { captureMeta = m; })
-      .catch(e => { captureError = e; });
+    // Enter scrub mode for this segment. The page replaces its timer
+    // primitives + drains startGlobeTimers into the scrub queue.
+    const queued = await page.evaluate(
+      (idx) => window.__beginBriefingScrub(idx),
+      job.segment_idx
+    );
+    log(`  scrub init: ${queued.queued} event(s) queued for segment ${job.segment_idx}`);
 
-    // The maximum we should wait. audio_ms is the narration length;
-    // the encoder needs a few seconds after that to flush.
-    const maxWaitMs = (job.audio_ms || 60_000) + 15_000;
-    await Promise.race([captureP, new Promise(r => setTimeout(r, maxWaitMs))]);
-    if (captureError) throw captureError;
-    if (!captureMeta) throw new Error(`capture timed out after ${maxWaitMs}ms`);
+    // Frame loop. Duration comes from job.audio_ms (the narration
+    // length, populated by /api/video-jobs/briefings/pending from
+    // seg.script.audio_ms). Fall back to a 30s default for legacy
+    // segments without timing metadata.
+    const durationMs = Number(job.audio_ms) || 30_000;
+    const totalFrames = Math.ceil((durationMs / 1000) * BRIEFING_FPS);
+    log(`  rendering ${totalFrames} frame(s) at ${BRIEFING_FPS}fps (${(durationMs/1000).toFixed(1)}s)`);
 
-    // The download Chrome wrote should now exist in framesDir under
-    // the filename the page reported (or with a "(1)"-style suffix if
-    // Chrome disambiguated). Find any .webm and pick the newest.
-    const dirFiles = await fs.promises.readdir(framesDir);
-    const webms = dirFiles.filter(f => f.endsWith('.webm'));
-    if (!webms.length) throw new Error(`no .webm found in ${framesDir} after capture`);
-    const webmName = webms
-      .map(f => ({ f, t: fs.statSync(path.join(framesDir, f)).mtimeMs }))
-      .sort((a, b) => b.t - a.t)[0].f;
-    const webmPath = path.join(framesDir, webmName);
-    const webmStat = await fs.promises.stat(webmPath);
-    if (webmStat.size < 50_000) {
-      throw new Error(`tiny webm (${webmStat.size} bytes) — capture failed`);
+    let written = 0;
+    let lastLogPct = 0;
+    for (let i = 0; i < totalFrames; i++) {
+      if (!_running) break;
+      const tMs = (i / BRIEFING_FPS) * 1000;
+      const dataUrl = await page.evaluate(
+        (t) => window.__renderBriefingFrameAt(t),
+        tMs
+      ).catch(err => {
+        throw new Error(`renderBriefingFrameAt(${tMs}ms) failed: ${err.message}`);
+      });
+      if (!dataUrl) {
+        // Skip null frames — log but keep going so a brief glitch
+        // doesn't tank the whole segment.
+        continue;
+      }
+      const b64 = dataUrl.startsWith('data:') ? dataUrl.split(',', 2)[1] : dataUrl;
+      const fpath = path.join(framesDir, `f${String(i).padStart(7, '0')}.jpg`);
+      await fs.promises.writeFile(fpath, Buffer.from(b64, 'base64'));
+      written++;
+      const pct = Math.floor((i / totalFrames) * 100);
+      if (pct >= lastLogPct + 25) {
+        log(`  frame ${i}/${totalFrames} (${pct}%)`);
+        lastLogPct = pct;
+      }
     }
-    log(`  captured: ${webmName} ${webmStat.size} bytes (${captureMeta.mime})`);
+    log(`  captured: ${written}/${totalFrames} frames in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 
-    // Transcode WebM → H.264 MP4 at the target portrait size. WebM is
-    // playable but TikTok/IG prefer h264/aac; doing it here saves the
-    // re-encode the platforms would do server-side.
+    try { await page.evaluate(() => window.__endBriefingScrub()); } catch (_) {}
+
+    if (written < 5) throw new Error(`only ${written} frame(s) captured`);
+
+    // Stitch the frames into MP4 at exactly BRIEFING_FPS. No timestamp
+    // demuxer needed — every frame is exactly 1/60s of timeline by
+    // construction.
     await new Promise((resolve, reject) => {
       const enc = spawn('ffmpeg', [
         '-loglevel', 'error',
         '-y',
-        '-i', webmPath,
-        '-vf', `scale=${BRIEFING_CAPTURE_W}:${BRIEFING_CAPTURE_H}:force_original_aspect_ratio=increase,crop=${BRIEFING_CAPTURE_W}:${BRIEFING_CAPTURE_H},fps=${BRIEFING_FPS}`,
+        '-framerate', String(BRIEFING_FPS),
+        '-i', path.join(framesDir, 'f%07d.jpg'),
+        '-vf', `scale=${BRIEFING_CAPTURE_W}:${BRIEFING_CAPTURE_H}:force_original_aspect_ratio=increase,crop=${BRIEFING_CAPTURE_W}:${BRIEFING_CAPTURE_H}`,
         '-c:v', 'libx264',
         '-pix_fmt', 'yuv420p',
         '-preset', 'veryfast',
         '-r', String(BRIEFING_FPS),
         '-fps_mode', 'cfr',
         '-movflags', '+faststart',
-        '-an', // strip audio (none in the webm anyway; we mux narration in next step)
         tmpVid,
       ]);
       let stderr = '';
       enc.stderr.on('data', d => { stderr += d.toString(); });
-      enc.on('close', code => code === 0 ? resolve() : reject(new Error(`ffmpeg(webm→mp4) exit ${code}: ${stderr.slice(0, 500)}`)));
+      enc.on('close', code => code === 0 ? resolve() : reject(new Error(`ffmpeg(stitch) exit ${code}: ${stderr.slice(0, 500)}`)));
       enc.on('error', reject);
     });
     const videoStat = await fs.promises.stat(tmpVid).catch(() => null);
     if (!videoStat || videoStat.size < 5000) {
-      throw new Error(`tmpVid too small (${videoStat?.size || 0} bytes) — encode produced no output`);
+      throw new Error(`tmpVid too small (${videoStat?.size || 0} bytes)`);
     }
-    log(`  video: ${videoStat.size} bytes after ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+    log(`  video: ${videoStat.size} bytes`);
 
     // ── Audio fetch + final mux ──────────────────────────────────────
     // The briefing-audio endpoint requires either a user session or
