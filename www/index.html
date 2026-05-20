@@ -47792,23 +47792,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
      * helper trying to layer on top. */
     bottom: env(safe-area-inset-bottom, 0px) !important;
   }
-  /* Pie stays in the bottom-left dock (right above the control bar)
-   * so the two compact icons sit at DIAGONALLY OPPOSITE corners of the
-   * briefing surface: pie at bottom-left, article roll at top-right.
-   * That separation makes it visually obvious that they're two
-   * independent expandable panels, not a single grouped UI. */
-  body.briefing-active .bSegmentSourcePie {
+  /* Pie + article roll both dock at the BOTTOM, on opposite sides:
+   * pie at bottom-left, article roll at bottom-right — sitting on the
+   * same row above the control bar. Pie's right edge and article
+   * roll's left edge are separated by the control-pill in the center.
+   * Same offset from the bottom for both. */
+  body.briefing-active .bSegmentSourcePie,
+  body.briefing-active .bSegmentArticleRoll {
     top: auto;
     bottom: calc(env(safe-area-inset-bottom, 0px) + 66px) !important;
     transform: translateY(8px);
   }
-  body.briefing-active .bSegmentSourcePie.visible { transform: translateY(0); }
-  /* Article roll docks at TOP-RIGHT — diagonally opposite the pie.
-   * The base CSS already anchors top: env(safe-area-inset-top)+78px /
-   * right: env(safe-area-inset-right, 12px), which puts it right under
-   * the segment-title chip on mobile. We don't need a briefing-active
-   * override — just preserve the entrance translate animation. */
-  body.briefing-active .bSegmentArticleRoll { transform: translateY(-8px); }
+  body.briefing-active .bSegmentSourcePie.visible,
   body.briefing-active .bSegmentArticleRoll.visible { transform: translateY(0); }
 }
 
@@ -47851,7 +47846,12 @@ const settingsToggle     = document.getElementById("settingsToggle");
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  cursor: pointer;
+  cursor: default;
+  /* Non-interactive in briefing playback — clicking opened an external
+     URL via window.open which interrupted the player. Taps now fall
+     through to the panel's compact-toggle handler so the only way to
+     dismiss the article roll is the explicit × corner button. */
+  pointer-events: none;
   box-shadow: 0 4px 18px rgba(0, 0, 0, 0.45);
   backdrop-filter: blur(12px) saturate(1.2);
   -webkit-backdrop-filter: blur(12px) saturate(1.2);
@@ -51184,7 +51184,12 @@ body.ticker-active .gTickerLabel {
         const location = esc(a.city_name || a.country_name || '');
         const source   = esc(a.source_name || '');
         const safe     = (a.url || '').replace(/'/g, '%27').replace(/"/g, '%22');
-        return `<div class="bSARollCard" onclick="window.open('${safe}','_blank')">
+        // Cards are non-interactive during briefing playback — opening
+        // an external URL via window.open interrupts the player. The
+        // article roll is informational only; users who want the link
+        // can pause + use the article-roll's full-tap expand UI in
+        // a future build.
+        return `<div class="bSARollCard">
           ${source ? `<div class="bSARollCardSource">${source}</div>` : ''}
           ${src ? `<img class="bSARollCardImg" src="${src}" onerror="this.style.display='none'" alt="" loading="lazy">` : `<div class="bSARollCardImgNone"></div>`}
           <div class="bSARollCardTitle">${title}</div>
