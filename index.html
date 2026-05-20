@@ -50837,10 +50837,29 @@ body.ticker-active .gTickerLabel {
     window.__briefingCapture = { episodeId: epId, segmentIdx: segIdx };
     window.__briefingCaptureReady = false;
     window.__briefingCaptureSegmentDone = false;
+    // Seed the first-launch flags here too, in case the worker hasn't
+    // (e.g. someone hits ?captureSeg=... in a real browser to debug).
+    // Same keys the puppeteer evaluateOnNewDocument seeds.
+    try {
+      localStorage.setItem('__earthIntroSeen', '1');
+      localStorage.setItem('earth00:tutorialSeen', '1');
+    } catch (_) {}
+    // Tear down any first-launch overlay that managed to mount in the
+    // window before capture mode took effect (welcome splash, intro
+    // tutorial scrim, onboarding card). These would otherwise sit on
+    // top of the briefing and the screencast would capture them
+    // instead of the actual playback.
+    const _purgeStartupOverlays = () => {
+      ['earthWelcome', 'introOverlay', 'onboardOverlay'].forEach(id => {
+        document.getElementById(id)?.remove();
+      });
+    };
+    _purgeStartupOverlays();
     // Wait until the rest of the page (globe, scene, fonts) is ready —
     // the briefing depends on window.__renderer etc. being initialized.
     // Same 2500ms grace period init() uses.
     await new Promise(r => setTimeout(r, 2500));
+    _purgeStartupOverlays();
     try {
       const res = await fetch(`${API}/api/briefing/episode/${epId}`);
       if (!res.ok) throw new Error(`episode fetch HTTP ${res.status}`);

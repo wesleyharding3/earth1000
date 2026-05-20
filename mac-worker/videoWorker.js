@@ -743,6 +743,18 @@ async function renderBriefingSegment(job) {
       Object.defineProperty(document, 'hidden',          { configurable: true, get: () => false });
       window.dispatchEvent(new Event('focus'));
       document.dispatchEvent(new Event('visibilitychange'));
+      // Pre-seed all "first-launch" localStorage flags so the page
+      // doesn't sit on welcome / intro / tutorial overlays instead of
+      // rendering the briefing. Puppeteer has a fresh localStorage per
+      // session — without these seeds the page treats every capture
+      // run as a brand-new visit and shows the welcome card, blocking
+      // openBriefing entirely (which is why the first batch of segment
+      // MP4s only had the welcome splash + voiceover).
+      try {
+        localStorage.setItem('__earthIntroSeen', '1');
+        localStorage.setItem('earth00:tutorialSeen', '1');
+        localStorage.setItem('earth00:audioMuted', '0');
+      } catch (_) {}
     });
     const url = `${APP_HOST}/?episode=${job.episode_id}&captureSeg=${job.segment_idx}`;
     log(`  ↦ ${url}`);
