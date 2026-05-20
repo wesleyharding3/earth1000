@@ -498,17 +498,40 @@ async function _publishEligibleRows() {
         // REELS succeeds with the same arc.mp4, the cards are the bad
         // item; if REELS also fails, the issue is broader (URL serving,
         // auth, etc).
+        //
+        // CRITICAL: REPLACE drafts.instagram rather than spreading. The
+        // original draft from socialDraftComposer carries an `image_url`
+        // (the thread's share-card PNG) for the legacy single-image
+        // path. If we spread it, the IG publisher's mode selector goes:
+        //
+        //   if (carouselVideos.length >= 2)  → VIDEO_CAROUSEL  ✓ (what we want)
+        //   else if (hasVideo && hasImage)   → CAROUSEL        ✗ tries to make an
+        //                                                        IMAGE_CAROUSEL_ITEM
+        //                                                        with image_url, fails
+        //                                                        "image-item: Only photo
+        //                                                        or video can be accepted"
+        //
+        // When forceReels strips carousel_videos, the leftover image_url
+        // pushes the publisher into CAROUSEL mode instead of REELS, and
+        // the image-item creation fails. Explicit replace fixes both
+        // states (force-reels + normal carousel) by never leaking
+        // image_url to the IG draft.
         const forceReels = process.env.IG_FORCE_REELS === '1' || process.env.IG_FORCE_REELS === 'true';
-        drafts.instagram = {
-          ...drafts.instagram,
-          // Order = scroll-stop priority: branded portrait card first
-          // (best chance of stopping a fast scroll), then the cinematic
-          // globe, then the data viz, then the article drill-down.
-          ...(forceReels ? {} : { carousel_videos: [portraitUrl, arcUrl, pieUrl, articlesUrl] }),
-          // Keep video_url for back-compat in case the publisher's
-          // VIDEO_CAROUSEL path falls back to REELS on a partial outage.
-          video_url:       arcUrl,
-        };
+        drafts.instagram = forceReels
+          ? {
+              caption:   drafts.instagram.caption,
+              video_url: arcUrl,
+            }
+          : {
+              caption:         drafts.instagram.caption,
+              // Order = scroll-stop priority: branded portrait card first
+              // (best chance of stopping a fast scroll), then the cinematic
+              // globe, then the data viz, then the article drill-down.
+              carousel_videos: [portraitUrl, arcUrl, pieUrl, articlesUrl],
+              // Keep video_url for back-compat in case the publisher's
+              // VIDEO_CAROUSEL path falls back to REELS on a partial outage.
+              video_url:       arcUrl,
+            };
       }
       if (drafts.threads) {
         // Threads also supports CAROUSEL (up to 10 items, added 2024).

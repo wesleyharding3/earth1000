@@ -408,8 +408,19 @@ async function concatMp4s(buffers, opts = {}) {
     args = [
       '-y',
       '-hide_banner', '-loglevel', 'error',
-      ...buffers.flatMap((_, i) => ['-i', inputPaths[i]]),
+      // `-use_editlist 0` as an INPUT option tells ffmpeg to IGNORE
+      // each source MP4's elst atom during demux. Without this, the
+      // arc.mp4 (rendered by mac-worker) and the 3 cards rendered by
+      // shareImageGenerator each carry their own AAC priming elst,
+      // and ffmpeg honors them during decode. The output gets baked
+      // with subtly mis-aligned audio/video timestamps that Meta's
+      // ingester catches and rejects with the generic 2207077
+      // "Media upload has failed" error. The output `-use_editlist 0`
+      // further down already strips elst on WRITE; this strips them
+      // on READ so they can't influence the decoded stream at all.
+      ...buffers.flatMap((_, i) => ['-use_editlist', '0', '-i', inputPaths[i]]),
       ...(musicStart > 0 ? ['-ss', String(musicStart)] : []),
+      '-use_editlist', '0',
       '-i', musicPath,
       '-filter_complex', filter,
       '-map', '[outv]',
@@ -433,7 +444,10 @@ async function concatMp4s(buffers, opts = {}) {
     args = [
       '-y',
       '-hide_banner', '-loglevel', 'error',
-      ...buffers.flatMap((_, i) => ['-i', inputPaths[i]]),
+      // `-use_editlist 0` as input options — see the music-mode branch
+      // above for the full rationale. Strips elst from each source MP4
+      // on READ so decoded timing is clean before the concat filter.
+      ...buffers.flatMap((_, i) => ['-use_editlist', '0', '-i', inputPaths[i]]),
       '-filter_complex', filter,
       '-map', '[outv]',
       '-map', '[outa]',
