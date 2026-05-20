@@ -157,7 +157,13 @@ const KW_COMMON_FRAC  = 0.30;  // keywords appearing in >30% of input excluded
 const KW_COMMON_FLOOR = 200;   // but always allow keywords with ≤200 occurrences
 const MIN_SOURCES_FOR_BREAKING = 3; // ≥3 distinct sources within 24h → "breaking meta-story"
 const CONVERGENCE_WINDOW_HOURS = 24;
-const TOTAL_ARTICLE_LIMIT  = 1500;
+// All six caps are env-overridable. Defaults were doubled 2026-05-20 from
+// the original (1500 / 200 / 12 / 700 / 200 / 200) so each storyThreadBuilder
+// run pulls a larger sample — roughly half the daily article ingest used
+// to bypass the cron entirely (1500 × 6 runs/day = 9k against ~20k/day
+// ingest). Going to 3000 raises throughput to ~90% with linear cost.
+// Set the env vars on Render if you want to dial back.
+const TOTAL_ARTICLE_LIMIT  = parseInt(process.env.STB_TOTAL_ARTICLE_LIMIT  || '3000', 10);
 const REFRESH_MIN_ARTICLES = 5;
 const REFRESH_MIN_NEW_KWS  = 3;
 const RECENCY_HALF_LIFE_HOURS = 36;
@@ -180,12 +186,12 @@ const RECENCY_HALF_LIFE_HOURS = 36;
 //   Tier 4  — BACKLOG FILL     remaining capacity, newest-first
 //
 // Total target = TOTAL_ARTICLE_LIMIT.
-const TIER_GLOBAL_LIMIT    = 200;
-const TIER_COUNTRY_FLOOR   = 2;    // per-country FLOOR: every country with candidates gets ≥ this many
-const TIER_COUNTRY_PER     = 12;   // per-country ceiling (includes floor)
-const TIER_COUNTRY_LIMIT   = 700;  // total cap on the CEILING pass (floor articles are ON TOP)
-const TIER_FRESH_LIMIT     = 200;
-const TIER_BACKLOG_LIMIT   = 200;
+const TIER_GLOBAL_LIMIT    = parseInt(process.env.STB_TIER_GLOBAL_LIMIT    || '400',  10);
+const TIER_COUNTRY_FLOOR   = parseInt(process.env.STB_TIER_COUNTRY_FLOOR   || '2',    10);  // per-country FLOOR: every country with candidates gets ≥ this many
+const TIER_COUNTRY_PER     = parseInt(process.env.STB_TIER_COUNTRY_PER     || '24',   10);  // per-country ceiling (includes floor)
+const TIER_COUNTRY_LIMIT   = parseInt(process.env.STB_TIER_COUNTRY_LIMIT   || '1400', 10);  // total cap on the CEILING pass (floor articles are ON TOP)
+const TIER_FRESH_LIMIT     = parseInt(process.env.STB_TIER_FRESH_LIMIT     || '400',  10);
+const TIER_BACKLOG_LIMIT   = parseInt(process.env.STB_TIER_BACKLOG_LIMIT   || '400',  10);
 const FRESH_PRIORITY_HOURS = 6;
 const PER_BATCH_THREAD_LIMIT = 150;  // existing threads shown to Claude per batch
 const SKIP_KEYWORDS   = new Set([ // too generic to cluster on
