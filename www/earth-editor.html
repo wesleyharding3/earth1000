@@ -1904,10 +1904,22 @@
                     <label style="font-size:10px;color:rgba(255,255,255,0.4);">Highlights (JSON array)</label>
                     <textarea id="fv-fm-hl-${id}" rows="6" onchange="fvFocalMapSetHighlights(${id}, this.value)" style="width:100%;padding:6px;background:#0a0e17;border:1px solid #1e293b;border-radius:4px;color:#e2e8f0;font-size:11px;font-family:Menlo,monospace;">${escHtml(highlightsJson)}</textarea>
                     <div style="font-size:10px;color:rgba(255,255,255,0.35);margin-top:4px;">
-                      Supported types: <code>marker</code> (lat/lng/label/kind), <code>circle</code> (lat/lng/radius_km/label), <code>arrow</code> (from:[lng,lat], to:[lng,lat], label), <code>polygon</code> (coordinates:[[lng,lat],…], label, fillColor).
+                      Supported types:<br/>
+                      • <code>marker</code> — lat/lng/label/kind (city, frontline, flashpoint, live)<br/>
+                      • <code>circle</code> — lat/lng/radius_km/label<br/>
+                      • <code>arrow</code> — from:[lng,lat], to:[lng,lat], label (animates by default)<br/>
+                      • <code>polygon</code> — coordinates:[[lng,lat],…], label, fillColor<br/>
+                      <br/>
+                      Per-highlight optional fields:<br/>
+                      • <code>appear_at_pct</code> 0..1 — when in the segment it appears (default: even staggered drop-in)<br/>
+                      • <code>pulse: true</code> — radar ring (auto on for flashpoint/live markers)<br/>
+                      • <code>animate_draw: false</code> — opt out of arrow draw animation<br/>
+                      • <code>draw_duration_ms</code> — how long the arrow takes to draw (default 1500)
                     </div>
                   </div>
-                  <div style="font-size:10px;color:rgba(255,255,255,0.35);margin-top:6px;">Map flies from zoom_start → zoom_end over duration_sec while narrator continues. Picks the preset → auto-fills center + zoom; switch to custom to override.</div>
+                  <div style="font-size:10px;color:rgba(255,255,255,0.35);margin-top:6px;">
+                    Map flies from zoom_start → zoom_end over duration_sec while narrator continues. Markers drop in sequentially. Add <code>"terrain": true</code> to map_config (or use a mountainous preset) to enable 3D elevation + camera pitch.
+                  </div>
                 </div>`;
               })()}
             </div>
@@ -2191,6 +2203,7 @@
         center: { lat: 24.8, lng: -107.4 },
         zoom_start: 4.8, zoom_end: 7.2,
         style: 'satellite',
+        terrain: true,
         highlights: [
           { type: 'marker', lat: 24.8091, lng: -107.3940, label: 'Culiacán',   kind: 'flashpoint' },
           { type: 'marker', lat: 23.2494, lng: -106.4111, label: 'Mazatlán',   kind: 'city' },
@@ -2202,6 +2215,7 @@
         center: { lat: 8.0, lng: -66.0 },
         zoom_start: 3.8, zoom_end: 5.2,
         style: 'dark',
+        terrain: true,
         highlights: [
           { type: 'marker', lat: 10.4806, lng: -66.9036, label: 'Caracas',         kind: 'city' },
           { type: 'marker', lat: 10.6666, lng: -71.6125, label: 'Maracaibo',       kind: 'flashpoint' },
@@ -2214,6 +2228,7 @@
         center: { lat: 23.7, lng: 121.0 },
         zoom_start: 4.5, zoom_end: 7.0,
         style: 'satellite',
+        terrain: true,
         highlights: [
           { type: 'marker', lat: 25.0330, lng: 121.5654, label: 'Taipei',    kind: 'city' },
           { type: 'marker', lat: 22.6273, lng: 120.3014, label: 'Kaohsiung', kind: 'city' },
@@ -2239,6 +2254,8 @@
         center: { lat: 34.0, lng: 75.5 },
         zoom_start: 4.8, zoom_end: 7.0,
         style: 'satellite',
+        terrain: true,
+        terrain_exaggeration: 1.8,
         highlights: [
           { type: 'marker', lat: 34.0837, lng: 74.7973, label: 'Srinagar',     kind: 'city' },
           { type: 'marker', lat: 34.3700, lng: 73.4711, label: 'Muzaffarabad', kind: 'city' },
@@ -2251,6 +2268,8 @@
         center: { lat: -17.0, lng: -65.0 },
         zoom_start: 4.2, zoom_end: 5.8,
         style: 'dark',
+        terrain: true,
+        terrain_exaggeration: 1.8,
         highlights: [
           { type: 'marker', lat: -16.5000, lng: -68.1500, label: 'La Paz',          kind: 'city' },
           { type: 'marker', lat: -19.0473, lng: -65.2595, label: 'Sucre',           kind: 'city' },
@@ -2275,6 +2294,7 @@
         center: { lat: 33.85, lng: 35.85 },
         zoom_start: 5.8, zoom_end: 8.2,
         style: 'dark',
+        terrain: true,
         highlights: [
           { type: 'marker', lat: 33.8938, lng: 35.5018, label: 'Beirut',    kind: 'city' },
           { type: 'marker', lat: 33.2733, lng: 35.1936, label: 'Tyre',      kind: 'frontline' },
@@ -2301,6 +2321,7 @@
         center: { lat: 34.5, lng: 51.4 },
         zoom_start: 4.8, zoom_end: 6.8,
         style: 'dark',
+        terrain: true,
         highlights: [
           { type: 'marker', lat: 35.6892, lng: 51.3890, label: 'Tehran',  kind: 'city' },
           { type: 'marker', lat: 33.7237, lng: 51.7261, label: 'Natanz',  kind: 'flashpoint' },

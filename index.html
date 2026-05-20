@@ -44357,9 +44357,54 @@ const settingsToggle     = document.getElementById("settingsToggle");
   background: #60c8ff;
   border: 2px solid #fff;
   box-shadow: 0 0 0 4px rgba(96,200,255,0.25), 0 2px 6px rgba(0,0,0,0.45);
+  color: #60c8ff; /* used as currentColor for the pulse ring */
 }
-.bFocalMap-highlight-marker.frontline { background: #ef4444; box-shadow: 0 0 0 4px rgba(239,68,68,0.28), 0 2px 6px rgba(0,0,0,0.45); }
-.bFocalMap-highlight-marker.flashpoint { background: #fbbf24; box-shadow: 0 0 0 4px rgba(251,191,36,0.30), 0 2px 6px rgba(0,0,0,0.45); }
+.bFocalMap-highlight-marker.frontline {
+  background: #ef4444;
+  box-shadow: 0 0 0 4px rgba(239,68,68,0.28), 0 2px 6px rgba(0,0,0,0.45);
+  color: #ef4444;
+}
+.bFocalMap-highlight-marker.flashpoint {
+  background: #fbbf24;
+  box-shadow: 0 0 0 4px rgba(251,191,36,0.30), 0 2px 6px rgba(0,0,0,0.45);
+  color: #fbbf24;
+}
+.bFocalMap-highlight-marker.live {
+  background: #34d399;
+  box-shadow: 0 0 0 4px rgba(52,211,153,0.30), 0 2px 6px rgba(0,0,0,0.45);
+  color: #34d399;
+}
+/* Sequential drop-in — marker starts invisible + scaled-down, then
+   transitions in at its scheduled appear time. The transform uses an
+   ease-out-back curve so the marker "lands" with a tiny bounce. */
+.bFocalMap-highlight-marker.scheduled {
+  opacity: 0;
+  transform: scale(0.2);
+  transition: opacity 360ms ease, transform 480ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.bFocalMap-highlight-marker.scheduled.dropped-in {
+  opacity: 1;
+  transform: scale(1);
+}
+/* Pulse ring — radar-style expanding circle. Color inherits via
+   currentColor so each kind's color carries through automatically. */
+.bFocalMap-pulse-ring {
+  position: absolute;
+  top: 50%; left: 50%;
+  width: 14px; height: 14px;
+  margin: -7px 0 0 -7px;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  opacity: 0;
+  pointer-events: none;
+  animation: bFocalMap-pulse 2.4s cubic-bezier(0, 0.55, 0.45, 1) infinite;
+}
+.bFocalMap-pulse-ring.delay { animation-delay: 1.2s; }
+@keyframes bFocalMap-pulse {
+  0%   { transform: scale(0.6); opacity: 0.85; }
+  80%  { opacity: 0;            }
+  100% { transform: scale(4.2); opacity: 0; }
+}
 .bFocalMap-highlight-label {
   position: absolute;
   transform: translate(10px, -50%);
@@ -48827,18 +48872,34 @@ body.ticker-active .gTickerLabel {
     },
   };
 
+  // Public terrain DEM tiles (AWS Terrain Tiles, terrarium encoding).
+  // No API key required. Used when map_config.terrain === true.
+  const _FOCAL_MAP_TERRAIN_DEM = {
+    type: 'raster-dem',
+    tiles: ['https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png'],
+    tileSize: 256,
+    encoding: 'terrarium',
+    maxzoom: 15,
+    attribution: 'Terrain &copy; Mapzen/AWS',
+  };
+
   // Maintain a single MapLibre instance — created lazily, reused across
   // segments. Resetting style on a fresh fire is cheaper than rebuilding.
   let _focalMapInst       = null;
   let _focalMapMarkers    = [];
   let _focalMapEndTimer   = null;
   let _focalMapAnimRaf    = null;
+  // Pending scheduled drop-in / arrow-draw timers — cleared on teardown.
+  let _focalMapScheduled  = [];
 
   function _focalMapCleanup() {
     // Tear down markers + layers, but keep the map instance so the next
-    // fire reuses it. Animation is cancelled; the container fades out.
+    // fire reuses it. Animation + scheduled timers are cancelled; the
+    // container fades out.
     if (_focalMapEndTimer) { clearTimeout(_focalMapEndTimer); _focalMapEndTimer = null; }
     if (_focalMapAnimRaf)  { cancelAnimationFrame(_focalMapAnimRaf); _focalMapAnimRaf = null; }
+    _focalMapScheduled.forEach(id => { try { clearTimeout(id); } catch (_) {} try { cancelAnimationFrame(id); } catch (_) {} });
+    _focalMapScheduled = [];
     _focalMapMarkers.forEach(m => { try { m.remove(); } catch (_) {} });
     _focalMapMarkers = [];
     if (_focalMapInst) {
@@ -48846,6 +48907,8 @@ body.ticker-active .gTickerLabel {
         .forEach(layerId => { try { _focalMapInst.removeLayer(layerId); } catch (_) {} });
       ['focal-arrows-src', 'focal-circles-src', 'focal-polygons-src']
         .forEach(srcId => { try { _focalMapInst.removeSource(srcId); } catch (_) {} });
+      try { _focalMapInst.setTerrain(null); } catch (_) {}
+      try { _focalMapInst.removeSource('focal-terrain-dem'); } catch (_) {}
     }
     const wrap = document.getElementById('bFocalMap');
     if (wrap) {
@@ -48899,6 +48962,14 @@ body.ticker-active .gTickerLabel {
     const zoomEnd    = Number.isFinite(config.zoom_end)   ? Number(config.zoom_end)   : 7.0;
     const durMs      = Math.max(3000, (durationSec || config.duration_sec || 10) * 1000);
     const highlights = Array.isArray(config.highlights) ? config.highlights : [];
+    // Terrain mode: enabled per-map. When on, the camera tilts so the
+    // relief is legible (45° default — caller can override). Without
+    // pitch the DEM rasters are visible but the 3D effect collapses.
+    const terrainOn   = !!config.terrain;
+    const terrainExag = Number.isFinite(config.terrain_exaggeration)
+      ? Number(config.terrain_exaggeration) : 1.5;
+    const pitchStart  = Number.isFinite(config.pitch_start) ? Number(config.pitch_start) : (terrainOn ? 35 : 0);
+    const pitchEnd    = Number.isFinite(config.pitch_end)   ? Number(config.pitch_end)   : (terrainOn ? 55 : 0);
 
     // Build or reset the MapLibre instance.
     if (!_focalMapInst) {
@@ -48907,6 +48978,7 @@ body.ticker-active .gTickerLabel {
         style,
         center,
         zoom: zoomStart,
+        pitch: pitchStart,
         attributionControl: false,
         interactive: false,
       });
@@ -48914,6 +48986,7 @@ body.ticker-active .gTickerLabel {
       _focalMapInst.setStyle(style);
       _focalMapInst.setCenter(center);
       _focalMapInst.setZoom(zoomStart);
+      try { _focalMapInst.setPitch(pitchStart); } catch (_) {}
     }
 
     if (label) {
@@ -48931,70 +49004,130 @@ body.ticker-active .gTickerLabel {
     const renderHighlights = () => {
       if (!_focalMapInst) return;
       const map = _focalMapInst;
-      const arrowFeats   = [];
-      const circleFeats  = [];
-      const polygonFeats = [];
 
-      for (const h of highlights) {
-        if (!h || !h.type) continue;
-        if (h.type === 'marker' && Number.isFinite(h.lat) && Number.isFinite(h.lng)) {
-          const el = document.createElement('div');
-          el.className = 'bFocalMap-highlight-marker' + (h.kind ? ` ${h.kind}` : '');
-          const m = new window.maplibregl.Marker({ element: el })
-            .setLngLat([h.lng, h.lat])
-            .addTo(map);
-          if (h.label) {
-            const lbl = document.createElement('div');
-            lbl.className = 'bFocalMap-highlight-label';
-            lbl.textContent = h.label;
-            el.appendChild(lbl);
+      // 3D terrain: add the DEM source + activate. Idempotent — guard
+      // against re-adding if a previous fire left it. The setStyle()
+      // call earlier wipes sources but not always synchronously.
+      if (terrainOn) {
+        try {
+          if (!map.getSource('focal-terrain-dem')) {
+            map.addSource('focal-terrain-dem', _FOCAL_MAP_TERRAIN_DEM);
           }
-          _focalMapMarkers.push(m);
-        } else if (h.type === 'circle' && Number.isFinite(h.lat) && Number.isFinite(h.lng) && Number.isFinite(h.radius_km)) {
-          circleFeats.push({
-            type: 'Feature',
-            geometry: { type: 'Polygon', coordinates: [_circlePolygonKm(h.lng, h.lat, h.radius_km)] },
-            properties: { label: h.label || '' },
-          });
-          if (h.label) {
-            const el = document.createElement('div');
-            el.className = 'bFocalMap-highlight-marker';
-            el.style.opacity = '0';
-            const m = new window.maplibregl.Marker({ element: el })
-              .setLngLat([h.lng, h.lat])
-              .addTo(map);
-            const lbl = document.createElement('div');
-            lbl.className = 'bFocalMap-highlight-label';
-            lbl.textContent = h.label;
-            el.appendChild(lbl);
-            _focalMapMarkers.push(m);
-          }
-        } else if (h.type === 'arrow' && Array.isArray(h.from) && Array.isArray(h.to)) {
-          arrowFeats.push({
-            type: 'Feature',
-            geometry: { type: 'LineString', coordinates: [h.from, h.to] },
-            properties: { label: h.label || '' },
-          });
-        } else if (h.type === 'polygon' && Array.isArray(h.coordinates)) {
-          polygonFeats.push({
-            type: 'Feature',
-            geometry: { type: 'Polygon', coordinates: [h.coordinates] },
-            properties: { label: h.label || '', fillColor: h.fillColor || '#ef4444' },
-          });
+          map.setTerrain({ source: 'focal-terrain-dem', exaggeration: terrainExag });
+        } catch (e) {
+          console.warn(`[briefing/focal_map] terrain failed: ${e.message}`);
         }
       }
 
+      // Buckets for geojson sources (built up first, added at end).
+      const circleFeats  = [];
+      const polygonFeats = [];
+      // Per-marker scheduling state — built up here, then activated by
+      // the timeline tick. Arrow draws are separate (per-arrow RAF).
+      const markersToSchedule = []; // { el, appearAtMs, hasPulse }
+      const arrowsToAnimate   = []; // { from, to, drawDurationMs, appearAtMs, label, animate }
+
+      // Partition highlights into deterministic types + reserve the
+      // marker/arrow indices we'll schedule below.
+      const markerHighlights = highlights.filter(h => h && h.type === 'marker' && Number.isFinite(h.lat) && Number.isFinite(h.lng));
+      const arrowHighlights  = highlights.filter(h => h && h.type === 'arrow' && Array.isArray(h.from) && Array.isArray(h.to));
+
+      // Default appear_at_pct distributes evenly across the SECOND HALF
+      // of the segment — so the camera fly-in plays first, then markers
+      // tap in one after another while the narrator names them. Caller
+      // can override per-highlight with appear_at_pct: 0.0..1.0.
+      const markerDefaultStart = 0.45;
+      const markerDefaultEnd   = 0.88;
+      for (let i = 0; i < markerHighlights.length; i++) {
+        const h = markerHighlights[i];
+        const explicit = Number.isFinite(h.appear_at_pct) ? Math.max(0, Math.min(1, h.appear_at_pct)) : null;
+        const evenPct = markerHighlights.length === 1
+          ? markerDefaultStart
+          : markerDefaultStart + (markerDefaultEnd - markerDefaultStart) * (i / Math.max(1, markerHighlights.length - 1));
+        const appearAtMs = Math.round((explicit != null ? explicit : evenPct) * durMs);
+
+        const el = document.createElement('div');
+        el.className = 'bFocalMap-highlight-marker scheduled' + (h.kind ? ` ${h.kind}` : '');
+        // Radar pulse — opt-in via h.pulse:true OR auto-on for
+        // flashpoint / live kinds (they're meant to feel "hot").
+        const hasPulse = h.pulse === true || h.kind === 'flashpoint' || h.kind === 'live';
+        if (hasPulse) {
+          const ring1 = document.createElement('div');
+          ring1.className = 'bFocalMap-pulse-ring';
+          el.appendChild(ring1);
+          const ring2 = document.createElement('div');
+          ring2.className = 'bFocalMap-pulse-ring delay';
+          el.appendChild(ring2);
+        }
+        if (h.label) {
+          const lbl = document.createElement('div');
+          lbl.className = 'bFocalMap-highlight-label';
+          lbl.textContent = h.label;
+          el.appendChild(lbl);
+        }
+        const m = new window.maplibregl.Marker({ element: el })
+          .setLngLat([h.lng, h.lat])
+          .addTo(map);
+        _focalMapMarkers.push(m);
+        markersToSchedule.push({ el, appearAtMs });
+      }
+
+      // Arrows — collect for the animated-draw pass below. Drawing
+      // defaults ON for new arrows; opt out per-arrow with
+      // animate_draw: false. draw_duration_ms defaults to 1500ms.
+      arrowHighlights.forEach((h, i) => {
+        const explicit = Number.isFinite(h.appear_at_pct) ? Math.max(0, Math.min(1, h.appear_at_pct)) : null;
+        // Stagger if not explicit — give the camera a beat, then draw.
+        const defaultPct = 0.30 + 0.15 * i;
+        const appearAtMs = Math.round((explicit != null ? explicit : Math.min(0.75, defaultPct)) * durMs);
+        const drawDurationMs = Number.isFinite(h.draw_duration_ms) ? Number(h.draw_duration_ms) : 1500;
+        const animate = h.animate_draw !== false;
+        arrowsToAnimate.push({ from: h.from, to: h.to, label: h.label || '', drawDurationMs, appearAtMs, animate });
+      });
+
+      // Circles + their optional labels — these stay static.
+      // (Could add appear_at_pct in a follow-up but circles are usually
+      // a "chokepoint" feature meant to be present from the start.)
+      highlights.forEach(h => {
+        if (!h || h.type !== 'circle') return;
+        if (!Number.isFinite(h.lat) || !Number.isFinite(h.lng) || !Number.isFinite(h.radius_km)) return;
+        circleFeats.push({
+          type: 'Feature',
+          geometry: { type: 'Polygon', coordinates: [_circlePolygonKm(h.lng, h.lat, h.radius_km)] },
+          properties: { label: h.label || '' },
+        });
+        if (h.label) {
+          const el = document.createElement('div');
+          el.className = 'bFocalMap-highlight-marker';
+          el.style.opacity = '0';
+          const mk = new window.maplibregl.Marker({ element: el })
+            .setLngLat([h.lng, h.lat])
+            .addTo(map);
+          const lbl = document.createElement('div');
+          lbl.className = 'bFocalMap-highlight-label';
+          lbl.textContent = h.label;
+          el.appendChild(lbl);
+          _focalMapMarkers.push(mk);
+        }
+      });
+
+      // Polygons (also static — typically a "contested zone" outline).
+      highlights.forEach(h => {
+        if (!h || h.type !== 'polygon' || !Array.isArray(h.coordinates)) return;
+        polygonFeats.push({
+          type: 'Feature',
+          geometry: { type: 'Polygon', coordinates: [h.coordinates] },
+          properties: { label: h.label || '', fillColor: h.fillColor || '#ef4444' },
+        });
+      });
+
+      // Add static sources/layers (circles + polygons).
       if (circleFeats.length) {
         map.addSource('focal-circles-src', { type: 'geojson', data: { type: 'FeatureCollection', features: circleFeats } });
         map.addLayer({ id: 'focal-circles-fill', type: 'fill', source: 'focal-circles-src',
           paint: { 'fill-color': '#60c8ff', 'fill-opacity': 0.18 } });
         map.addLayer({ id: 'focal-circles-line', type: 'line', source: 'focal-circles-src',
           paint: { 'line-color': '#60c8ff', 'line-width': 2, 'line-opacity': 0.85 } });
-      }
-      if (arrowFeats.length) {
-        map.addSource('focal-arrows-src', { type: 'geojson', data: { type: 'FeatureCollection', features: arrowFeats } });
-        map.addLayer({ id: 'focal-arrows-line', type: 'line', source: 'focal-arrows-src',
-          paint: { 'line-color': '#fbbf24', 'line-width': 3, 'line-opacity': 0.9, 'line-dasharray': [2, 1] } });
       }
       if (polygonFeats.length) {
         map.addSource('focal-polygons-src', { type: 'geojson', data: { type: 'FeatureCollection', features: polygonFeats } });
@@ -49004,9 +49137,71 @@ body.ticker-active .gTickerLabel {
           paint: { 'line-color': ['get', 'fillColor'], 'line-width': 2, 'line-opacity': 0.9 } });
       }
 
-      // Animate camera: zoom_start → zoom_end over duration_sec while
-      // narrator continues. Linear interpolation, capped to durMs - 800ms
-      // so the final zoom holds briefly before fade-out.
+      // Arrow source — initialized empty, populated by the per-arrow
+      // RAF animation that interpolates each arrow's end-point from
+      // `from` to `to` over draw_duration_ms.
+      if (arrowsToAnimate.length) {
+        map.addSource('focal-arrows-src', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+        map.addLayer({ id: 'focal-arrows-line', type: 'line', source: 'focal-arrows-src',
+          paint: { 'line-color': '#fbbf24', 'line-width': 3, 'line-opacity': 0.9, 'line-dasharray': [2, 1] } });
+      }
+
+      // Animated arrow draw state — one entry per arrow being drawn.
+      const arrowState = arrowsToAnimate.map(a => ({ ...a, started: false, done: false, t0: 0 }));
+      const updateArrowSource = () => {
+        if (!_focalMapInst) return;
+        const src = _focalMapInst.getSource('focal-arrows-src');
+        if (!src) return;
+        const feats = arrowState
+          .filter(s => s.started)
+          .map(s => {
+            if (s.done || !s.animate) {
+              return { type: 'Feature', geometry: { type: 'LineString', coordinates: [s.from, s.to] }, properties: { label: s.label } };
+            }
+            const t = Math.min(1, (performance.now() - s.t0) / s.drawDurationMs);
+            const eased = t * t * (3 - 2 * t);
+            const lng = s.from[0] + (s.to[0] - s.from[0]) * eased;
+            const lat = s.from[1] + (s.to[1] - s.from[1]) * eased;
+            if (t >= 1) s.done = true;
+            return { type: 'Feature', geometry: { type: 'LineString', coordinates: [s.from, [lng, lat]] }, properties: { label: s.label } };
+          });
+        src.setData({ type: 'FeatureCollection', features: feats });
+      };
+
+      // Schedule marker drops + arrow draws on a single timeline tick.
+      // For each marker: at appearAtMs, add the 'dropped-in' class so
+      // CSS transitions the element in. For each arrow: at appearAtMs,
+      // mark started=true and start the per-arrow draw RAF.
+      const t0Schedule = performance.now();
+      const timelineTick = () => {
+        if (!_focalMapInst) return;
+        const elapsed = performance.now() - t0Schedule;
+        for (const m of markersToSchedule) {
+          if (!m._fired && elapsed >= m.appearAtMs) {
+            m._fired = true;
+            try { m.el.classList.add('dropped-in'); } catch (_) {}
+          }
+        }
+        let anyArrowAnimating = false;
+        for (const s of arrowState) {
+          if (!s.started && elapsed >= s.appearAtMs) {
+            s.started = true;
+            s.t0 = performance.now();
+          }
+          if (s.started && !s.done && s.animate) anyArrowAnimating = true;
+        }
+        if (arrowState.length && (anyArrowAnimating || arrowState.some(s => s.started && !s._sourcePainted))) {
+          updateArrowSource();
+          arrowState.forEach(s => { if (s.started) s._sourcePainted = true; });
+        }
+        if (elapsed < durMs) {
+          _focalMapScheduled.push(requestAnimationFrame(timelineTick));
+        }
+      };
+      _focalMapScheduled.push(requestAnimationFrame(timelineTick));
+
+      // Camera animation — zoom + pitch (pitch only matters when terrain
+      // is on, but cheap to interpolate either way).
       const animMs = Math.max(2000, durMs - 800);
       const t0 = performance.now();
       const tick = (now) => {
@@ -49014,7 +49209,9 @@ body.ticker-active .gTickerLabel {
         const t = Math.min(1, (now - t0) / animMs);
         const eased = t * t * (3 - 2 * t); // smoothstep
         const z = zoomStart + (zoomEnd - zoomStart) * eased;
+        const p = pitchStart + (pitchEnd - pitchStart) * eased;
         try { _focalMapInst.setZoom(z); } catch (_) {}
+        if (pitchStart !== pitchEnd) { try { _focalMapInst.setPitch(p); } catch (_) {} }
         if (t < 1) {
           _focalMapAnimRaf = requestAnimationFrame(tick);
         } else {
