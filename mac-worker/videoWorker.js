@@ -741,10 +741,21 @@ async function renderBriefingSegment(job) {
     ],
   });
   const t0 = Date.now();
-  let page, client, ffmpeg;
-  const tmpVid   = path.join(os.tmpdir(), `briefing-${job.job_id}-${Date.now()}-vid.mp4`);
-  const tmpAudio = path.join(os.tmpdir(), `briefing-${job.job_id}-${Date.now()}-aud.mp3`);
-  const tmpOut   = path.join(os.tmpdir(), `briefing-${job.job_id}-${Date.now()}-out.mp4`);
+  let page, client;
+  const runId = `${job.job_id}-${Date.now()}`;
+  const framesDir = path.join(os.tmpdir(), `briefing-${runId}-frames`);
+  const concatTxt = path.join(os.tmpdir(), `briefing-${runId}-concat.txt`);
+  const tmpVid   = path.join(os.tmpdir(), `briefing-${runId}-vid.mp4`);
+  const tmpAudio = path.join(os.tmpdir(), `briefing-${runId}-aud.mp3`);
+  const tmpOut   = path.join(os.tmpdir(), `briefing-${runId}-out.mp4`);
+  await fs.promises.mkdir(framesDir, { recursive: true });
+  // Per-frame {ts, path} record; ts is the CDP metadata.timestamp
+  // (seconds since epoch) of the frame's wall-clock capture time.
+  // We need the real timing because Chrome's screencast delivery rate
+  // is highly variable in headless (anywhere from 7 fps to 60 fps)
+  // and ffmpeg's image2pipe assumes a fixed -framerate, which makes
+  // any output speed-up bug almost guaranteed unless we use timestamps.
+  const frames = [];
   try {
     page = await browser.newPage();
     await page.evaluateOnNewDocument(() => {
@@ -799,45 +810,26 @@ async function renderBriefingSegment(job) {
     }
 
     // Start CDP screencast. Each Page.screencastFrame carries a
-    // base64-jpg + metadata; we ack it (otherwise Chrome stops sending
-    // frames after a small internal buffer) and pipe the bytes to
-    // ffmpeg's stdin.
+    // base64-jpg + metadata.timestamp (wall-clock seconds). We write
+    // every frame to disk with its arrival index, then ack so Chrome
+    // keeps streaming. The timestamps drive the concat demuxer below
+    // so the output timing matches real time regardless of how
+    // erratically Chrome delivers frames.
     client = await page.target().createCDPSession();
-    ffmpeg = spawn('ffmpeg', [
-      '-loglevel', 'error',
-      '-y',
-      '-f', 'image2pipe',
-      '-framerate', String(BRIEFING_FPS),
-      '-i', 'pipe:0',
-      // vsync cfr forces a constant 60fps timeline — Chrome's screencast
-      // delivery rate fluctuates and without this ffmpeg would emit
-      // variable-FPS, which TikTok/IG re-encoders sometimes mangle.
-      '-vf', `scale=${BRIEFING_CAPTURE_W}:${BRIEFING_CAPTURE_H}:force_original_aspect_ratio=increase,crop=${BRIEFING_CAPTURE_W}:${BRIEFING_CAPTURE_H},fps=${BRIEFING_FPS}`,
-      '-c:v', 'libx264',
-      '-pix_fmt', 'yuv420p',
-      '-preset', 'veryfast',
-      '-r', String(BRIEFING_FPS),
-      '-fps_mode', 'cfr',
-      '-movflags', '+faststart',
-      tmpVid,
-    ]);
-    let ffmpegStderr = '';
-    ffmpeg.stderr.on('data', d => { ffmpegStderr += d.toString(); });
-    const ffmpegDone = new Promise((resolve, reject) => {
-      ffmpeg.on('close', code => code === 0 ? resolve() : reject(new Error(`ffmpeg(video) exit ${code}: ${ffmpegStderr.slice(0, 500)}`)));
-      ffmpeg.on('error', reject);
-    });
-
     client.on('Page.screencastFrame', async (event) => {
       try {
         const buf = Buffer.from(event.data, 'base64');
-        if (!ffmpeg.killed && ffmpeg.stdin.writable) {
-          if (!ffmpeg.stdin.write(buf)) {
-            await new Promise(r => ffmpeg.stdin.once('drain', r));
-          }
-        }
+        const i = frames.length;
+        const fpath = path.join(framesDir, `f${String(i).padStart(7, '0')}.jpg`);
+        // CDP gives us metadata.timestamp in seconds-since-epoch as a
+        // float. Fall back to wall clock if it's missing.
+        const ts = (event.metadata?.timestamp != null)
+          ? event.metadata.timestamp
+          : (Date.now() / 1000);
+        await fs.promises.writeFile(fpath, buf);
+        frames.push({ ts, path: fpath });
         await client.send('Page.screencastFrameAck', { sessionId: event.sessionId });
-      } catch (e) { /* drop frame on write errors */ }
+      } catch (e) { /* drop frame on write errors — accumulating frames is more important than perfection */ }
     });
     await client.send('Page.startScreencast', {
       format: 'jpeg',
@@ -861,14 +853,62 @@ async function renderBriefingSegment(job) {
       if (done) break;
       await new Promise(r => setTimeout(r, 250));
     }
-
-    // Stop screencast, end ffmpeg, wait for the video MP4.
     try { await client.send('Page.stopScreencast'); } catch (_) {}
-    try { ffmpeg.stdin.end(); } catch (_) {}
-    await ffmpegDone;
+
+    if (frames.length < 5) {
+      throw new Error(`screencast captured only ${frames.length} frame(s)`);
+    }
+    // Build a concat demuxer file with explicit per-frame durations.
+    // The duration of frame N = (timestamp[N+1] − timestamp[N]). The
+    // last frame gets a small fallback so the final image isn't a
+    // zero-length 0-frame. ffmpeg's concat demuxer reads this and
+    // emits a variable-rate stream; the output filter then resamples
+    // to BRIEFING_FPS via duplication.
+    let totalDur = 0;
+    const lines = [];
+    for (let i = 0; i < frames.length; i++) {
+      const next = frames[i + 1];
+      let dur = next ? Math.max(0.001, next.ts - frames[i].ts) : 0.05;
+      // Defensive clamp — if a single frame somehow has > 5s gap (bad
+      // ts data) just hold for 5s instead of stretching the video.
+      if (dur > 5) dur = 5;
+      totalDur += dur;
+      lines.push(`file '${frames[i].path}'`);
+      lines.push(`duration ${dur.toFixed(6)}`);
+    }
+    // Concat demuxer quirk: the last file is repeated WITHOUT a
+    // duration line — it inherits the previous frame's duration.
+    lines.push(`file '${frames[frames.length - 1].path}'`);
+    await fs.promises.writeFile(concatTxt, lines.join('\n') + '\n');
+    log(`  screencast: ${frames.length} frame(s) over ${totalDur.toFixed(1)}s real time (~${(frames.length / Math.max(0.1, totalDur)).toFixed(1)} fps)`);
+
+    await new Promise((resolve, reject) => {
+      const enc = spawn('ffmpeg', [
+        '-loglevel', 'error',
+        '-y',
+        '-f', 'concat',
+        '-safe', '0',
+        '-i', concatTxt,
+        // fps=BRIEFING_FPS resamples the variable-rate concat input to
+        // a clean constant 60fps via frame duplication; scale+crop
+        // keeps the canvas at the exact 1080×1920 portrait size.
+        '-vf', `scale=${BRIEFING_CAPTURE_W}:${BRIEFING_CAPTURE_H}:force_original_aspect_ratio=increase,crop=${BRIEFING_CAPTURE_W}:${BRIEFING_CAPTURE_H},fps=${BRIEFING_FPS}`,
+        '-c:v', 'libx264',
+        '-pix_fmt', 'yuv420p',
+        '-preset', 'veryfast',
+        '-r', String(BRIEFING_FPS),
+        '-fps_mode', 'cfr',
+        '-movflags', '+faststart',
+        tmpVid,
+      ]);
+      let stderr = '';
+      enc.stderr.on('data', d => { stderr += d.toString(); });
+      enc.on('close', code => code === 0 ? resolve() : reject(new Error(`ffmpeg(video) exit ${code}: ${stderr.slice(0, 500)}`)));
+      enc.on('error', reject);
+    });
     const videoStat = await fs.promises.stat(tmpVid).catch(() => null);
     if (!videoStat || videoStat.size < 5000) {
-      throw new Error(`tmpVid too small (${videoStat?.size || 0} bytes) — screencast produced no frames`);
+      throw new Error(`tmpVid too small (${videoStat?.size || 0} bytes) — encode produced no output`);
     }
     log(`  video: ${videoStat.size} bytes after ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 
@@ -952,9 +992,12 @@ async function renderBriefingSegment(job) {
   } finally {
     if (client) try { await client.detach(); } catch (_) {}
     await browser.close().catch(() => {});
-    for (const f of [tmpVid, tmpAudio, tmpOut]) {
+    for (const f of [tmpVid, tmpAudio, tmpOut, concatTxt]) {
       try { await fs.promises.unlink(f); } catch (_) {}
     }
+    // Nuke the per-run frames directory in one shot — these can be
+    // hundreds of JPEGs (1-2 GB intermediate) on a 30s+ segment.
+    try { await fs.promises.rm(framesDir, { recursive: true, force: true }); } catch (_) {}
   }
 }
 
