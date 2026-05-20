@@ -47506,6 +47506,57 @@ const settingsToggle     = document.getElementById("settingsToggle");
    eye lands at the same place every segment. (Was right-anchored
    before; flipped so pie and article roll don't collide on the same
    side of the screen on mobile.) */
+/* ── Compact (collapsible icon) mode for mobile briefings ──────────
+   On narrow viewports we default the pie chart + article roll to
+   small circular icon buttons in the bottom corners. Tap an icon to
+   expand it into the full panel; tap the panel anywhere to collapse
+   back. CSS-only state via the .compact class (toggled by JS at
+   briefing open). The ::before icon shows when .compact, all real
+   content hides. The panel transitions smoothly between states. */
+@media (max-width: 720px) {
+  body.briefing-active .bSegmentSourcePie.compact,
+  body.briefing-active .bArticlePanel.compact {
+    width: 44px;
+    height: 44px;
+    min-width: 0;
+    min-height: 0;
+    max-width: none;
+    padding: 0;
+    border-radius: 50%;
+    cursor: pointer;
+    overflow: hidden;
+    background:
+      radial-gradient(120% 80% at 50% 0%, rgba(255,255,255,0.18) 0%, transparent 55%),
+      linear-gradient(180deg, rgba(28,40,60,0.92), rgba(10,14,23,0.88));
+    border: 1px solid rgba(96,200,255,0.42);
+    box-shadow: 0 6px 14px rgba(0,0,0,0.35), 0 0 8px rgba(96,200,255,0.18);
+    display: block !important;
+    opacity: 1 !important;
+    transform: none !important;
+    pointer-events: all;
+  }
+  body.briefing-active .bSegmentSourcePie.compact > *,
+  body.briefing-active .bArticlePanel.compact > * {
+    display: none !important;
+  }
+  body.briefing-active .bSegmentSourcePie.compact::before {
+    content: '';
+    display: block; width: 100%; height: 100%;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2360c8ff' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'><circle cx='12' cy='12' r='9'/><path d='M12 3 v9 l8 4'/></svg>");
+    background-size: 24px 24px;
+    background-position: center;
+    background-repeat: no-repeat;
+  }
+  body.briefing-active .bArticlePanel.compact::before {
+    content: '';
+    display: block; width: 100%; height: 100%;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2360c8ff' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'><rect x='3' y='4' width='18' height='4' rx='1'/><rect x='3' y='10' width='18' height='4' rx='1'/><rect x='3' y='16' width='18' height='4' rx='1'/></svg>");
+    background-size: 22px 22px;
+    background-position: center;
+    background-repeat: no-repeat;
+  }
+}
+
 .bSegmentSourcePie {
   position: fixed;
   /* Bottom-anchored — see index.html for rationale. */
@@ -50620,6 +50671,23 @@ body.ticker-active .gTickerLabel {
       window.audioEngine?.setLayer?.('news', false);
     } catch (_) {}
     document.body.classList.add('briefing-active');
+    // On mobile, start the source-pie + article-roll panels in their
+    // compact (icon-only) form. The .compact class hides their content
+    // and shows a small circular icon button instead. Tap to expand,
+    // tap again on the expanded panel to collapse back. Desktop ignores
+    // the class entirely (CSS rules are gated by the 720px breakpoint).
+    try {
+      const isMobile = window.matchMedia?.('(max-width: 720px)').matches;
+      const pie = document.getElementById('bSegmentSourcePie');
+      const ap  = document.getElementById('bArticlePanel');
+      if (isMobile) {
+        if (pie) pie.classList.add('compact');
+        if (ap)  ap.classList.add('compact');
+      } else {
+        if (pie) pie.classList.remove('compact');
+        if (ap)  ap.classList.remove('compact');
+      }
+    } catch (_) {}
     document.getElementById('bRecap').classList.remove('open');
     // Dots meta: "Earth Briefing" + date above nav dots
     const metaDate = fmtDate(episode.target_date);
@@ -55543,6 +55611,33 @@ body.ticker-active .gTickerLabel {
       close();
     }, { capture: true });
   })();
+
+  // ── Compact-mode toggle for pie + article panels (mobile only) ─────
+  // Wired ONCE on script load. The .compact class is added/removed by
+  // openBriefing based on viewport; here we just wire the user-tap
+  // toggle so the icon expands and the expanded panel collapses on
+  // re-tap. Click handler is no-op on desktop because the CSS rules
+  // are gated by @media (max-width: 720px).
+  (function _wireCompactPanels() {
+    const pie = document.getElementById('bSegmentSourcePie');
+    const ap  = document.getElementById('bArticlePanel');
+    const toggleCompact = (el) => {
+      if (!el) return;
+      el.classList.toggle('compact');
+    };
+    if (pie) pie.addEventListener('click', () => toggleCompact(pie));
+    // Article panel: only the OUTER chrome (the panel's own padding /
+    // background area) should toggle. Tapping an article card / video
+    // card inside it must NOT collapse. Use direct-target check.
+    if (ap) ap.addEventListener('click', (e) => {
+      // If the user clicked an INTERACTIVE child (article card / video /
+      // a tag), don't collapse — let them open the article.
+      const interactive = e.target.closest('a, button, .bAPCard, .bAPVideoCard, .bAPArticleVideoCard, .bAPTwitterCard, iframe');
+      if (interactive && interactive !== ap) return;
+      toggleCompact(ap);
+    });
+  })();
+
   // Briefing volume slider + popover toggle — see index.html for rationale.
   const _bVolSlider = document.getElementById('bVolSlider');
   const _bVolBtn    = document.getElementById('bVolBtn');
