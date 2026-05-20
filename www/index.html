@@ -51853,6 +51853,34 @@ body.ticker-active .gTickerLabel {
         const fireHeatmap      = isHeatmap && hasMedia;
         const fireFocalMap     = isFocalMap && hasMedia;
 
+        // ── iOS diagnostic — TEMPORARY ──────────────────────────────────
+        // The user reports focal_map silently fails to fire on iOS
+        // Capacitor with no on-screen feedback. Even my earlier diagnostic
+        // (a8aaacfc) lives INSIDE startFocalMap — if the fire branch
+        // never reaches startFocalMap, that UI never appears. So surface
+        // the fire-check decision per segment via a fixed banner at the
+        // top of the briefing surface. Will be removed once iOS issue
+        // is identified.
+        try {
+          if (isFocalMap || isHeatmap || (fm && fm.enabled)) {
+            const dbg = document.getElementById('bFocalDebugBanner') || (() => {
+              const el = document.createElement('div');
+              el.id = 'bFocalDebugBanner';
+              el.style.cssText = 'position:absolute;top:80px;left:50%;transform:translateX(-50%);background:rgba(251,191,36,0.95);color:#0a0e17;padding:6px 12px;border-radius:6px;font-family:monospace;font-size:11px;font-weight:700;z-index:99999;pointer-events:none;max-width:90vw;text-align:center;line-height:1.4;';
+              document.getElementById('briefingOverlay')?.appendChild(el);
+              return el;
+            })();
+            const fmKeys = fm ? Object.keys(fm).join(',') : '(no-fm)';
+            dbg.textContent =
+              `seg=${idx} type=${seg.type || seg.segment_type} ` +
+              `media_type=${mediaType || '(none)'} ` +
+              `fireFM=${fireFocalMap} ` +
+              `hasMedia=${hasMedia} ` +
+              `mapCfg=${!!mapCfg} ` +
+              `center=${mapCfg?.center ? `${mapCfg.center.lat},${mapCfg.center.lng}` : '(none)'}`;
+          }
+        } catch (_) {}
+
         // Diagnostic — surface the reason a heatmap-flavoured segment
         // silently skipped its trigger. Three failure modes the user
         // has hit at least once:
