@@ -817,91 +817,67 @@ async function renderBriefingSegment(job) {
       throw new Error('capture mode did not become ready within 60s' + (readyState.err ? ` (${readyState.err})` : ''));
     }
 
-    // Active capture loop — far higher frame rate than Page.startScreencast.
-    // Chrome's screencast is a passive subscription that the compositor
-    // throttles aggressively in headless mode (was delivering ~9 fps
-    // under our WebGL load). Page.captureScreenshot is on-demand: we
-    // ask, Chrome renders + returns. Round-trip is 20-40ms in headless,
-    // so a tight loop hits ~25-50 effective fps. The loop runs in
-    // parallel with the segment-done waiter below.
+    // Real capture: ask the PAGE to record its own globe canvas via
+    // canvas.captureStream(60) + MediaRecorder. Chrome's compositor
+    // hands frames directly to a hardware-accelerated VP9 encoder —
+    // no per-frame CDP roundtrip, no JPEG encode, no disk write loop.
+    // We just receive one ~10 MB WebM blob at the end.
+    //
+    // The blob comes back via a synthesized <a download="…"> click that
+    // Chrome turns into a real file write into framesDir (configured
+    // via Browser.setDownloadBehavior just before we kick off capture).
+    // That's the only fast way to move 10+ MB out of the page — passing
+    // it through page.evaluate would serialize the bytes through CDP
+    // and take 20-30 seconds.
     client = await page.target().createCDPSession();
-    let captureStop = false;
+    await client.send('Browser.setDownloadBehavior', {
+      behavior: 'allowAndName',
+      downloadPath: framesDir,
+      eventsEnabled: true,
+    });
+
+    // Fire the in-page capture function. It returns once the segment-
+    // done flag flips (set by _onSegmentEnded when narration ends).
+    // Don't await it inline — that'd block until the segment finishes
+    // and we want the worker to be able to observe the download
+    // completing in parallel.
+    let captureMeta = null;
     let captureError = null;
-    const captureLoop = (async () => {
-      while (!captureStop) {
-        const t = Date.now();
-        try {
-          const { data } = await client.send('Page.captureScreenshot', {
-            format: 'jpeg',
-            quality: 90,
-            captureBeyondViewport: false,
-            // omit clip — defaults to the configured viewport (1080×1920)
-          });
-          const i = frames.length;
-          const fpath = path.join(framesDir, `f${String(i).padStart(7, '0')}.jpg`);
-          await fs.promises.writeFile(fpath, Buffer.from(data, 'base64'));
-          frames.push({ ts: t / 1000, path: fpath });
-        } catch (e) {
-          captureError = e;
-          break;
-        }
-        // Yield to the event loop so the segment-done waiter can run.
-        // No sleep — capture as fast as Chrome will respond.
-        await new Promise(r => setImmediate(r));
-      }
-    })();
+    const captureP = page.evaluate(() => window.__captureBriefingClip())
+      .then(m => { captureMeta = m; })
+      .catch(e => { captureError = e; });
 
-    // Wait for the segment audio to finish (signaled by
-    // __briefingCaptureSegmentDone). Cap the wait at audio_ms + 5s
-    // safety, falling back to 90s if the server didn't report a length.
-    const maxWaitMs = (job.audio_ms || 60_000) + 5_000;
-    const captureDeadline = Date.now() + maxWaitMs;
-    while (Date.now() < captureDeadline) {
-      if (captureError) throw new Error(`captureScreenshot failed: ${captureError.message}`);
-      const done = await page.evaluate(() => !!window.__briefingCaptureSegmentDone).catch(() => false);
-      if (done) break;
-      await new Promise(r => setTimeout(r, 250));
-    }
-    captureStop = true;
-    await captureLoop;
+    // The maximum we should wait. audio_ms is the narration length;
+    // the encoder needs a few seconds after that to flush.
+    const maxWaitMs = (job.audio_ms || 60_000) + 15_000;
+    await Promise.race([captureP, new Promise(r => setTimeout(r, maxWaitMs))]);
+    if (captureError) throw captureError;
+    if (!captureMeta) throw new Error(`capture timed out after ${maxWaitMs}ms`);
 
-    if (frames.length < 5) {
-      throw new Error(`screencast captured only ${frames.length} frame(s)`);
+    // The download Chrome wrote should now exist in framesDir under
+    // the filename the page reported (or with a "(1)"-style suffix if
+    // Chrome disambiguated). Find any .webm and pick the newest.
+    const dirFiles = await fs.promises.readdir(framesDir);
+    const webms = dirFiles.filter(f => f.endsWith('.webm'));
+    if (!webms.length) throw new Error(`no .webm found in ${framesDir} after capture`);
+    const webmName = webms
+      .map(f => ({ f, t: fs.statSync(path.join(framesDir, f)).mtimeMs }))
+      .sort((a, b) => b.t - a.t)[0].f;
+    const webmPath = path.join(framesDir, webmName);
+    const webmStat = await fs.promises.stat(webmPath);
+    if (webmStat.size < 50_000) {
+      throw new Error(`tiny webm (${webmStat.size} bytes) — capture failed`);
     }
-    // Build a concat demuxer file with explicit per-frame durations.
-    // The duration of frame N = (timestamp[N+1] − timestamp[N]). The
-    // last frame gets a small fallback so the final image isn't a
-    // zero-length 0-frame. ffmpeg's concat demuxer reads this and
-    // emits a variable-rate stream; the output filter then resamples
-    // to BRIEFING_FPS via duplication.
-    let totalDur = 0;
-    const lines = [];
-    for (let i = 0; i < frames.length; i++) {
-      const next = frames[i + 1];
-      let dur = next ? Math.max(0.001, next.ts - frames[i].ts) : 0.05;
-      // Defensive clamp — if a single frame somehow has > 5s gap (bad
-      // ts data) just hold for 5s instead of stretching the video.
-      if (dur > 5) dur = 5;
-      totalDur += dur;
-      lines.push(`file '${frames[i].path}'`);
-      lines.push(`duration ${dur.toFixed(6)}`);
-    }
-    // Concat demuxer quirk: the last file is repeated WITHOUT a
-    // duration line — it inherits the previous frame's duration.
-    lines.push(`file '${frames[frames.length - 1].path}'`);
-    await fs.promises.writeFile(concatTxt, lines.join('\n') + '\n');
-    log(`  screencast: ${frames.length} frame(s) over ${totalDur.toFixed(1)}s real time (~${(frames.length / Math.max(0.1, totalDur)).toFixed(1)} fps)`);
+    log(`  captured: ${webmName} ${webmStat.size} bytes (${captureMeta.mime})`);
 
+    // Transcode WebM → H.264 MP4 at the target portrait size. WebM is
+    // playable but TikTok/IG prefer h264/aac; doing it here saves the
+    // re-encode the platforms would do server-side.
     await new Promise((resolve, reject) => {
       const enc = spawn('ffmpeg', [
         '-loglevel', 'error',
         '-y',
-        '-f', 'concat',
-        '-safe', '0',
-        '-i', concatTxt,
-        // fps=BRIEFING_FPS resamples the variable-rate concat input to
-        // a clean constant 60fps via frame duplication; scale+crop
-        // keeps the canvas at the exact 1080×1920 portrait size.
+        '-i', webmPath,
         '-vf', `scale=${BRIEFING_CAPTURE_W}:${BRIEFING_CAPTURE_H}:force_original_aspect_ratio=increase,crop=${BRIEFING_CAPTURE_W}:${BRIEFING_CAPTURE_H},fps=${BRIEFING_FPS}`,
         '-c:v', 'libx264',
         '-pix_fmt', 'yuv420p',
@@ -909,11 +885,12 @@ async function renderBriefingSegment(job) {
         '-r', String(BRIEFING_FPS),
         '-fps_mode', 'cfr',
         '-movflags', '+faststart',
+        '-an', // strip audio (none in the webm anyway; we mux narration in next step)
         tmpVid,
       ]);
       let stderr = '';
       enc.stderr.on('data', d => { stderr += d.toString(); });
-      enc.on('close', code => code === 0 ? resolve() : reject(new Error(`ffmpeg(video) exit ${code}: ${stderr.slice(0, 500)}`)));
+      enc.on('close', code => code === 0 ? resolve() : reject(new Error(`ffmpeg(webm→mp4) exit ${code}: ${stderr.slice(0, 500)}`)));
       enc.on('error', reject);
     });
     const videoStat = await fs.promises.stat(tmpVid).catch(() => null);

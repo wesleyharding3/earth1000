@@ -50903,6 +50903,78 @@ body.ticker-active .gTickerLabel {
     return true;
   }
 
+  // ── In-page MediaRecorder capture (GPU-accelerated, ~60fps) ──────────
+  // The Mac worker's previous capture mechanisms (Page.startScreencast,
+  // then Page.captureScreenshot in a loop) both topped out at 2-9 fps
+  // because every frame round-trips through CDP + JPEG encode + disk
+  // write while also competing with the page's own WebGL rendering.
+  //
+  // This function uses the browser's native canvas.captureStream() →
+  // MediaRecorder pipeline instead. The compositor streams frames
+  // directly to a hardware-accelerated VP9 encoder; no CDP overhead,
+  // no per-frame JPEG hit. We end up at the canvas's actual render
+  // rate (typically 60 fps with --disable-gpu-vsync).
+  //
+  // Returns the WebM blob via a synthesized download — the worker pre-
+  // configures Browser.setDownloadBehavior to write to its tmpdir and
+  // intercepts the file there. WAY faster than serializing 10 MB of
+  // bytes back through page.evaluate().
+  window.__captureBriefingClip = async function () {
+    if (!window.__briefingCapture) throw new Error('not in capture mode');
+    const canvas = window.__renderer?.domElement;
+    if (!canvas || typeof canvas.captureStream !== 'function') {
+      throw new Error('no globe canvas / captureStream unsupported');
+    }
+    if (typeof MediaRecorder === 'undefined') throw new Error('MediaRecorder unavailable');
+    // Try VP9 → VP8 → default. VP9 gives the best quality/size; if not
+    // supported the browser still has webm/vp8.
+    const pickMime = () => {
+      for (const m of [
+        'video/webm;codecs=vp9',
+        'video/webm;codecs=vp8',
+        'video/webm',
+      ]) {
+        try { if (MediaRecorder.isTypeSupported(m)) return m; } catch (_) {}
+      }
+      return '';
+    };
+    const mime = pickMime();
+    const stream = canvas.captureStream(60);
+    const rec = new MediaRecorder(stream, mime ? {
+      mimeType: mime,
+      videoBitsPerSecond: 8_000_000, // 8 Mbps — high-quality 1080×1920 60fps
+    } : undefined);
+    const chunks = [];
+    rec.ondataavailable = (e) => { if (e.data && e.data.size > 0) chunks.push(e.data); };
+    const stopped = new Promise(r => { rec.onstop = r; });
+    rec.start(1000); // request a chunk every 1s so we don't hold one giant buffer
+
+    // Wait for the segment-done flag the briefing playback flips when
+    // narration ends. Same flag the worker was polling before. Add a
+    // safety ceiling so a stuck briefing can't hang the recorder forever.
+    const deadline = Date.now() + 5 * 60 * 1000; // 5 min hard cap
+    while (!window.__briefingCaptureSegmentDone && Date.now() < deadline) {
+      await new Promise(r => setTimeout(r, 100));
+    }
+    rec.stop();
+    await stopped;
+    const blob = new Blob(chunks, { type: mime || 'video/webm' });
+    // Synthesize a download so the worker's pre-configured download
+    // behavior writes it to disk. The filename includes the capture
+    // descriptor so the worker can find the exact file even if Chrome
+    // disambiguates concurrent downloads.
+    const fname = `briefing-cap-${window.__briefingCapture.episodeId}-${window.__briefingCapture.segmentIdx}.webm`;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.style.display = 'none';
+    a.href = url;
+    a.download = fname;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { URL.revokeObjectURL(url); a.remove(); }, 5000);
+    return { bytes: blob.size, mime: mime || 'video/webm', filename: fname };
+  };
+
   if (document.readyState === 'complete') {
     if (new URLSearchParams(window.location.search).has('captureSeg')) {
       _maybeRunCaptureMode();
