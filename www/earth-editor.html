@@ -1901,20 +1901,17 @@
                     <input type="text" id="fv-fm-label-${id}" value="${escHtml(mc.label || '')}" placeholder="e.g. Donetsk frontline" onchange="enrichData[${id}].featured_video.map_config.label = this.value" style="width:100%;padding:6px;background:#0a0e17;border:1px solid #1e293b;border-radius:4px;color:#e2e8f0;font-size:12px;" />
                   </div>
                   <div>
-                    <label style="font-size:10px;color:rgba(255,255,255,0.4);">Highlights (JSON array)</label>
-                    <textarea id="fv-fm-hl-${id}" rows="6" onchange="fvFocalMapSetHighlights(${id}, this.value)" style="width:100%;padding:6px;background:#0a0e17;border:1px solid #1e293b;border-radius:4px;color:#e2e8f0;font-size:11px;font-family:Menlo,monospace;">${escHtml(highlightsJson)}</textarea>
-                    <div style="font-size:10px;color:rgba(255,255,255,0.35);margin-top:4px;">
-                      Supported types:<br/>
-                      • <code>marker</code> — lat/lng/label/kind (city, frontline, flashpoint, live)<br/>
-                      • <code>circle</code> — lat/lng/radius_km/label<br/>
-                      • <code>arrow</code> — from:[lng,lat], to:[lng,lat], label (animates by default)<br/>
-                      • <code>polygon</code> — coordinates:[[lng,lat],…], label, fillColor<br/>
-                      <br/>
-                      Per-highlight optional fields:<br/>
-                      • <code>appear_at_pct</code> 0..1 — when in the segment it appears (default: even staggered drop-in)<br/>
-                      • <code>pulse: true</code> — radar ring (auto on for flashpoint/live markers)<br/>
-                      • <code>animate_draw: false</code> — opt out of arrow draw animation<br/>
-                      • <code>draw_duration_ms</code> — how long the arrow takes to draw (default 1500)
+                    <label style="font-size:10px;color:rgba(255,255,255,0.4);">Highlights</label>
+                    <div id="fv-fm-hl-list-${id}" style="margin-top:4px;">${_fvFocalMapListHtml(id)}</div>
+                    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px;">
+                      <button type="button" onclick="fvFocalMapAddHighlight(${id}, 'marker')" style="flex:1;min-width:80px;padding:6px 8px;background:rgba(96,200,255,0.12);border:1px solid rgba(96,200,255,0.35);border-radius:4px;color:#60c8ff;font-size:11px;font-weight:600;cursor:pointer;">+ Marker</button>
+                      <button type="button" onclick="fvFocalMapAddHighlight(${id}, 'circle')" style="flex:1;min-width:80px;padding:6px 8px;background:rgba(34,211,238,0.12);border:1px solid rgba(34,211,238,0.35);border-radius:4px;color:#22d3ee;font-size:11px;font-weight:600;cursor:pointer;">+ Circle</button>
+                      <button type="button" onclick="fvFocalMapAddHighlight(${id}, 'arrow')" style="flex:1;min-width:80px;padding:6px 8px;background:rgba(251,191,36,0.12);border:1px solid rgba(251,191,36,0.35);border-radius:4px;color:#fbbf24;font-size:11px;font-weight:600;cursor:pointer;">+ Arrow</button>
+                      <button type="button" onclick="fvFocalMapAddHighlight(${id}, 'polygon')" style="flex:1;min-width:80px;padding:6px 8px;background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.35);border-radius:4px;color:#ef4444;font-size:11px;font-weight:600;cursor:pointer;">+ Polygon</button>
+                    </div>
+                    <div style="font-size:10px;color:rgba(255,255,255,0.35);margin-top:6px;line-height:1.5;">
+                      <b>marker</b> = labeled dot · <b>circle</b> = radius ring · <b>arrow</b> = animated A→B line · <b>polygon</b> = colored shape.<br/>
+                      Markers stagger in automatically — use <b>Appear%</b> to override timing.
                     </div>
                   </div>
                   <div style="font-size:10px;color:rgba(255,255,255,0.35);margin-top:6px;">
@@ -2418,8 +2415,10 @@
         set(`fv-fm-ze-${id}`,    p.zoom_end);
         set(`fv-fm-style-${id}`, p.style || 'dark');
         set(`fv-fm-label-${id}`, p.label);
-        const hl = document.getElementById(`fv-fm-hl-${id}`);
-        if (hl) hl.value = JSON.stringify(p.highlights || [], null, 2);
+        // Re-render the cards from the new highlights array. (The
+        // legacy JSON textarea is no longer in the DOM — the card
+        // list is the only surface to keep in sync.)
+        if (typeof fvFocalMapRenderHighlights === 'function') fvFocalMapRenderHighlights(id);
       }
     };
 
@@ -2431,8 +2430,8 @@
       fv.map_config.center[axis] = parseFloat(value);
     };
 
-    // Validate + persist the highlights JSON. Invalid JSON is preserved
-    // in the textarea (so the user can fix it) but not committed.
+    // Legacy JSON setter — kept for backwards compatibility but the
+    // current editor uses card-based UI below.
     window.fvFocalMapSetHighlights = function(id, raw) {
       const fv = enrichData[id]?.featured_video;
       if (!fv) return;
@@ -2441,12 +2440,211 @@
         const parsed = JSON.parse(raw || '[]');
         if (!Array.isArray(parsed)) throw new Error('not an array');
         fv.map_config.highlights = parsed;
-        const ta = document.getElementById(`fv-fm-hl-${id}`);
-        if (ta) ta.style.borderColor = '#1e293b';
+        if (typeof fvFocalMapRenderHighlights === 'function') fvFocalMapRenderHighlights(id);
       } catch (e) {
-        const ta = document.getElementById(`fv-fm-hl-${id}`);
-        if (ta) ta.style.borderColor = '#ef4444';
         console.warn(`[focal_map] highlights JSON invalid: ${e.message}`);
+      }
+    };
+
+    // ── Card-based highlights editor ────────────────────────────────────
+    // The JSON textarea was too clunky for editorial work. The card UI
+    // is a list of typed rows with per-field inputs + add/remove/reorder
+    // buttons. The underlying data shape (map_config.highlights array)
+    // is unchanged so the player renders identically. Per-type sensible
+    // defaults are seeded around the current map center on add.
+
+    const _FV_FM_COLORS = { marker: '#60c8ff', circle: '#22d3ee', arrow: '#fbbf24', polygon: '#ef4444' };
+
+    // Returns the HTML for ONE highlight card. Each card is a compact
+    // row of inputs sized to the surrounding form; type is identified
+    // by the colored left border + uppercase title chip.
+    function _fvFocalMapCardHtml(id, idx, h) {
+      const t = h.type || 'marker';
+      const color = _FV_FM_COLORS[t] || _FV_FM_COLORS.marker;
+      const inputStyle = `padding:4px 6px;background:#0a0e17;border:1px solid #1e293b;border-radius:3px;color:#e2e8f0;font-size:11px;width:100%;box-sizing:border-box;`;
+      const labelStyle = `font-size:9px;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.04em;`;
+      const btnStyle = `padding:2px 6px;background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.12);border-radius:3px;color:#e2e8f0;cursor:pointer;font-size:11px;line-height:1;`;
+      const cardStyle = `border-left:3px solid ${color};background:rgba(255,255,255,0.025);border-radius:4px;padding:8px 10px;margin-bottom:6px;`;
+      const headerHtml = `
+        <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px;">
+          <span style="font-weight:600;color:${color};text-transform:uppercase;letter-spacing:0.06em;font-size:10px;">${t}</span>
+          <div style="flex:1;"></div>
+          <button type="button" onclick="fvFocalMapMoveHighlight(${id}, ${idx}, -1)" style="${btnStyle}" title="Move up">▲</button>
+          <button type="button" onclick="fvFocalMapMoveHighlight(${id}, ${idx}, 1)" style="${btnStyle}" title="Move down">▼</button>
+          <button type="button" onclick="fvFocalMapRemoveHighlight(${id}, ${idx})" style="${btnStyle};color:#fca5a5;border-color:rgba(239,68,68,0.3);" title="Remove">✕</button>
+        </div>`;
+
+      // Per-type input body
+      let body = '';
+      if (t === 'marker') {
+        body = `
+          <div style="display:flex;gap:6px;margin-bottom:4px;">
+            <div style="flex:2;"><div style="${labelStyle}">Label</div><input type="text" value="${escHtml(h.label || '')}" placeholder="e.g. Donetsk" onchange="fvFocalMapUpdateHighlight(${id}, ${idx}, 'label', this.value)" style="${inputStyle}" /></div>
+            <div style="flex:1;"><div style="${labelStyle}">Kind</div>
+              <select onchange="fvFocalMapUpdateHighlight(${id}, ${idx}, 'kind', this.value)" style="${inputStyle}">
+                <option value="city"       ${(h.kind || 'city') === 'city' ? 'selected' : ''}>city (blue)</option>
+                <option value="frontline"  ${h.kind === 'frontline' ? 'selected' : ''}>frontline (red)</option>
+                <option value="flashpoint" ${h.kind === 'flashpoint' ? 'selected' : ''}>flashpoint (amber)</option>
+                <option value="live"       ${h.kind === 'live' ? 'selected' : ''}>live (green)</option>
+              </select>
+            </div>
+          </div>
+          <div style="display:flex;gap:6px;">
+            <div style="flex:1;"><div style="${labelStyle}">Lat</div><input type="number" step="0.001" value="${h.lat ?? ''}" onchange="fvFocalMapUpdateHighlight(${id}, ${idx}, 'lat', this.value)" style="${inputStyle}" /></div>
+            <div style="flex:1;"><div style="${labelStyle}">Lng</div><input type="number" step="0.001" value="${h.lng ?? ''}" onchange="fvFocalMapUpdateHighlight(${id}, ${idx}, 'lng', this.value)" style="${inputStyle}" /></div>
+            <div style="flex:1;"><div style="${labelStyle}">Appear%</div><input type="number" step="5" min="0" max="100" placeholder="auto" value="${h.appear_at_pct != null ? Math.round(h.appear_at_pct * 100) : ''}" onchange="fvFocalMapUpdateHighlight(${id}, ${idx}, 'appear_at_pct_percent', this.value)" style="${inputStyle}" /></div>
+            <div style="flex:1;display:flex;flex-direction:column;justify-content:flex-end;"><label style="display:flex;align-items:center;gap:4px;font-size:11px;color:rgba(255,255,255,0.6);padding-bottom:4px;"><input type="checkbox" ${h.pulse ? 'checked' : ''} onchange="fvFocalMapUpdateHighlight(${id}, ${idx}, 'pulse', this.checked)" /> pulse</label></div>
+          </div>`;
+      } else if (t === 'circle') {
+        body = `
+          <div style="display:flex;gap:6px;margin-bottom:4px;">
+            <div style="flex:2;"><div style="${labelStyle}">Label</div><input type="text" value="${escHtml(h.label || '')}" placeholder="e.g. Hormuz chokepoint" onchange="fvFocalMapUpdateHighlight(${id}, ${idx}, 'label', this.value)" style="${inputStyle}" /></div>
+            <div style="flex:1;"><div style="${labelStyle}">Radius (km)</div><input type="number" step="1" min="1" value="${h.radius_km ?? ''}" onchange="fvFocalMapUpdateHighlight(${id}, ${idx}, 'radius_km', this.value)" style="${inputStyle}" /></div>
+          </div>
+          <div style="display:flex;gap:6px;">
+            <div style="flex:1;"><div style="${labelStyle}">Lat</div><input type="number" step="0.001" value="${h.lat ?? ''}" onchange="fvFocalMapUpdateHighlight(${id}, ${idx}, 'lat', this.value)" style="${inputStyle}" /></div>
+            <div style="flex:1;"><div style="${labelStyle}">Lng</div><input type="number" step="0.001" value="${h.lng ?? ''}" onchange="fvFocalMapUpdateHighlight(${id}, ${idx}, 'lng', this.value)" style="${inputStyle}" /></div>
+          </div>`;
+      } else if (t === 'arrow') {
+        const fromLng = Array.isArray(h.from) ? (h.from[0] ?? '') : '';
+        const fromLat = Array.isArray(h.from) ? (h.from[1] ?? '') : '';
+        const toLng   = Array.isArray(h.to)   ? (h.to[0]   ?? '') : '';
+        const toLat   = Array.isArray(h.to)   ? (h.to[1]   ?? '') : '';
+        body = `
+          <div style="margin-bottom:4px;">
+            <div style="${labelStyle}">Label</div><input type="text" value="${escHtml(h.label || '')}" placeholder="e.g. Russian advance" onchange="fvFocalMapUpdateHighlight(${id}, ${idx}, 'label', this.value)" style="${inputStyle}" />
+          </div>
+          <div style="display:flex;gap:6px;margin-bottom:4px;">
+            <div style="flex:1;"><div style="${labelStyle}">From lat</div><input type="number" step="0.001" value="${fromLat}" onchange="fvFocalMapUpdateHighlight(${id}, ${idx}, 'from.lat', this.value)" style="${inputStyle}" /></div>
+            <div style="flex:1;"><div style="${labelStyle}">From lng</div><input type="number" step="0.001" value="${fromLng}" onchange="fvFocalMapUpdateHighlight(${id}, ${idx}, 'from.lng', this.value)" style="${inputStyle}" /></div>
+            <div style="flex:1;"><div style="${labelStyle}">To lat</div><input type="number" step="0.001" value="${toLat}" onchange="fvFocalMapUpdateHighlight(${id}, ${idx}, 'to.lat', this.value)" style="${inputStyle}" /></div>
+            <div style="flex:1;"><div style="${labelStyle}">To lng</div><input type="number" step="0.001" value="${toLng}" onchange="fvFocalMapUpdateHighlight(${id}, ${idx}, 'to.lng', this.value)" style="${inputStyle}" /></div>
+          </div>
+          <div style="display:flex;gap:6px;align-items:flex-end;">
+            <div style="flex:1;"><div style="${labelStyle}">Appear%</div><input type="number" step="5" min="0" max="100" placeholder="auto" value="${h.appear_at_pct != null ? Math.round(h.appear_at_pct * 100) : ''}" onchange="fvFocalMapUpdateHighlight(${id}, ${idx}, 'appear_at_pct_percent', this.value)" style="${inputStyle}" /></div>
+            <div style="flex:1;"><div style="${labelStyle}">Draw ms</div><input type="number" step="100" min="0" placeholder="1500" value="${h.draw_duration_ms ?? ''}" onchange="fvFocalMapUpdateHighlight(${id}, ${idx}, 'draw_duration_ms', this.value)" style="${inputStyle}" /></div>
+            <label style="flex:1;display:flex;align-items:center;gap:4px;font-size:11px;color:rgba(255,255,255,0.6);padding-bottom:4px;"><input type="checkbox" ${h.animate_draw !== false ? 'checked' : ''} onchange="fvFocalMapUpdateHighlight(${id}, ${idx}, 'animate_draw', this.checked)" /> animate draw</label>
+          </div>`;
+      } else if (t === 'polygon') {
+        const coordsStr = Array.isArray(h.coordinates)
+          ? JSON.stringify(h.coordinates)
+          : '[[0,0],[0,0],[0,0],[0,0]]';
+        body = `
+          <div style="display:flex;gap:6px;margin-bottom:4px;">
+            <div style="flex:2;"><div style="${labelStyle}">Label</div><input type="text" value="${escHtml(h.label || '')}" placeholder="e.g. Contested zone" onchange="fvFocalMapUpdateHighlight(${id}, ${idx}, 'label', this.value)" style="${inputStyle}" /></div>
+            <div style="flex:1;"><div style="${labelStyle}">Fill color</div><input type="text" value="${escHtml(h.fillColor || '#ef4444')}" placeholder="#ef4444" onchange="fvFocalMapUpdateHighlight(${id}, ${idx}, 'fillColor', this.value)" style="${inputStyle}" /></div>
+          </div>
+          <div>
+            <div style="${labelStyle}">Coordinates [[lng,lat],…] — closed ring</div>
+            <input type="text" value="${escHtml(coordsStr)}" onchange="fvFocalMapUpdateHighlight(${id}, ${idx}, 'coordinates', this.value)" style="${inputStyle};font-family:Menlo,monospace;font-size:10px;" />
+          </div>`;
+      }
+      return `<div style="${cardStyle}">${headerHtml}${body}</div>`;
+    }
+
+    // Aggregate HTML for all highlights of a given thread's focal_map.
+    function _fvFocalMapListHtml(id) {
+      const highlights = enrichData[id]?.featured_video?.map_config?.highlights || [];
+      if (!highlights.length) {
+        return `<div style="font-size:11px;color:rgba(255,255,255,0.35);padding:14px;text-align:center;border:1px dashed rgba(255,255,255,0.12);border-radius:4px;">No highlights yet. Click a button below to add one.</div>`;
+      }
+      return highlights.map((h, idx) => _fvFocalMapCardHtml(id, idx, h)).join('');
+    }
+
+    // Re-render the highlights list (called after add/remove/move/preset-apply).
+    window.fvFocalMapRenderHighlights = function(id) {
+      const container = document.getElementById(`fv-fm-hl-list-${id}`);
+      if (container) container.innerHTML = _fvFocalMapListHtml(id);
+    };
+
+    // Append a new highlight of `type` with sensible defaults seeded
+    // around the current map center.
+    window.fvFocalMapAddHighlight = function(id, type) {
+      const fv = enrichData[id]?.featured_video;
+      if (!fv) return;
+      if (!fv.map_config) fv.map_config = {};
+      if (!Array.isArray(fv.map_config.highlights)) fv.map_config.highlights = [];
+      const cLat = Number(fv.map_config.center?.lat) || 0;
+      const cLng = Number(fv.map_config.center?.lng) || 0;
+      let h;
+      if (type === 'marker') {
+        h = { type: 'marker', lat: cLat, lng: cLng, label: 'New marker', kind: 'city' };
+      } else if (type === 'circle') {
+        h = { type: 'circle', lat: cLat, lng: cLng, radius_km: 50, label: 'New circle' };
+      } else if (type === 'arrow') {
+        h = { type: 'arrow', from: [cLng - 0.5, cLat - 0.5], to: [cLng + 0.5, cLat + 0.5], label: 'New arrow' };
+      } else if (type === 'polygon') {
+        h = { type: 'polygon',
+              coordinates: [[cLng-1,cLat-1],[cLng+1,cLat-1],[cLng+1,cLat+1],[cLng-1,cLat+1],[cLng-1,cLat-1]],
+              label: 'New zone',
+              fillColor: '#ef4444' };
+      } else return;
+      fv.map_config.highlights.push(h);
+      fvFocalMapRenderHighlights(id);
+    };
+
+    window.fvFocalMapRemoveHighlight = function(id, idx) {
+      const arr = enrichData[id]?.featured_video?.map_config?.highlights;
+      if (!Array.isArray(arr) || idx < 0 || idx >= arr.length) return;
+      arr.splice(idx, 1);
+      fvFocalMapRenderHighlights(id);
+    };
+
+    window.fvFocalMapMoveHighlight = function(id, idx, dir) {
+      const arr = enrichData[id]?.featured_video?.map_config?.highlights;
+      if (!Array.isArray(arr)) return;
+      const newIdx = idx + dir;
+      if (newIdx < 0 || newIdx >= arr.length) return;
+      [arr[idx], arr[newIdx]] = [arr[newIdx], arr[idx]];
+      fvFocalMapRenderHighlights(id);
+    };
+
+    // Updates one field on highlight at index `idx`. Handles type
+    // coercion for numeric inputs (lat/lng/etc.) and the nested
+    // arrow from/to coordinate tuples. The `appear_at_pct_percent`
+    // pseudo-field accepts a 0-100 integer from the UI and stores
+    // 0-1 in the model.
+    window.fvFocalMapUpdateHighlight = function(id, idx, field, value) {
+      const h = enrichData[id]?.featured_video?.map_config?.highlights?.[idx];
+      if (!h) return;
+      if (field === 'lat' || field === 'lng' || field === 'radius_km' || field === 'draw_duration_ms') {
+        const n = value === '' || value == null ? null : parseFloat(value);
+        if (n == null || Number.isNaN(n)) {
+          if (field === 'draw_duration_ms') delete h[field];
+        } else {
+          h[field] = n;
+        }
+      } else if (field === 'appear_at_pct_percent') {
+        const n = value === '' || value == null ? null : parseFloat(value);
+        if (n == null || Number.isNaN(n)) delete h.appear_at_pct;
+        else h.appear_at_pct = Math.max(0, Math.min(1, n / 100));
+      } else if (field === 'appear_at_pct') {
+        const n = value === '' || value == null ? null : parseFloat(value);
+        if (n == null || Number.isNaN(n)) delete h.appear_at_pct;
+        else h.appear_at_pct = Math.max(0, Math.min(1, n));
+      } else if (field === 'from.lat' || field === 'from.lng' || field === 'to.lat' || field === 'to.lng') {
+        const [tuple, axis] = field.split('.');
+        if (!Array.isArray(h[tuple])) h[tuple] = [0, 0];
+        const n = parseFloat(value);
+        h[tuple][axis === 'lng' ? 0 : 1] = Number.isNaN(n) ? 0 : n;
+      } else if (field === 'pulse' || field === 'animate_draw') {
+        if (field === 'animate_draw') {
+          // Default is TRUE — only persist when user explicitly opts out
+          if (value === false) h.animate_draw = false;
+          else delete h.animate_draw;
+        } else {
+          if (value) h.pulse = true;
+          else delete h.pulse;
+        }
+      } else if (field === 'coordinates') {
+        try {
+          const parsed = JSON.parse(value);
+          if (Array.isArray(parsed)) h.coordinates = parsed;
+        } catch (_) {
+          // Leave untouched on bad JSON — next save attempt will use the prior value
+        }
+      } else {
+        h[field] = value;
       }
     };
 
