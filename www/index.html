@@ -47508,12 +47508,21 @@ const settingsToggle     = document.getElementById("settingsToggle");
    side of the screen on mobile.) */
 /* ── Compact (collapsible icon) mode for mobile briefings ──────────
    On narrow viewports we default the pie chart + article roll to
-   small circular icon buttons in the bottom corners. Tap an icon to
-   expand it into the full panel; tap the panel anywhere to collapse
-   back. CSS-only state via the .compact class (toggled by JS at
-   briefing open). The ::before icon shows when .compact, all real
-   content hides. The panel transitions smoothly between states. */
+   small circular icon buttons in the bottom corners (pie=left,
+   article=right). Tap the icon to expand; in expanded mode a small
+   × button in the top-right of the panel collapses back to the icon.
+   CSS-only state via the .compact class (toggled by JS at briefing
+   open). The ::before is the ICON when compact; the ::after is the
+   MINIMIZE × when expanded. */
 @media (max-width: 720px) {
+  /* Make BOTH panels clickable on mobile during briefings, in both
+     states. Pie has pointer-events:none in its base CSS — that was
+     killing the tap-to-collapse on the expanded pie. */
+  body.briefing-active .bSegmentSourcePie,
+  body.briefing-active .bArticlePanel {
+    pointer-events: all;
+  }
+  /* ── Compact (icon) mode ─────────────────────────────────────── */
   body.briefing-active .bSegmentSourcePie.compact,
   body.briefing-active .bArticlePanel.compact {
     width: 44px;
@@ -47554,6 +47563,31 @@ const settingsToggle     = document.getElementById("settingsToggle");
     background-size: 22px 22px;
     background-position: center;
     background-repeat: no-repeat;
+  }
+  /* ── Expanded mode: minimize × button in top-right corner ─────
+     ::after is a positioned visual; the JS click handler detects
+     when the tap lands within this corner zone and calls
+     toggleCompact. Outside that zone, taps on .bAPCard children
+     still open articles normally. */
+  body.briefing-active .bSegmentSourcePie:not(.compact)::after,
+  body.briefing-active .bArticlePanel:not(.compact)::after {
+    content: '×';
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    width: 22px;
+    height: 22px;
+    line-height: 20px;
+    text-align: center;
+    background: rgba(10,14,23,0.88);
+    border: 1px solid rgba(96,200,255,0.42);
+    border-radius: 50%;
+    color: #60c8ff;
+    font-size: 15px;
+    font-weight: 700;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.45);
+    pointer-events: none;  /* visual only; JS detects click position */
+    z-index: 100200;
   }
 }
 
@@ -48306,10 +48340,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
        previous +80px overlapped the controls; the controls were also
        shrunk on mobile (see bControls / bControlBtn rules below) so
        +110px gives a comfortable visual margin without taking too
-       much additional vertical real estate. */
+       much additional vertical real estate. RIGHT-anchored on mobile
+       to match the pie chart's bottom-LEFT anchor — symmetric layout
+       around the briefing surface so the two compact-mode icons sit
+       in opposite corners. */
     bottom: calc(var(--page-nav-height, 48px) + env(safe-area-inset-bottom, 0px) + var(--app-bottom-inset, 0px) + 110px);
-    left: env(safe-area-inset-left, 8px);
-    right: auto;
+    right: env(safe-area-inset-right, 8px);
+    left: auto;
     transform: none;
     width: 30vw;
     max-width: 140px;
@@ -51560,13 +51597,13 @@ body.ticker-active .gTickerLabel {
       // side of another only gets one card. The dot-product gate hides
       // any back-hemisphere card, so on a hemisphere flip only the
       // visible labels stay on screen.
-      if (window.briefingAddFlowArcLabel) {
+      if (labelsOn && window.briefingAddFlowArcLabel) {
         window.briefingAddFlowArcLabel(rawFromLat, rawFromLng, arc.from_name, tier);
         const toDelayMs = (distKm < DOMESTIC_KM)
           ? 500
           : Math.round(BRIEFING_ARC_REVEAL_SECS * 1000);
         addBTimer(setTimeout(() => {
-          if (window.briefingAddFlowArcLabel) {
+          if (labelsOn && window.briefingAddFlowArcLabel) {
             window.briefingAddFlowArcLabel(rawToLat, rawToLng, arc.to_name, tier);
           }
         }, toDelayMs));
@@ -55270,7 +55307,13 @@ body.ticker-active .gTickerLabel {
     if (row) row.setAttribute('aria-pressed', labelsOn ? 'true' : 'false');
     if (state) state.textContent = labelsOn ? 'ON' : 'OFF';
     if (!labelsOn) {
+      // Clear BOTH label surfaces — the single hover card AND the
+      // multi-label flow-arc system. Without the flow-arc clear, the
+      // PRIMARY/SECONDARY country chips on the globe (the ones the
+      // user actually sees) persist even after labels are toggled
+      // off, since they were added to a separate persistent array.
       try { window.briefingHideLabel?.(); } catch (_) {}
+      try { window.clearBriefingFlowArcLabels?.(); } catch (_) {}
     }
   }
 
@@ -55613,29 +55656,40 @@ body.ticker-active .gTickerLabel {
   })();
 
   // ── Compact-mode toggle for pie + article panels (mobile only) ─────
-  // Wired ONCE on script load. The .compact class is added/removed by
-  // openBriefing based on viewport; here we just wire the user-tap
-  // toggle so the icon expands and the expanded panel collapses on
-  // re-tap. Click handler is no-op on desktop because the CSS rules
-  // are gated by @media (max-width: 720px).
+  // When .compact: tapping ANYWHERE on the panel expands it.
+  // When expanded: tapping ONLY the top-right × button (a corner zone
+  //   ~28×28px) collapses back to icon. Taps elsewhere (article cards,
+  //   pie chart, legend rows) keep their normal behavior — articles
+  //   stay openable, the user has to deliberately hit the × to minimize.
   (function _wireCompactPanels() {
     const pie = document.getElementById('bSegmentSourcePie');
     const ap  = document.getElementById('bArticlePanel');
-    const toggleCompact = (el) => {
+    const MIN_HIT = 30;  // size of the top-right × hit zone in pixels
+    const handleTap = (el, e) => {
       if (!el) return;
-      el.classList.toggle('compact');
+      const isCompact = el.classList.contains('compact');
+      if (isCompact) {
+        // Compact (icon) — tap anywhere expands.
+        el.classList.remove('compact');
+        return;
+      }
+      // Expanded — only the top-right × corner zone collapses. The
+      // ::after pseudo-element is purely visual (pointer-events:none);
+      // we detect the click position relative to the panel's bounds
+      // and treat anything within MIN_HIT of the top-right as a × tap.
+      const rect = el.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      const inMinimizeZone = (rect.width - x) < MIN_HIT && y < MIN_HIT;
+      if (inMinimizeZone) {
+        el.classList.add('compact');
+        return;
+      }
+      // Tap was somewhere else in the expanded panel — let the article
+      // card / pie legend / etc. handle it normally. No state change.
     };
-    if (pie) pie.addEventListener('click', () => toggleCompact(pie));
-    // Article panel: only the OUTER chrome (the panel's own padding /
-    // background area) should toggle. Tapping an article card / video
-    // card inside it must NOT collapse. Use direct-target check.
-    if (ap) ap.addEventListener('click', (e) => {
-      // If the user clicked an INTERACTIVE child (article card / video /
-      // a tag), don't collapse — let them open the article.
-      const interactive = e.target.closest('a, button, .bAPCard, .bAPVideoCard, .bAPArticleVideoCard, .bAPTwitterCard, iframe');
-      if (interactive && interactive !== ap) return;
-      toggleCompact(ap);
-    });
+    if (pie) pie.addEventListener('click', (e) => handleTap(pie, e));
+    if (ap)  ap.addEventListener('click', (e) => handleTap(ap, e));
   })();
 
   // Briefing volume slider + popover toggle — see index.html for rationale.
