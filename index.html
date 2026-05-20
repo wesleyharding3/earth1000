@@ -47966,6 +47966,18 @@ body.ticker-active .gTickerLabel {
   // Each segment fetches its own MP3 slice. audio.ended drives advancement.
   // seek=true on user-initiated skips; seek=false on auto-advance (audio.ended).
   function goToSegment(idx, seek = false) {
+    // Scrub mode lock: when the mac-worker is capturing a specific
+    // segment via __beginBriefingScrub(N), the page's normal advance
+    // paths (audio.ended fallback timer, retry-after-error silent
+    // fallback, etc.) still fire from within the scrub queue and try
+    // to goToSegment(N+1). Without this guard, the title chip + flag
+    // chips switch to the NEXT segment mid-capture and the rendered
+    // MP4 ends up labeled as the wrong story. Lock to the target
+    // segment for the entire capture.
+    if (_scrubMode && window.__briefingCapture
+        && idx !== window.__briefingCapture.segmentIdx) {
+      return;
+    }
     clearTimeout(segTimer);
     clearBTimers();
 
