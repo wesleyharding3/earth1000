@@ -43795,7 +43795,16 @@ body.briefing-capture-mode #onboardOverlay,
 body.briefing-capture-mode .bControlsWrap,
 body.briefing-capture-mode .bDotsMeta,
 body.briefing-capture-mode .bDots,
-body.briefing-capture-mode #bRecap {
+body.briefing-capture-mode #bRecap,
+/* Per-segment chrome we don't want in the exported segment MP4: the
+   source-pie chart, the scrolling article roll, and the right-side
+   article-card panel are all useful in the live briefing but make the
+   exported clip look noisy / busy. Hide them so the export keeps just
+   the globe, flag chips, title, captions, and focal overlays. */
+body.briefing-capture-mode .bSegmentSourcePie,
+body.briefing-capture-mode .bSegmentArticleRoll,
+body.briefing-capture-mode .bArticlePanel,
+body.briefing-capture-mode .bDataPanels {
   display: none !important;
 }
 /* The launcher splash should never render in capture mode — the worker

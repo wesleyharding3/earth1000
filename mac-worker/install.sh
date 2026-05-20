@@ -41,6 +41,17 @@ cp "$SCRIPT_DIR/videoWorker.js" "$WORKER_HOME/videoWorker.js"
 echo "==> Copying portrait.mp3 alongside videoWorker.js"
 cp "$SCRIPT_DIR/../audio/carousel/portrait.mp3" "$WORKER_HOME/portrait.mp3"
 
+# Briefing music bed — the worker mixes this under the narration for
+# each captured segment so the exported MP4 has the same ambient feel
+# as the in-app briefing playback. One static track per the briefing
+# spec ("Morse Room Signal").
+if [ -f "$SCRIPT_DIR/../Morse Room Signal.mp3" ]; then
+  echo "==> Copying Morse Room Signal.mp3 (briefing music bed) alongside videoWorker.js"
+  cp "$SCRIPT_DIR/../Morse Room Signal.mp3" "$WORKER_HOME/Morse Room Signal.mp3"
+else
+  echo "==> WARNING: $SCRIPT_DIR/../Morse Room Signal.mp3 not found — briefing exports will be narration-only"
+fi
+
 echo "==> Installing puppeteer into $WORKER_HOME (will download Chromium ~170MB)"
 cd "$WORKER_HOME"
 cat > package.json <<'JSON'

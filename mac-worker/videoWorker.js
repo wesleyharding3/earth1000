@@ -710,7 +710,16 @@ async function renderVideo(job) {
 // the queue row's status so the next worker poll skips it.
 const BRIEFING_CAPTURE_W = 1080;
 const BRIEFING_CAPTURE_H = 1920;
-const BRIEFING_FPS = 30;
+// Bumped 30 → 60 for noticeably smoother globe choreography. Chrome's
+// headless screencast delivers up to ~60fps when GPU rasterization is
+// enabled (already on via --enable-gpu-rasterization); ffmpeg fills any
+// gaps via -vsync cfr so the output is always exactly 60fps.
+const BRIEFING_FPS = 60;
+// Soft music bed mixed under the narration. Path resolves relative to
+// the installed worker dir (install.sh copies the file from the project
+// root). Volume is well below the narration so it reads as ambient.
+const BRIEFING_MUSIC_PATH = path.join(__dirname, 'Morse Room Signal.mp3');
+const BRIEFING_MUSIC_VOLUME = 0.12;
 
 async function renderBriefingSegment(job) {
   const puppeteer = require('puppeteer');
@@ -794,11 +803,15 @@ async function renderBriefingSegment(job) {
       '-f', 'image2pipe',
       '-framerate', String(BRIEFING_FPS),
       '-i', 'pipe:0',
-      '-vf', `scale=${BRIEFING_CAPTURE_W}:${BRIEFING_CAPTURE_H}:force_original_aspect_ratio=increase,crop=${BRIEFING_CAPTURE_W}:${BRIEFING_CAPTURE_H}`,
+      // vsync cfr forces a constant 60fps timeline — Chrome's screencast
+      // delivery rate fluctuates and without this ffmpeg would emit
+      // variable-FPS, which TikTok/IG re-encoders sometimes mangle.
+      '-vf', `scale=${BRIEFING_CAPTURE_W}:${BRIEFING_CAPTURE_H}:force_original_aspect_ratio=increase,crop=${BRIEFING_CAPTURE_W}:${BRIEFING_CAPTURE_H},fps=${BRIEFING_FPS}`,
       '-c:v', 'libx264',
       '-pix_fmt', 'yuv420p',
       '-preset', 'veryfast',
       '-r', String(BRIEFING_FPS),
+      '-fps_mode', 'cfr',
       '-movflags', '+faststart',
       tmpVid,
     ]);
@@ -822,7 +835,11 @@ async function renderBriefingSegment(job) {
     });
     await client.send('Page.startScreencast', {
       format: 'jpeg',
-      quality: 80,
+      // Bumped 80 → 92 to keep arc lines + chrome text crisp at the
+      // higher frame rate. Each JPEG is ~150-220 KB at 92 vs 80-120 at
+      // 80; ffmpeg re-encodes to libx264 anyway so the on-disk size
+      // doesn't grow much, only the intermediate stream does.
+      quality: 92,
       maxWidth:  BRIEFING_CAPTURE_W,
       maxHeight: BRIEFING_CAPTURE_H,
       everyNthFrame: 1,
@@ -864,24 +881,65 @@ async function renderBriefingSegment(job) {
     await fs.promises.writeFile(tmpAudio, audioBuf);
     log(`  audio: ${audioBuf.length} bytes`);
 
-    await new Promise((resolve, reject) => {
-      const mux = spawn('ffmpeg', [
-        '-loglevel', 'error',
-        '-y',
-        '-i', tmpVid,
-        '-i', tmpAudio,
-        '-c:v', 'copy',
-        '-c:a', 'aac',
-        '-b:a', '128k',
-        '-shortest',
-        '-movflags', '+faststart',
-        tmpOut,
-      ]);
-      let stderr = '';
-      mux.stderr.on('data', d => { stderr += d.toString(); });
-      mux.on('close', code => code === 0 ? resolve() : reject(new Error(`ffmpeg(mux) exit ${code}: ${stderr.slice(0, 500)}`)));
-      mux.on('error', reject);
-    });
+    // Probe the briefing music file — if it's installed alongside the
+    // worker we add it as a soft bed under the narration; if missing,
+    // fall back to the narration-only mux (so the worker still ships
+    // a valid MP4 even on a fresh install before the music has been
+    // copied over).
+    const haveMusic = await fs.promises.stat(BRIEFING_MUSIC_PATH).catch(() => null);
+    if (haveMusic && haveMusic.size > 1000) {
+      // Stream-loop the music (-stream_loop -1) so a short bed covers
+      // any length of narration, then amix it under the voice at low
+      // volume. duration=first locks the output length to the narration
+      // so we don't bleed extra music after the voice ends.
+      await new Promise((resolve, reject) => {
+        const mux = spawn('ffmpeg', [
+          '-loglevel', 'error',
+          '-y',
+          '-i', tmpVid,
+          '-i', tmpAudio,
+          '-stream_loop', '-1',
+          '-i', BRIEFING_MUSIC_PATH,
+          '-filter_complex',
+            `[2:a]volume=${BRIEFING_MUSIC_VOLUME}[bed];` +
+            `[1:a][bed]amix=inputs=2:duration=first:dropout_transition=0,` +
+            `alimiter=limit=0.98[aout]`,
+          '-map', '0:v',
+          '-map', '[aout]',
+          '-c:v', 'copy',
+          '-c:a', 'aac',
+          '-b:a', '160k',
+          '-shortest',
+          '-movflags', '+faststart',
+          tmpOut,
+        ]);
+        let stderr = '';
+        mux.stderr.on('data', d => { stderr += d.toString(); });
+        mux.on('close', code => code === 0 ? resolve() : reject(new Error(`ffmpeg(mux+music) exit ${code}: ${stderr.slice(0, 500)}`)));
+        mux.on('error', reject);
+      });
+    } else {
+      // Music file not installed — log once and proceed narration-only.
+      warn(`  briefing music not found at ${BRIEFING_MUSIC_PATH} — muxing narration only`);
+      await new Promise((resolve, reject) => {
+        const mux = spawn('ffmpeg', [
+          '-loglevel', 'error',
+          '-y',
+          '-i', tmpVid,
+          '-i', tmpAudio,
+          '-c:v', 'copy',
+          '-c:a', 'aac',
+          '-b:a', '128k',
+          '-shortest',
+          '-movflags', '+faststart',
+          tmpOut,
+        ]);
+        let stderr = '';
+        mux.stderr.on('data', d => { stderr += d.toString(); });
+        mux.on('close', code => code === 0 ? resolve() : reject(new Error(`ffmpeg(mux) exit ${code}: ${stderr.slice(0, 500)}`)));
+        mux.on('error', reject);
+      });
+    }
 
     const finalBuf = await fs.promises.readFile(tmpOut);
     return finalBuf;
