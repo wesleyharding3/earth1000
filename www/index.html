@@ -47792,20 +47792,23 @@ const settingsToggle     = document.getElementById("settingsToggle");
      * helper trying to layer on top. */
     bottom: env(safe-area-inset-bottom, 0px) !important;
   }
-  body.briefing-active .bSegmentSourcePie,
-  body.briefing-active .bSegmentArticleRoll {
+  /* Pie stays in the bottom-left dock (right above the control bar)
+   * so the two compact icons sit at DIAGONALLY OPPOSITE corners of the
+   * briefing surface: pie at bottom-left, article roll at top-right.
+   * That separation makes it visually obvious that they're two
+   * independent expandable panels, not a single grouped UI. */
+  body.briefing-active .bSegmentSourcePie {
     top: auto;
-    /* Sit directly above the controls. Controls bottom is now at env+0
-     * (above), wrap ~64px tall → wrap top at env+64. +66 puts the
-     * roll/pie bottom 2px above the controls. !important for the same
-     * reason as the wrap rule above — keep the calc deterministic.
-     * Same double-inset fix as above — drop --app-bottom-inset since
-     * env alone covers the home-indicator. */
     bottom: calc(env(safe-area-inset-bottom, 0px) + 66px) !important;
+    transform: translateY(8px);
   }
-  body.briefing-active .bSegmentSourcePie { transform: translateY(8px); }
-  body.briefing-active .bSegmentArticleRoll { transform: translateY(8px); }
-  body.briefing-active .bSegmentSourcePie.visible,
+  body.briefing-active .bSegmentSourcePie.visible { transform: translateY(0); }
+  /* Article roll docks at TOP-RIGHT — diagonally opposite the pie.
+   * The base CSS already anchors top: env(safe-area-inset-top)+78px /
+   * right: env(safe-area-inset-right, 12px), which puts it right under
+   * the segment-title chip on mobile. We don't need a briefing-active
+   * override — just preserve the entrance translate animation. */
+  body.briefing-active .bSegmentArticleRoll { transform: translateY(-8px); }
   body.briefing-active .bSegmentArticleRoll.visible { transform: translateY(0); }
 }
 
