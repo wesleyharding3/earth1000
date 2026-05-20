@@ -38,6 +38,16 @@ That's it. The worker now runs invisibly. It generates videos for any pending th
 - **Re-config** (e.g. new token): delete `~/.earth00-worker.json` and re-run `install.sh`.
 - **Update:** pull the latest from git → re-run `install.sh`.
 
+## Local carousel/reel dump
+
+The worker mirrors every MP4 the picker cron produces to your project folder so you can manually re-post to TikTok / Mastodon / wherever else without re-rendering.
+
+- **Default location:** `~/Desktop/earth00/carousel_dumps/<sanitized-thread-title>/`
+- **Override:** set `"dumpDir": "/some/path"` in `~/.earth00-worker.json` (or `""` to disable).
+- **What lands there:** `arc.mp4` is written from the in-memory buffer the moment the worker uploads it; `portrait.mp4` / `pie.mp4` / `articles.mp4` / `reel.mp4` are pulled from the share endpoints on the next sync pass (every 10 polls ≈ 10 minutes).
+- **Idempotent:** existing files are not re-fetched on later passes (skip-if-exists per slot).
+- **Tweak cadence:** export `WORKER_SYNC_EVERY_N_POLLS=5` to sync twice as often (default 10).
+
 ## What happens when you go on vacation
 
 Picker cron on Render keeps picking threads and queueing them in `pending_video` status. The picker's second phase (which also publishes any eligible rows) only acts on threads whose videos are ready OR which have been pending > 48h (in which case they go out image-only). When you come back and your Mac wakes up, the worker drains the queue. The cron has a daily cap (default 4 posts/day) so you don't get a backlog flood.

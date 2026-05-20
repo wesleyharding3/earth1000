@@ -5748,6 +5748,17 @@ button.arcCtxSegDot,
 #flowCtxCard.view-ctx #arcContextPanel .arcCtxBody {
   height: 340px;
 }
+/* Gate variant — the badge IS the panel surface, not a CTA inside it.
+   Let it fill the full available context-panel height on desktop
+   instead of the 340px typewriter lock above. The panel's own
+   max-height (calc(100vh - safe-area - 160px)) caps the growth so the
+   card never overflows the viewport. Mobile still uses 340px because
+   the live-arcs slot cap (360px) leaves no extra headroom. */
+@media (pointer: fine) and (min-width: 701px) {
+  #flowCtxCard.view-ctx #arcContextPanel .arcCtxBody.arcCtxBodyGateFull {
+    height: calc(100vh - env(safe-area-inset-top, 0px) - 180px);
+  }
+}
 #flowCtxCard,
 .arcContextPanel,
 .arcCtxBody {
@@ -35198,6 +35209,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
     return el;
   }
   function showFlowCtxCard({ kind, title, imageUrl, isoCode, meta }) {
+    // Hard guard: never let the flow-context card render while a briefing
+    // is active. openBriefing already calls hideFlowCtxCard at start, but
+    // some open paths fire from async timers (image preload, geocode
+    // resolution, ambient-card hover) that can land after openBriefing
+    // ran — this short-circuits them so a stale show-request can't
+    // resurrect the panel mid-briefing.
+    if (window.briefingActive) return;
     const el = _ensureFlowCtxCard();
     el.querySelector(".flowCtxKind").textContent = kind || "";
     el.querySelector(".flowCtxTitle").textContent = title || "";
@@ -43750,6 +43768,40 @@ const settingsToggle     = document.getElementById("settingsToggle");
 }
 @keyframes bBadgePulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.6;transform:scale(1.3)} }
 
+/* ── Briefing-segment capture mode ──────────────────────────────────
+   Activated when the page loads with ?episode=<id>&captureSeg=<idx> —
+   the Mac worker uses this to grab each segment as a standalone 9:16
+   MP4 for content production. Strips every non-essential surface so
+   Puppeteer's screencast captures a clean briefing frame:
+     - top tabs, ticker, page-nav, recap, dots overlays, sign-in chrome
+     - briefing controls bar (play/pause/seek pill)
+     - briefing dots indicator + meta date
+   The globe + segment scaffolding (title, flag chips, pie, article roll,
+   focal map, captions) stay visible. The worker resizes its viewport
+   to 1080×1920 before opening the URL, so this mode just trusts the
+   surrounding viewport rather than forcing its own dimensions. */
+body.briefing-capture-mode {
+  background: #000;
+  overflow: hidden;
+}
+body.briefing-capture-mode #globalTicker,
+body.briefing-capture-mode #pageNav,
+body.briefing-capture-mode #privacyFooter,
+body.briefing-capture-mode #topTabs,
+body.briefing-capture-mode .signinChrome,
+body.briefing-capture-mode #notifNudge,
+body.briefing-capture-mode #briefingNudge,
+body.briefing-capture-mode #onboardOverlay,
+body.briefing-capture-mode .bControlsWrap,
+body.briefing-capture-mode .bDotsMeta,
+body.briefing-capture-mode .bDots,
+body.briefing-capture-mode #bRecap {
+  display: none !important;
+}
+/* The launcher splash should never render in capture mode — the worker
+   loads straight into segment playback. */
+body.briefing-capture-mode #bLauncher { display: none !important; }
+
 /* ── Overlay ── */
 #briefingOverlay {
   position: fixed; inset: 0; z-index: 100000;
@@ -45036,7 +45088,14 @@ body.ticker-active .gTickerLabel {
      bottom anchoring so the pie + article cards have more room above. */
 .bControlsWrap {
   position: absolute;
-  bottom: calc(var(--page-nav-height) + env(safe-area-inset-bottom) + var(--app-bottom-inset, 0px) + 8px);
+  /* Sit above BOTH the tab-nav row AND the ticker band. The previous
+     formula only cleared --page-nav-height (39px), which left the wrap
+     overlapping the ticker-active tab buttons that float on top of the
+     ticker. Adding --global-ticker-height (36px) + --global-ticker-gap
+     matches the standard bottom-stack pattern used elsewhere (e.g., the
+     country panel, news flows panel) so the briefing controls clear the
+     full bottom chrome instead of intersecting it. */
+  bottom: calc(var(--page-nav-height) + var(--global-ticker-height) + var(--global-ticker-gap) + env(safe-area-inset-bottom) + var(--app-bottom-inset, 0px) + 8px);
   left: 50%; transform: translateX(-50%);
   display: flex; flex-direction: column; align-items: center; gap: 6px;
   opacity: 0; transition: opacity 0.5s ease 0.5s;
@@ -45939,15 +45998,10 @@ body.ticker-active .gTickerLabel {
   let captionsOn    = false;
   // Location-labels toggle — when OFF, the per-segment country/city name
   // chips no longer paint on the globe during briefing playback. Defaults
-  // to ON; persisted under earth00:briefingLabels so it sticks across
-  // sessions. Composed with the existing briefingShowLabel/At gates at
-  // each call site below.
-  let labelsOn = (() => {
-    try {
-      const v = localStorage.getItem('earth00:briefingLabels');
-      return v == null ? true : v === 'on';
-    } catch (_) { return true; }
-  })();
+  // to ON each briefing. No localStorage persistence — a prior session's
+  // "off" never haunts a fresh playback, and openBriefing resets to true
+  // so a same-session toggle-off doesn't carry across.
+  let labelsOn = true;
   let playbackRate  = 1;       // 1, 1.5, or 2
   let _panelsBySeg  = {};      // { segment_index: [panel rows] } — fetched on briefing open
 
@@ -46556,15 +46610,33 @@ body.ticker-active .gTickerLabel {
     // Block listening if the user has consumed their free allowance and
     // doesn't have an account / has used their weekly free briefing.
     // Re-listens of an already-consumed episode bypass the gate (matches
-    // server-side briefing_access_log semantics).
-    if (window.__briefingAccess && !window.__briefingAccess.canListen(episode.id)) {
+    // server-side briefing_access_log semantics). Capture mode (Mac
+    // worker rendering segments to MP4) also bypasses — it's running
+    // server-side / on the admin's own machine, not a real user listen.
+    if (!window.__briefingCapture
+        && window.__briefingAccess
+        && !window.__briefingAccess.canListen(episode.id)) {
       const state = window.__briefingAccess.state();
       try { _showBriefingPaywall(state); } catch (e) { console.warn('[briefing] paywall failed:', e.message); }
       return;
     }
     // Record this listen against the user's allowance. Re-listens of the
     // same episode are no-ops (consume() short-circuits on duplicate id).
-    try { window.__briefingAccess?.consume(episode.id); } catch (_) {}
+    // Skip the consume in capture mode so the worker doesn't burn through
+    // weekly allowances by re-rendering.
+    if (!window.__briefingCapture) {
+      try { window.__briefingAccess?.consume(episode.id); } catch (_) {}
+    }
+    // Reset the labels toggle to ON for every briefing. The toggle is a
+    // transient per-briefing preference — never carry a prior "off"
+    // (same session or otherwise) into a fresh playback.
+    labelsOn = true;
+    try {
+      const _row   = document.getElementById('bLabelsToggle');
+      const _state = document.getElementById('bLabelsToggleState');
+      if (_row)   _row.setAttribute('aria-pressed', 'true');
+      if (_state) _state.textContent = 'ON';
+    } catch (_) {}
     // Briefing is designed exclusively for the 3D globe (camera flies,
     // arcs render in world space, hover labels do dot-product checks
     // against the camera). The 2D map projection has none of that
@@ -47196,13 +47268,16 @@ body.ticker-active .gTickerLabel {
       }
 
       // Multi-label cards — see www/index.html for full notes.
-      if (window.briefingAddFlowArcLabel) {
+      // Gated by labelsOn so the settings-toggle off state actually
+      // suppresses the country chips on arc endpoints, not just the
+      // single hover card.
+      if (labelsOn && window.briefingAddFlowArcLabel) {
         window.briefingAddFlowArcLabel(rawFromLat, rawFromLng, arc.from_name, tier);
         const toDelayMs = (distKm < DOMESTIC_KM)
           ? 500
           : Math.round(BRIEFING_ARC_REVEAL_SECS * 1000);
         addBTimer(setTimeout(() => {
-          if (window.briefingAddFlowArcLabel) {
+          if (labelsOn && window.briefingAddFlowArcLabel) {
             window.briefingAddFlowArcLabel(rawToLat, rawToLng, arc.to_name, tier);
           }
         }, toDelayMs));
@@ -47978,6 +48053,16 @@ body.ticker-active .gTickerLabel {
         if (_bgMusicSegmentPaused) bgMusicResumeForGap();
         else bgMusicNarratorEnd();
         clearTimeout(segTimer);
+        // ── Capture mode: signal completion and stop. The Mac worker
+        // is recording exactly this one segment; auto-advancing would
+        // bleed the next segment's audio into the screencast and waste
+        // worker time. window.__briefingCaptureSegmentDone is the
+        // Puppeteer-side "I can stop recording now" handshake.
+        if (window.__briefingCapture
+            && window.__briefingCapture.segmentIdx === curIdx) {
+          window.__briefingCaptureSegmentDone = true;
+          return;
+        }
         let pauseMs = seg.video_id
           ? (VIDEO_PAUSE_SECS * 1000) / playbackRate
           : SEGMENT_BUFFER_MS / playbackRate;
@@ -50224,21 +50309,65 @@ body.ticker-active .gTickerLabel {
     updateCaptions(seg);
   }
 
+  // Re-emit the current segment's labels — used by setLabels when the
+  // user toggles labels back on mid-briefing. Without this, toggling
+  // OFF then ON during a segment leaves the globe label-less until the
+  // next segment fires, since the original emission already happened.
+  // Mirrors drawSegmentArcs's label emission but skips arcs/halos/pulses
+  // (those still exist from the original draw). Gated on briefingActive
+  // so the initial sync at popover-wire time doesn't paint labels onto
+  // an idle globe.
+  function _replaySegmentLabels() {
+    if (!labelsOn) return;
+    if (!window.briefingActive) return;
+    const seg = episode?.segments?.[segIdx];
+    if (!seg) return;
+    const primary   = Array.isArray(seg.flow_arcs)           ? seg.flow_arcs           : [];
+    const secondary = Array.isArray(seg.secondary_flow_arcs) ? seg.secondary_flow_arcs : [];
+    const addLabel = (arc, tier) => {
+      if (arc.from_lat == null || arc.to_lat == null) return;
+      const fLat = arc.from_lat, fLng = arc.from_lng ?? arc.from_lon ?? 0;
+      const tLat = arc.to_lat,   tLng = arc.to_lng   ?? arc.to_lon   ?? 0;
+      if (_isZeroSentinel(fLat, fLng) || _isZeroSentinel(tLat, tLng)) return;
+      if (window.briefingAddFlowArcLabel) {
+        window.briefingAddFlowArcLabel(fLat, fLng, arc.from_name, tier);
+        window.briefingAddFlowArcLabel(tLat, tLng, arc.to_name,   tier);
+      }
+    };
+    for (const arc of primary)   addLabel(arc, 'primary');
+    for (const arc of secondary) addLabel(arc, 'secondary');
+    if (seg.primary_city && window.briefingShowLabel) {
+      window.briefingShowLabel(seg.primary_city, true);
+    } else if (seg.primary_country && window.briefingShowLabel) {
+      window.briefingShowLabel(seg.primary_country, false);
+    }
+  }
+
   // Labels toggle — when OFF, hide any visible label immediately AND
   // gate future briefingShowLabel*() calls so they no-op for the rest
-  // of the playback. Persisted under earth00:briefingLabels.
-  // Labels toggle lives inside the settings popover. The row element
-  // uses aria-pressed for state and a separate span showing ON/OFF
-  // so the toggle reads correctly to assistive tech AND visually.
+  // of the playback. NOT persisted — each briefing starts with labels
+  // ON (openBriefing resets labelsOn=true). The toggle is a per-briefing
+  // transient preference, nothing more. The row element uses aria-pressed
+  // for state and a separate span showing ON/OFF so the toggle reads
+  // correctly to assistive tech AND visually.
   function setLabels(on) {
     labelsOn = !!on;
-    try { localStorage.setItem('earth00:briefingLabels', labelsOn ? 'on' : 'off'); } catch (_) {}
     const row = document.getElementById('bLabelsToggle');
     const state = document.getElementById('bLabelsToggleState');
     if (row) row.setAttribute('aria-pressed', labelsOn ? 'true' : 'false');
     if (state) state.textContent = labelsOn ? 'ON' : 'OFF';
-    if (!labelsOn) {
+    if (labelsOn) {
+      // OFF → ON: re-emit the current segment's labels so the country
+      // chips + hover card pop back immediately instead of waiting for
+      // the next segment boundary.
+      _replaySegmentLabels();
+    } else {
+      // ON → OFF: clear BOTH label surfaces — the single hover card AND
+      // the multi-label flow-arc system. Without the flow-arc clear, the
+      // PRIMARY/SECONDARY country chips on the globe persist even after
+      // labels are toggled off.
       try { window.briefingHideLabel?.(); } catch (_) {}
+      try { window.clearBriefingFlowArcLabels?.(); } catch (_) {}
     }
   }
 
@@ -50253,6 +50382,14 @@ body.ticker-active .gTickerLabel {
       window.audioEngine?.setLayer?.('globe', false);
       window.audioEngine?.setLayer?.('news', false);
     } catch (_) {}
+    // Close any open Thread / Line / Article flow-context card so it
+    // doesn't sit behind the launcher splash and then re-emerge on the
+    // briefing globe. openBriefing also calls hideFlowCtxCard, but that
+    // doesn't run until the user actually taps Start Briefing — by then
+    // the panel has flashed visible through the launcher overlay.
+    try { window.hideFlowCtxCard?.(); } catch (_) {}
+    try { window.__flowClosePanel?.(); } catch (_) {}
+    try { window.__arcListClose?.(); } catch (_) {}
     // Race fix — wait for tier/admin state.
     try { if (window.__tierReady) await window.__tierReady; } catch (_) {}
     // NOTE: The prior `if (!__checkTier('pro')) → openPricing` hard-gate
@@ -50539,7 +50676,7 @@ body.ticker-active .gTickerLabel {
     if (pop.parentElement !== document.body) {
       document.body.appendChild(pop);
     }
-    setLabels(labelsOn); // sync row state from persisted value
+    setLabels(labelsOn); // sync row UI to current labelsOn (default true)
     const isOpen = () => !pop.hasAttribute('hidden');
     const open = () => { pop.removeAttribute('hidden'); btn.classList.add('active'); };
     const close = () => { pop.setAttribute('hidden', ''); btn.classList.remove('active'); };
@@ -50678,10 +50815,71 @@ body.ticker-active .gTickerLabel {
     else if (e.key === ' ')          { e.preventDefault(); setPlaying(!playing); }
   });
 
+  // ── Briefing-segment capture-mode bootstrap ────────────────────────
+  // Activated when the page loads with ?episode=<id>&captureSeg=<idx>.
+  // The Mac worker drives this: it sets the viewport to 1080×1920,
+  // opens the URL, then polls for `window.__briefingCaptureReady`,
+  // starts its screencast, and waits for `window.__briefingCaptureSegmentDone`.
+  // Auth gate + listen-counting are bypassed (see openBriefing's
+  // canListen guard above). We fetch the explicit episode by id rather
+  // than today's, jump straight to the requested segment, and the
+  // `_onSegmentEnded` hook flips Done when narration finishes so the
+  // worker can stop recording without bleeding into the next segment.
+  async function _maybeRunCaptureMode() {
+    const params = new URLSearchParams(window.location.search);
+    const epIdStr  = params.get('episode');
+    const segIdxStr = params.get('captureSeg');
+    if (!epIdStr || segIdxStr == null) return false;
+    const epId   = parseInt(epIdStr, 10);
+    const segIdx = parseInt(segIdxStr, 10);
+    if (!Number.isFinite(epId) || !Number.isFinite(segIdx) || segIdx < 0) return false;
+    document.body.classList.add('briefing-capture-mode');
+    window.__briefingCapture = { episodeId: epId, segmentIdx: segIdx };
+    window.__briefingCaptureReady = false;
+    window.__briefingCaptureSegmentDone = false;
+    // Wait until the rest of the page (globe, scene, fonts) is ready —
+    // the briefing depends on window.__renderer etc. being initialized.
+    // Same 2500ms grace period init() uses.
+    await new Promise(r => setTimeout(r, 2500));
+    try {
+      const res = await fetch(`${API}/api/briefing/episode/${epId}`);
+      if (!res.ok) throw new Error(`episode fetch HTTP ${res.status}`);
+      episode = await res.json();
+      if (!episode || !Array.isArray(episode.segments) || !episode.segments[segIdx]) {
+        throw new Error(`episode ${epId} has no segment ${segIdx}`);
+      }
+    } catch (err) {
+      window.__briefingCaptureError = err.message;
+      console.error('[capture] episode load failed:', err.message);
+      return true;
+    }
+    // openBriefing is async — invoke it then jump to the requested
+    // segment. The auth gate above already bypasses on __briefingCapture.
+    try {
+      await openBriefing();
+      goToSegment(segIdx);
+      window.__briefingCaptureReady = true;
+    } catch (err) {
+      window.__briefingCaptureError = err.message;
+      console.error('[capture] openBriefing failed:', err.message);
+    }
+    return true;
+  }
+
   if (document.readyState === 'complete') {
-    setTimeout(init, 2500);
+    if (new URLSearchParams(window.location.search).has('captureSeg')) {
+      _maybeRunCaptureMode();
+    } else {
+      setTimeout(init, 2500);
+    }
   } else {
-    window.addEventListener('load', () => setTimeout(init, 2500));
+    window.addEventListener('load', () => {
+      if (new URLSearchParams(window.location.search).has('captureSeg')) {
+        _maybeRunCaptureMode();
+      } else {
+        setTimeout(init, 2500);
+      }
+    });
   }
 
   // Expose data panel renderer for the cluster thread panel (separate IIFE)

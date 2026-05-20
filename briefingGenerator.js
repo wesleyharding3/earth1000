@@ -1313,6 +1313,30 @@ async function run() {
       episodeId
     ]);
 
+    // ── 7b. Enqueue per-segment render jobs for the Mac worker ─────────────
+    // The worker polls /api/video-jobs/briefings/pending, renders each
+    // segment as a 9:16 1080×1920 MP4 via Puppeteer + ffmpeg, and writes
+    // the result to <dumpDir>/briefings/<target_date>/seg-<idx>.mp4 on the
+    // user's local Mac. Local-only (no DB blob storage) since this is for
+    // manual content-production posts. ON CONFLICT keeps re-generation
+    // idempotent — re-running briefingGenerator for an existing episode
+    // doesn't clobber prior render status.
+    try {
+      const enqueueable = segments
+        .map((seg, i) => ({ idx: i, seg }))
+        .filter(({ seg }) => seg && (seg.type === 'story' || seg.type === 'intro' || seg.type === 'outro'));
+      if (enqueueable.length) {
+        await pool.query(`
+          INSERT INTO briefing_segment_render_queue (episode_id, segment_idx)
+          SELECT $1, unnest($2::int[])
+          ON CONFLICT (episode_id, segment_idx) DO NOTHING
+        `, [episodeId, enqueueable.map(e => e.idx)]);
+        console.log(`   [${elapsed(t0)}] Enqueued ${enqueueable.length} segment render job(s) for Mac worker`);
+      }
+    } catch (e) {
+      console.warn(`   ⚠ segment render-queue insert failed (non-fatal): ${e.message}`);
+    }
+
     // ── 8. Persist story continuity links ─────────────────────────────────
     await saveSegmentLinks(episodeId, segments, storyContexts).catch(e =>
       console.warn(`   ⚠ storyTracker saveSegmentLinks failed (non-fatal): ${e.message}`)

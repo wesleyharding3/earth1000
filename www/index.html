@@ -37767,6 +37767,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
     return el;
   }
   function showFlowCtxCard({ kind, title, imageUrl, isoCode, meta }) {
+    // Hard guard: never let the flow-context card render while a briefing
+    // is active. openBriefing already calls hideFlowCtxCard at start, but
+    // some open paths fire from async timers (image preload, geocode
+    // resolution, ambient-card hover) that can land after openBriefing
+    // ran — this short-circuits them so a stale show-request can't
+    // resurrect the panel mid-briefing.
+    if (window.briefingActive) return;
     const el = _ensureFlowCtxCard();
     el.querySelector(".flowCtxKind").textContent = kind || "";
     el.querySelector(".flowCtxTitle").textContent = title || "";
@@ -47515,15 +47522,25 @@ const settingsToggle     = document.getElementById("settingsToggle");
    open). The ::before is the ICON when compact; the ::after is the
    MINIMIZE × when expanded. */
 @media (max-width: 720px) {
-  /* Make BOTH panels clickable on mobile during briefings, in both
-     states. Pie has pointer-events:none in its base CSS — that was
-     killing the tap-to-collapse on the expanded pie. */
+  /* Make ALL three panels clickable on mobile during briefings, in both
+     states. Pie + roll have pointer-events:none in their base CSS — that
+     was killing the tap-to-collapse on the expanded panels. */
   body.briefing-active .bSegmentSourcePie,
+  body.briefing-active .bSegmentArticleRoll,
   body.briefing-active .bArticlePanel {
     pointer-events: all;
   }
   /* ── Compact (icon) mode ─────────────────────────────────────── */
+  /* `transition: none !important` is critical: each base panel has a
+     `transition: opacity ..., transform ...` on its non-compact path
+     for the fade/slide entrance. When .compact lands while those base
+     transitions are queued, iOS WKWebView keeps the Web Animation
+     "running" but stuck at currentTime:0, freezing the panel at its
+     start-state (opacity:0, translateY(-8|-16)). Disabling the
+     transition makes the !important overrides land as instant jumps
+     instead of getting absorbed into a stale transition. */
   body.briefing-active .bSegmentSourcePie.compact,
+  body.briefing-active .bSegmentArticleRoll.compact,
   body.briefing-active .bArticlePanel.compact {
     width: 44px;
     height: 44px;
@@ -47542,9 +47559,11 @@ const settingsToggle     = document.getElementById("settingsToggle");
     display: block !important;
     opacity: 1 !important;
     transform: none !important;
+    transition: none !important;
     pointer-events: all;
   }
   body.briefing-active .bSegmentSourcePie.compact > *,
+  body.briefing-active .bSegmentArticleRoll.compact > *,
   body.briefing-active .bArticlePanel.compact > * {
     display: none !important;
   }
@@ -47556,6 +47575,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     background-position: center;
     background-repeat: no-repeat;
   }
+  body.briefing-active .bSegmentArticleRoll.compact::before,
   body.briefing-active .bArticlePanel.compact::before {
     content: '';
     display: block; width: 100%; height: 100%;
@@ -47564,12 +47584,23 @@ const settingsToggle     = document.getElementById("settingsToggle");
     background-position: center;
     background-repeat: no-repeat;
   }
+  /* Defensive duplicate of `transform: none !important` for pie + roll —
+     the base .compact rule covers all three panels, but iOS WKWebView
+     has been seen ignoring the !important when the matching cascade
+     also contains a mobile briefing-active transform on the bare class.
+     Repeating it here with the .compact-only selector guarantees the
+     override wins. transition:none is already on the base rule. */
+  body.briefing-active .bSegmentSourcePie.compact,
+  body.briefing-active .bSegmentArticleRoll.compact {
+    transform: none !important;
+  }
   /* ── Expanded mode: minimize × button in top-right corner ─────
      ::after is a positioned visual; the JS click handler detects
      when the tap lands within this corner zone and calls
      toggleCompact. Outside that zone, taps on .bAPCard children
      still open articles normally. */
   body.briefing-active .bSegmentSourcePie:not(.compact)::after,
+  body.briefing-active .bSegmentArticleRoll:not(.compact)::after,
   body.briefing-active .bArticlePanel:not(.compact)::after {
     content: '×';
     position: absolute;
@@ -49923,13 +49954,10 @@ body.ticker-active .gTickerLabel {
   let captionsOn    = false;
   // Location-labels toggle — when OFF, per-segment country/city name
   // chips no longer paint on the globe during briefing playback.
-  // Defaults to ON; persisted under earth00:briefingLabels.
-  let labelsOn = (() => {
-    try {
-      const v = localStorage.getItem('earth00:briefingLabels');
-      return v == null ? true : v === 'on';
-    } catch (_) { return true; }
-  })();
+  // Defaults to ON each briefing. No localStorage persistence — a prior
+  // session's "off" never haunts a fresh playback, and openBriefing
+  // resets to true so a same-session toggle-off doesn't carry across.
+  let labelsOn = true;
   let playbackRate  = 1;       // 1, 1.5, or 2
   let _panelsBySeg  = {};      // { segment_index: [panel rows] } — fetched on briefing open
 
@@ -50621,6 +50649,16 @@ body.ticker-active .gTickerLabel {
       return;
     }
     try { window.__briefingAccess?.consume(episode.id); } catch (_) {}
+    // Reset the labels toggle to ON for every briefing. The toggle is a
+    // transient per-briefing preference — never carry a prior "off"
+    // (same session or otherwise) into a fresh playback.
+    labelsOn = true;
+    try {
+      const _row   = document.getElementById('bLabelsToggle');
+      const _state = document.getElementById('bLabelsToggleState');
+      if (_row)   _row.setAttribute('aria-pressed', 'true');
+      if (_state) _state.textContent = 'ON';
+    } catch (_) {}
     // Briefing is designed exclusively for the 3D globe (camera flies,
     // arcs render in world space, hover labels do dot-product checks
     // against the camera). The 2D map projection has none of that
@@ -50708,21 +50746,25 @@ body.ticker-active .gTickerLabel {
       window.audioEngine?.setLayer?.('news', false);
     } catch (_) {}
     document.body.classList.add('briefing-active');
-    // On mobile, start the source-pie + article-roll panels in their
-    // compact (icon-only) form. The .compact class hides their content
-    // and shows a small circular icon button instead. Tap to expand,
-    // tap again on the expanded panel to collapse back. Desktop ignores
-    // the class entirely (CSS rules are gated by the 720px breakpoint).
+    // On mobile, start the source-pie, article-roll, and side-article-
+    // panel in their compact (icon-only) form. The .compact class hides
+    // their content and shows a small circular icon button instead. Tap
+    // to expand, tap the × in the top-right corner of the expanded panel
+    // to collapse back. Desktop ignores the class entirely (CSS rules
+    // are gated by the 720px breakpoint).
     try {
       const isMobile = window.matchMedia?.('(max-width: 720px)').matches;
-      const pie = document.getElementById('bSegmentSourcePie');
-      const ap  = document.getElementById('bArticlePanel');
+      const pie  = document.getElementById('bSegmentSourcePie');
+      const roll = document.getElementById('bSegmentArticleRoll');
+      const ap   = document.getElementById('bArticlePanel');
       if (isMobile) {
-        if (pie) pie.classList.add('compact');
-        if (ap)  ap.classList.add('compact');
+        if (pie)  pie.classList.add('compact');
+        if (roll) roll.classList.add('compact');
+        if (ap)   ap.classList.add('compact');
       } else {
-        if (pie) pie.classList.remove('compact');
-        if (ap)  ap.classList.remove('compact');
+        if (pie)  pie.classList.remove('compact');
+        if (roll) roll.classList.remove('compact');
+        if (ap)   ap.classList.remove('compact');
       }
     } catch (_) {}
     document.getElementById('bRecap').classList.remove('open');
@@ -55294,24 +55336,62 @@ body.ticker-active .gTickerLabel {
     updateCaptions(seg);
   }
 
+  // Re-emit the current segment's labels — used by setLabels when the
+  // user toggles labels back on mid-briefing. Without this, toggling
+  // OFF then ON during a segment leaves the globe label-less until the
+  // next segment fires, since the original emission already happened.
+  // Mirrors drawSegmentArcs's label emission but skips arcs/halos/pulses
+  // (those still exist from the original draw). Gated on briefingActive
+  // so the initial sync at popover-wire time doesn't paint labels onto
+  // an idle globe.
+  function _replaySegmentLabels() {
+    if (!labelsOn) return;
+    if (!window.briefingActive) return;
+    const seg = episode?.segments?.[segIdx];
+    if (!seg) return;
+    const primary   = Array.isArray(seg.flow_arcs)           ? seg.flow_arcs           : [];
+    const secondary = Array.isArray(seg.secondary_flow_arcs) ? seg.secondary_flow_arcs : [];
+    const addLabel = (arc, tier) => {
+      if (arc.from_lat == null || arc.to_lat == null) return;
+      const fLat = arc.from_lat, fLng = arc.from_lng ?? arc.from_lon ?? 0;
+      const tLat = arc.to_lat,   tLng = arc.to_lng   ?? arc.to_lon   ?? 0;
+      if (_isZeroSentinel(fLat, fLng) || _isZeroSentinel(tLat, tLng)) return;
+      if (window.briefingAddFlowArcLabel) {
+        window.briefingAddFlowArcLabel(fLat, fLng, arc.from_name, tier);
+        window.briefingAddFlowArcLabel(tLat, tLng, arc.to_name,   tier);
+      }
+    };
+    for (const arc of primary)   addLabel(arc, 'primary');
+    for (const arc of secondary) addLabel(arc, 'secondary');
+    if (seg.primary_city && window.briefingShowLabel) {
+      window.briefingShowLabel(seg.primary_city, true);
+    } else if (seg.primary_country && window.briefingShowLabel) {
+      window.briefingShowLabel(seg.primary_country, false);
+    }
+  }
+
   // Labels toggle (lives inside the settings popover). When OFF, the
   // per-segment country/city name chips no longer paint on the globe
-  // during briefing playback. Persisted under earth00:briefingLabels
-  // so it sticks across sessions. Call sites at the briefingShowLabel*
-  // invocation points below check `labelsOn` to no-op when off.
+  // during briefing playback. NOT persisted — each briefing starts
+  // with labels ON (openBriefing resets labelsOn=true). The toggle
+  // is a per-briefing transient preference, nothing more.
   function setLabels(on) {
     labelsOn = !!on;
-    try { localStorage.setItem('earth00:briefingLabels', labelsOn ? 'on' : 'off'); } catch (_) {}
     const row = document.getElementById('bLabelsToggle');
     const state = document.getElementById('bLabelsToggleState');
     if (row) row.setAttribute('aria-pressed', labelsOn ? 'true' : 'false');
     if (state) state.textContent = labelsOn ? 'ON' : 'OFF';
-    if (!labelsOn) {
-      // Clear BOTH label surfaces — the single hover card AND the
-      // multi-label flow-arc system. Without the flow-arc clear, the
-      // PRIMARY/SECONDARY country chips on the globe (the ones the
-      // user actually sees) persist even after labels are toggled
-      // off, since they were added to a separate persistent array.
+    if (labelsOn) {
+      // OFF → ON: re-emit the current segment's labels so the country
+      // chips + hover card pop back immediately instead of waiting for
+      // the next segment boundary.
+      _replaySegmentLabels();
+    } else {
+      // ON → OFF: clear BOTH label surfaces — the single hover card AND
+      // the multi-label flow-arc system. Without the flow-arc clear, the
+      // PRIMARY/SECONDARY country chips on the globe persist even after
+      // labels are toggled off, since they were added to a separate
+      // persistent array.
       try { window.briefingHideLabel?.(); } catch (_) {}
       try { window.clearBriefingFlowArcLabels?.(); } catch (_) {}
     }
@@ -55328,6 +55408,14 @@ body.ticker-active .gTickerLabel {
       window.audioEngine?.setLayer?.('globe', false);
       window.audioEngine?.setLayer?.('news', false);
     } catch (_) {}
+    // Close any open Thread / Line / Article flow-context card so it
+    // doesn't sit behind the launcher splash and then re-emerge on the
+    // briefing globe. openBriefing also calls hideFlowCtxCard, but that
+    // doesn't run until the user actually taps Start Briefing — by then
+    // the panel has flashed visible through the launcher overlay.
+    try { window.hideFlowCtxCard?.(); } catch (_) {}
+    try { window.__flowClosePanel?.(); } catch (_) {}
+    try { window.__arcListClose?.(); } catch (_) {}
     // Race fix for tier check: __checkTier reads window.__isAdmin /
     // window.__userTier, both populated async after sign-in. Wait for
     // tier state to settle before deciding pro vs free. 5s safety
@@ -55625,8 +55713,9 @@ body.ticker-active .gTickerLabel {
     if (pop.parentElement !== document.body) {
       document.body.appendChild(pop);
     }
-    // Sync labels row state to persisted value (call setLabels with current
-    // labelsOn so the row + aria-pressed reflect localStorage state).
+    // Sync the row UI to the current labelsOn value (default true).
+    // _replaySegmentLabels inside setLabels is gated by briefingActive
+    // so this call is a no-op against the globe during page load.
     setLabels(labelsOn);
     const isOpen = () => !pop.hasAttribute('hidden');
     const open = () => {
@@ -55662,8 +55751,9 @@ body.ticker-active .gTickerLabel {
   //   pie chart, legend rows) keep their normal behavior — articles
   //   stay openable, the user has to deliberately hit the × to minimize.
   (function _wireCompactPanels() {
-    const pie = document.getElementById('bSegmentSourcePie');
-    const ap  = document.getElementById('bArticlePanel');
+    const pie  = document.getElementById('bSegmentSourcePie');
+    const roll = document.getElementById('bSegmentArticleRoll');
+    const ap   = document.getElementById('bArticlePanel');
     const MIN_HIT = 30;  // size of the top-right × hit zone in pixels
     const handleTap = (el, e) => {
       if (!el) return;
@@ -55688,8 +55778,9 @@ body.ticker-active .gTickerLabel {
       // Tap was somewhere else in the expanded panel — let the article
       // card / pie legend / etc. handle it normally. No state change.
     };
-    if (pie) pie.addEventListener('click', (e) => handleTap(pie, e));
-    if (ap)  ap.addEventListener('click', (e) => handleTap(ap, e));
+    if (pie)  pie.addEventListener('click',  (e) => handleTap(pie,  e));
+    if (roll) roll.addEventListener('click', (e) => handleTap(roll, e));
+    if (ap)   ap.addEventListener('click',   (e) => handleTap(ap,   e));
   })();
 
   // Briefing volume slider + popover toggle — see index.html for rationale.

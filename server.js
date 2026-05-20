@@ -16064,6 +16064,174 @@ app.post('/api/video-jobs/:thread_id/skip', async (req, res) => {
   }
 });
 
+// GET /api/video-jobs/dump-targets — Mac worker calls this to drive the
+// local-disk export. Returns recent queue rows + boolean flags for which
+// MP4 slots (portrait / arc / pie / articles / reel) the DB currently
+// has populated. The worker uses this list to download missing slots
+// from /share/thread/:id/<slot>.mp4 and write them to <dumpDir>/<title>/
+// so the user has a tiktok-ready local copy of everything the picker
+// cron has rendered.
+//
+// Window: last 30 days, any status except 'rejected' (we still want
+// posted, pending_approval, pending_video, etc).
+app.get('/api/video-jobs/dump-targets', async (req, res) => {
+  if (!_checkVideoWorkerToken(req, res)) return;
+  try {
+    const days = Math.min(90, Math.max(1, parseInt(req.query.days || '30', 10)));
+    const { rows } = await pool.query(`
+      SELECT q.id AS queue_id,
+             q.thread_id,
+             q.post_kind,
+             q.status,
+             q.scheduled_for,
+             q.posted_at,
+             (q.portrait_mp4 IS NOT NULL) AS has_portrait,
+             (q.arc_video    IS NOT NULL) AS has_arc,
+             (q.pie_mp4      IS NOT NULL) AS has_pie,
+             (q.articles_mp4 IS NOT NULL) AS has_articles,
+             (q.reel_mp4     IS NOT NULL) AS has_reel,
+             st.title
+        FROM social_post_queue q
+        LEFT JOIN story_threads st ON st.id = q.thread_id
+       WHERE q.created_at > NOW() - ($1::int * INTERVAL '1 day')
+         AND q.status <> 'rejected'
+       ORDER BY q.id DESC
+       LIMIT 200
+    `, [days]);
+    res.json({
+      rows: rows.map(r => ({
+        queue_id:      r.queue_id,
+        thread_id:     r.thread_id,
+        title:         r.title || `thread-${r.thread_id}`,
+        post_kind:     r.post_kind || 'carousel',
+        status:        r.status,
+        scheduled_for: r.scheduled_for,
+        posted_at:     r.posted_at,
+        slots: {
+          portrait: !!r.has_portrait,
+          arc:      !!r.has_arc,
+          pie:      !!r.has_pie,
+          articles: !!r.has_articles,
+          reel:     !!r.has_reel,
+        },
+      })),
+    });
+  } catch (err) {
+    console.error('[video-jobs/dump-targets]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ── Briefing segment render queue endpoints (Mac worker) ────────────────
+// The Mac worker drains briefing_segment_render_queue to produce one
+// 9:16 MP4 per briefing segment. Local-only output — the worker writes
+// to <dumpDir>/briefings/<target_date>/seg-<idx>.mp4; no blob storage on
+// our side. These endpoints just track which segments are pending vs.
+// completed so re-runs of the worker don't redo finished work.
+
+// GET /api/video-jobs/briefings/pending — claim up to LIMIT segments
+// atomically (pending → claimed). Returning the rows hands the lease
+// over to the worker; a stale claim is recoverable by manually flipping
+// rows back to 'pending' in the DB.
+app.get('/api/video-jobs/briefings/pending', async (req, res) => {
+  if (!_checkVideoWorkerToken(req, res)) return;
+  try {
+    const limit = Math.min(10, Math.max(1, parseInt(req.query.limit || '3', 10)));
+    // CTE + UPDATE ... RETURNING gives us atomic claim semantics — even
+    // if two workers ran simultaneously, each row's status flip happens
+    // inside a single transaction so neither sees the other's claim.
+    const { rows } = await pool.query(`
+      WITH next AS (
+        SELECT q.id
+          FROM briefing_segment_render_queue q
+         WHERE q.status = 'pending'
+         ORDER BY q.id ASC
+         LIMIT $1
+         FOR UPDATE SKIP LOCKED
+      )
+      UPDATE briefing_segment_render_queue q
+         SET status = 'claimed', claimed_at = NOW()
+        FROM next, briefing_episodes e
+       WHERE q.id = next.id AND e.id = q.episode_id
+       RETURNING q.id              AS job_id,
+                 q.episode_id,
+                 q.segment_idx,
+                 e.target_date,
+                 e.headline,
+                 e.segments        AS segments_json
+    `, [limit]);
+    // Slim the per-job payload to what the worker needs: episode/seg
+    // ids, the segment's title (for filename + log line), and its
+    // expected duration so the worker can size the screencast.
+    const jobs = rows.map(r => {
+      const seg = Array.isArray(r.segments_json) ? r.segments_json[r.segment_idx] : null;
+      const audioMs = seg?.script?.audio_ms || seg?.audio_ms || null;
+      const segTitle = seg?.thread_title || seg?.title || seg?.type || '';
+      return {
+        job_id:        r.job_id,
+        episode_id:    r.episode_id,
+        segment_idx:   r.segment_idx,
+        target_date:   r.target_date,
+        episode_title: r.headline || '',
+        segment_title: segTitle,
+        segment_type:  seg?.type || 'story',
+        audio_ms:      audioMs,
+      };
+    });
+    res.json({ jobs });
+  } catch (err) {
+    console.error('[video-jobs/briefings/pending]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/video-jobs/briefings/:job_id/complete — worker says it
+// wrote the MP4 to disk. We just flip status + record bytes_out for
+// audit. Body is optional JSON {bytes_out}.
+app.post('/api/video-jobs/briefings/:job_id/complete',
+  express.json({ limit: '1kb' }),
+  async (req, res) => {
+    if (!_checkVideoWorkerToken(req, res)) return;
+    try {
+      const jobId = parseInt(req.params.job_id, 10);
+      if (!Number.isFinite(jobId)) return res.status(400).json({ error: 'invalid job_id' });
+      const bytesOut = parseInt(req.body?.bytes_out, 10);
+      const { rowCount } = await pool.query(`
+        UPDATE briefing_segment_render_queue
+           SET status = 'completed',
+               completed_at = NOW(),
+               bytes_out = $2
+         WHERE id = $1 AND status IN ('claimed', 'pending')
+      `, [jobId, Number.isFinite(bytesOut) ? bytesOut : null]);
+      res.json({ ok: true, rows_updated: rowCount });
+    } catch (err) {
+      console.error('[video-jobs/briefings/complete]', err.message);
+      res.status(500).json({ error: err.message });
+    }
+  }
+);
+
+// POST /api/video-jobs/briefings/:job_id/skip — worker reports a render
+// failure. Row goes to 'failed' with the reason recorded so we can
+// re-queue it manually after fixing the underlying cause.
+app.post('/api/video-jobs/briefings/:job_id/skip', async (req, res) => {
+  if (!_checkVideoWorkerToken(req, res)) return;
+  try {
+    const jobId = parseInt(req.params.job_id, 10);
+    if (!Number.isFinite(jobId)) return res.status(400).json({ error: 'invalid job_id' });
+    const reason = String(req.query.reason || 'unknown').slice(0, 240);
+    const { rowCount } = await pool.query(`
+      UPDATE briefing_segment_render_queue
+         SET status = 'failed', completed_at = NOW(), error_text = $2
+       WHERE id = $1
+    `, [jobId, reason]);
+    res.json({ ok: true, rows_updated: rowCount });
+  } catch (err) {
+    console.error('[video-jobs/briefings/skip]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // TEMPORARY Chromium probe — verifies Puppeteer can launch and render on
 // this Render instance. Used as the gating test before building out the
 // /share/thread/:id/arc.mp4 video pipeline. Will be removed after the

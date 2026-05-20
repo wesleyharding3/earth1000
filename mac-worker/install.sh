@@ -71,13 +71,28 @@ else
     echo "FATAL: token cannot be empty."
     exit 1
   fi
-  cat > "$CONFIG_PATH" <<EOF
+  DEFAULT_DUMP_DIR="$HOME/Desktop/earth00/carousel_dumps"
+  read -r -p "  Carousel dump dir (empty to disable) [$DEFAULT_DUMP_DIR]: " DUMP_DIR
+  DUMP_DIR="${DUMP_DIR-$DEFAULT_DUMP_DIR}"
+  if [ -n "$DUMP_DIR" ]; then
+    cat > "$CONFIG_PATH" <<EOF
 {
   "renderHost": "$RENDER_HOST",
   "appHost":    "$APP_HOST",
-  "token":      "$TOKEN"
+  "token":      "$TOKEN",
+  "dumpDir":    "$DUMP_DIR"
 }
 EOF
+  else
+    cat > "$CONFIG_PATH" <<EOF
+{
+  "renderHost": "$RENDER_HOST",
+  "appHost":    "$APP_HOST",
+  "token":      "$TOKEN",
+  "dumpDir":    ""
+}
+EOF
+  fi
   chmod 600 "$CONFIG_PATH"
   echo "==> Wrote $CONFIG_PATH (mode 600)"
 fi

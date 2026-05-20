@@ -19,8 +19,18 @@
  *   {
  *     "renderHost": "https://earth-wjr6.onrender.com",
  *     "appHost":    "https://earth00.com",
- *     "token":      "<long random string matching VIDEO_WORKER_TOKEN on Render>"
+ *     "token":      "<long random string matching VIDEO_WORKER_TOKEN on Render>",
+ *     "dumpDir":    "<absolute path or ~/path — local mirror of every carousel/reel
+ *                    slot the picker cron produces; default is ~/Desktop/earth00/carousel_dumps;
+ *                    pass an empty string to disable>"
  *   }
+ *
+ * The worker writes every freshly-rendered arc.mp4 to <dumpDir>/<title>/arc.mp4
+ * directly from the buffer, and every ~10 polls calls the server's
+ * /api/video-jobs/dump-targets endpoint to pull any portrait / pie /
+ * articles / reel slots the picker cron's pre-warm pass has produced.
+ * Result: a tiktok-ready local copy of every carousel + reel without
+ * re-rendering, organized by sanitized thread title.
  *
  * Logs to ~/Library/Logs/earth00-worker.log (configured by launchd plist).
  */
@@ -47,6 +57,32 @@ const TOKEN       = String(CONFIG.token      || '');
 if (!RENDER_HOST || !APP_HOST || !TOKEN) {
   console.error('[worker] FATAL: config missing renderHost / appHost / token');
   process.exit(1);
+}
+// Local dump dir — when set, every carousel/reel slot the picker cron
+// produces gets mirrored to <DUMP_DIR>/<sanitized-title>/<slot>.mp4 so
+// the user can manually post the same renders to TikTok / Mastodon /
+// wherever else, without re-rendering. Default points at the project's
+// canonical carousel_dumps folder; set to '' or null in config to skip.
+const DUMP_DIR = (() => {
+  const v = CONFIG.dumpDir;
+  if (v === '' || v === null) return '';                    // explicit disable
+  if (typeof v === 'string' && v.trim()) return path.resolve(v.replace(/^~/, os.homedir()));
+  return path.join(os.homedir(), 'Desktop', 'earth00', 'carousel_dumps');
+})();
+const SLOTS = [
+  { key: 'portrait', file: 'portrait.mp4' },
+  { key: 'arc',      file: 'arc.mp4'      },
+  { key: 'pie',      file: 'pie.mp4'      },
+  { key: 'articles', file: 'articles.mp4' },
+  { key: 'reel',     file: 'reel.mp4'     },
+];
+function sanitizeTitle(name) {
+  return String(name || 'untitled')
+    .replace(/[\/\\:*?"<>|]/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/^\.+|\.+$/g, '')
+    .slice(0, 120) || 'untitled';
 }
 
 const POLL_INTERVAL_MS = 60_000;     // poll every minute
@@ -95,6 +131,129 @@ async function reportSkip(threadId, reason) {
       method: 'POST',
     });
   } catch (_) { /* best-effort */ }
+}
+
+// ── Briefing-segment render API helpers ──────────────────────────────
+async function fetchBriefingPending() {
+  const url = `${RENDER_HOST}/api/video-jobs/briefings/pending?token=${encodeURIComponent(TOKEN)}&limit=3`;
+  const res = await fetch(url);
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`briefings/pending HTTP ${res.status}: ${body.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  return Array.isArray(data.jobs) ? data.jobs : [];
+}
+
+async function reportBriefingComplete(jobId, bytesOut) {
+  const res = await fetch(`${RENDER_HOST}/api/video-jobs/briefings/${jobId}/complete?token=${encodeURIComponent(TOKEN)}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ bytes_out: bytesOut }),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`briefings/complete HTTP ${res.status}: ${body.slice(0, 200)}`);
+  }
+}
+
+async function reportBriefingSkip(jobId, reason) {
+  try {
+    await fetch(`${RENDER_HOST}/api/video-jobs/briefings/${jobId}/skip?token=${encodeURIComponent(TOKEN)}&reason=${encodeURIComponent(reason)}`, {
+      method: 'POST',
+    });
+  } catch (_) { /* best-effort */ }
+}
+
+// ── Local-dump helpers ────────────────────────────────────────────────
+// Mirror every MP4 slot the picker cron produces to the user's project
+// folder so they can manually re-post to TikTok / Mastodon / etc.
+async function ensureDumpFolder(title, threadId) {
+  if (!DUMP_DIR) return null;
+  await fs.promises.mkdir(DUMP_DIR, { recursive: true });
+  const base = sanitizeTitle(title || `thread-${threadId}`);
+  const dir  = path.join(DUMP_DIR, base);
+  await fs.promises.mkdir(dir, { recursive: true });
+  return dir;
+}
+
+// Write the just-rendered arc.mp4 directly from the in-memory buffer.
+// Free — we already have the bytes from the Puppeteer pass.
+async function dumpArcLocally(threadId, title, mp4Buffer) {
+  if (!DUMP_DIR) return;
+  try {
+    const dir = await ensureDumpFolder(title, threadId);
+    if (!dir) return;
+    await fs.promises.writeFile(path.join(dir, 'arc.mp4'), mp4Buffer);
+    await fs.promises.writeFile(path.join(dir, 'meta.txt'),
+      `thread_id:  ${threadId}\n` +
+      `title:      ${title || ''}\n` +
+      `arc_bytes:  ${mp4Buffer.length}\n` +
+      `arc_saved:  ${new Date().toISOString()}\n`);
+    log(`  ↳ dumped arc.mp4 → ${dir}`);
+  } catch (err) {
+    warn(`  dump arc failed: ${err.message}`);
+  }
+}
+
+async function fetchDumpTargets() {
+  const res = await fetch(`${RENDER_HOST}/api/video-jobs/dump-targets?token=${encodeURIComponent(TOKEN)}&days=30`);
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`dump-targets HTTP ${res.status}: ${body.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  return Array.isArray(data.rows) ? data.rows : [];
+}
+
+async function downloadShareMp4(threadId, slotFile) {
+  // share endpoints are public — no token needed. They serve from DB
+  // cache; on cache miss the server renders + caches before responding,
+  // but every slot we're fetching has slots[<slot>]=true (verified before
+  // we get here), so the DB row already has bytes.
+  const url = `${APP_HOST}/share/thread/${threadId}/${slotFile}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`HTTP ${res.status} fetching ${slotFile}`);
+  const buf = Buffer.from(await res.arrayBuffer());
+  if (buf.length < 1000) throw new Error(`undersized ${slotFile} (${buf.length} bytes)`);
+  return buf;
+}
+
+// Walk the dump-targets list and download any slot that the DB has but
+// local disk doesn't. Idempotent per slot — skip-if-exists keeps the
+// scan cheap on subsequent polls.
+async function syncDumpsFromServer() {
+  if (!DUMP_DIR) return;
+  let targets;
+  try {
+    targets = await fetchDumpTargets();
+  } catch (err) {
+    warn(`dump-targets fetch failed: ${err.message}`);
+    return;
+  }
+  if (!targets.length) return;
+  let pulled = 0;
+  let skipped = 0;
+  for (const t of targets) {
+    if (!_running) break;
+    const dir = await ensureDumpFolder(t.title, t.thread_id);
+    if (!dir) continue;
+    for (const slot of SLOTS) {
+      if (!t.slots[slot.key]) continue;             // not yet rendered
+      const dest = path.join(dir, slot.file);
+      try {
+        const stat = await fs.promises.stat(dest).catch(() => null);
+        if (stat && stat.size > 1000) { skipped++; continue; }
+        const buf = await downloadShareMp4(t.thread_id, slot.file);
+        await fs.promises.writeFile(dest, buf);
+        pulled++;
+        log(`  ↳ pulled ${slot.file} for thread=${t.thread_id} "${(t.title || '').slice(0, 40)}" (${buf.length} bytes)`);
+      } catch (err) {
+        warn(`  ↳ ${slot.file} thread=${t.thread_id}: ${err.message}`);
+      }
+    }
+  }
+  if (pulled || skipped) log(`dump sync: pulled ${pulled}, skipped ${skipped} (already local)`);
 }
 
 // ── Video render (Mac-side Puppeteer) ──────────────────────────────────
@@ -429,6 +588,230 @@ async function renderVideo(job) {
   }
 }
 
+// ── Briefing-segment renderer ──────────────────────────────────────────
+// Records ONE briefing segment as a 1080×1920 portrait MP4 with audio
+// for content production. The pipeline:
+//
+//   1. Launch Puppeteer at 1080×1920 (portrait), open
+//      <APP_HOST>/?episode=<id>&captureSeg=<idx>. The page's
+//      _maybeRunCaptureMode bootstrap fetches the episode, jumps to
+//      that segment, and flips window.__briefingCaptureReady=true.
+//   2. Start CDP Page.startScreencast → stream JPEG frames at 30fps.
+//   3. Each frame is acked and piped to an ffmpeg image2pipe → MP4
+//      (silent video).
+//   4. Poll for window.__briefingCaptureSegmentDone (set by
+//      _onSegmentEnded in capture mode) — bounded by the segment's
+//      audio_ms + a 5s safety margin.
+//   5. Stop screencast, close ffmpeg stdin, wait for the video MP4.
+//   6. Fetch the segment audio from /api/briefing/audio/<id>/<seg>.
+//   7. ffmpeg mux video + audio → final 9:16 MP4 → write to
+//      <dumpDir>/briefings/<episode-date>/seg-<idx>.mp4.
+//
+// Local-only: nothing uploaded to server. POST .../complete just flips
+// the queue row's status so the next worker poll skips it.
+const BRIEFING_CAPTURE_W = 1080;
+const BRIEFING_CAPTURE_H = 1920;
+const BRIEFING_FPS = 30;
+
+async function renderBriefingSegment(job) {
+  const puppeteer = require('puppeteer');
+  const { spawn } = require('child_process');
+  const browser = await puppeteer.launch({
+    headless: 'new',
+    defaultViewport: { width: BRIEFING_CAPTURE_W, height: BRIEFING_CAPTURE_H },
+    args: [
+      '--no-sandbox',
+      '--disable-dev-shm-usage',
+      '--hide-scrollbars',
+      '--autoplay-policy=no-user-gesture-required',
+      '--disable-background-timer-throttling',
+      '--disable-backgrounding-occluded-windows',
+      '--disable-renderer-backgrounding',
+      '--enable-gpu-rasterization',
+      '--ignore-gpu-blocklist',
+      `--window-size=${BRIEFING_CAPTURE_W},${BRIEFING_CAPTURE_H}`,
+    ],
+  });
+  const t0 = Date.now();
+  let page, client, ffmpeg;
+  const tmpVid   = path.join(os.tmpdir(), `briefing-${job.job_id}-${Date.now()}-vid.mp4`);
+  const tmpAudio = path.join(os.tmpdir(), `briefing-${job.job_id}-${Date.now()}-aud.mp3`);
+  const tmpOut   = path.join(os.tmpdir(), `briefing-${job.job_id}-${Date.now()}-out.mp4`);
+  try {
+    page = await browser.newPage();
+    await page.evaluateOnNewDocument(() => {
+      Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' });
+      Object.defineProperty(document, 'hidden',          { configurable: true, get: () => false });
+      window.dispatchEvent(new Event('focus'));
+      document.dispatchEvent(new Event('visibilitychange'));
+    });
+    const url = `${APP_HOST}/?episode=${job.episode_id}&captureSeg=${job.segment_idx}`;
+    log(`  ↦ ${url}`);
+    await page.goto(url, { waitUntil: 'load', timeout: 90_000 });
+
+    // Wait for capture-mode bootstrap: __briefingCaptureReady true OR
+    // __briefingCaptureError set. The page resolves one of these within
+    // ~5-15s (episode fetch + openBriefing + first audio canplay).
+    const waitReadyMs = 60_000;
+    const readyDeadline = Date.now() + waitReadyMs;
+    let lastErr = null;
+    while (Date.now() < readyDeadline) {
+      const state = await page.evaluate(() => ({
+        ready: !!window.__briefingCaptureReady,
+        err:   window.__briefingCaptureError || null,
+      })).catch(() => ({ ready: false, err: null }));
+      if (state.err) throw new Error(`page: ${state.err}`);
+      if (state.ready) { lastErr = null; break; }
+      await new Promise(r => setTimeout(r, 250));
+    }
+    const readyState = await page.evaluate(() => ({
+      ready: !!window.__briefingCaptureReady,
+      err:   window.__briefingCaptureError || null,
+    }));
+    if (!readyState.ready) {
+      throw new Error('capture mode did not become ready within 60s' + (readyState.err ? ` (${readyState.err})` : ''));
+    }
+
+    // Start CDP screencast. Each Page.screencastFrame carries a
+    // base64-jpg + metadata; we ack it (otherwise Chrome stops sending
+    // frames after a small internal buffer) and pipe the bytes to
+    // ffmpeg's stdin.
+    client = await page.target().createCDPSession();
+    ffmpeg = spawn('ffmpeg', [
+      '-loglevel', 'error',
+      '-y',
+      '-f', 'image2pipe',
+      '-framerate', String(BRIEFING_FPS),
+      '-i', 'pipe:0',
+      '-vf', `scale=${BRIEFING_CAPTURE_W}:${BRIEFING_CAPTURE_H}:force_original_aspect_ratio=increase,crop=${BRIEFING_CAPTURE_W}:${BRIEFING_CAPTURE_H}`,
+      '-c:v', 'libx264',
+      '-pix_fmt', 'yuv420p',
+      '-preset', 'veryfast',
+      '-r', String(BRIEFING_FPS),
+      '-movflags', '+faststart',
+      tmpVid,
+    ]);
+    let ffmpegStderr = '';
+    ffmpeg.stderr.on('data', d => { ffmpegStderr += d.toString(); });
+    const ffmpegDone = new Promise((resolve, reject) => {
+      ffmpeg.on('close', code => code === 0 ? resolve() : reject(new Error(`ffmpeg(video) exit ${code}: ${ffmpegStderr.slice(0, 500)}`)));
+      ffmpeg.on('error', reject);
+    });
+
+    client.on('Page.screencastFrame', async (event) => {
+      try {
+        const buf = Buffer.from(event.data, 'base64');
+        if (!ffmpeg.killed && ffmpeg.stdin.writable) {
+          if (!ffmpeg.stdin.write(buf)) {
+            await new Promise(r => ffmpeg.stdin.once('drain', r));
+          }
+        }
+        await client.send('Page.screencastFrameAck', { sessionId: event.sessionId });
+      } catch (e) { /* drop frame on write errors */ }
+    });
+    await client.send('Page.startScreencast', {
+      format: 'jpeg',
+      quality: 80,
+      maxWidth:  BRIEFING_CAPTURE_W,
+      maxHeight: BRIEFING_CAPTURE_H,
+      everyNthFrame: 1,
+    });
+
+    // Wait for the segment audio to finish (signaled by
+    // __briefingCaptureSegmentDone). Cap the wait at audio_ms + 5s
+    // safety, falling back to 90s if the server didn't report a length.
+    const maxWaitMs = (job.audio_ms || 60_000) + 5_000;
+    const captureDeadline = Date.now() + maxWaitMs;
+    while (Date.now() < captureDeadline) {
+      const done = await page.evaluate(() => !!window.__briefingCaptureSegmentDone).catch(() => false);
+      if (done) break;
+      await new Promise(r => setTimeout(r, 250));
+    }
+
+    // Stop screencast, end ffmpeg, wait for the video MP4.
+    try { await client.send('Page.stopScreencast'); } catch (_) {}
+    try { ffmpeg.stdin.end(); } catch (_) {}
+    await ffmpegDone;
+    const videoStat = await fs.promises.stat(tmpVid).catch(() => null);
+    if (!videoStat || videoStat.size < 5000) {
+      throw new Error(`tmpVid too small (${videoStat?.size || 0} bytes) — screencast produced no frames`);
+    }
+    log(`  video: ${videoStat.size} bytes after ${((Date.now() - t0) / 1000).toFixed(1)}s`);
+
+    // ── Audio fetch + final mux ──────────────────────────────────────
+    const audioUrl = `${RENDER_HOST}/api/briefing/audio/${job.episode_id}/${job.segment_idx}`;
+    const audioRes = await fetch(audioUrl);
+    if (!audioRes.ok) {
+      const body = await audioRes.text().catch(() => '');
+      throw new Error(`audio fetch HTTP ${audioRes.status}: ${body.slice(0, 200)}`);
+    }
+    const audioBuf = Buffer.from(await audioRes.arrayBuffer());
+    await fs.promises.writeFile(tmpAudio, audioBuf);
+    log(`  audio: ${audioBuf.length} bytes`);
+
+    await new Promise((resolve, reject) => {
+      const mux = spawn('ffmpeg', [
+        '-loglevel', 'error',
+        '-y',
+        '-i', tmpVid,
+        '-i', tmpAudio,
+        '-c:v', 'copy',
+        '-c:a', 'aac',
+        '-b:a', '128k',
+        '-shortest',
+        '-movflags', '+faststart',
+        tmpOut,
+      ]);
+      let stderr = '';
+      mux.stderr.on('data', d => { stderr += d.toString(); });
+      mux.on('close', code => code === 0 ? resolve() : reject(new Error(`ffmpeg(mux) exit ${code}: ${stderr.slice(0, 500)}`)));
+      mux.on('error', reject);
+    });
+
+    const finalBuf = await fs.promises.readFile(tmpOut);
+    return finalBuf;
+  } finally {
+    if (client) try { await client.detach(); } catch (_) {}
+    await browser.close().catch(() => {});
+    for (const f of [tmpVid, tmpAudio, tmpOut]) {
+      try { await fs.promises.unlink(f); } catch (_) {}
+    }
+  }
+}
+
+async function pollBriefingJobs() {
+  if (!DUMP_DIR) return;                              // local-only output; nothing to do without a dump dir
+  let jobs;
+  try { jobs = await fetchBriefingPending(); }
+  catch (err) { warn(`fetchBriefingPending failed: ${err.message}`); return; }
+  if (!jobs.length) return;
+
+  log(`fetched ${jobs.length} briefing render job(s)`);
+  for (const job of jobs) {
+    if (!_running) break;
+    const tag = `episode=${job.episode_id} seg=${job.segment_idx} "${(job.segment_title || '').slice(0, 40)}"`;
+    log(`▶ briefing ${tag}`);
+    const t0 = Date.now();
+    try {
+      const mp4 = await renderBriefingSegment(job);
+      // Folder = <dumpDir>/briefings/<yyyy-mm-dd>/seg-NN.mp4
+      const dateStr = (job.target_date || '').slice(0, 10) || `ep-${job.episode_id}`;
+      const dir = path.join(DUMP_DIR, 'briefings', dateStr);
+      await fs.promises.mkdir(dir, { recursive: true });
+      const pad = String(job.segment_idx).padStart(2, '0');
+      const dest = path.join(dir, `seg-${pad}.mp4`);
+      await fs.promises.writeFile(dest, mp4);
+      const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+      log(`  ✓ ${dest} (${mp4.length} bytes, ${elapsed}s)`);
+      await reportBriefingComplete(job.job_id, mp4.length);
+    } catch (err) {
+      const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
+      warn(`  ✗ briefing ${tag} failed after ${elapsed}s: ${err.message}`);
+      await reportBriefingSkip(job.job_id, err.message.slice(0, 200));
+    }
+  }
+}
+
 // ── Main loop ──────────────────────────────────────────────────────────
 let _running = true;
 async function poll() {
@@ -453,6 +836,9 @@ async function poll() {
       log(`  rendered ${mp4.length} bytes in ${elapsed}s — uploading`);
       const upRes = await uploadResult(job.thread_id, mp4);
       log(`  uploaded: ${JSON.stringify(upRes)}`);
+      // Free local mirror of the freshly rendered arc.mp4 — the buffer
+      // is already in memory, so this costs us one disk write.
+      await dumpArcLocally(job.thread_id, job.title, mp4);
     } catch (err) {
       const elapsed = ((Date.now() - t0) / 1000).toFixed(1);
       warn(`  ✗ ${tag} failed after ${elapsed}s: ${err.message}`);
@@ -463,11 +849,34 @@ async function poll() {
 
 async function main() {
   log(`worker starting. renderHost=${RENDER_HOST} appHost=${APP_HOST}`);
+  if (DUMP_DIR) log(`carousel dumps → ${DUMP_DIR}`);
+  else          log(`carousel dump disabled (set dumpDir in ~/.earth00-worker.json to enable)`);
   process.on('SIGTERM', () => { _running = false; log('SIGTERM — finishing current job + exiting'); });
   process.on('SIGINT',  () => { _running = false; log('SIGINT — finishing current job + exiting'); });
 
+  // Sync the local dump folder on a longer cadence than the render
+  // poll. Pulling the dump-targets list + every share/*.mp4 every minute
+  // would flood the share endpoints with re-renders on cache-cold
+  // instances; one pass per ~10 minutes is plenty since the picker cron
+  // only fires twice a day. SYNC_EVERY_N_POLLS=10 ≈ 10 minutes at the
+  // default 60s poll.
+  const SYNC_EVERY_N_POLLS = Math.max(1, parseInt(process.env.WORKER_SYNC_EVERY_N_POLLS || '10', 10));
+  let pollCount = 0;
+
   while (_running) {
     try { await poll(); } catch (err) { warn(`poll loop error: ${err.message}`); }
+    // Briefing-segment renders run after the arc-clip pass so a queued
+    // arc render isn't starved by a long briefing capture. Each
+    // briefing segment is ~30-90s of real-time recording, vs ~30s for
+    // an arc clip — keep them sequential to avoid Chromium juggling
+    // two heavy WebGL pages at once.
+    if (_running) {
+      try { await pollBriefingJobs(); } catch (err) { warn(`briefing poll error: ${err.message}`); }
+    }
+    pollCount++;
+    if (DUMP_DIR && pollCount % SYNC_EVERY_N_POLLS === 0) {
+      try { await syncDumpsFromServer(); } catch (err) { warn(`dump sync error: ${err.message}`); }
+    }
     if (!_running) break;
     await new Promise(r => setTimeout(r, POLL_INTERVAL_MS));
   }
