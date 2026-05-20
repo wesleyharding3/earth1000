@@ -234,12 +234,15 @@ async function syncDumpsFromServer() {
   if (!targets.length) return;
   let pulled = 0;
   let skipped = 0;
+  let reelsTriggered = 0;
   for (const t of targets) {
     if (!_running) break;
     const dir = await ensureDumpFolder(t.title, t.thread_id);
     if (!dir) continue;
+    // First pass: download every slot the DB row already has (free —
+    // serves from BYTEA cache).
     for (const slot of SLOTS) {
-      if (!t.slots[slot.key]) continue;             // not yet rendered
+      if (!t.slots[slot.key]) continue;             // not yet rendered server-side
       const dest = path.join(dir, slot.file);
       try {
         const stat = await fs.promises.stat(dest).catch(() => null);
@@ -252,8 +255,32 @@ async function syncDumpsFromServer() {
         warn(`  ↳ ${slot.file} thread=${t.thread_id}: ${err.message}`);
       }
     }
+    // Second pass: if this is a carousel post (or just one that already
+    // has portrait+arc+pie+articles in DB) but no reel.mp4 yet, trigger
+    // a one-time server-side render by hitting /share/thread/:id/reel.mp4.
+    // The endpoint stitches all 4 cards at aspect=reel (9:16 1080×1920)
+    // and caches the result back into social_post_queue.reel_mp4 — so we
+    // pay the render cost exactly once per thread. Posting the four
+    // carousel MP4s separately to TikTok looks bad because each card has
+    // a different intrinsic aspect; the stitched reel is uniform 9:16.
+    const reelDest = path.join(dir, 'reel.mp4');
+    const reelStat = await fs.promises.stat(reelDest).catch(() => null);
+    const haveAllCarouselCards = t.slots.portrait && t.slots.arc && t.slots.pie && t.slots.articles;
+    if ((!reelStat || reelStat.size < 1000) && (t.slots.reel || haveAllCarouselCards)) {
+      try {
+        const buf = await downloadShareMp4(t.thread_id, 'reel.mp4');
+        await fs.promises.writeFile(reelDest, buf);
+        pulled++;
+        if (!t.slots.reel) reelsTriggered++;
+        log(`  ↳ ${t.slots.reel ? 'pulled' : 'rendered+pulled'} reel.mp4 for thread=${t.thread_id} "${(t.title || '').slice(0, 40)}" (${buf.length} bytes)`);
+      } catch (err) {
+        warn(`  ↳ reel.mp4 thread=${t.thread_id}: ${err.message}`);
+      }
+    }
   }
-  if (pulled || skipped) log(`dump sync: pulled ${pulled}, skipped ${skipped} (already local)`);
+  if (pulled || skipped || reelsTriggered) {
+    log(`dump sync: pulled ${pulled}, skipped ${skipped} (already local), triggered ${reelsTriggered} on-demand reel render(s)`);
+  }
 }
 
 // ── Video render (Mac-side Puppeteer) ──────────────────────────────────
