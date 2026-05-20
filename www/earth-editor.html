@@ -1864,6 +1864,13 @@
                       <option value="custom" ${presetKey === 'custom' ? 'selected' : ''}>Custom (manual center + zoom)</option>
                     </select>
                   </div>
+                  <div style="margin-bottom:6px;">
+                    <label style="font-size:10px;color:rgba(255,255,255,0.4);">Find center (type a place name)</label>
+                    <div style="display:flex;gap:4px;">
+                      <input type="text" id="fv-fm-center-name-${id}" placeholder='e.g. "Kashmir", "Donetsk", "Strait of Hormuz"' style="flex:1;padding:6px;background:#0a0e17;border:1px solid #1e293b;border-radius:4px;color:#e2e8f0;font-size:12px;" onkeydown="if(event.key==='Enter'){event.preventDefault();fvFocalMapResolveName(${id}, 0, 'center');}" />
+                      <button type="button" onclick="fvFocalMapResolveName(${id}, 0, 'center')" style="white-space:nowrap;padding:6px 10px;background:rgba(96,200,255,0.10);border:1px solid rgba(96,200,255,0.30);border-radius:4px;color:#60c8ff;font-size:11px;font-weight:600;cursor:pointer;">↻ Find center</button>
+                    </div>
+                  </div>
                   <div style="display:flex;gap:8px;margin-bottom:6px;">
                     <div style="flex:1;">
                       <label style="font-size:10px;color:rgba(255,255,255,0.4);">Center lat</label>
@@ -2476,10 +2483,18 @@
 
       // Per-type input body
       let body = '';
+      // Small Find button — wraps any text input. Style shared across types.
+      const findBtnStyle = `${btnStyle};white-space:nowrap;flex-shrink:0;background:rgba(96,200,255,0.10);border-color:rgba(96,200,255,0.30);color:#60c8ff;`;
       if (t === 'marker') {
         body = `
           <div style="display:flex;gap:6px;margin-bottom:4px;">
-            <div style="flex:2;"><div style="${labelStyle}">Label</div><input type="text" value="${escHtml(h.label || '')}" placeholder="e.g. Donetsk" onchange="fvFocalMapUpdateHighlight(${id}, ${idx}, 'label', this.value)" style="${inputStyle}" /></div>
+            <div style="flex:2;">
+              <div style="${labelStyle}">Label (type a place name and Find)</div>
+              <div style="display:flex;gap:4px;">
+                <input type="text" value="${escHtml(h.label || '')}" placeholder="e.g. Donetsk" onchange="fvFocalMapUpdateHighlight(${id}, ${idx}, 'label', this.value)" style="${inputStyle}" />
+                <button type="button" onclick="fvFocalMapResolveName(${id}, ${idx}, 'marker')" style="${findBtnStyle}" title="Resolve label to lat/lng">↻ Find</button>
+              </div>
+            </div>
             <div style="flex:1;"><div style="${labelStyle}">Kind</div>
               <select onchange="fvFocalMapUpdateHighlight(${id}, ${idx}, 'kind', this.value)" style="${inputStyle}">
                 <option value="city"       ${(h.kind || 'city') === 'city' ? 'selected' : ''}>city (blue)</option>
@@ -2498,7 +2513,13 @@
       } else if (t === 'circle') {
         body = `
           <div style="display:flex;gap:6px;margin-bottom:4px;">
-            <div style="flex:2;"><div style="${labelStyle}">Label</div><input type="text" value="${escHtml(h.label || '')}" placeholder="e.g. Hormuz chokepoint" onchange="fvFocalMapUpdateHighlight(${id}, ${idx}, 'label', this.value)" style="${inputStyle}" /></div>
+            <div style="flex:2;">
+              <div style="${labelStyle}">Label (type a place name and Find)</div>
+              <div style="display:flex;gap:4px;">
+                <input type="text" value="${escHtml(h.label || '')}" placeholder="e.g. Hormuz chokepoint" onchange="fvFocalMapUpdateHighlight(${id}, ${idx}, 'label', this.value)" style="${inputStyle}" />
+                <button type="button" onclick="fvFocalMapResolveName(${id}, ${idx}, 'circle')" style="${findBtnStyle}" title="Resolve label to lat/lng">↻ Find</button>
+              </div>
+            </div>
             <div style="flex:1;"><div style="${labelStyle}">Radius (km)</div><input type="number" step="1" min="1" value="${h.radius_km ?? ''}" onchange="fvFocalMapUpdateHighlight(${id}, ${idx}, 'radius_km', this.value)" style="${inputStyle}" /></div>
           </div>
           <div style="display:flex;gap:6px;">
@@ -2512,7 +2533,23 @@
         const toLat   = Array.isArray(h.to)   ? (h.to[1]   ?? '') : '';
         body = `
           <div style="margin-bottom:4px;">
-            <div style="${labelStyle}">Label</div><input type="text" value="${escHtml(h.label || '')}" placeholder="e.g. Russian advance" onchange="fvFocalMapUpdateHighlight(${id}, ${idx}, 'label', this.value)" style="${inputStyle}" />
+            <div style="${labelStyle}">Label (annotation shown to viewer)</div><input type="text" value="${escHtml(h.label || '')}" placeholder="e.g. Russian advance" onchange="fvFocalMapUpdateHighlight(${id}, ${idx}, 'label', this.value)" style="${inputStyle}" />
+          </div>
+          <div style="display:flex;gap:6px;margin-bottom:4px;">
+            <div style="flex:1;">
+              <div style="${labelStyle}">From — name + Find</div>
+              <div style="display:flex;gap:4px;">
+                <input type="text" value="${escHtml(h.from_name || '')}" placeholder="e.g. Sloviansk" onchange="fvFocalMapUpdateHighlight(${id}, ${idx}, 'from_name', this.value)" style="${inputStyle}" />
+                <button type="button" onclick="fvFocalMapResolveName(${id}, ${idx}, 'arrow_from')" style="${findBtnStyle}" title="Resolve from name to coords">↻</button>
+              </div>
+            </div>
+            <div style="flex:1;">
+              <div style="${labelStyle}">To — name + Find</div>
+              <div style="display:flex;gap:4px;">
+                <input type="text" value="${escHtml(h.to_name || '')}" placeholder="e.g. Donetsk" onchange="fvFocalMapUpdateHighlight(${id}, ${idx}, 'to_name', this.value)" style="${inputStyle}" />
+                <button type="button" onclick="fvFocalMapResolveName(${id}, ${idx}, 'arrow_to')" style="${findBtnStyle}" title="Resolve to name to coords">↻</button>
+              </div>
+            </div>
           </div>
           <div style="display:flex;gap:6px;margin-bottom:4px;">
             <div style="flex:1;"><div style="${labelStyle}">From lat</div><input type="number" step="0.001" value="${fromLat}" onchange="fvFocalMapUpdateHighlight(${id}, ${idx}, 'from.lat', this.value)" style="${inputStyle}" /></div>
@@ -2597,6 +2634,83 @@
       if (newIdx < 0 || newIdx >= arr.length) return;
       [arr[idx], arr[newIdx]] = [arr[newIdx], arr[idx]];
       fvFocalMapRenderHighlights(id);
+    };
+
+    // Resolve a place name (label / from_name / to_name / center) to
+    // coordinates via the existing /api/admin/briefing-editor/resolve-coords
+    // endpoint. Hits the shared _coordCache so multiple resolves for
+    // the same name don't re-hit the API. `target` selects which slot
+    // to populate: 'marker' / 'circle' (use h.label → h.lat/lng),
+    // 'arrow_from' (use h.from_name → h.from[0..1]), 'arrow_to'
+    // (use h.to_name → h.to[0..1]), 'center' (use the center input
+    // value → map_config.center.lat/lng).
+    window.fvFocalMapResolveName = async function(id, idx, target) {
+      const fv = enrichData[id]?.featured_video;
+      if (!fv) return;
+
+      // Source-of-name lookup per target.
+      let name = '';
+      if (target === 'center') {
+        const inp = document.getElementById(`fv-fm-center-name-${id}`);
+        name = (inp?.value || '').trim();
+      } else {
+        const h = fv.map_config?.highlights?.[idx];
+        if (!h) return;
+        if (target === 'marker' || target === 'circle') name = (h.label || '').trim();
+        else if (target === 'arrow_from') name = (h.from_name || '').trim();
+        else if (target === 'arrow_to')   name = (h.to_name   || '').trim();
+      }
+      if (!name) {
+        alert('Type a place name first (e.g. "Donetsk", "France", "Strait of Hormuz").');
+        return;
+      }
+
+      // Cache-first to avoid hammering the resolver.
+      let coord = _coordCache[name];
+      if (!coord) {
+        try {
+          const res = await fetch(`${API_BASE}/api/admin/briefing-editor/resolve-coords`, {
+            method: 'POST', headers: authHeaders(), body: JSON.stringify({ names: [name] }),
+          });
+          if (res.ok) {
+            const coords = await res.json();
+            if (coords[name]) { _coordCache[name] = coords[name]; coord = coords[name]; }
+          }
+        } catch (e) {
+          console.warn(`[focal_map] resolve error for "${name}":`, e.message);
+        }
+      }
+      if (!coord) {
+        alert(`Could not resolve "${name}". Try a country name, capital, or major city (e.g. "Iran" instead of "IR", or "Tehran" instead of "Iran capital").`);
+        return;
+      }
+
+      // Apply to the right slot. coord = { lat, lon }.
+      if (target === 'center') {
+        if (!fv.map_config) fv.map_config = {};
+        if (!fv.map_config.center) fv.map_config.center = { lat: null, lng: null };
+        fv.map_config.center.lat = coord.lat;
+        fv.map_config.center.lng = coord.lon;
+        const latInp = document.getElementById(`fv-fm-clat-${id}`);
+        const lngInp = document.getElementById(`fv-fm-clng-${id}`);
+        if (latInp) latInp.value = coord.lat;
+        if (lngInp) lngInp.value = coord.lon;
+      } else {
+        const h = fv.map_config.highlights[idx];
+        if (target === 'marker' || target === 'circle') {
+          h.lat = coord.lat;
+          h.lng = coord.lon;
+        } else if (target === 'arrow_from') {
+          if (!Array.isArray(h.from)) h.from = [0, 0];
+          h.from[0] = coord.lon;
+          h.from[1] = coord.lat;
+        } else if (target === 'arrow_to') {
+          if (!Array.isArray(h.to)) h.to = [0, 0];
+          h.to[0] = coord.lon;
+          h.to[1] = coord.lat;
+        }
+        fvFocalMapRenderHighlights(id);
+      }
     };
 
     // Updates one field on highlight at index `idx`. Handles type
