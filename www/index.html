@@ -49571,6 +49571,7 @@ body.ticker-active .gTickerLabel {
       <button class="bControlBtn" id="bNext" title="Next">&#8594;</button>
       <button class="bControlBtn speed" id="bSpeed" title="Playback speed">1x</button>
       <button class="bControlBtn cc" id="bCCToggle" title="Toggle captions">CC</button>
+      <button class="bControlBtn cc" id="bLabelsToggle" title="Toggle location labels on the globe">LBL</button>
       <!-- Briefing volume — click icon to open vertical glow-gold slider.
            See index.html for rationale. -->
       <div class="bVolWrap">
@@ -49703,6 +49704,15 @@ body.ticker-active .gTickerLabel {
   let briefingTimers    = [];
   let activeTUListeners = [];
   let captionsOn    = false;
+  // Location-labels toggle — when OFF, per-segment country/city name
+  // chips no longer paint on the globe during briefing playback.
+  // Defaults to ON; persisted under earth00:briefingLabels.
+  let labelsOn = (() => {
+    try {
+      const v = localStorage.getItem('earth00:briefingLabels');
+      return v == null ? true : v === 'on';
+    } catch (_) { return true; }
+  })();
   let playbackRate  = 1;       // 1, 1.5, or 2
   let _panelsBySeg  = {};      // { segment_index: [panel rows] } — fetched on briefing open
 
@@ -53853,14 +53863,40 @@ body.ticker-active .gTickerLabel {
     const label = document.getElementById('bFocalMapLabel');
     if (!wrap || !inner) return;
 
+    // Show the container IMMEDIATELY with status text so failures
+    // are visible on-screen (we have no Safari Web Inspector path on
+    // iOS Capacitor for the typical user). If MapLibre fails to load,
+    // tiles fail to fetch, or Map construction throws, the label
+    // surfaces the exact failure rather than the player going silent.
+    if (label) {
+      label.textContent = (config.label || (config.preset || '').replace(/_/g, ' ') || 'Loading map…');
+      label.style.display = 'block';
+    }
+    wrap.classList.add('visible');
+    wrap.setAttribute('aria-hidden', 'false');
+    const _setStatus = (msg, isError) => {
+      if (!label) return;
+      label.textContent = msg;
+      label.style.color = isError ? '#fca5a5' : '#e2e8f0';
+      label.style.borderColor = isError ? 'rgba(239,68,68,0.55)' : 'rgba(96,200,255,0.35)';
+    };
+
     try {
       await _ensureMapLibreLoaded();
     } catch (e) {
+      _setStatus(`Map lib failed: ${e.message}`, true);
       console.warn(`[briefing/focal_map] MapLibre load failed: ${e.message}`);
+      return;
+    }
+    if (!window.maplibregl) {
+      _setStatus('MapLibre missing from window after load', true);
       return;
     }
 
     _focalMapCleanup();
+    // Re-apply visible because _focalMapCleanup removes it.
+    wrap.classList.add('visible');
+    wrap.setAttribute('aria-hidden', 'false');
 
     const styleKey   = config.style || 'dark';
     const style      = _FOCAL_MAP_STYLES[styleKey] || _FOCAL_MAP_STYLES.dark;
@@ -53875,31 +53911,41 @@ body.ticker-active .gTickerLabel {
     const pitchStart  = Number.isFinite(config.pitch_start) ? Number(config.pitch_start) : (terrainOn ? 35 : 0);
     const pitchEnd    = Number.isFinite(config.pitch_end)   ? Number(config.pitch_end)   : (terrainOn ? 55 : 0);
 
-    if (!_focalMapInst) {
-      _focalMapInst = new window.maplibregl.Map({
-        container: inner,
-        style,
-        center,
-        zoom: zoomStart,
-        pitch: pitchStart,
-        attributionControl: false,
-        interactive: false,
-      });
-    } else {
-      _focalMapInst.setStyle(style);
-      _focalMapInst.setCenter(center);
-      _focalMapInst.setZoom(zoomStart);
-      try { _focalMapInst.setPitch(pitchStart); } catch (_) {}
+    try {
+      if (!_focalMapInst) {
+        _focalMapInst = new window.maplibregl.Map({
+          container: inner,
+          style,
+          center,
+          zoom: zoomStart,
+          pitch: pitchStart,
+          attributionControl: false,
+          interactive: false,
+        });
+        _focalMapInst.on('error', (ev) => {
+          const m = ev?.error?.message || ev?.message || 'tile/style error';
+          _setStatus(`Map error: ${m}`, true);
+          console.warn('[briefing/focal_map] maplibre error:', ev);
+        });
+      } else {
+        _focalMapInst.setStyle(style);
+        _focalMapInst.setCenter(center);
+        _focalMapInst.setZoom(zoomStart);
+        try { _focalMapInst.setPitch(pitchStart); } catch (_) {}
+      }
+    } catch (e) {
+      _setStatus(`Map init failed: ${e.message}`, true);
+      console.warn(`[briefing/focal_map] Map construction failed: ${e.message}`);
+      return;
     }
 
     if (label) {
       const txt = config.label || (config.preset || '').replace(/_/g, ' ');
       label.textContent = txt;
+      label.style.color = '#e2e8f0';
+      label.style.borderColor = 'rgba(96,200,255,0.35)';
       label.style.display = txt ? 'block' : 'none';
     }
-
-    wrap.classList.add('visible');
-    wrap.setAttribute('aria-hidden', 'false');
 
     const renderHighlights = () => {
       if (!_focalMapInst) return;
