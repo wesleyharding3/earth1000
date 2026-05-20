@@ -53733,8 +53733,16 @@ body.ticker-active .gTickerLabel {
   // endpoint the live "Map This" panel uses, with server-side cache so
   // repeated plays of the same briefing are free.
   // Lazy-load MapLibre GL JS — only when a focal_map moment fires.
-  // The library + stylesheet are pulled from unpkg the first time and
-  // cached on window so subsequent moments reuse the same instance.
+  // Bundled locally at www/vendor/ for two reasons:
+  //   1. Capacitor's iOS WKWebView served from https://localhost was
+  //      not reliably loading the unpkg.com CDN script — manifested as
+  //      "map doesn't appear" on iOS while the web build (where unpkg
+  //      reaches the user's browser fine) worked.
+  //   2. Removes the runtime third-party dependency for app-store
+  //      builds. Tile imagery still comes from external CDNs (Carto,
+  //      Esri, AWS terrain) but those are XHR/fetch loads, which work
+  //      fine in WKWebView; only the script+stylesheet were the
+  //      problem.
   let _focalMapLoadPromise = null;
   function _ensureMapLibreLoaded() {
     if (window.maplibregl) return Promise.resolve();
@@ -53745,13 +53753,13 @@ body.ticker-active .gTickerLabel {
         const link = document.createElement('link');
         link.id = cssId;
         link.rel = 'stylesheet';
-        link.href = 'https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css';
+        link.href = './vendor/maplibre-gl.css';
         document.head.appendChild(link);
       }
       const script = document.createElement('script');
-      script.src = 'https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js';
+      script.src = './vendor/maplibre-gl.js';
       script.onload = () => resolve();
-      script.onerror = () => reject(new Error('maplibre-gl script failed to load'));
+      script.onerror = () => reject(new Error('maplibre-gl script failed to load (./vendor/)'));
       document.head.appendChild(script);
     });
     return _focalMapLoadPromise;
