@@ -739,7 +739,11 @@ async function renderBriefingSegment(job) {
     log(`  video: ${videoStat.size} bytes after ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 
     // ── Audio fetch + final mux ──────────────────────────────────────
-    const audioUrl = `${RENDER_HOST}/api/briefing/audio/${job.episode_id}/${job.segment_idx}`;
+    // The briefing-audio endpoint requires either a user session or
+    // the worker token (server.js has a bypass branch keyed on the
+    // same VIDEO_WORKER_TOKEN). Pass the token as ?token=… so the
+    // server's worker-token check matches.
+    const audioUrl = `${RENDER_HOST}/api/briefing/audio/${job.episode_id}/${job.segment_idx}?token=${encodeURIComponent(TOKEN)}`;
     const audioRes = await fetch(audioUrl);
     if (!audioRes.ok) {
       const body = await audioRes.text().catch(() => '');

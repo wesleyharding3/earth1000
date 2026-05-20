@@ -11238,19 +11238,29 @@ async function resolveAudioRequestUser(req) {
 // streaming an episode they no longer have entitlement to via a saved URL.
 app.get("/api/briefing/audio/:id/:segIdx", async (req, res) => {
   try {
-    const user = await resolveAudioRequestUser(req);
-    if (!user?.id) return res.status(401).json({ error: "Authentication required" });
+    // Worker-token bypass for the Mac-side briefing-segment renderer:
+    // the worker fetches the per-segment MP3 to mux into its captured
+    // video. It runs server-side (no Supabase session), so we accept
+    // the VIDEO_WORKER_TOKEN as a signed-in equivalent. Same token
+    // /api/video-jobs/* uses; an exposed token equals "can read any
+    // briefing audio slice", which is fine for an admin-owned secret.
+    const workerToken = req.query.token || req.headers['x-worker-token'];
+    const isWorker = workerToken && workerToken === process.env.VIDEO_WORKER_TOKEN;
+    if (!isWorker) {
+      const user = await resolveAudioRequestUser(req);
+      if (!user?.id) return res.status(401).json({ error: "Authentication required" });
+      const tier = user.tier || "free";
+      const access = await checkBriefingAccess(user.id, parseInt(req.params.id), tier, { isAdmin: !!user.is_admin }).catch(() => ({ allowed: true }));
+      if (!access.allowed) {
+        return res.status(403).json({
+          error: access.resetNote || "Weekly briefing limit reached",
+          limitReached: true, used: access.used, limit: access.limit, requiredTier: "pro",
+        });
+      }
+    }
     const episodeId = parseInt(req.params.id);
     const segIdx    = parseInt(req.params.segIdx);
     if (!Number.isFinite(episodeId)) return res.status(400).json({ error: "Bad episode id" });
-    const tier = user.tier || "free";
-    const access = await checkBriefingAccess(user.id, episodeId, tier, { isAdmin: !!user.is_admin }).catch(() => ({ allowed: true }));
-    if (!access.allowed) {
-      return res.status(403).json({
-        error: access.resetNote || "Weekly briefing limit reached",
-        limitReached: true, used: access.used, limit: access.limit, requiredTier: "pro",
-      });
-    }
     const cached = await getAudioCached(episodeId);
     if (!cached) return res.status(404).json({ error: "Audio not found" });
     const { buf, segs } = cached;
