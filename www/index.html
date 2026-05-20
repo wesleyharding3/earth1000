@@ -47522,12 +47522,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
    open). The ::before is the ICON when compact; the ::after is the
    MINIMIZE × when expanded. */
 @media (max-width: 720px) {
-  /* Make ALL three panels clickable on mobile during briefings, in both
-     states. Pie + roll have pointer-events:none in their base CSS — that
-     was killing the tap-to-collapse on the expanded panels. */
-  body.briefing-active .bSegmentSourcePie,
-  body.briefing-active .bSegmentArticleRoll,
+  /* Hide the side article-card panel during briefing on mobile —
+     bSegmentArticleRoll covers the same role (constituent headlines)
+     and the two were both rendering as compact icons in the same area,
+     creating a visible duplicate. The roll wins because its smooth
+     scrolling animation is more engaging than the 3-card stack. */
   body.briefing-active .bArticlePanel {
+    display: none !important;
+  }
+  /* Pie + scrolling roll are the two interactive bottom-row panels. */
+  body.briefing-active .bSegmentSourcePie,
+  body.briefing-active .bSegmentArticleRoll {
     pointer-events: all;
   }
   /* ── Compact (icon) mode ─────────────────────────────────────── */
@@ -47540,8 +47545,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
      transition makes the !important overrides land as instant jumps
      instead of getting absorbed into a stale transition. */
   body.briefing-active .bSegmentSourcePie.compact,
-  body.briefing-active .bSegmentArticleRoll.compact,
-  body.briefing-active .bArticlePanel.compact {
+  body.briefing-active .bSegmentArticleRoll.compact {
     width: 44px;
     height: 44px;
     min-width: 0;
@@ -47563,8 +47567,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     pointer-events: all;
   }
   body.briefing-active .bSegmentSourcePie.compact > *,
-  body.briefing-active .bSegmentArticleRoll.compact > *,
-  body.briefing-active .bArticlePanel.compact > * {
+  body.briefing-active .bSegmentArticleRoll.compact > * {
     display: none !important;
   }
   body.briefing-active .bSegmentSourcePie.compact::before {
@@ -47575,8 +47578,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
     background-position: center;
     background-repeat: no-repeat;
   }
-  body.briefing-active .bSegmentArticleRoll.compact::before,
-  body.briefing-active .bArticlePanel.compact::before {
+  body.briefing-active .bSegmentArticleRoll.compact::before {
     content: '';
     display: block; width: 100%; height: 100%;
     background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2360c8ff' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'><rect x='3' y='4' width='18' height='4' rx='1'/><rect x='3' y='10' width='18' height='4' rx='1'/><rect x='3' y='16' width='18' height='4' rx='1'/></svg>");
@@ -47600,8 +47602,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
      toggleCompact. Outside that zone, taps on .bAPCard children
      still open articles normally. */
   body.briefing-active .bSegmentSourcePie:not(.compact)::after,
-  body.briefing-active .bSegmentArticleRoll:not(.compact)::after,
-  body.briefing-active .bArticlePanel:not(.compact)::after {
+  body.briefing-active .bSegmentArticleRoll:not(.compact)::after {
     content: '×';
     position: absolute;
     top: 4px;
