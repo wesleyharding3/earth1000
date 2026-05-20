@@ -2554,32 +2554,40 @@ async function buildSegments(narrative, threadData, allArcs, entityCoords = {}) 
     const uniqueIds  = rawIds.filter(id => !usedArticleIds.has(id));
     uniqueIds.forEach(id => usedArticleIds.add(id));
 
-    // ── Primary globe focus: use Claude's entity extraction (subject of story),
-    //    NOT article geo-tags (source country, often wrong for international stories)
+    // ── Primary globe focus ───────────────────────────────────────────
+    // PRIORITY ORDER (was wrong — Claude per-segment entities and the
+    // article publisher's home country were winning over the classifier-
+    // authoritative thread.primary_nations, producing nonsense pairings
+    // like "Trump pushes Iran deal" → Panama, "Bolivia Crisis" → Dominican
+    // Republic, "Japan Q1 GDP" → Singapore. The thread's primary_nations
+    // is the source of truth — set by the actor classifier with full-thread
+    // context — so it ALWAYS wins for country selection. Claude per-segment
+    // entities still drive primaryCity (the classifier has no city-level
+    // granularity). geoArticle source country is last-resort only.
     let primaryCity    = null;
     let primaryCountry = null;
+
+    // 1. Primary country: thread.primary_nations[0] is authoritative.
+    if (Array.isArray(thread.primary_nations) && thread.primary_nations.length) {
+      const c = _isoToCountry(thread.primary_nations[0]);
+      if (c) primaryCountry = { name: c.name, lat: c.lat, lon: c.lon };
+    }
+
+    // 2. Primary city: Claude narrative entities may name a specific
+    //    city that primary_nations can't capture. If the entity is a
+    //    country AND we still don't have primaryCountry, use it too.
     for (const e of (ns.entities || [])) {
       const coords = entityCoords[e.name];
       if (!coords) continue;
       if (e.type === 'city'    && !primaryCity)    primaryCity    = { name: e.name, lat: coords.lat, lon: coords.lon };
       if (e.type === 'country' && !primaryCountry) primaryCountry = { name: e.name, lat: coords.lat, lon: coords.lon };
     }
-    // Fallback to article-sourced location only if Claude found nothing
-    if (!primaryCity && !primaryCountry) {
-      primaryCity    = thread.primaryCity    || null;
-      primaryCountry = thread.primaryCountry || null;
-    }
-    // Final fallback: pull primary country from the actor classifier. The
-    // first ISO in primary_nations is the most-central country to the
-    // story per Claude's geopolitical inference. Used when neither
-    // segment entities nor article-sourced geo yielded a country —
-    // common for diplomacy stories where the actor is named but the
-    // article publisher is some Reuters wire desk in London.
-    if (!primaryCountry && Array.isArray(thread.primary_nations) && thread.primary_nations.length) {
-      const firstIso = thread.primary_nations[0];
-      const c = _isoToCountry(firstIso);
-      if (c) primaryCountry = { name: c.name, lat: c.lat, lon: c.lon };
-    }
+
+    // 3. Last resort: article publisher's geo. This is often the
+    //    publisher's home country (NOT the story's subject) so it's
+    //    only used when both 1 and 2 yielded nothing.
+    if (!primaryCity)    primaryCity    = thread.primaryCity    || null;
+    if (!primaryCountry) primaryCountry = thread.primaryCountry || null;
 
     // Strip primary node(s) from secondary_locations — avoids duplication in
     // display and globe player (primary_city / primary_country shown separately).
