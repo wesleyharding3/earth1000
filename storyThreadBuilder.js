@@ -477,6 +477,27 @@ async function run() {
   const sqlSingletons = articles.filter(a => !sqlAssigned.has(a.id));
   console.log(`   [${elapsed()}] SQL clusters: ${sqlClusters.length} | SQL singletons: ${sqlSingletons.length}`);
 
+  // ── Orphan-to-existing-thread attach pass (Fix B) ────────────────
+  // Before embedding-singleton clustering (which only finds same-batch
+  // pairs), try to attach each singleton to an ACTIVE THREAD whose
+  // centroid is a strong semantic match. Most singletons in this stream
+  // are "ongoing-story new development" — the thread already exists,
+  // the article just needs to find its way home.
+  //
+  // Threads touched here flow into refreshThreadIds below so the
+  // dedup/audit passes see them.
+  console.log(`   [${elapsed()}] Running orphan→active-thread attach pass...`);
+  const _attachResult = await attachSingletonsToExistingThreads(sqlSingletons);
+  const attachedIds = _attachResult.attachedIds;
+  const touchedByAttach = _attachResult.touchedThreadIds;
+  const remainingSingletons = attachedIds.size
+    ? sqlSingletons.filter(a => !attachedIds.has(a.id))
+    : sqlSingletons;
+  console.log(
+    `   [${elapsed()}] Orphan-attach: ${attachedIds.size} article(s) joined ${touchedByAttach.size} thread(s) | ` +
+    `${remainingSingletons.length} still singleton`
+  );
+
   // Embedding-based second pass: catches semantically-equivalent stories
   // (same event, different vocabulary or different languages) that SQL's
   // keyword-Jaccard floor (MIN_SHARED_KW=3) misses. Runs in-process,
@@ -484,13 +505,16 @@ async function run() {
   // embeddingClusterSingletons() above for the algorithm. Articles
   // without an embedding (pre-backfill rows) pass through as
   // singletons untouched.
-  console.log(`   [${elapsed()}] Running embedding clustering on SQL singletons...`);
-  const embClusters = embeddingClusterSingletons(sqlSingletons);
+  //
+  // Operates on the REMAINING singletons after orphan-attach. Articles
+  // that joined an active thread above are no longer in the pool.
+  console.log(`   [${elapsed()}] Running embedding clustering on remaining singletons...`);
+  const embClusters = embeddingClusterSingletons(remainingSingletons);
   const embAssigned = new Set(embClusters.flat().map(a => a.id));
-  const trueSingletons = sqlSingletons.filter(a => !embAssigned.has(a.id));
-  const embeddedCount = sqlSingletons.filter(a => a.embedding).length;
+  const trueSingletons = remainingSingletons.filter(a => !embAssigned.has(a.id));
+  const embeddedCount = remainingSingletons.filter(a => a.embedding).length;
   console.log(
-    `   [${elapsed()}] Embedding clusters: ${embClusters.length} (from ${embeddedCount}/${sqlSingletons.length} embedded singletons) | ` +
+    `   [${elapsed()}] Embedding clusters: ${embClusters.length} (from ${embeddedCount}/${remainingSingletons.length} embedded singletons) | ` +
     `Articles clustered by embeddings: ${embAssigned.size} | True singletons: ${trueSingletons.length}`
   );
 
@@ -513,6 +537,14 @@ async function run() {
   // Claude dedup pass so we only spend Claude calls on clusters containing
   // at least one just-modified thread, not the entire 240-thread universe.
   const allTouchedIds = new Set();
+  // Seed both sets with threads that absorbed orphan articles in the
+  // attach pass above. Without this, those threads' context wouldn't
+  // refresh and the dedup pass would skip them even though their
+  // member set just changed.
+  for (const tid of touchedByAttach) {
+    refreshThreadIds.add(tid);
+    allTouchedIds.add(tid);
+  }
 
   // Cluster-preserving batching + country round-robin for singletons.
   // Each cluster stays intact in a single batch (split only if it exceeds
@@ -715,6 +747,198 @@ const EMBEDDING_RECENCY_DAYS  =
   parseInt(process.env.EMBEDDING_RECENCY_DAYS    || '14', 10);
 const EMBEDDING_MIN_CLUSTER   =
   parseInt(process.env.EMBEDDING_MIN_CLUSTER     || '3', 10);
+
+// ─── Orphan-to-existing-thread attach (Fix B) ──────────────────────────
+//
+// Before sqlSingletons hit embeddingClusterSingletons (which only finds
+// singleton↔singleton pairs), we run them against the centroids of
+// ACTIVE THREADS. A high-cosine match means the article belongs to a
+// thread that's already in flight — most of our singletons are
+// "ongoing story, new development", not "first-of-its-kind story".
+//
+// Why this matters: until this step landed, the embedding column on
+// news_articles was only used to rescue same-batch singletons (~3%
+// recall). The bigger join — orphan into an existing 80-article
+// thread about the same story — never happened. Articles fell into
+// Claude with no thread proposal, and Claude usually classified them
+// as new threads OR dropped them as singletons (when SEND_SINGLETONS_
+// TO_CLAUDE is disabled).
+//
+// Tuning knobs (all env vars):
+//   ATTACH_SIM_THRESHOLD             default 0.82   cosine floor for attach
+//   ATTACH_THREAD_AGE_DAYS           default 5      only consider threads
+//                                                  updated within N days
+//   ATTACH_CENTROID_RECENCY_DAYS     default 7      only use member articles
+//                                                  within N days for centroid
+//   ATTACH_MAX_MEMBERS_PER_CENTROID  default 50     cap members read per thread
+//   ATTACH_MAX_PER_THREAD_PER_RUN    default 20     cap attaches per thread
+//                                                  (prevent one hot thread from
+//                                                  absorbing the whole pool)
+const ATTACH_SIM_THRESHOLD            = parseFloat(process.env.ATTACH_SIM_THRESHOLD            || '0.82');
+const ATTACH_THREAD_AGE_DAYS          = parseInt(process.env.ATTACH_THREAD_AGE_DAYS            || '5',  10);
+const ATTACH_CENTROID_RECENCY_DAYS    = parseInt(process.env.ATTACH_CENTROID_RECENCY_DAYS      || '7',  10);
+const ATTACH_MAX_MEMBERS_PER_CENTROID = parseInt(process.env.ATTACH_MAX_MEMBERS_PER_CENTROID   || '50', 10);
+const ATTACH_MAX_PER_THREAD_PER_RUN   = parseInt(process.env.ATTACH_MAX_PER_THREAD_PER_RUN     || '20', 10);
+
+// Build a centroid (L2-normalized average) per active thread from its
+// most-recent embedded member articles. Returns an array of
+//   { threadId, centroid: Float32Array, memberCount }
+// Threads with zero embedded members in the recency window are skipped.
+async function _loadActiveThreadCentroids() {
+  const { rows } = await pool.query(`
+    WITH ranked AS (
+      SELECT sta.thread_id,
+             a.embedding,
+             ROW_NUMBER() OVER (
+               PARTITION BY sta.thread_id
+               ORDER BY a.published_at DESC
+             ) AS rn
+        FROM story_thread_articles sta
+        JOIN story_threads t   ON t.id = sta.thread_id
+        JOIN news_articles a   ON a.id = sta.article_id
+       WHERE t.status = 'active'
+         AND t.last_updated_at > NOW() - ($1::int * INTERVAL '1 day')
+         AND a.embedding IS NOT NULL
+         AND a.published_at > NOW() - ($2::int * INTERVAL '1 day')
+    )
+    SELECT thread_id, embedding
+      FROM ranked
+     WHERE rn <= $3
+  `, [ATTACH_THREAD_AGE_DAYS, ATTACH_CENTROID_RECENCY_DAYS, ATTACH_MAX_MEMBERS_PER_CENTROID]);
+
+  // Group + average per thread.
+  const groups = new Map();
+  for (const r of rows) {
+    const vec = _parseEmbedding(r.embedding);
+    if (!vec || vec.length === 0) continue;
+    if (!groups.has(r.thread_id)) groups.set(r.thread_id, []);
+    groups.get(r.thread_id).push(vec);
+  }
+
+  const centroids = [];
+  for (const [threadId, vecs] of groups) {
+    if (!vecs.length) continue;
+    const dim = vecs[0].length;
+    const sum = new Float32Array(dim);
+    for (const v of vecs) {
+      for (let i = 0; i < dim; i++) sum[i] += v[i];
+    }
+    // Average then re-normalize. The embedder outputs L2-normalized
+    // unit vectors, so cosine = dot product — but averaging unit
+    // vectors produces a sub-unit-length result. Normalize so the
+    // dot-product-as-cosine identity holds against the centroid too.
+    const inv = 1 / vecs.length;
+    let mag = 0;
+    for (let i = 0; i < dim; i++) { sum[i] *= inv; mag += sum[i] * sum[i]; }
+    mag = Math.sqrt(mag);
+    if (mag > 0) {
+      for (let i = 0; i < dim; i++) sum[i] /= mag;
+    }
+    centroids.push({ threadId: Number(threadId), centroid: sum, memberCount: vecs.length });
+  }
+  return centroids;
+}
+
+// Attach singleton articles to active threads via embedding similarity.
+// Returns { attachedIds: Set<number>, touchedThreadIds: Set<number> }.
+//   attachedIds      — article IDs that were attached. Caller filters
+//                      these out of the singleton pool before downstream
+//                      passes (embedding-cluster, Claude).
+//   touchedThreadIds — threads that got new members. Caller should add
+//                      these to refreshThreadIds so the audit/dedup
+//                      passes see them.
+async function attachSingletonsToExistingThreads(singletons) {
+  if (!Array.isArray(singletons) || !singletons.length) {
+    return { attachedIds: new Set(), touchedThreadIds: new Set() };
+  }
+
+  const centroids = await _loadActiveThreadCentroids();
+  if (!centroids.length) {
+    console.log(`     orphan-attach: no active-thread centroids (no recently-updated active threads with embedded members)`);
+    return { attachedIds: new Set(), touchedThreadIds: new Set() };
+  }
+
+  // Walk each singleton and find its best-matching active thread.
+  // We only need ONE pass over (singletons × centroids) — cheap.
+  const matches = []; // { article, threadId, sim }
+  let consideredCount = 0;
+  for (const article of singletons) {
+    const vec = _parseEmbedding(article.embedding);
+    if (!vec || vec.length === 0) continue;
+    consideredCount++;
+    let bestSim = 0, bestCent = null;
+    for (const c of centroids) {
+      const sim = _cosine(vec, c.centroid);
+      if (sim > bestSim) { bestSim = sim; bestCent = c; }
+    }
+    if (bestCent && bestSim >= ATTACH_SIM_THRESHOLD) {
+      matches.push({ article, threadId: bestCent.threadId, sim: bestSim });
+    }
+  }
+
+  console.log(
+    `     orphan-attach: considered ${consideredCount} embedded singleton(s) ` +
+    `against ${centroids.length} centroid(s); ${matches.length} above threshold ${ATTACH_SIM_THRESHOLD}`
+  );
+
+  if (!matches.length) {
+    return { attachedIds: new Set(), touchedThreadIds: new Set() };
+  }
+
+  // Per-thread cap: prevent one hot thread (Iran, Ukraine, etc.) from
+  // absorbing every borderline match. Take the highest-similarity
+  // matches first, drop the rest.
+  const perThread = new Map();
+  for (const m of matches) {
+    if (!perThread.has(m.threadId)) perThread.set(m.threadId, []);
+    perThread.get(m.threadId).push(m);
+  }
+  const accepted = [];
+  for (const arr of perThread.values()) {
+    arr.sort((a, b) => b.sim - a.sim);
+    accepted.push(...arr.slice(0, ATTACH_MAX_PER_THREAD_PER_RUN));
+  }
+
+  // Insert relations. ON CONFLICT DO NOTHING — if Claude or a parallel
+  // run already attached the same article, that's fine, skip.
+  const articleIds = accepted.map(m => m.article.id);
+  const threadIds  = accepted.map(m => m.threadId);
+  const scores     = accepted.map(m => Number(m.sim.toFixed(4)));
+  await pool.query(`
+    INSERT INTO story_thread_articles (article_id, thread_id, relevance_score)
+    SELECT unnest($1::int[]), unnest($2::int[]), unnest($3::numeric[])
+    ON CONFLICT DO NOTHING
+  `, [articleIds, threadIds, scores]);
+
+  // Recompute article_count from source-of-truth + bump last_updated_at
+  // on the touched threads. The cron's later create/update path also
+  // bumps these but only for threads Claude touched — orphan attaches
+  // happen BEFORE Claude, so we need to maintain consistency here.
+  const touchedThreadIds = new Set(threadIds);
+  await pool.query(`
+    UPDATE story_threads
+       SET article_count   = (SELECT COUNT(*) FROM story_thread_articles WHERE thread_id = story_threads.id),
+           last_updated_at = NOW()
+     WHERE id = ANY($1::int[])
+  `, [Array.from(touchedThreadIds)]);
+
+  // Diagnostic: per-thread summary so editorial can spot hot-attach
+  // threads (one thread absorbing 20+ orphans per run = likely a
+  // splitter candidate).
+  for (const [tid, arr] of perThread) {
+    const attached = arr.slice(0, ATTACH_MAX_PER_THREAD_PER_RUN);
+    const minSim = attached[attached.length - 1].sim.toFixed(3);
+    const maxSim = attached[0].sim.toFixed(3);
+    console.log(`     orphan-attach: thread #${tid} ← ${attached.length} article(s)  sim=${minSim}..${maxSim}`);
+  }
+
+  console.log(
+    `     orphan-attach: attached ${accepted.length} article(s) to ` +
+    `${touchedThreadIds.size} thread(s); ${matches.length - accepted.length} dropped by per-thread cap`
+  );
+
+  return { attachedIds: new Set(articleIds), touchedThreadIds };
+}
 
 function _parseEmbedding(raw) {
   // pgvector columns serialize as text '[0.1,-0.2,...]' by default in
