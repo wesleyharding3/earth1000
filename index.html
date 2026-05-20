@@ -51107,32 +51107,39 @@ body.ticker-active .gTickerLabel {
 
   function _scrubAdvanceArcs(tMs) {
     if (_scrubArcSpawnAt == null) return;
-    if (!Array.isArray(arcObjects)) return;
+    // Briefing arc meshes are pushed into window.briefingRevealList by
+    // drawSegmentArcs via buildBriefingArc. Each is a THREE.Mesh whose
+    // material.uniforms have { uColor, uIntensity, uRevealEnd,
+    // uRevealRate, uTime }. animate()'s live-playback code advances
+    // uRevealEnd by 0.016 * uRevealRate per frame; we overwrite it
+    // here based on scrub time so the reveal matches our scrub clock,
+    // not real wall-clock time.
+    const list = window.briefingRevealList;
+    if (!Array.isArray(list) || !list.length) return;
     const elapsedMs = tMs - _scrubArcSpawnAt;
-    for (const arc of arcObjects) {
-      if (!arc.tubeMat?.uniforms) continue;
-      const localElapsed = elapsedMs - ((arc.drawInDelay || 0) * 1000);
-      const durMs = (arc.drawInDuration || 1.0) * 1000;
-      let revealEnd, opacity;
-      if (localElapsed <= 0) {
-        revealEnd = 0.001;
-        opacity = 0;
-      } else if (localElapsed >= durMs) {
-        revealEnd = 1;
-        opacity = arc.baseOpacity || 1;
+    for (const mesh of list) {
+      const u = mesh?.material?.uniforms;
+      if (!u || !u.uRevealEnd) continue;
+      // uRevealRate is set by buildBriefingArc to 1/revealSecs.
+      // Convert back: revealSecs = 1/uRevealRate; revealDurMs =
+      // revealSecs * 1000. Fall back to 1000ms if missing.
+      const rate = u.uRevealRate?.value || 1;
+      const durMs = Math.max(100, (1 / rate) * 1000);
+      let revealEnd;
+      if (elapsedMs <= 0) {
+        revealEnd = 0;
+      } else if (elapsedMs >= durMs) {
+        revealEnd = 1.0;
       } else {
-        const rawT = localElapsed / durMs;
-        const eIn  = 1 - Math.pow(1 - rawT, 3);
-        revealEnd = Math.max(0.001, eIn);
-        opacity = (arc.baseOpacity || 1) * Math.min(1, rawT * 4);
+        const t01 = elapsedMs / durMs;
+        // Ease-out cubic for a snappy front-of-arc draw — matches the
+        // perceived feel of the live briefing reveal.
+        revealEnd = 1 - Math.pow(1 - t01, 3);
       }
-      arc.tubeMat.uniforms.uVisibleStart.value = 0;
-      arc.tubeMat.uniforms.uVisibleEnd.value   = revealEnd;
-      arc.tubeMat.uniforms.uOpacity.value      = opacity;
-      if (arc.orb && arc.orb.material) {
-        arc.orb.material.opacity = opacity;
-        arc.orb.visible = revealEnd > 0.001;
-      }
+      u.uRevealEnd.value = revealEnd;
+      // uTime drives shader-internal effects (lead-edge pulse). Keep
+      // it in sync with our scrub clock for reproducibility.
+      if (u.uTime) u.uTime.value = elapsedMs / 1000;
     }
   }
 

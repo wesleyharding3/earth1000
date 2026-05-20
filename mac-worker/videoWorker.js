@@ -846,12 +846,16 @@ async function renderBriefingSegment(job) {
     if (!fnReady) throw new Error('scrub API never became available (stale cache or page error)');
 
     // Enter scrub mode for this segment. The page replaces its timer
-    // primitives + drains startGlobeTimers into the scrub queue.
-    const queued = await page.evaluate(
+    // The new script-driven scrub parses seg.script into an absolute-ms
+    // event list (camera_focus + arc_draw at known offsets) and returns
+    // { ok, events }. Each render-frame call applies pending events and
+    // advances continuous state (camera slerp, arc reveal uniforms).
+    const scrubInit = await page.evaluate(
       (idx) => window.__beginBriefingScrub(idx),
       job.segment_idx
     );
-    log(`  scrub init: ${queued.queued} event(s) queued for segment ${job.segment_idx}`);
+    const nEvents = scrubInit?.events;
+    log(`  scrub init: ${nEvents ?? '?'} event(s) parsed for segment ${job.segment_idx}`);
 
     // Frame loop. Duration comes from job.audio_ms (the narration
     // length, populated by /api/video-jobs/briefings/pending from
