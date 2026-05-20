@@ -549,13 +549,31 @@ async function _publishEligibleRows() {
       // caches the result back to social_post_queue.reel_mp4 — so a
       // cold render here can take up to ~60s. We pre-warm before
       // publishing so Meta fetches from a populated DB cache.
+      //
+      // CRITICAL: the IG + Threads drafts get REPLACED (not spread)
+      // so any image_url / carousel_videos from the carousel-mode
+      // template don't leak through. The IG publisher's mode
+      // selector picks CAROUSEL when (hasVideo && hasImage) — which
+      // would then try to mix the reel.mp4 with a leftover still
+      // image and IG rejects "image-item: only photo or video can
+      // be accepted as media type." For a Reel we want REELS mode
+      // (single-video, no image), which means video_url only.
       const reelUrl = `${publicHost}/share/thread/${row.thread_id}/reel.mp4`;
       if (drafts.instagram) {
-        drafts.instagram = { ...drafts.instagram, video_url: reelUrl, reel_url: reelUrl };
+        drafts.instagram = {
+          caption:   drafts.instagram.caption,
+          video_url: reelUrl,
+        };
       }
       if (drafts.threads) {
-        drafts.threads = { ...drafts.threads, video_url: reelUrl };
+        drafts.threads = {
+          body:      drafts.threads.body,
+          video_url: reelUrl,
+        };
       }
+      // Bluesky doesn't support native video yet — keep its full
+      // draft intact for the text + link-facet fallback. Adding
+      // video_url is a no-op there but harmless.
       if (drafts.bluesky) {
         drafts.bluesky = { ...drafts.bluesky, video_url: reelUrl };
       }
