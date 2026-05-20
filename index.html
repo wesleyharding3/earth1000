@@ -51014,28 +51014,76 @@ body.ticker-active .gTickerLabel {
   const SCRUB_ARC_REVEAL_MS      = 1000;   // matches BRIEFING_ARC_REVEAL_SECS
 
   // Map a segment's seg.script + primary location into a flat list of
-  // absolute-ms events we can apply in order. Returns null if the
-  // segment has no script (caller should fall back to a no-op).
+  // absolute-ms events we can apply in order. Returns [] if the
+  // segment has no script (caller renders a static globe).
+  //
+  // Mirrors startGlobeTimers's timing logic so the scrub output matches
+  // the live briefing's choreography pacing:
+  //   - camera_focus fires at its script-declared ms (or 6% of segment
+  //     duration as a fallback)
+  //   - arc_draw fires at min(script_arc_ms, 8% of segment,
+  //     camera_focus + 1400ms) — the same hard cap startGlobeTimers
+  //     applies (arcs are meant to draw EARLY for energy; the user
+  //     reported them appearing at 6-10s into a segment when we used
+  //     the raw script position)
+  //   - focal_map fires at focal_trigger_ms - start_ms (the 2D map
+  //     featured-media-moment takeover)
   function _scrubBuildEventList(seg) {
-    if (!Array.isArray(seg?.script) || !seg.script.length) return [];
+    const segDurMs = Math.max(1, Math.round((getSegmentDuration(segIdx) || 30) * 1000));
     const events = [];
-    let t = 0;
-    let cameraDone = false;
-    let arcDone    = false;
-    for (const line of seg.script) {
-      if (line && line.type === 'event') {
-        if (line.kind === 'camera_focus' && !cameraDone) {
-          events.push({ msAbs: t, kind: 'camera_focus', applied: false });
-          cameraDone = true;
-        } else if (line.kind === 'arc_draw' && !arcDone) {
-          events.push({ msAbs: t, kind: 'arc_draw', applied: false });
-          arcDone = true;
+
+    // First pass: walk script to find raw camera_focus + arc_draw ms.
+    let cameraMs = null;
+    let arcMs    = null;
+    if (Array.isArray(seg?.script) && seg.script.length) {
+      let t = 0;
+      for (const line of seg.script) {
+        if (line && line.type === 'event') {
+          if (line.kind === 'camera_focus' && cameraMs == null) cameraMs = t;
+          if (line.kind === 'arc_draw'     && arcMs    == null) arcMs    = t;
         }
-        // data_panels event intentionally skipped — we hide the data
-        // panel DOM in briefing-capture-mode anyway.
+        t += (Number(line?.ms) || Number(line?.est_ms) || 0);
       }
-      t += (Number(line?.ms) || Number(line?.est_ms) || 0);
     }
+
+    // Apply startGlobeTimers's exact caps so scrub timing matches the
+    // live briefing's choreography.
+    const ARC_HARD_CAP_FRAC = 0.08;
+    const ARC_AFTER_CAM_MS  = 1400;
+    const finalCameraMs = (cameraMs != null) ? cameraMs : Math.round(segDurMs * 0.06);
+    const arcCapMs = Math.min(
+      Math.round(segDurMs * ARC_HARD_CAP_FRAC),
+      finalCameraMs + ARC_AFTER_CAM_MS
+    );
+    const finalArcMs = (arcMs != null)
+      ? Math.min(arcMs, arcCapMs)
+      : Math.min(Math.round(segDurMs * 0.05), arcCapMs);
+
+    events.push({ msAbs: finalCameraMs, kind: 'camera_focus', applied: false });
+    events.push({ msAbs: finalArcMs,    kind: 'arc_draw',     applied: false });
+
+    // Focal-map featured-media moment. Mirror the live trigger calc:
+    // focal_trigger_ms - start_ms when both are present, else
+    // voiceover_ms (end-of-narration), else 35% of segment duration.
+    const fm = seg?.featured_video || seg?.video?.focal || seg?.video_focal || null;
+    const mediaType = seg?.media_type || 'youtube';
+    const mapCfg = mediaType === 'focal_map' ? (fm?.map_config || seg?.map_config) : null;
+    if (mapCfg && mapCfg.center && mapCfg.center.lat != null && mapCfg.center.lng != null) {
+      let triggerMs = null;
+      if (Number.isFinite(seg.focal_trigger_ms) && Number.isFinite(seg.start_ms)) {
+        triggerMs = Math.max(0, seg.focal_trigger_ms - seg.start_ms);
+      } else if (Number.isFinite(seg.voiceover_ms) && seg.voiceover_ms > 0) {
+        triggerMs = seg.voiceover_ms;
+      } else {
+        const triggerPct = (fm?.trigger_pct ?? 35) / 100;
+        triggerMs = Math.round(segDurMs * triggerPct);
+      }
+      const durSec = Number.isFinite(mapCfg.duration_sec)
+        ? mapCfg.duration_sec
+        : Math.max(6, (fm?.end_sec || 10) - (fm?.start_sec || 0));
+      events.push({ msAbs: triggerMs, kind: 'focal_map', mapCfg, durSec, applied: false });
+    }
+
     events.sort((a, b) => a.msAbs - b.msAbs);
     return events;
   }
@@ -51143,6 +51191,8 @@ body.ticker-active .gTickerLabel {
     }
   }
 
+  let _scrubSavedGlobeActive = null;
+
   window.__beginBriefingScrub = function (segmentIdx) {
     if (_scrubMode) throw new Error('already scrubbing');
     if (!window.__briefingCapture) throw new Error('not in capture mode');
@@ -51153,6 +51203,23 @@ body.ticker-active .gTickerLabel {
     _scrubSeg = episode.segments[segmentIdx];
     segIdx = segmentIdx;
     playing = true;
+
+    // PAUSE the live globe animate() loop. Without this, animate() runs
+    // every RAF (~60fps real wall clock) and:
+    //   1. rebuildGlobeQuat() overwrites any quaternion we write here
+    //      (so our scrub-time camera slerp gets stomped)
+    //   2. ambient drift + small autoplay adjustments fire continuously
+    //      (so the captured frames jitter/shimmer)
+    //   3. arc reveal uniforms (uRevealEnd) are advanced toward 1.0
+    //      every tick of real time (so by the time we capture frame N,
+    //      animate has run several seconds of real time and our reveal
+    //      animation collapses to "fully drawn from frame 0")
+    // Setting __globeActive=false makes animate's early-return guard
+    // skip everything except the RAF reschedule. We then own ALL scene
+    // state ourselves and the captured frames reflect exactly the
+    // scrub-time choreography.
+    _scrubSavedGlobeActive = window.__globeActive;
+    window.__globeActive = false;
 
     // Reset per-segment state.
     _scrubEvents = _scrubBuildEventList(_scrubSeg);
@@ -51206,6 +51273,20 @@ body.ticker-active .gTickerLabel {
       } else if (ev.kind === 'arc_draw') {
         _scrubApplyArcDraw();
         _scrubArcSpawnAt = ev.msAbs;
+      } else if (ev.kind === 'focal_map') {
+        // Fire the 2D map takeover. MapLibre animates camera fly-in
+        // on its own RAF (which we DID pause via __globeActive=false,
+        // but that only stops the THREE.js globe loop — MapLibre has
+        // its own internal animation timer using real wall-clock time).
+        // So the map's zoom-in completes in real time while our scrub
+        // captures move slowly through that period — captured frames
+        // mostly show the post-zoom settled state, which is fine for
+        // featured-media moments.
+        try {
+          if (typeof startFocalMap === 'function') {
+            startFocalMap(ev.mapCfg, ev.durSec);
+          }
+        } catch (e) { console.warn('[scrub] focal_map failed:', e.message); }
       }
       ev.applied = true;
       applied++;
@@ -51224,6 +51305,12 @@ body.ticker-active .gTickerLabel {
   };
 
   window.__endBriefingScrub = function () {
+    // Restore animate() loop so the live page is interactive after
+    // the worker finishes. Saved value snapshot from __beginBriefingScrub.
+    if (_scrubSavedGlobeActive !== null) {
+      window.__globeActive = _scrubSavedGlobeActive;
+      _scrubSavedGlobeActive = null;
+    }
     _scrubMode = false;
     _scrubSeg = null;
     _scrubEvents = [];
