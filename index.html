@@ -22770,6 +22770,20 @@ const settingsToggle     = document.getElementById("settingsToggle");
       window.focusCity            = focusCity;
       window.focusCountry         = focusCountry;
       window._globeResetZoom      = () => { targetZoom = _isMobileView ? 3.6 : 3.0; zoomingOut = true; };
+      // ── Expose for deterministic briefing-segment scrub renderer ───────────
+      // The scrub renderer (window.__beginBriefingScrub +
+      // window.__renderBriefingFrameAt in the briefing IIFE) drives the
+      // camera directly from each segment's seg.script timeline at the
+      // worker's frame pace, bypassing animate()'s real-time easing.
+      // Per-frame it computes (target = computeFocusQuat(lat, lon)),
+      // slerps globeQuat from the snapshot taken at the camera_focus
+      // event time, and sets camera.position.z by lerp.
+      window.__computeFocusQuat   = computeFocusQuat;
+      window.__getGlobeQuat       = () => globeQuat.clone();
+      window.__setGlobeQuat       = (q) => globeQuat.copy(q);
+      window.__getCameraZ         = () => window.__camera ? window.__camera.position.z : 0;
+      window.__setCameraZ         = (z) => { if (window.__camera) window.__camera.position.z = z; };
+      window.__getBriefingWideZ   = () => _isMobileView ? 4.2 : 3.4;
 
       // Unified opener used by the polygon hit-test layer. Matches a
       // country by lowercase name against the init-time countries[]
@@ -50948,77 +50962,178 @@ body.ticker-active .gTickerLabel {
     return true;
   }
 
-  // ── Deterministic briefing-segment scrub mode ────────────────────
-  // Mirrors the pattern that makes __renderClipFrame produce silk-
-  // smooth carousel arc MP4s: pause real-time, drive a manual clock,
-  // call rend.render() + toDataURL() per frame at the worker's pace.
+  // ── Deterministic briefing-segment scrub mode (script-driven) ───
   //
-  // The briefing's choreography is data-driven by startGlobeTimers,
-  // which schedules everything via setTimeout. We hijack setTimeout +
-  // setInterval while scrubbing — events go into a sorted queue keyed
-  // by their scheduled fire-time. Each frame request fires all queued
-  // events with fire-time ≤ tMs, then renders the globe once and
-  // returns the canvas as base64 JPEG. The DOM chrome (title, flags,
-  // captions) is hidden by briefing-capture-mode CSS — we only need
-  // the globe canvas to be correct per frame.
+  // V2 design (Nov 2026): drive the scene state DIRECTLY from
+  // seg.script's event timeline instead of intercepting setTimeouts.
   //
-  // Audio is muted + paused (we set audio.currentTime per frame so any
-  // code reading it sees the scrub time, but audio doesn't actually
-  // play). The narration MP3 + music bed are muxed into the final MP4
-  // server-side by the worker after all frames are captured.
+  // Why: the previous timer-interception approach was structurally
+  // fragile — multiple unrelated code paths (audio.ended fallback,
+  // retry-after-error silent fallback, segTimer at end of estDur)
+  // also called setTimeout and their events leaked into the scrub
+  // queue, advancing to the wrong segment mid-capture. Patching each
+  // one was whack-a-mole.
+  //
+  // seg.script is already the briefing generator's deterministic
+  // event timeline. Each entry is either { type:'text', ms:N } (a
+  // narration line of N ms) or { type:'event', kind:'camera_focus' |
+  // 'arc_draw' | 'data_panels' } (a side-effect fired right at the
+  // cumulative ms position of that script index). Walking it builds
+  // a flat event list with absolute ms. We then apply events in
+  // order as the worker's scrub clock advances.
+  //
+  // Camera animation: snapshot globeQuat + camera.z at scrub start.
+  // At camera_focus event, snapshot AGAIN and compute the target
+  // quat from primary_city/country lat-lon. Each frame, slerp from
+  // the post-event snapshot toward the target over a 1.5s window.
+  // Identical math to the arc-clip renderer's per-frame state
+  // assignments — same proven pattern.
+  //
+  // Arcs: at arc_draw event, call drawSegmentArcs (which is the
+  // briefing's own arc-spawn function). Record spawn time. Each
+  // frame, set each arc's uVisibleEnd / uOpacity uniforms based on
+  // (tMs - spawnedAtMs).
+  //
+  // setTimeout/setInterval are NOT intercepted. Anything else the
+  // page schedules just runs in real time and is irrelevant to our
+  // deterministic capture.
 
   let _scrubMode = false;
-  let _scrubQueue = [];                // [{ fireAt, fn, _id }]
-  let _scrubClock = 0;
-  let _scrubNextId = 0;
-  let _scrubSavedFns = null;           // { setTimeout, clearTimeout, setInterval, clearInterval }
+  let _scrubSeg = null;
+  let _scrubEvents = [];        // [{ msAbs, kind, payload, applied }]
+  let _scrubArcSpawnAt = null;  // ms when arc_draw fired (or null)
+  // Camera animation snapshots — captured at scrub init AND right
+  // before each transition so slerp interpolates from where the
+  // camera actually is at that moment.
+  let _scrubCamInitialQuat   = null;
+  let _scrubCamInitialZ      = 0;
+  let _scrubCamTransitionAtMs = -1; // ms when the current transition began
+  let _scrubCamTargetQuat    = null;
+  let _scrubCamTargetZ       = 0;
+  const SCRUB_CAM_TRANSITION_MS  = 1500;   // matches the live briefing's camera ease
+  const SCRUB_ARC_REVEAL_MS      = 1000;   // matches BRIEFING_ARC_REVEAL_SECS
 
-  function _scrubInstallTimerHooks() {
-    _scrubSavedFns = {
-      setTimeout:    window.setTimeout,
-      clearTimeout:  window.clearTimeout,
-      setInterval:   window.setInterval,
-      clearInterval: window.clearInterval,
-    };
-    window.setTimeout = function (fn, ms, ...args) {
-      if (!_scrubMode) return _scrubSavedFns.setTimeout.call(window, fn, ms, ...args);
-      const id = ++_scrubNextId;
-      _scrubQueue.push({ fireAt: _scrubClock + (Number(ms) || 0), fn: () => fn(...args), _id: id });
-      return id;
-    };
-    window.clearTimeout = function (id) {
-      if (!_scrubMode) return _scrubSavedFns.clearTimeout.call(window, id);
-      const i = _scrubQueue.findIndex(e => e._id === id);
-      if (i >= 0) _scrubQueue.splice(i, 1);
-    };
-    window.setInterval = function (fn, ms, ...args) {
-      if (!_scrubMode) return _scrubSavedFns.setInterval.call(window, fn, ms, ...args);
-      const id = ++_scrubNextId;
-      const period = Math.max(16, Number(ms) || 16);
-      const reschedule = () => {
-        _scrubQueue.push({
-          fireAt: _scrubClock + period,
-          fn: () => { try { fn(...args); } catch (_) {} reschedule(); },
-          _id: id,
-        });
-      };
-      reschedule();
-      return id;
-    };
-    window.clearInterval = function (id) {
-      if (!_scrubMode) return _scrubSavedFns.clearInterval.call(window, id);
-      const i = _scrubQueue.findIndex(e => e._id === id);
-      if (i >= 0) _scrubQueue.splice(i, 1);
-    };
+  // Map a segment's seg.script + primary location into a flat list of
+  // absolute-ms events we can apply in order. Returns null if the
+  // segment has no script (caller should fall back to a no-op).
+  function _scrubBuildEventList(seg) {
+    if (!Array.isArray(seg?.script) || !seg.script.length) return [];
+    const events = [];
+    let t = 0;
+    let cameraDone = false;
+    let arcDone    = false;
+    for (const line of seg.script) {
+      if (line && line.type === 'event') {
+        if (line.kind === 'camera_focus' && !cameraDone) {
+          events.push({ msAbs: t, kind: 'camera_focus', applied: false });
+          cameraDone = true;
+        } else if (line.kind === 'arc_draw' && !arcDone) {
+          events.push({ msAbs: t, kind: 'arc_draw', applied: false });
+          arcDone = true;
+        }
+        // data_panels event intentionally skipped — we hide the data
+        // panel DOM in briefing-capture-mode anyway.
+      }
+      t += (Number(line?.ms) || Number(line?.est_ms) || 0);
+    }
+    events.sort((a, b) => a.msAbs - b.msAbs);
+    return events;
   }
 
-  function _scrubRestoreTimerHooks() {
-    if (!_scrubSavedFns) return;
-    window.setTimeout    = _scrubSavedFns.setTimeout;
-    window.clearTimeout  = _scrubSavedFns.clearTimeout;
-    window.setInterval   = _scrubSavedFns.setInterval;
-    window.clearInterval = _scrubSavedFns.clearInterval;
-    _scrubSavedFns = null;
+  // Resolve the camera's lat/lon target from a segment's primary
+  // location fields. Priority matches the briefing's own startGlobeTimers
+  // (primary_city > primary_country > globe_focus).
+  function _scrubResolvePrimaryLatLon(seg) {
+    if (seg.primary_city) {
+      const c = (window.__globeCities || []).find(c => c.name === seg.primary_city);
+      if (c) return { lat: c.lat, lon: c.lon };
+    }
+    if (seg.primary_country) {
+      const c = (window.__globeCountries || []).find(c => c.name === seg.primary_country);
+      if (c) return { lat: c.lat, lon: c.lon ?? c.lng ?? 0 };
+    }
+    if (seg.globe_focus && seg.globe_focus.lat != null) {
+      return { lat: Number(seg.globe_focus.lat), lon: Number(seg.globe_focus.lng ?? seg.globe_focus.lon ?? 0) };
+    }
+    return null;
+  }
+
+  function _scrubApplyCameraFocus() {
+    if (typeof window.__computeFocusQuat !== 'function') return;
+    const ll = _scrubResolvePrimaryLatLon(_scrubSeg);
+    if (!ll) return;
+    // Snapshot CURRENT pose as the starting point of this transition.
+    if (typeof window.__getGlobeQuat === 'function') {
+      _scrubCamInitialQuat = window.__getGlobeQuat();
+    }
+    _scrubCamInitialZ = (typeof window.__getCameraZ === 'function') ? window.__getCameraZ() : 0;
+    _scrubCamTargetQuat = window.__computeFocusQuat(ll.lat, ll.lon);
+    _scrubCamTargetZ = (typeof window.__getBriefingWideZ === 'function') ? window.__getBriefingWideZ() : 3.4;
+    // The transition starts at the event's ms (we re-fill this from
+    // the caller); recorded below.
+  }
+
+  function _scrubApplyArcDraw() {
+    // drawSegmentArcs is the briefing's own arc-spawn function — it
+    // walks seg.flow_arcs + seg.secondary_flow_arcs, builds the WebGL
+    // tubes, adds halos + flag-chip labels, and schedules its own
+    // city-pulse drops via setTimeout. Those internal setTimeouts run
+    // in real wall-clock time (we don't intercept), which means halos
+    // and pulses appear ~immediately on the next render — close
+    // enough to "all together" for the captured frame.
+    if (typeof drawSegmentArcs === 'function') {
+      try { drawSegmentArcs(_scrubSeg); } catch (e) { console.warn('[scrub] drawSegmentArcs failed:', e.message); }
+    }
+  }
+
+  function _scrubAdvanceCamera(tMs) {
+    if (_scrubCamTransitionAtMs < 0 || !_scrubCamTargetQuat) return;
+    const elapsed = tMs - _scrubCamTransitionAtMs;
+    const t01 = Math.max(0, Math.min(1, elapsed / SCRUB_CAM_TRANSITION_MS));
+    // easeInOutCubic — matches the arc-clip renderer's easing curve
+    const eased = t01 < 0.5 ? 4 * t01 * t01 * t01 : 1 - Math.pow(-2 * t01 + 2, 3) / 2;
+    // Slerp globe rotation
+    if (typeof window.__setGlobeQuat === 'function' && _scrubCamInitialQuat) {
+      const q = _scrubCamInitialQuat.clone();
+      q.slerp(_scrubCamTargetQuat, eased);
+      window.__setGlobeQuat(q);
+    }
+    // Lerp camera Z
+    if (typeof window.__setCameraZ === 'function') {
+      const z = _scrubCamInitialZ + (_scrubCamTargetZ - _scrubCamInitialZ) * eased;
+      window.__setCameraZ(z);
+    }
+  }
+
+  function _scrubAdvanceArcs(tMs) {
+    if (_scrubArcSpawnAt == null) return;
+    if (!Array.isArray(arcObjects)) return;
+    const elapsedMs = tMs - _scrubArcSpawnAt;
+    for (const arc of arcObjects) {
+      if (!arc.tubeMat?.uniforms) continue;
+      const localElapsed = elapsedMs - ((arc.drawInDelay || 0) * 1000);
+      const durMs = (arc.drawInDuration || 1.0) * 1000;
+      let revealEnd, opacity;
+      if (localElapsed <= 0) {
+        revealEnd = 0.001;
+        opacity = 0;
+      } else if (localElapsed >= durMs) {
+        revealEnd = 1;
+        opacity = arc.baseOpacity || 1;
+      } else {
+        const rawT = localElapsed / durMs;
+        const eIn  = 1 - Math.pow(1 - rawT, 3);
+        revealEnd = Math.max(0.001, eIn);
+        opacity = (arc.baseOpacity || 1) * Math.min(1, rawT * 4);
+      }
+      arc.tubeMat.uniforms.uVisibleStart.value = 0;
+      arc.tubeMat.uniforms.uVisibleEnd.value   = revealEnd;
+      arc.tubeMat.uniforms.uOpacity.value      = opacity;
+      if (arc.orb && arc.orb.material) {
+        arc.orb.material.opacity = opacity;
+        arc.orb.visible = revealEnd > 0.001;
+      }
+    }
   }
 
   window.__beginBriefingScrub = function (segmentIdx) {
@@ -51028,29 +51143,26 @@ body.ticker-active .gTickerLabel {
       throw new Error(`no segment ${segmentIdx}`);
     }
     _scrubMode = true;
-    _scrubQueue = [];
-    _scrubClock = 0;
-    _scrubNextId = 0;
-    _scrubInstallTimerHooks();
+    _scrubSeg = episode.segments[segmentIdx];
+    segIdx = segmentIdx;
+    playing = true;
 
-    // Mute the current audio so its real-time playback can't influence
-    // the choreography we're about to schedule into the scrub queue.
-    if (audio) {
-      try { audio.muted = true; audio.pause(); } catch (_) {}
-    }
-    // goToSegment handles DOM setup: title chip, country flag chips,
-    // intro/outro overlay, arcMesh clears, music routing, etc. Its
-    // INTERNAL choreography schedule (camera focus, arc draws, halos,
-    // pulses) is gated on audio's canplaythrough event, which never
-    // fires in scrub mode because audio is muted/paused. So those
-    // events would silently never schedule.
-    try { goToSegment(segmentIdx); } catch (e) { console.warn('[scrub] goToSegment failed:', e.message); }
+    // Reset per-segment state.
+    _scrubEvents = _scrubBuildEventList(_scrubSeg);
+    _scrubArcSpawnAt = null;
+    _scrubCamTransitionAtMs = -1;
+    _scrubCamTargetQuat = null;
+    _scrubCamInitialQuat = (typeof window.__getGlobeQuat === 'function')
+      ? window.__getGlobeQuat() : null;
+    _scrubCamInitialZ = (typeof window.__getCameraZ === 'function')
+      ? window.__getCameraZ() : 0;
 
-    // Now kill the audio element so its canplaythrough / error / ended
-    // listeners can't fire LATER and schedule duplicate (or shifted)
-    // choreography events that would corrupt the scrub timeline.
+    // Mute + clear the audio element so the briefing's audio-load path
+    // can't fire stale ended/error handlers that would call goToSegment.
     if (audio) {
       try {
+        audio.muted = true;
+        audio.pause();
         audio.onerror = null;
         audio.onended = null;
         audio.src = '';
@@ -51058,57 +51170,60 @@ body.ticker-active .gTickerLabel {
       } catch (_) {}
     }
 
-    // Manually invoke startGlobeTimers — the source of every visible
-    // choreography event for a story segment (camera focus, arc reveal,
-    // halo appearance, pulse rings, tour-node sequencing). Without this
-    // explicit call the scrub queue only contains the 5-6 setTimeouts
-    // that goToSegment scheduled directly (segment-transition timers,
-    // music routing) — none of the actual visual choreography. With
-    // this call, every choreography event lands in the scrub queue at
-    // scrubClock=0 + its relative delay, so __renderBriefingFrameAt
-    // can drain them in order as the worker's frame loop advances time.
-    playing = true; // some internal setTimeouts guard on this
-    const seg = episode.segments[segmentIdx];
-    const dur = getSegmentDuration(segmentIdx);
-    try { startGlobeTimers(segmentIdx, seg, dur); }
-    catch (e) { console.warn('[scrub] startGlobeTimers failed:', e.message); }
+    // DOM setup: title chip, country flag chips, intro/outro overlay,
+    // arc-mesh clear, music routing, etc. All synchronous side-effects
+    // we want; we just don't want goToSegment's audio-canplaythrough
+    // path (which would auto-fire startGlobeTimers and schedule events
+    // via real-time setTimeout). The lock guard at the top of
+    // goToSegment also blocks any later auto-advance to seg N+1.
+    try { goToSegment(segmentIdx); } catch (e) { console.warn('[scrub] goToSegment failed:', e.message); }
+    if (audio) {
+      try { audio.src = ''; audio.removeAttribute('src'); } catch (_) {}
+    }
 
-    return { ok: true, queued: _scrubQueue.length };
+    return { ok: true, events: _scrubEvents.length };
   };
 
   window.__renderBriefingFrameAt = function (tMs) {
     if (!_scrubMode) throw new Error('not in scrub mode');
     const target = Math.max(0, Number(tMs) || 0);
-    // Drain everything up to target time. Sort first so we fire in
-    // chronological order (events can schedule more events).
-    _scrubQueue.sort((a, b) => a.fireAt - b.fireAt);
-    let drained = 0;
-    while (_scrubQueue.length && _scrubQueue[0].fireAt <= target) {
-      const ev = _scrubQueue.shift();
-      try { ev.fn(); } catch (_) {}
-      drained++;
-      _scrubQueue.sort((a, b) => a.fireAt - b.fireAt);
+
+    // Apply pending events in order.
+    let applied = 0;
+    for (const ev of _scrubEvents) {
+      if (ev.applied) continue;
+      if (ev.msAbs > target) break;
+      if (ev.kind === 'camera_focus') {
+        _scrubApplyCameraFocus();
+        _scrubCamTransitionAtMs = ev.msAbs;
+      } else if (ev.kind === 'arc_draw') {
+        _scrubApplyArcDraw();
+        _scrubArcSpawnAt = ev.msAbs;
+      }
+      ev.applied = true;
+      applied++;
     }
-    _scrubClock = target;
-    // Surface our clock to any code that reads audio.currentTime.
-    if (audio) { try { audio.currentTime = target / 1000; } catch (_) {} }
-    // Synchronous globe render — sets the WebGL framebuffer to the
-    // exact state we want. The worker then calls Page.captureScreenshot
-    // to grab the WHOLE page (canvas + DOM) at this frozen moment, so
-    // the title chip, country flag chips, captions, and any other
-    // briefing-active DOM chrome land in the output too. Returning
-    // {drained, queueLen} lets the worker log progress without us
-    // serializing a megabyte of JPEG bytes through CDP every frame.
+
+    // Per-frame continuous state.
+    _scrubAdvanceCamera(target);
+    _scrubAdvanceArcs(target);
+
+    // Synchronous globe render — worker calls Page.captureScreenshot
+    // next, which reads the framebuffer + the surrounding DOM.
     if (window.__renderer && window.scene && window.__camera) {
       window.__renderer.render(window.scene, window.__camera);
     }
-    return { ok: true, drained, queueLen: _scrubQueue.length, clock: _scrubClock };
+    return { ok: true, applied, eventsLeft: _scrubEvents.filter(e => !e.applied).length };
   };
 
   window.__endBriefingScrub = function () {
-    _scrubRestoreTimerHooks();
     _scrubMode = false;
-    _scrubQueue = [];
+    _scrubSeg = null;
+    _scrubEvents = [];
+    _scrubArcSpawnAt = null;
+    _scrubCamInitialQuat = null;
+    _scrubCamTargetQuat = null;
+    _scrubCamTransitionAtMs = -1;
     return { ok: true };
   };
 

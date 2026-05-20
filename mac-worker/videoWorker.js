@@ -792,7 +792,7 @@ async function renderBriefingSegment(job) {
     // stops at the silent-fallback's estDur instead of the full segment.
     //
     // _bust busts CDN cache so a stale earth00.com HTML doesn't ship
-    // an older version of the page without window.__captureBriefingClip.
+    // an older version of the page without the scrub API.
     const bust = Date.now().toString(36);
     const url = `${APP_HOST}/?episode=${job.episode_id}&captureSeg=${job.segment_idx}&captureToken=${encodeURIComponent(TOKEN)}&_bust=${bust}`;
     log(`  ↦ ${url}`);
