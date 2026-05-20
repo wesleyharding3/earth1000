@@ -22780,7 +22780,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
       // event time, and sets camera.position.z by lerp.
       window.__computeFocusQuat   = computeFocusQuat;
       window.__getGlobeQuat       = () => globeQuat.clone();
-      window.__setGlobeQuat       = (q) => globeQuat.copy(q);
+      // CRITICAL: ALSO apply to scene.quaternion. animate() normally
+      // copies globeQuat → scene.quaternion every frame (line ~23707),
+      // but the briefing scrub renderer pauses animate() (sets
+      // __globeActive=false) so the in-memory globeQuat write would
+      // never reach the scene transform without this explicit copy.
+      // Same trick the arc-clip renderer's __setGlobePose uses.
+      window.__setGlobeQuat       = (q) => { globeQuat.copy(q); scene.quaternion.copy(globeQuat); };
       window.__getCameraZ         = () => window.__camera ? window.__camera.position.z : 0;
       window.__setCameraZ         = (z) => { if (window.__camera) window.__camera.position.z = z; };
       window.__getBriefingWideZ   = () => _isMobileView ? 4.2 : 3.4;
