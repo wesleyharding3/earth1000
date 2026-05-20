@@ -49506,6 +49506,25 @@ body.ticker-active .gTickerLabel {
     // Auto fade-out at end of duration. The cleanup itself only runs
     // after the opacity transition, so the map "lingers" visually a
     // beat past durationSec — matches how heatmap fades.
+    //
+    // Globe zoom-back-out is scheduled SLIGHTLY EARLIER than the map
+    // cleanup so the 3D globe begins easing back to its wide briefing
+    // view at the same moment the 2D map starts fading. Without this
+    // the globe sat at zoom 1.65 (the Google-Earth-style tight zoom
+    // we set at the top of startFocalMap) until the NEXT segment's
+    // startGlobeTimers fired its own startFocus — leaving the user
+    // staring at a too-tight close-up of one country for the rest of
+    // the focal segment's narration.
+    //
+    // The startFocus call uses no opts.zoom override, so the briefing
+    // default (3.4 desktop / 4.2 mobile) kicks in via startFocus's
+    // own briefingActive branch.
+    const _zoomBackLat = Number(config.center.lat);
+    const _zoomBackLon = Number(config.center.lng);
+    const zoomOutLeadMs = 400;
+    setTimeout(() => {
+      try { window.startFocus?.(_zoomBackLat, _zoomBackLon); } catch (_) {}
+    }, Math.max(0, durMs - zoomOutLeadMs));
     _focalMapEndTimer = setTimeout(() => {
       _focalMapCleanup();
     }, durMs);

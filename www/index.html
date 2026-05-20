@@ -54460,6 +54460,21 @@ body.ticker-active .gTickerLabel {
       });
     }
 
+    // Globe zoom-back-out: schedule a startFocus call SLIGHTLY EARLIER
+    // than the map cleanup so the 3D globe begins easing back to its
+    // wide briefing view at the same moment the 2D map starts fading.
+    // Without this the globe sat at zoom 1.85 (the Google-Earth-style
+    // tight zoom we set at the top) until the NEXT segment's
+    // startGlobeTimers fired its own startFocus — leaving the user
+    // staring at a too-tight close-up for the rest of the segment's
+    // narration. startFocus with no opts.zoom uses the briefing
+    // default (4.2 mobile / 3.4 desktop) via its briefingActive branch.
+    const _zoomBackLat = Number(config.center.lat);
+    const _zoomBackLon = Number(config.center.lng);
+    const zoomOutLeadMs = 400;
+    setTimeout(() => {
+      try { window.startFocus?.(_zoomBackLat, _zoomBackLon); } catch (_) {}
+    }, Math.max(0, durMs - zoomOutLeadMs));
     _focalMapEndTimer = setTimeout(() => {
       _focalMapCleanup();
     }, durMs);
