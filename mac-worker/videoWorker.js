@@ -219,6 +219,63 @@ async function downloadShareMp4(threadId, slotFile) {
   return buf;
 }
 
+// Locally stitch the four carousel cards into a single 9:16 1080×1920
+// reel.mp4 — same role as the server's /share/thread/:id/reel.mp4
+// endpoint, but done on the Mac so we sidestep Render's 60s gateway
+// timeout. Each card is scaled-to-fit + black-padded to a uniform
+// 1080×1920 canvas (portrait/pie/articles are 4:5 1080×1350 natively;
+// arc is already 9:16 1080×1920), then concat-filtered with audio.
+// Result is a TikTok-ready uniform-aspect reel even though the input
+// cards have mixed aspects.
+async function stitchCarouselToReelLocally(threadId, dir) {
+  const { spawn } = require('child_process');
+  const inputs = ['portrait.mp4', 'arc.mp4', 'pie.mp4', 'articles.mp4'];
+  for (const f of inputs) {
+    const p = path.join(dir, f);
+    const stat = await fs.promises.stat(p).catch(() => null);
+    if (!stat || stat.size < 1000) {
+      throw new Error(`missing input ${f} for local reel stitch`);
+    }
+  }
+  const out = path.join(dir, 'reel.mp4');
+  // Each [vN] is scaled to fit inside 1080×1920 keeping aspect, then
+  // padded with black to the exact 1080×1920 canvas (centered), then
+  // SAR forced to 1 so concat doesn't complain about mismatched pixel
+  // ratios. Audio is straight passthrough (each card has its own AAC
+  // track). The concat filter ties video+audio for each of the four
+  // segments and outputs one [outv][outa] pair.
+  const filter = inputs.map((_, i) => (
+    `[${i}:v]scale=1080:1920:force_original_aspect_ratio=decrease,` +
+    `pad=1080:1920:(ow-iw)/2:(oh-ih)/2:color=black,setsar=1,fps=30[v${i}]`
+  )).join(';') + ';' +
+    inputs.map((_, i) => `[v${i}][${i}:a]`).join('') +
+    `concat=n=${inputs.length}:v=1:a=1[outv][outa]`;
+  const args = [
+    '-loglevel', 'error',
+    '-y',
+    ...inputs.flatMap(f => ['-i', path.join(dir, f)]),
+    '-filter_complex', filter,
+    '-map', '[outv]',
+    '-map', '[outa]',
+    '-c:v', 'libx264',
+    '-pix_fmt', 'yuv420p',
+    '-preset', 'veryfast',
+    '-c:a', 'aac',
+    '-b:a', '128k',
+    '-movflags', '+faststart',
+    out,
+  ];
+  await new Promise((resolve, reject) => {
+    const ff = spawn('ffmpeg', args);
+    let stderr = '';
+    ff.stderr.on('data', d => { stderr += d.toString(); });
+    ff.on('close', code => code === 0 ? resolve() : reject(new Error(`ffmpeg(reel-stitch) exit ${code}: ${stderr.slice(0, 500)}`)));
+    ff.on('error', reject);
+  });
+  const stat = await fs.promises.stat(out);
+  return stat.size;
+}
+
 // Walk the dump-targets list and download any slot that the DB has but
 // local disk doesn't. Idempotent per slot — skip-if-exists keeps the
 // scan cheap on subsequent polls.
@@ -255,26 +312,41 @@ async function syncDumpsFromServer() {
         warn(`  ↳ ${slot.file} thread=${t.thread_id}: ${err.message}`);
       }
     }
-    // Second pass: if this is a carousel post (or just one that already
-    // has portrait+arc+pie+articles in DB) but no reel.mp4 yet, trigger
-    // a one-time server-side render by hitting /share/thread/:id/reel.mp4.
-    // The endpoint stitches all 4 cards at aspect=reel (9:16 1080×1920)
-    // and caches the result back into social_post_queue.reel_mp4 — so we
-    // pay the render cost exactly once per thread. Posting the four
-    // carousel MP4s separately to TikTok looks bad because each card has
-    // a different intrinsic aspect; the stitched reel is uniform 9:16.
+    // Second pass: if we have all four carousel cards locally but no
+    // reel.mp4 yet, ffmpeg-stitch them into a uniform 9:16 reel right
+    // here on the Mac. We tried hitting /share/thread/:id/reel.mp4 to
+    // let the server do this, but the cold render exceeds Render's
+    // 60s gateway timeout (4 cards × ~15s + concat ≈ 70-80s). Doing
+    // it locally is faster (no network), uses the user's hardware,
+    // and never times out. If we DO see slots.reel=true (reel-mode
+    // post that picker cron pre-warmed), we still prefer to pull from
+    // server since that copy is exactly what was published.
     const reelDest = path.join(dir, 'reel.mp4');
     const reelStat = await fs.promises.stat(reelDest).catch(() => null);
-    const haveAllCarouselCards = t.slots.portrait && t.slots.arc && t.slots.pie && t.slots.articles;
-    if ((!reelStat || reelStat.size < 1000) && (t.slots.reel || haveAllCarouselCards)) {
-      try {
-        const buf = await downloadShareMp4(t.thread_id, 'reel.mp4');
-        await fs.promises.writeFile(reelDest, buf);
-        pulled++;
-        if (!t.slots.reel) reelsTriggered++;
-        log(`  ↳ ${t.slots.reel ? 'pulled' : 'rendered+pulled'} reel.mp4 for thread=${t.thread_id} "${(t.title || '').slice(0, 40)}" (${buf.length} bytes)`);
-      } catch (err) {
-        warn(`  ↳ reel.mp4 thread=${t.thread_id}: ${err.message}`);
+    const haveAllCarouselCards =
+      (await fs.promises.stat(path.join(dir, 'portrait.mp4')).catch(() => null))?.size > 1000 &&
+      (await fs.promises.stat(path.join(dir, 'arc.mp4')).catch(() => null))?.size > 1000 &&
+      (await fs.promises.stat(path.join(dir, 'pie.mp4')).catch(() => null))?.size > 1000 &&
+      (await fs.promises.stat(path.join(dir, 'articles.mp4')).catch(() => null))?.size > 1000;
+    if (!reelStat || reelStat.size < 1000) {
+      if (t.slots.reel) {
+        try {
+          const buf = await downloadShareMp4(t.thread_id, 'reel.mp4');
+          await fs.promises.writeFile(reelDest, buf);
+          pulled++;
+          log(`  ↳ pulled reel.mp4 (server cache) for thread=${t.thread_id} (${buf.length} bytes)`);
+        } catch (err) {
+          warn(`  ↳ reel.mp4 thread=${t.thread_id}: ${err.message}`);
+        }
+      } else if (haveAllCarouselCards) {
+        try {
+          const t0 = Date.now();
+          const bytes = await stitchCarouselToReelLocally(t.thread_id, dir);
+          reelsTriggered++;
+          log(`  ↳ stitched reel.mp4 locally for thread=${t.thread_id} "${(t.title || '').slice(0, 40)}" (${bytes} bytes, ${((Date.now() - t0) / 1000).toFixed(1)}s)`);
+        } catch (err) {
+          warn(`  ↳ reel-stitch thread=${t.thread_id}: ${err.message}`);
+        }
       }
     }
   }
