@@ -44302,6 +44302,86 @@ const settingsToggle     = document.getElementById("settingsToggle");
    Article cards always sit on the RIGHT during a briefing, with the
    source pie always on the LEFT. Was left-anchored before; flipped
    so the layout reads as [pie | articles] consistently. ── */
+/* ── Focal map overlay (featured geographical moment) ───────────────────
+   MapLibre map covers the briefing surface during a focal_map moment.
+   Sits above the globe + dots/labels but below the controls so playback
+   is always reachable. Fades in over 600ms; the inner pane is where the
+   MapLibre instance mounts. */
+.bFocalMap {
+  position: absolute;
+  top: 8%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(72vw, 1100px);
+  height: min(64vh, 720px);
+  border-radius: 12px;
+  background: #0a0e17;
+  box-shadow: 0 24px 64px rgba(0,0,0,0.55), 0 0 0 1px rgba(96,200,255,0.18);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 600ms ease;
+  z-index: 12;
+  overflow: hidden;
+}
+.bFocalMap.visible { opacity: 1; }
+.bFocalMapInner {
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+}
+.bFocalMapLabel {
+  position: absolute;
+  top: 16px;
+  left: 18px;
+  padding: 8px 14px;
+  background: rgba(10,14,23,0.78);
+  border: 1px solid rgba(96,200,255,0.35);
+  border-radius: 6px;
+  color: #e2e8f0;
+  font-family: 'Inter', system-ui, sans-serif;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  backdrop-filter: blur(8px);
+  pointer-events: none;
+  z-index: 2;
+}
+.bFocalMap .maplibregl-ctrl-bottom-left,
+.bFocalMap .maplibregl-ctrl-bottom-right,
+.bFocalMap .maplibregl-ctrl-top-left,
+.bFocalMap .maplibregl-ctrl-top-right { display: none; }
+.bFocalMap-highlight-marker {
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: #60c8ff;
+  border: 2px solid #fff;
+  box-shadow: 0 0 0 4px rgba(96,200,255,0.25), 0 2px 6px rgba(0,0,0,0.45);
+}
+.bFocalMap-highlight-marker.frontline { background: #ef4444; box-shadow: 0 0 0 4px rgba(239,68,68,0.28), 0 2px 6px rgba(0,0,0,0.45); }
+.bFocalMap-highlight-marker.flashpoint { background: #fbbf24; box-shadow: 0 0 0 4px rgba(251,191,36,0.30), 0 2px 6px rgba(0,0,0,0.45); }
+.bFocalMap-highlight-label {
+  position: absolute;
+  transform: translate(10px, -50%);
+  padding: 3px 8px;
+  background: rgba(10,14,23,0.88);
+  border: 1px solid rgba(255,255,255,0.18);
+  border-radius: 4px;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  pointer-events: none;
+}
+@media (max-width: 720px) {
+  .bFocalMap {
+    top: 12%;
+    width: 92vw;
+    height: 48vh;
+  }
+  .bFocalMapLabel { font-size: 11px; padding: 6px 10px; top: 10px; left: 10px; }
+}
+
 .bArticlePanel {
   position: absolute;
   /* Bottom-anchored (was top: 50%). Mirror of .bSegmentSourcePie — sits
@@ -45525,6 +45605,13 @@ body.ticker-active .gTickerLabel {
   <div class="bArcLabel" id="bArcLabel"></div>
   <div class="bSubtitle" id="bSubtitle"></div>
   <div class="bVideoWrap" id="bVideoWrap"></div>
+  <!-- Focal geographical moment — MapLibre map overlay that flies into a
+       region and paints editorial highlights. Mounted lazily on first
+       featured_map fire; visibility controlled by the .visible class. -->
+  <div class="bFocalMap" id="bFocalMap" aria-hidden="true">
+    <div class="bFocalMapInner" id="bFocalMapInner"></div>
+    <div class="bFocalMapLabel" id="bFocalMapLabel"></div>
+  </div>
   <div class="bArticlePanel" id="bArticlePanel"></div>
   <div class="bDataPanels" id="bDataPanels"></div>
   <div class="bCaptions" id="bCaptions"></div>
@@ -47331,19 +47418,26 @@ body.ticker-active .gTickerLabel {
         const hmResolved = mediaType === 'heatmap'
           ? (fm?.heatmap_resolved || seg.heatmap_resolved || null)
           : null;
+        // Focal-map config — same fm-or-top-level resolution as heatmap.
+        const mapCfg = mediaType === 'focal_map'
+          ? (fm?.map_config || seg.map_config || null)
+          : null;
 
         const hasMedia =
           (mediaType === 'youtube' && ytId) ||
           ((mediaType === 'twitter_post' || mediaType === 'twitter_video') && tweetUrl) ||
-          (mediaType === 'heatmap' && (hmQ || (hmResolved && Array.isArray(hmResolved.values) && hmResolved.values.length)));
+          (mediaType === 'heatmap' && (hmQ || (hmResolved && Array.isArray(hmResolved.values) && hmResolved.values.length))) ||
+          (mediaType === 'focal_map' && mapCfg && mapCfg.center && mapCfg.center.lat != null && mapCfg.center.lng != null);
 
-        // Heatmap is a passive overlay — fires whenever segment carries
-        // heatmap data, regardless of fm.enabled (which is a video-takeover
-        // concept). Video/Twitter are takeovers — gated on fm.enabled.
-        // See www/index.html for full rationale.
+        // Heatmap + focal_map are passive overlays — fire whenever segment
+        // carries the relevant data, regardless of fm.enabled (which is a
+        // video-takeover concept). Video/Twitter are takeovers — gated on
+        // fm.enabled. See www/index.html for full rationale.
         const isHeatmap    = mediaType === 'heatmap';
-        const fireTakeover = !isHeatmap && fm?.enabled && hasMedia;
+        const isFocalMap   = mediaType === 'focal_map';
+        const fireTakeover = !isHeatmap && !isFocalMap && fm?.enabled && hasMedia;
         const fireHeatmap  = isHeatmap && hasMedia;
+        const fireFocalMap = isFocalMap && hasMedia;
 
         // Diagnostic — log when a segment carries heatmap data but
         // can't fire (missing media_type tag, missing data, etc).
@@ -47362,7 +47456,7 @@ body.ticker-active .gTickerLabel {
           );
         }
 
-        if (fireTakeover || fireHeatmap) {
+        if (fireTakeover || fireHeatmap || fireFocalMap) {
           const fStart      = fm?.start_sec ?? 0;
           const fEnd        = fm?.end_sec   ?? (fStart + (fm?.duration_sec || 15));
           const triggerPct  = (fm?.trigger_pct ?? 35) / 100;
@@ -47410,6 +47504,11 @@ body.ticker-active .gTickerLabel {
             const fire = () => {
               if (isHeatmap) {
                 startFocalHeatmap(hmQ, hmMode, Math.max(1, fEnd - fStart), hmResolved);
+              } else if (isFocalMap) {
+                const durSec = Number.isFinite(mapCfg.duration_sec)
+                  ? mapCfg.duration_sec
+                  : Math.max(6, fEnd - fStart || 10);
+                startFocalMap(mapCfg, durSec);
               } else {
                 if (!document.getElementById('bVideoCard')) {
                   if (mediaType === 'youtube' && ytId) {
@@ -47438,7 +47537,7 @@ body.ticker-active .gTickerLabel {
             //     www/index.html for rationale).
             // twitter_video stays a takeover (its embedded video has
             // its own soundtrack that would conflict with the narrator).
-            const isPassiveOverlay = isHeatmap || mediaType === 'twitter_post';
+            const isPassiveOverlay = isHeatmap || isFocalMap || mediaType === 'twitter_post';
             if (isPassiveOverlay || !audio) {
               advance();
               return;
@@ -47477,6 +47576,8 @@ body.ticker-active .gTickerLabel {
           }, triggerDelayMs));
         } else if (mediaType === 'heatmap') {
           console.warn(`[briefing/heatmap] seg ${idx} NOT firing — hasMedia=${hasMedia} hmQ="${hmQ}" hmResolved=${!!hmResolved}`);
+        } else if (mediaType === 'focal_map') {
+          console.warn(`[briefing/focal_map] seg ${idx} NOT firing — hasMedia=${hasMedia} mapCfg=${!!mapCfg} center=${mapCfg?.center ? `${mapCfg.center.lat},${mapCfg.center.lng}` : '(none)'}`);
         } else if (mediaType === 'twitter_post' || mediaType === 'twitter_video') {
           // Twitter no-fire diagnostic — see www/index.html for rationale.
           console.warn(`[briefing/twitter] seg ${idx} NOT firing — hasMedia=${hasMedia} tweetUrl="${tweetUrl}" fm.enabled=${fm?.enabled ?? '(no fm)'} mediaType=${mediaType}`);
@@ -48681,6 +48782,266 @@ body.ticker-active .gTickerLabel {
   // import dependency is concentrated in…"). The same /api/heatmap/ask
   // endpoint the live "Map This" panel uses, with server-side cache so
   // repeated plays of the same briefing are free.
+  // Lazy-load MapLibre GL JS — only when a focal_map moment fires.
+  // The library + stylesheet are pulled from unpkg the first time and
+  // cached on window so subsequent moments reuse the same instance.
+  let _focalMapLoadPromise = null;
+  function _ensureMapLibreLoaded() {
+    if (window.maplibregl) return Promise.resolve();
+    if (_focalMapLoadPromise) return _focalMapLoadPromise;
+    _focalMapLoadPromise = new Promise((resolve, reject) => {
+      const cssId = 'maplibre-gl-css';
+      if (!document.getElementById(cssId)) {
+        const link = document.createElement('link');
+        link.id = cssId;
+        link.rel = 'stylesheet';
+        link.href = 'https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css';
+        document.head.appendChild(link);
+      }
+      const script = document.createElement('script');
+      script.src = 'https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js';
+      script.onload = () => resolve();
+      script.onerror = () => reject(new Error('maplibre-gl script failed to load'));
+      document.head.appendChild(script);
+    });
+    return _focalMapLoadPromise;
+  }
+
+  // Map style URLs by style key. Using public demo tiles so no API key
+  // is required for first-cut; we can swap in a paid provider later
+  // without touching player code.
+  const _FOCAL_MAP_STYLES = {
+    dark:      'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json',
+    minimal:   'https://basemaps.cartocdn.com/gl/positron-gl-style/style.json',
+    satellite: {
+      version: 8,
+      sources: {
+        sat: {
+          type: 'raster',
+          tiles: ['https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'],
+          tileSize: 256,
+          attribution: 'Tiles &copy; Esri',
+        },
+      },
+      layers: [{ id: 'sat', type: 'raster', source: 'sat' }],
+    },
+  };
+
+  // Maintain a single MapLibre instance — created lazily, reused across
+  // segments. Resetting style on a fresh fire is cheaper than rebuilding.
+  let _focalMapInst       = null;
+  let _focalMapMarkers    = [];
+  let _focalMapEndTimer   = null;
+  let _focalMapAnimRaf    = null;
+
+  function _focalMapCleanup() {
+    // Tear down markers + layers, but keep the map instance so the next
+    // fire reuses it. Animation is cancelled; the container fades out.
+    if (_focalMapEndTimer) { clearTimeout(_focalMapEndTimer); _focalMapEndTimer = null; }
+    if (_focalMapAnimRaf)  { cancelAnimationFrame(_focalMapAnimRaf); _focalMapAnimRaf = null; }
+    _focalMapMarkers.forEach(m => { try { m.remove(); } catch (_) {} });
+    _focalMapMarkers = [];
+    if (_focalMapInst) {
+      ['focal-arrows', 'focal-arrows-line', 'focal-circles', 'focal-circles-fill', 'focal-circles-line', 'focal-polygons', 'focal-polygons-line']
+        .forEach(layerId => { try { _focalMapInst.removeLayer(layerId); } catch (_) {} });
+      ['focal-arrows-src', 'focal-circles-src', 'focal-polygons-src']
+        .forEach(srcId => { try { _focalMapInst.removeSource(srcId); } catch (_) {} });
+    }
+    const wrap = document.getElementById('bFocalMap');
+    if (wrap) {
+      wrap.classList.remove('visible');
+      wrap.setAttribute('aria-hidden', 'true');
+    }
+  }
+  // Expose so segment teardown (when user skips/closes) can hide the map
+  window.__focalMapCleanup = _focalMapCleanup;
+
+  // Apply a square circle in km using a turf-like polygon approximation
+  // so we don't need turf as a dep. 64-sided ring → looks circular at
+  // typical zoom levels.
+  function _circlePolygonKm(lng, lat, radiusKm, steps = 64) {
+    const coords = [];
+    const earthRadiusKm = 6371;
+    const latRad = lat * Math.PI / 180;
+    for (let i = 0; i <= steps; i++) {
+      const theta = (i / steps) * 2 * Math.PI;
+      // Equirectangular delta — fine for the small radii we'll use (<200km)
+      const dLat = (radiusKm / earthRadiusKm) * (180 / Math.PI) * Math.cos(theta);
+      const dLng = (radiusKm / earthRadiusKm) * (180 / Math.PI) * Math.sin(theta) / Math.cos(latRad);
+      coords.push([lng + dLng, lat + dLat]);
+    }
+    return coords;
+  }
+
+  async function startFocalMap(config, durationSec) {
+    if (!config || !config.center || config.center.lat == null || config.center.lng == null) {
+      console.warn('[briefing/focal_map] no usable map_config — skipping');
+      return;
+    }
+    const wrap  = document.getElementById('bFocalMap');
+    const inner = document.getElementById('bFocalMapInner');
+    const label = document.getElementById('bFocalMapLabel');
+    if (!wrap || !inner) return;
+
+    try {
+      await _ensureMapLibreLoaded();
+    } catch (e) {
+      console.warn(`[briefing/focal_map] MapLibre load failed: ${e.message}`);
+      return;
+    }
+
+    _focalMapCleanup();
+
+    const styleKey   = config.style || 'dark';
+    const style      = _FOCAL_MAP_STYLES[styleKey] || _FOCAL_MAP_STYLES.dark;
+    const center     = [Number(config.center.lng), Number(config.center.lat)];
+    const zoomStart  = Number.isFinite(config.zoom_start) ? Number(config.zoom_start) : 4.5;
+    const zoomEnd    = Number.isFinite(config.zoom_end)   ? Number(config.zoom_end)   : 7.0;
+    const durMs      = Math.max(3000, (durationSec || config.duration_sec || 10) * 1000);
+    const highlights = Array.isArray(config.highlights) ? config.highlights : [];
+
+    // Build or reset the MapLibre instance.
+    if (!_focalMapInst) {
+      _focalMapInst = new window.maplibregl.Map({
+        container: inner,
+        style,
+        center,
+        zoom: zoomStart,
+        attributionControl: false,
+        interactive: false,
+      });
+    } else {
+      _focalMapInst.setStyle(style);
+      _focalMapInst.setCenter(center);
+      _focalMapInst.setZoom(zoomStart);
+    }
+
+    if (label) {
+      const txt = config.label || (config.preset || '').replace(/_/g, ' ');
+      label.textContent = txt;
+      label.style.display = txt ? 'block' : 'none';
+    }
+
+    // Reveal the container — opacity transition handles the fade in.
+    wrap.classList.add('visible');
+    wrap.setAttribute('aria-hidden', 'false');
+
+    // Wait for the style to load before drawing highlights (sources
+    // can't be added before then).
+    const renderHighlights = () => {
+      if (!_focalMapInst) return;
+      const map = _focalMapInst;
+      const arrowFeats   = [];
+      const circleFeats  = [];
+      const polygonFeats = [];
+
+      for (const h of highlights) {
+        if (!h || !h.type) continue;
+        if (h.type === 'marker' && Number.isFinite(h.lat) && Number.isFinite(h.lng)) {
+          const el = document.createElement('div');
+          el.className = 'bFocalMap-highlight-marker' + (h.kind ? ` ${h.kind}` : '');
+          const m = new window.maplibregl.Marker({ element: el })
+            .setLngLat([h.lng, h.lat])
+            .addTo(map);
+          if (h.label) {
+            const lbl = document.createElement('div');
+            lbl.className = 'bFocalMap-highlight-label';
+            lbl.textContent = h.label;
+            el.appendChild(lbl);
+          }
+          _focalMapMarkers.push(m);
+        } else if (h.type === 'circle' && Number.isFinite(h.lat) && Number.isFinite(h.lng) && Number.isFinite(h.radius_km)) {
+          circleFeats.push({
+            type: 'Feature',
+            geometry: { type: 'Polygon', coordinates: [_circlePolygonKm(h.lng, h.lat, h.radius_km)] },
+            properties: { label: h.label || '' },
+          });
+          if (h.label) {
+            const el = document.createElement('div');
+            el.className = 'bFocalMap-highlight-marker';
+            el.style.opacity = '0';
+            const m = new window.maplibregl.Marker({ element: el })
+              .setLngLat([h.lng, h.lat])
+              .addTo(map);
+            const lbl = document.createElement('div');
+            lbl.className = 'bFocalMap-highlight-label';
+            lbl.textContent = h.label;
+            el.appendChild(lbl);
+            _focalMapMarkers.push(m);
+          }
+        } else if (h.type === 'arrow' && Array.isArray(h.from) && Array.isArray(h.to)) {
+          arrowFeats.push({
+            type: 'Feature',
+            geometry: { type: 'LineString', coordinates: [h.from, h.to] },
+            properties: { label: h.label || '' },
+          });
+        } else if (h.type === 'polygon' && Array.isArray(h.coordinates)) {
+          polygonFeats.push({
+            type: 'Feature',
+            geometry: { type: 'Polygon', coordinates: [h.coordinates] },
+            properties: { label: h.label || '', fillColor: h.fillColor || '#ef4444' },
+          });
+        }
+      }
+
+      if (circleFeats.length) {
+        map.addSource('focal-circles-src', { type: 'geojson', data: { type: 'FeatureCollection', features: circleFeats } });
+        map.addLayer({ id: 'focal-circles-fill', type: 'fill', source: 'focal-circles-src',
+          paint: { 'fill-color': '#60c8ff', 'fill-opacity': 0.18 } });
+        map.addLayer({ id: 'focal-circles-line', type: 'line', source: 'focal-circles-src',
+          paint: { 'line-color': '#60c8ff', 'line-width': 2, 'line-opacity': 0.85 } });
+      }
+      if (arrowFeats.length) {
+        map.addSource('focal-arrows-src', { type: 'geojson', data: { type: 'FeatureCollection', features: arrowFeats } });
+        map.addLayer({ id: 'focal-arrows-line', type: 'line', source: 'focal-arrows-src',
+          paint: { 'line-color': '#fbbf24', 'line-width': 3, 'line-opacity': 0.9, 'line-dasharray': [2, 1] } });
+      }
+      if (polygonFeats.length) {
+        map.addSource('focal-polygons-src', { type: 'geojson', data: { type: 'FeatureCollection', features: polygonFeats } });
+        map.addLayer({ id: 'focal-polygons', type: 'fill', source: 'focal-polygons-src',
+          paint: { 'fill-color': ['get', 'fillColor'], 'fill-opacity': 0.25 } });
+        map.addLayer({ id: 'focal-polygons-line', type: 'line', source: 'focal-polygons-src',
+          paint: { 'line-color': ['get', 'fillColor'], 'line-width': 2, 'line-opacity': 0.9 } });
+      }
+
+      // Animate camera: zoom_start → zoom_end over duration_sec while
+      // narrator continues. Linear interpolation, capped to durMs - 800ms
+      // so the final zoom holds briefly before fade-out.
+      const animMs = Math.max(2000, durMs - 800);
+      const t0 = performance.now();
+      const tick = (now) => {
+        if (!_focalMapInst) return;
+        const t = Math.min(1, (now - t0) / animMs);
+        const eased = t * t * (3 - 2 * t); // smoothstep
+        const z = zoomStart + (zoomEnd - zoomStart) * eased;
+        try { _focalMapInst.setZoom(z); } catch (_) {}
+        if (t < 1) {
+          _focalMapAnimRaf = requestAnimationFrame(tick);
+        } else {
+          _focalMapAnimRaf = null;
+        }
+      };
+      _focalMapAnimRaf = requestAnimationFrame(tick);
+    };
+
+    if (_focalMapInst.isStyleLoaded()) {
+      renderHighlights();
+    } else {
+      _focalMapInst.once('load', renderHighlights);
+      _focalMapInst.once('styledata', () => {
+        if (_focalMapInst.isStyleLoaded()) renderHighlights();
+      });
+    }
+
+    // Auto fade-out at end of duration. The cleanup itself only runs
+    // after the opacity transition, so the map "lingers" visually a
+    // beat past durationSec — matches how heatmap fades.
+    _focalMapEndTimer = setTimeout(() => {
+      _focalMapCleanup();
+    }, durMs);
+  }
+  window.startFocalMap = startFocalMap;
+
   async function startFocalHeatmap(question, mode, durationSec, prebaked) {
     if (!question && !(prebaked && Array.isArray(prebaked.values) && prebaked.values.length)) {
       console.warn('[briefing/heatmap] no question and no prebaked values — skipping render');
@@ -48937,6 +49298,10 @@ body.ticker-active .gTickerLabel {
       try { window.__semHeatClose?.(); } catch (_) {}
       try { window.__endHeatmapPan?.(); } catch (_) {}
     }
+    // Focal-map overlay teardown — symmetric with the heatmap path above.
+    // If a focal map is showing when the segment ends (or user skips/closes),
+    // tear it down so it doesn't bleed into the next segment.
+    try { window.__focalMapCleanup?.(); } catch (_) {}
     arcMeshes = [];
   }
   // Expose so setBriefingViewMode can call it when returning to country view

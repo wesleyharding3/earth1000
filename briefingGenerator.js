@@ -76,6 +76,7 @@ const _SCRIPT_BUDGETS = {
   arc_draw:         2500,  // one flow arc draw + pulse
   data_panels:      2500,  // data panels render
   featured_heatmap: 0,     // narrator continues; heatmap is overlay
+  featured_map:     0,     // narrator continues; focal map zoom is overlay
 };
 const _SCRIPT_PAUSING_KINDS = new Set(['featured_video', 'featured_twitter']);
 
@@ -132,6 +133,7 @@ function _buildSegmentScript(seg) {
   const arcs = Array.isArray(seg.flow_arcs) ? seg.flow_arcs : [];
   const hasFocal = !!seg.video_focal?.enabled;
   const isHeatmap = seg.media_type === 'heatmap';
+  const isFocalMap = seg.media_type === 'focal_map';
   const isTwitter = seg.media_type === 'twitter_post' || seg.media_type === 'twitter_video';
   const beforeText = seg.voiceover_before_video || '';
   const afterText  = seg.voiceover_after_video  || '';
@@ -191,6 +193,16 @@ function _buildSegmentScript(seg) {
         },
         est_ms: _SCRIPT_BUDGETS.featured_heatmap,
         ms:     _SCRIPT_BUDGETS.featured_heatmap,
+      });
+    } else if (isFocalMap) {
+      // Focal-map overlay — narrator continues. Player flies a 2D
+      // MapLibre map onto the briefing surface and paints highlights.
+      lines.push({
+        type: 'event',
+        kind: 'featured_map',
+        payload: { map_config: seg.map_config || null },
+        est_ms: _SCRIPT_BUDGETS.featured_map,
+        ms:     _SCRIPT_BUDGETS.featured_map,
       });
     } else if (isTwitter) {
       const dur = (seg.video_focal.end_sec - seg.video_focal.start_sec) * 1000;
@@ -2028,6 +2040,18 @@ async function generateNarrative(threadData, storyContexts = {}, preferenceProfi
                 heatmap_mode:     t._featuredVideo.heatmap_mode || 'binary',
               }
             : {}),
+          ...(t._featuredVideo.media_type === 'focal_map'
+            ? {
+                // Surface a short, human-readable summary so Claude can
+                // write a transition that points at the map ("zoom in on
+                // the Donetsk frontline…"). The full map_config is too
+                // verbose for the prompt and isn't needed at narration time.
+                map_label:  t._featuredVideo.map_config?.label
+                              || t._featuredVideo.map_config?.preset
+                              || 'a focused regional map',
+                map_region: t._featuredVideo.map_config?.preset || null,
+              }
+            : {}),
         },
       } : {}),
       // Side tweet — embedded beside the article card; NOT a featured handoff.
@@ -2596,6 +2620,7 @@ async function buildSegments(narrative, threadData, allArcs, entityCoords = {}) 
     }
 
     const _isHeatmap = thread._featuredVideo?.media_type === 'heatmap';
+    const _isFocalMap = thread._featuredVideo?.media_type === 'focal_map';
 
     // Resolve the YouTube channel name for the side video card.
     // Priority: (1) manifest override carries an explicit author, (2) the
@@ -2635,6 +2660,11 @@ async function buildSegments(narrative, threadData, allArcs, entityCoords = {}) 
       // in this file) writes seg.heatmap_resolved alongside these.
       heatmap_question:    _isHeatmap ? (thread._featuredVideo?.heatmap_question || '') : null,
       heatmap_mode:        _isHeatmap ? (thread._featuredVideo?.heatmap_mode || 'binary') : null,
+      // Focal-map config — only populated when media_type === 'focal_map'.
+      // Shape: { preset, label, center:{lat,lng}, zoom_start, zoom_end,
+      //          duration_sec, style, highlights:[{type,lat,lng,label,...}] }
+      // Player reads seg.map_config when firing the featured_map event.
+      map_config:          _isFocalMap ? (thread._featuredVideo?.map_config || null) : null,
       voiceover_text:      voiceoverText,
       voiceover_before_video: voiceoverBeforeVideo,
       voiceover_after_video:  voiceoverAfterVideo,

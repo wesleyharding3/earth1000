@@ -1800,6 +1800,7 @@
                 <label style="font-size:10px;color:rgba(255,255,255,0.4);">Media type</label>
                 <select id="fv-media-${id}" onchange="fvUpdateMediaType(${id}, this.value)" style="width:100%;padding:6px;background:#0a0e17;border:1px solid #1e293b;border-radius:4px;color:#e2e8f0;font-size:12px;">
                   <option value="heatmap" ${fvType === 'heatmap' ? 'selected' : ''}>Heatmap overlay (default)</option>
+                  <option value="focal_map" ${fvType === 'focal_map' ? 'selected' : ''}>Focal geographical moment (2D map)</option>
                   <option value="youtube" ${fvType === 'youtube' ? 'selected' : ''}>YouTube</option>
                   <option value="twitter_post" ${fvType === 'twitter_post' ? 'selected' : ''}>X post</option>
                 </select>
@@ -1842,6 +1843,73 @@
                 </select>
                 <div style="font-size:10px;color:rgba(255,255,255,0.35);margin-top:4px;">Globe overlays this heatmap during the segment. Resolved at render time via /api/heatmap/ask.</div>
               </div>
+
+              <!-- Focal map overlay -->
+              ${(() => {
+                const mc = fv.map_config || {};
+                const presets = window.FOCAL_MAP_PRESETS || {};
+                const presetKey = mc.preset || '';
+                const center = mc.center || { lat: '', lng: '' };
+                const presetOpts = Object.keys(presets).map(k => `<option value="${k}" ${presetKey === k ? 'selected' : ''}>${escHtml(presets[k].label || k)}</option>`).join('');
+                const highlightsJson = mc.highlights
+                  ? JSON.stringify(mc.highlights, null, 2)
+                  : '[\n  { "type": "marker", "lat": 0, "lng": 0, "label": "POI" }\n]';
+                return `
+                <div id="fv-fm-fields-${id}" style="display:${fvType === 'focal_map' ? 'block' : 'none'};">
+                  <div style="margin-bottom:6px;">
+                    <label style="font-size:10px;color:rgba(255,255,255,0.4);">Region preset (or pick "custom" to set center/zoom manually)</label>
+                    <select id="fv-fm-preset-${id}" onchange="fvFocalMapApplyPreset(${id}, this.value)" style="width:100%;padding:6px;background:#0a0e17;border:1px solid #1e293b;border-radius:4px;color:#e2e8f0;font-size:12px;">
+                      <option value="">— select preset —</option>
+                      ${presetOpts}
+                      <option value="custom" ${presetKey === 'custom' ? 'selected' : ''}>Custom (manual center + zoom)</option>
+                    </select>
+                  </div>
+                  <div style="display:flex;gap:8px;margin-bottom:6px;">
+                    <div style="flex:1;">
+                      <label style="font-size:10px;color:rgba(255,255,255,0.4);">Center lat</label>
+                      <input type="number" step="0.001" id="fv-fm-clat-${id}" value="${center.lat ?? ''}" placeholder="48.0" onchange="fvFocalMapSetCenter(${id}, 'lat', this.value)" style="width:100%;padding:6px;background:#0a0e17;border:1px solid #1e293b;border-radius:4px;color:#e2e8f0;font-size:12px;" />
+                    </div>
+                    <div style="flex:1;">
+                      <label style="font-size:10px;color:rgba(255,255,255,0.4);">Center lng</label>
+                      <input type="number" step="0.001" id="fv-fm-clng-${id}" value="${center.lng ?? ''}" placeholder="37.8" onchange="fvFocalMapSetCenter(${id}, 'lng', this.value)" style="width:100%;padding:6px;background:#0a0e17;border:1px solid #1e293b;border-radius:4px;color:#e2e8f0;font-size:12px;" />
+                    </div>
+                  </div>
+                  <div style="display:flex;gap:8px;margin-bottom:6px;">
+                    <div style="flex:1;">
+                      <label style="font-size:10px;color:rgba(255,255,255,0.4);">Zoom start</label>
+                      <input type="number" step="0.1" id="fv-fm-zs-${id}" value="${mc.zoom_start ?? 4.5}" onchange="enrichData[${id}].featured_video.map_config.zoom_start = parseFloat(this.value) || 4.5" style="width:100%;padding:6px;background:#0a0e17;border:1px solid #1e293b;border-radius:4px;color:#e2e8f0;font-size:12px;" />
+                    </div>
+                    <div style="flex:1;">
+                      <label style="font-size:10px;color:rgba(255,255,255,0.4);">Zoom end</label>
+                      <input type="number" step="0.1" id="fv-fm-ze-${id}" value="${mc.zoom_end ?? 7.0}" onchange="enrichData[${id}].featured_video.map_config.zoom_end = parseFloat(this.value) || 7.0" style="width:100%;padding:6px;background:#0a0e17;border:1px solid #1e293b;border-radius:4px;color:#e2e8f0;font-size:12px;" />
+                    </div>
+                    <div style="flex:1;">
+                      <label style="font-size:10px;color:rgba(255,255,255,0.4);">Duration (sec)</label>
+                      <input type="number" step="1" min="3" max="30" id="fv-fm-dur-${id}" value="${mc.duration_sec ?? 10}" onchange="enrichData[${id}].featured_video.map_config.duration_sec = parseInt(this.value) || 10" style="width:100%;padding:6px;background:#0a0e17;border:1px solid #1e293b;border-radius:4px;color:#e2e8f0;font-size:12px;" />
+                    </div>
+                  </div>
+                  <div style="margin-bottom:6px;">
+                    <label style="font-size:10px;color:rgba(255,255,255,0.4);">Map style</label>
+                    <select id="fv-fm-style-${id}" onchange="enrichData[${id}].featured_video.map_config.style = this.value" style="width:100%;padding:6px;background:#0a0e17;border:1px solid #1e293b;border-radius:4px;color:#e2e8f0;font-size:12px;">
+                      <option value="dark" ${(mc.style || 'dark') === 'dark' ? 'selected' : ''}>Dark (default)</option>
+                      <option value="satellite" ${mc.style === 'satellite' ? 'selected' : ''}>Satellite</option>
+                      <option value="minimal" ${mc.style === 'minimal' ? 'selected' : ''}>Minimal (greyscale)</option>
+                    </select>
+                  </div>
+                  <div style="margin-bottom:6px;">
+                    <label style="font-size:10px;color:rgba(255,255,255,0.4);">Display label (used by narrator hint)</label>
+                    <input type="text" id="fv-fm-label-${id}" value="${escHtml(mc.label || '')}" placeholder="e.g. Donetsk frontline" onchange="enrichData[${id}].featured_video.map_config.label = this.value" style="width:100%;padding:6px;background:#0a0e17;border:1px solid #1e293b;border-radius:4px;color:#e2e8f0;font-size:12px;" />
+                  </div>
+                  <div>
+                    <label style="font-size:10px;color:rgba(255,255,255,0.4);">Highlights (JSON array)</label>
+                    <textarea id="fv-fm-hl-${id}" rows="6" onchange="fvFocalMapSetHighlights(${id}, this.value)" style="width:100%;padding:6px;background:#0a0e17;border:1px solid #1e293b;border-radius:4px;color:#e2e8f0;font-size:11px;font-family:Menlo,monospace;">${escHtml(highlightsJson)}</textarea>
+                    <div style="font-size:10px;color:rgba(255,255,255,0.35);margin-top:4px;">
+                      Supported types: <code>marker</code> (lat/lng/label/kind), <code>circle</code> (lat/lng/radius_km/label), <code>arrow</code> (from:[lng,lat], to:[lng,lat], label), <code>polygon</code> (coordinates:[[lng,lat],…], label, fillColor).
+                    </div>
+                  </div>
+                  <div style="font-size:10px;color:rgba(255,255,255,0.35);margin-top:6px;">Map flies from zoom_start → zoom_end over duration_sec while narrator continues. Picks the preset → auto-fills center + zoom; switch to custom to override.</div>
+                </div>`;
+              })()}
             </div>
           </div>
           <!-- Side tweet — independent of the featured-media moment. If filled
@@ -1972,6 +2040,10 @@
           // Heatmap overlay
           heatmap_question: '',
           heatmap_mode: 'binary',
+          // Focal-map overlay — lazily initialized on first selection of
+          // 'focal_map' as media_type. Kept null here to avoid stuffing
+          // a wide stub object into every manifest entry.
+          map_config: null,
         };
       }
       enrichData[id].featured_video.enabled = !!enabled;
@@ -1984,12 +2056,168 @@
     window.fvUpdateMediaType = function(id, value) {
       if (!enrichData[id]?.featured_video) return;
       enrichData[id].featured_video.media_type = value;
+      // Lazily initialize map_config when the user first switches to
+      // focal_map so the form has somewhere to write into.
+      if (value === 'focal_map' && !enrichData[id].featured_video.map_config) {
+        enrichData[id].featured_video.map_config = {
+          preset: '',
+          label: '',
+          center: { lat: null, lng: null },
+          zoom_start: 4.5,
+          zoom_end: 7.0,
+          duration_sec: 10,
+          style: 'dark',
+          highlights: [],
+        };
+      }
       const yt = document.getElementById(`fv-yt-fields-${id}`);
       const tw = document.getElementById(`fv-tw-fields-${id}`);
       const hm = document.getElementById(`fv-hm-fields-${id}`);
+      const fm = document.getElementById(`fv-fm-fields-${id}`);
       if (yt) yt.style.display = value === 'youtube' ? 'block' : 'none';
       if (tw) tw.style.display = (value === 'twitter_post' || value === 'twitter_video') ? 'block' : 'none';
       if (hm) hm.style.display = value === 'heatmap' ? 'block' : 'none';
+      if (fm) fm.style.display = value === 'focal_map' ? 'block' : 'none';
+    };
+
+    // ── Focal-map presets ──
+    // Curated region presets — selecting one auto-fills center, zoom,
+    // and a sensible default highlight set. The editor can then refine
+    // any field manually (or pick "custom" to fully override).
+    window.FOCAL_MAP_PRESETS = {
+      donetsk: {
+        label: 'Donetsk frontline',
+        center: { lat: 48.0, lng: 37.8 },
+        zoom_start: 4.5, zoom_end: 7.0,
+        style: 'dark',
+        highlights: [
+          { type: 'marker', lat: 48.015, lng: 37.803, label: 'Donetsk',    kind: 'frontline' },
+          { type: 'marker', lat: 48.733, lng: 37.583, label: 'Kramatorsk', kind: 'city' },
+          { type: 'marker', lat: 48.575, lng: 38.000, label: 'Bakhmut',    kind: 'frontline' },
+        ],
+      },
+      hormuz: {
+        label: 'Strait of Hormuz',
+        center: { lat: 26.5, lng: 56.3 },
+        zoom_start: 4.5, zoom_end: 6.8,
+        style: 'satellite',
+        highlights: [
+          { type: 'circle', lat: 26.566, lng: 56.250, radius_km: 60, label: 'Hormuz chokepoint' },
+          { type: 'marker', lat: 25.276, lng: 55.296, label: 'Dubai', kind: 'city' },
+          { type: 'marker', lat: 27.183, lng: 56.275, label: 'Bandar Abbas', kind: 'city' },
+        ],
+      },
+      gaza: {
+        label: 'Gaza Strip',
+        center: { lat: 31.5, lng: 34.45 },
+        zoom_start: 5.5, zoom_end: 9.0,
+        style: 'satellite',
+        highlights: [
+          { type: 'marker', lat: 31.5017, lng: 34.4668, label: 'Gaza City',  kind: 'city' },
+          { type: 'marker', lat: 31.3547, lng: 34.3088, label: 'Khan Younis', kind: 'city' },
+          { type: 'marker', lat: 31.2989, lng: 34.2417, label: 'Rafah',       kind: 'frontline' },
+        ],
+      },
+      taiwan_strait: {
+        label: 'Taiwan Strait',
+        center: { lat: 24.0, lng: 120.5 },
+        zoom_start: 3.5, zoom_end: 5.8,
+        style: 'dark',
+        highlights: [
+          { type: 'marker', lat: 25.0330, lng: 121.5654, label: 'Taipei',  kind: 'city' },
+          { type: 'marker', lat: 24.4798, lng: 118.0819, label: 'Xiamen',  kind: 'city' },
+          { type: 'arrow', from: [118.08, 24.48], to: [120.65, 24.15], label: 'PLA exercise corridor' },
+        ],
+      },
+      red_sea: {
+        label: 'Red Sea / Bab el-Mandeb',
+        center: { lat: 14.5, lng: 43.0 },
+        zoom_start: 3.5, zoom_end: 5.5,
+        style: 'satellite',
+        highlights: [
+          { type: 'circle', lat: 12.583, lng: 43.333, radius_km: 80, label: 'Bab el-Mandeb' },
+          { type: 'marker', lat: 15.348, lng: 44.207, label: "Sana'a", kind: 'city' },
+        ],
+      },
+      south_china_sea: {
+        label: 'South China Sea',
+        center: { lat: 14.0, lng: 116.0 },
+        zoom_start: 3.0, zoom_end: 5.0,
+        style: 'dark',
+        highlights: [
+          { type: 'marker', lat: 9.5707,  lng: 115.8350, label: 'Spratlys', kind: 'flashpoint' },
+          { type: 'marker', lat: 16.5375, lng: 111.6200, label: 'Paracels', kind: 'flashpoint' },
+        ],
+      },
+      kursk: {
+        label: 'Kursk Oblast',
+        center: { lat: 51.5, lng: 35.5 },
+        zoom_start: 4.5, zoom_end: 7.0,
+        style: 'dark',
+        highlights: [
+          { type: 'marker', lat: 51.7373, lng: 36.1873, label: 'Kursk',       kind: 'city' },
+          { type: 'marker', lat: 51.2855, lng: 35.0386, label: 'Sudzha',      kind: 'frontline' },
+          { type: 'arrow', from: [34.18, 50.91], to: [35.30, 51.25], label: 'Ukrainian incursion' },
+        ],
+      },
+    };
+
+    // Apply a preset to the focal_map config — copies center, zoom,
+    // style, and a default highlight set into the live config and
+    // refreshes the form fields. The user can then refine any value
+    // manually; that won't switch the preset back to "custom" unless
+    // they explicitly pick it.
+    window.fvFocalMapApplyPreset = function(id, presetKey) {
+      const fv = enrichData[id]?.featured_video;
+      if (!fv) return;
+      if (!fv.map_config) fv.map_config = {};
+      fv.map_config.preset = presetKey;
+      if (presetKey && presetKey !== 'custom' && window.FOCAL_MAP_PRESETS[presetKey]) {
+        const p = window.FOCAL_MAP_PRESETS[presetKey];
+        fv.map_config.label      = p.label;
+        fv.map_config.center     = { ...p.center };
+        fv.map_config.zoom_start = p.zoom_start;
+        fv.map_config.zoom_end   = p.zoom_end;
+        fv.map_config.style      = p.style || 'dark';
+        fv.map_config.highlights = JSON.parse(JSON.stringify(p.highlights || []));
+        // Refresh the form fields with the new values
+        const set = (sel, val) => { const el = document.getElementById(sel); if (el) el.value = val; };
+        set(`fv-fm-clat-${id}`,  p.center.lat);
+        set(`fv-fm-clng-${id}`,  p.center.lng);
+        set(`fv-fm-zs-${id}`,    p.zoom_start);
+        set(`fv-fm-ze-${id}`,    p.zoom_end);
+        set(`fv-fm-style-${id}`, p.style || 'dark');
+        set(`fv-fm-label-${id}`, p.label);
+        const hl = document.getElementById(`fv-fm-hl-${id}`);
+        if (hl) hl.value = JSON.stringify(p.highlights || [], null, 2);
+      }
+    };
+
+    window.fvFocalMapSetCenter = function(id, axis, value) {
+      const fv = enrichData[id]?.featured_video;
+      if (!fv) return;
+      if (!fv.map_config) fv.map_config = {};
+      if (!fv.map_config.center) fv.map_config.center = { lat: null, lng: null };
+      fv.map_config.center[axis] = parseFloat(value);
+    };
+
+    // Validate + persist the highlights JSON. Invalid JSON is preserved
+    // in the textarea (so the user can fix it) but not committed.
+    window.fvFocalMapSetHighlights = function(id, raw) {
+      const fv = enrichData[id]?.featured_video;
+      if (!fv) return;
+      if (!fv.map_config) fv.map_config = {};
+      try {
+        const parsed = JSON.parse(raw || '[]');
+        if (!Array.isArray(parsed)) throw new Error('not an array');
+        fv.map_config.highlights = parsed;
+        const ta = document.getElementById(`fv-fm-hl-${id}`);
+        if (ta) ta.style.borderColor = '#1e293b';
+      } catch (e) {
+        const ta = document.getElementById(`fv-fm-hl-${id}`);
+        if (ta) ta.style.borderColor = '#ef4444';
+        console.warn(`[focal_map] highlights JSON invalid: ${e.message}`);
+      }
     };
 
     // Keep the legacy duration_sec mirror in sync whenever start_sec or
@@ -2224,6 +2452,7 @@
                 <option value="youtube" ${mediaType === 'youtube' ? 'selected' : ''}>YouTube Video</option>
                 <option value="twitter_post" ${mediaType === 'twitter_post' ? 'selected' : ''}>Twitter/X Post</option>
                 <option value="heatmap" ${mediaType === 'heatmap' ? 'selected' : ''}>Heatmap (configured in Step 2)</option>
+                <option value="focal_map" ${mediaType === 'focal_map' ? 'selected' : ''}>Focal map (configured in Step 2)</option>
               </select>
             </div>
             <div id="media-yt-${idx}" style="display:${mediaType === 'youtube' ? 'block' : 'none'};">
@@ -2236,6 +2465,14 @@
             </div>
             <div id="media-hm-${idx}" style="display:${mediaType === 'heatmap' ? 'block' : 'none'};font-size:11px;color:rgba(255,255,255,0.5);padding:6px 8px;background:rgba(96,200,255,0.06);border-left:2px solid rgba(96,200,255,0.4);border-radius:4px;">
               Heatmap question and mode are edited in Step 2 (enrichment). The Step 3 dropdown only displays the type.
+            </div>
+            <div id="media-fm-${idx}" style="display:${mediaType === 'focal_map' ? 'block' : 'none'};font-size:11px;color:rgba(255,255,255,0.5);padding:6px 8px;background:rgba(96,200,255,0.06);border-left:2px solid rgba(96,200,255,0.4);border-radius:4px;">
+              ${(() => {
+                const mc = (seg.map_config) || (seg.thread_id != null && enrichData[seg.thread_id]?.featured_video?.map_config) || null;
+                if (!mc) return 'Focal map config lives in Step 2 (enrichment). No config detected yet — return to Step 2 to set preset, center, zoom, and highlights.';
+                const hl = Array.isArray(mc.highlights) ? mc.highlights.length : 0;
+                return `Focal map: <b>${escHtml(mc.label || mc.preset || 'custom')}</b> · ${hl} highlight${hl===1?'':'s'} · zoom ${mc.zoom_start ?? '?'} → ${mc.zoom_end ?? '?'} · ${mc.duration_sec ?? 10}s. Edit in Step 2.`;
+              })()}
             </div>
           </div>
           <div class="seg-field" style="padding-left:12px;border-left:2px solid rgba(96,200,255,0.2);">
@@ -2340,6 +2577,7 @@
       const ytDiv = document.getElementById(`media-yt-${idx}`);
       const twDiv = document.getElementById(`media-tw-${idx}`);
       const hmDiv = document.getElementById(`media-hm-${idx}`);
+      const fmDiv = document.getElementById(`media-fm-${idx}`);
       // Heatmap segments don't need the YouTube ID or Twitter URL fields —
       // hide both. Without this guard the old logic showed the Twitter
       // input for any non-youtube selection, including 'heatmap', which
@@ -2348,6 +2586,7 @@
       if (ytDiv) ytDiv.style.display = mediaType === 'youtube' ? 'block' : 'none';
       if (twDiv) twDiv.style.display = (mediaType === 'twitter_post' || mediaType === 'twitter_video') ? 'block' : 'none';
       if (hmDiv) hmDiv.style.display = mediaType === 'heatmap' ? 'block' : 'none';
+      if (fmDiv) fmDiv.style.display = mediaType === 'focal_map' ? 'block' : 'none';
     }
 
     function toggleFeaturedFields(idx, enabled) {
@@ -2525,6 +2764,10 @@
           if (_enrichFv.heatmap_question)        clone.heatmap_question = _enrichFv.heatmap_question;
           if (_enrichFv.heatmap_mode)            clone.heatmap_mode     = _enrichFv.heatmap_mode;
           if (_enrichFv.twitter_url)             clone.twitter_url      = _enrichFv.twitter_url;
+          // Focal-map config — same source-of-truth model as heatmap.
+          // Sync the editor's map_config onto the segment so the player
+          // can render it without re-reading enrichData.
+          if (_enrichFv.map_config)              clone.map_config       = _enrichFv.map_config;
           // narrator_transition (full override, used verbatim by the
           // briefing player) and narrator_transition_hint (guidance for
           // Claude when override is blank) are INDEPENDENT fields — see
@@ -2627,6 +2870,7 @@
           // selection unless the segment-level select says otherwise.
           const _segMediaTypeChoice = mediaTypeEl?.value;
           const _enrichSaysHeatmap  = _enrichFv?.media_type === 'heatmap';
+          const _enrichSaysFocalMap = _enrichFv?.media_type === 'focal_map';
           let selectedMediaType;
           if (_enrichSaysHeatmap && (!_segMediaTypeChoice || _segMediaTypeChoice === 'heatmap' || _segMediaTypeChoice === 'youtube')) {
             // Heatmap from Step 2 wins. The 'youtube' fallback covers
@@ -2634,6 +2878,10 @@
             // explicit non-heatmap, non-youtube choice (twitter_post /
             // twitter_video) at the segment level overrides Step 2.
             selectedMediaType = 'heatmap';
+          } else if (_enrichSaysFocalMap && (!_segMediaTypeChoice || _segMediaTypeChoice === 'focal_map' || _segMediaTypeChoice === 'youtube')) {
+            // Focal map from Step 2 follows the same protect-Step-2-from-
+            // legacy-default-overwrite rule as heatmap.
+            selectedMediaType = 'focal_map';
           } else {
             selectedMediaType = _segMediaTypeChoice || 'youtube';
           }
@@ -2669,7 +2917,8 @@
           const hasMedia = (
             clone.video_id ||
             clone.twitter_url ||
-            (clone.media_type === 'heatmap' && clone.heatmap_question)
+            (clone.media_type === 'heatmap' && clone.heatmap_question) ||
+            (clone.media_type === 'focal_map' && clone.map_config && clone.map_config.center)
           );
           if (focalCb?.checked && focalStartEl && focalEndEl && hasMedia) {
             const focalData = {
@@ -2693,6 +2942,10 @@
               twitter_url:      clone.twitter_url || null,
               heatmap_question: clone.heatmap_question || '',
               heatmap_mode:     clone.heatmap_mode     || 'binary',
+              // Mirror map_config too so the player's fallback chain
+              // (fm = featured_video || video_focal || …) always finds it
+              // regardless of which slot the segment shape lands in.
+              map_config:       clone.map_config       || null,
             };
             if (clone.video) clone.video.focal = focalData;
             clone.video_focal = focalData;
