@@ -11244,7 +11244,10 @@ app.get("/api/briefing/audio/:id/:segIdx", async (req, res) => {
     // the VIDEO_WORKER_TOKEN as a signed-in equivalent. Same token
     // /api/video-jobs/* uses; an exposed token equals "can read any
     // briefing audio slice", which is fine for an admin-owned secret.
-    const workerToken = req.query.token || req.headers['x-worker-token'];
+    // Also accept via ?at= — capture mode injects the worker token as
+    // window.__authToken so the page's in-app audio URL builders (all
+    // using ?at=) work transparently inside Puppeteer.
+    const workerToken = req.query.token || req.query.at || req.headers['x-worker-token'];
     const isWorker = workerToken && workerToken === process.env.VIDEO_WORKER_TOKEN;
     if (!isWorker) {
       const user = await resolveAudioRequestUser(req);

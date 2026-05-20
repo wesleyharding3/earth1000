@@ -50846,6 +50846,15 @@ body.ticker-active .gTickerLabel {
     window.__briefingCapture = { episodeId: epId, segmentIdx: segIdx };
     window.__briefingCaptureReady = false;
     window.__briefingCaptureSegmentDone = false;
+    // Worker passes its VIDEO_WORKER_TOKEN as ?captureToken=… so the
+    // page's audio fetches (which all append ?at=<window.__authToken>)
+    // can pass the server's worker-token bypass. Without this the page
+    // has no Supabase session inside Puppeteer, every audio.src fetch
+    // 401s, the briefing falls into silent-fallback mode, and the
+    // screencast stops at silent-fallback's estDur instead of the
+    // full segment.
+    const captureToken = params.get('captureToken');
+    if (captureToken) window.__authToken = captureToken;
     // Seed the first-launch flags here too, in case the worker hasn't
     // (e.g. someone hits ?captureSeg=... in a real browser to debug).
     // Same keys the puppeteer evaluateOnNewDocument seeds.

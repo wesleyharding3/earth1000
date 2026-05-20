@@ -765,7 +765,13 @@ async function renderBriefingSegment(job) {
         localStorage.setItem('earth00:audioMuted', '0');
       } catch (_) {}
     });
-    const url = `${APP_HOST}/?episode=${job.episode_id}&captureSeg=${job.segment_idx}`;
+    // captureToken is consumed by _maybeRunCaptureMode in index.html
+    // and stamped into window.__authToken so the page's in-app audio
+    // URL builders (every one of which appends ?at=<__authToken>) pass
+    // the server's worker-token bypass. Without this the audio fetches
+    // 401, the page falls into silent-fallback mode, and the screencast
+    // stops at the silent-fallback's estDur instead of the full segment.
+    const url = `${APP_HOST}/?episode=${job.episode_id}&captureSeg=${job.segment_idx}&captureToken=${encodeURIComponent(TOKEN)}`;
     log(`  ↦ ${url}`);
     await page.goto(url, { waitUntil: 'load', timeout: 90_000 });
 
