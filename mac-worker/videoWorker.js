@@ -737,6 +737,14 @@ async function renderBriefingSegment(job) {
       '--disable-renderer-backgrounding',
       '--enable-gpu-rasterization',
       '--ignore-gpu-blocklist',
+      // Unthrottle the compositor. Without these flags Chrome caps its
+      // render rate at the display refresh and headless screencast often
+      // delivers <10 fps under WebGL load; with them headless can push
+      // 30-50 fps which is what we actually want for smooth briefing
+      // playback.
+      '--disable-gpu-vsync',
+      '--disable-frame-rate-limit',
+      '--disable-features=CalculateNativeWinOcclusion,IntensiveWakeUpThrottling',
       `--window-size=${BRIEFING_CAPTURE_W},${BRIEFING_CAPTURE_H}`,
     ],
   });
@@ -809,39 +817,39 @@ async function renderBriefingSegment(job) {
       throw new Error('capture mode did not become ready within 60s' + (readyState.err ? ` (${readyState.err})` : ''));
     }
 
-    // Start CDP screencast. Each Page.screencastFrame carries a
-    // base64-jpg + metadata.timestamp (wall-clock seconds). We write
-    // every frame to disk with its arrival index, then ack so Chrome
-    // keeps streaming. The timestamps drive the concat demuxer below
-    // so the output timing matches real time regardless of how
-    // erratically Chrome delivers frames.
+    // Active capture loop — far higher frame rate than Page.startScreencast.
+    // Chrome's screencast is a passive subscription that the compositor
+    // throttles aggressively in headless mode (was delivering ~9 fps
+    // under our WebGL load). Page.captureScreenshot is on-demand: we
+    // ask, Chrome renders + returns. Round-trip is 20-40ms in headless,
+    // so a tight loop hits ~25-50 effective fps. The loop runs in
+    // parallel with the segment-done waiter below.
     client = await page.target().createCDPSession();
-    client.on('Page.screencastFrame', async (event) => {
-      try {
-        const buf = Buffer.from(event.data, 'base64');
-        const i = frames.length;
-        const fpath = path.join(framesDir, `f${String(i).padStart(7, '0')}.jpg`);
-        // CDP gives us metadata.timestamp in seconds-since-epoch as a
-        // float. Fall back to wall clock if it's missing.
-        const ts = (event.metadata?.timestamp != null)
-          ? event.metadata.timestamp
-          : (Date.now() / 1000);
-        await fs.promises.writeFile(fpath, buf);
-        frames.push({ ts, path: fpath });
-        await client.send('Page.screencastFrameAck', { sessionId: event.sessionId });
-      } catch (e) { /* drop frame on write errors — accumulating frames is more important than perfection */ }
-    });
-    await client.send('Page.startScreencast', {
-      format: 'jpeg',
-      // Bumped 80 → 92 to keep arc lines + chrome text crisp at the
-      // higher frame rate. Each JPEG is ~150-220 KB at 92 vs 80-120 at
-      // 80; ffmpeg re-encodes to libx264 anyway so the on-disk size
-      // doesn't grow much, only the intermediate stream does.
-      quality: 92,
-      maxWidth:  BRIEFING_CAPTURE_W,
-      maxHeight: BRIEFING_CAPTURE_H,
-      everyNthFrame: 1,
-    });
+    let captureStop = false;
+    let captureError = null;
+    const captureLoop = (async () => {
+      while (!captureStop) {
+        const t = Date.now();
+        try {
+          const { data } = await client.send('Page.captureScreenshot', {
+            format: 'jpeg',
+            quality: 90,
+            captureBeyondViewport: false,
+            // omit clip — defaults to the configured viewport (1080×1920)
+          });
+          const i = frames.length;
+          const fpath = path.join(framesDir, `f${String(i).padStart(7, '0')}.jpg`);
+          await fs.promises.writeFile(fpath, Buffer.from(data, 'base64'));
+          frames.push({ ts: t / 1000, path: fpath });
+        } catch (e) {
+          captureError = e;
+          break;
+        }
+        // Yield to the event loop so the segment-done waiter can run.
+        // No sleep — capture as fast as Chrome will respond.
+        await new Promise(r => setImmediate(r));
+      }
+    })();
 
     // Wait for the segment audio to finish (signaled by
     // __briefingCaptureSegmentDone). Cap the wait at audio_ms + 5s
@@ -849,11 +857,13 @@ async function renderBriefingSegment(job) {
     const maxWaitMs = (job.audio_ms || 60_000) + 5_000;
     const captureDeadline = Date.now() + maxWaitMs;
     while (Date.now() < captureDeadline) {
+      if (captureError) throw new Error(`captureScreenshot failed: ${captureError.message}`);
       const done = await page.evaluate(() => !!window.__briefingCaptureSegmentDone).catch(() => false);
       if (done) break;
       await new Promise(r => setTimeout(r, 250));
     }
-    try { await client.send('Page.stopScreencast'); } catch (_) {}
+    captureStop = true;
+    await captureLoop;
 
     if (frames.length < 5) {
       throw new Error(`screencast captured only ${frames.length} frame(s)`);
