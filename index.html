@@ -50993,11 +50993,41 @@ body.ticker-active .gTickerLabel {
     if (audio) {
       try { audio.muted = true; audio.pause(); } catch (_) {}
     }
-    // Drive the segment open. goToSegment fires startGlobeTimers which
-    // populates _scrubQueue with every camera-focus / arc-draw / pulse
-    // / label event. The audio element setup inside will fail (no real
-    // network play), but the visual choreography is what we care about.
+    // goToSegment handles DOM setup: title chip, country flag chips,
+    // intro/outro overlay, arcMesh clears, music routing, etc. Its
+    // INTERNAL choreography schedule (camera focus, arc draws, halos,
+    // pulses) is gated on audio's canplaythrough event, which never
+    // fires in scrub mode because audio is muted/paused. So those
+    // events would silently never schedule.
     try { goToSegment(segmentIdx); } catch (e) { console.warn('[scrub] goToSegment failed:', e.message); }
+
+    // Now kill the audio element so its canplaythrough / error / ended
+    // listeners can't fire LATER and schedule duplicate (or shifted)
+    // choreography events that would corrupt the scrub timeline.
+    if (audio) {
+      try {
+        audio.onerror = null;
+        audio.onended = null;
+        audio.src = '';
+        audio.removeAttribute('src');
+      } catch (_) {}
+    }
+
+    // Manually invoke startGlobeTimers — the source of every visible
+    // choreography event for a story segment (camera focus, arc reveal,
+    // halo appearance, pulse rings, tour-node sequencing). Without this
+    // explicit call the scrub queue only contains the 5-6 setTimeouts
+    // that goToSegment scheduled directly (segment-transition timers,
+    // music routing) — none of the actual visual choreography. With
+    // this call, every choreography event lands in the scrub queue at
+    // scrubClock=0 + its relative delay, so __renderBriefingFrameAt
+    // can drain them in order as the worker's frame loop advances time.
+    playing = true; // some internal setTimeouts guard on this
+    const seg = episode.segments[segmentIdx];
+    const dur = getSegmentDuration(segmentIdx);
+    try { startGlobeTimers(segmentIdx, seg, dur); }
+    catch (e) { console.warn('[scrub] startGlobeTimers failed:', e.message); }
+
     return { ok: true, queued: _scrubQueue.length };
   };
 
