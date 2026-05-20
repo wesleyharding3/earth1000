@@ -48116,6 +48116,27 @@ const settingsToggle     = document.getElementById("settingsToggle");
   overflow: hidden;
 }
 .bFocalMap.visible { opacity: 1; }
+/* Fullscreen takeover during the briefing focal_map moment — the
+   globe zooms in synchronously (window.startFocus) while this fades
+   in over ~1.2s, producing a Google-Earth-style continuous-zoom
+   transition from 3D globe to 2D map. Higher z-index than the
+   default 12 so the article cards / pie panel sit under the map. */
+.bFocalMap.fullscreen {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  width: 100vw; height: 100vh;
+  transform: none;
+  border-radius: 0;
+  box-shadow: none;
+  transition: opacity 1200ms ease;
+  z-index: 100050;
+}
+.bFocalMap.fullscreen .bFocalMapLabel {
+  top: max(28px, env(safe-area-inset-top, 0px) + 18px);
+  left: 24px;
+  font-size: 14px;
+  padding: 10px 16px;
+}
 .bFocalMapInner {
   position: absolute;
   inset: 0;
@@ -48799,6 +48820,98 @@ body.ticker-active .gTickerLabel {
 }
 #briefingOverlay.open .bControlsWrap { opacity: 1; }
 /* Volume button + vertical popover — see index.html for rationale. */
+/* ── Settings button + popover (briefing) ───────────────────────────── */
+.bSettingsWrap {
+  position: relative;
+  display: inline-flex; align-items: center;
+}
+.bSettingsBtn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px;
+  min-width: 32px; min-height: 32px;
+  background: transparent; border: none; padding: 0;
+  color: rgba(255,235,200,0.85);
+  cursor: pointer;
+  border-radius: 50%;
+  transition: color 0.15s, background 0.15s, transform 0.4s ease;
+}
+.bSettingsBtn:hover { color: rgba(255,210,140,1); background: rgba(255,200,130,0.10); }
+.bSettingsBtn.active { color: rgba(255,210,140,1); background: rgba(255,200,130,0.12); }
+.bSettingsBtn.active .bSettingsIcon { transform: rotate(45deg); }
+.bSettingsIcon {
+  width: 16px; height: 16px;
+  flex-shrink: 0;
+  transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.bSettingsPopover {
+  /* Viewport-anchored (position: fixed) — keeps the popover inside
+     screen bounds no matter where the gear button sits in the control
+     pill. Was position:absolute originally; on narrow mobile viewports
+     that overflowed past the left edge whenever the gear was on the
+     right side of the pill. */
+  position: fixed;
+  right: 16px;
+  /* Sit above the control bar with a comfortable gap. The control bar
+     bottom math matches .bArticlePanel / .bSegmentSourcePie. */
+  bottom: calc(var(--page-nav-height, 48px) + env(safe-area-inset-bottom, 0px) + var(--app-bottom-inset, 0px) + 70px);
+  /* Flex width — clamp picks the smaller of (preferred 280px, viewport-32px).
+     box-sizing: border-box so the 20px of horizontal padding is INCLUDED
+     in the width budget — otherwise the visual box ends up wider than
+     intended and overflows narrow viewports. */
+  box-sizing: border-box;
+  width: min(280px, calc(100vw - 32px));
+  padding: 10px;
+  background:
+    radial-gradient(120% 80% at 50% 0%, rgba(96,200,255,0.16) 0%, transparent 55%),
+    linear-gradient(180deg, rgba(14,22,38,0.96), rgba(10,14,23,0.92));
+  border: 1px solid rgba(96,200,255,0.30);
+  border-radius: 12px;
+  box-shadow:
+    0 10px 26px rgba(0,0,0,0.50),
+    0 0 14px rgba(96,200,255,0.18);
+  z-index: 100100;
+}
+.bSettingsTitle {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.55);
+  padding: 2px 4px 8px;
+}
+.bSettingsRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  padding: 8px 10px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 8px;
+  color: rgba(255,255,255,0.85);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+}
+.bSettingsRow:hover { background: rgba(255,255,255,0.08); border-color: rgba(255,255,255,0.18); }
+.bSettingsRowLabel { flex: 1; text-align: left; }
+.bSettingsRowState {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  padding: 3px 8px;
+  border-radius: 10px;
+  background: rgba(96,200,255,0.18);
+  color: #60c8ff;
+  border: 1px solid rgba(96,200,255,0.35);
+}
+.bSettingsRow[aria-pressed="false"] .bSettingsRowState {
+  background: rgba(255,255,255,0.06);
+  color: rgba(255,255,255,0.45);
+  border-color: rgba(255,255,255,0.10);
+}
+
 .bVolWrap {
   position: relative;
   display: inline-flex; align-items: center;
@@ -49581,7 +49694,25 @@ body.ticker-active .gTickerLabel {
       <button class="bControlBtn" id="bNext" title="Next">&#8594;</button>
       <button class="bControlBtn speed" id="bSpeed" title="Playback speed">1x</button>
       <button class="bControlBtn cc" id="bCCToggle" title="Toggle captions">CC</button>
-      <button class="bControlBtn cc" id="bLabelsToggle" title="Toggle location labels on the globe">LBL</button>
+      <!-- Settings — gear icon opens a popover with per-briefing toggles
+           (currently: globe location labels). Replaces the old LBL pill
+           button so we have room to add more toggles later without
+           crowding the control pill. -->
+      <div class="bSettingsWrap">
+        <button class="bControlBtn bSettingsBtn" id="bSettingsBtn" type="button" title="Briefing settings" aria-label="Briefing settings">
+          <svg class="bSettingsIcon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+        </button>
+        <div class="bSettingsPopover" id="bSettingsPopover" hidden>
+          <div class="bSettingsTitle">Briefing Settings</div>
+          <button class="bSettingsRow" id="bLabelsToggle" type="button" aria-pressed="true">
+            <span class="bSettingsRowLabel">Globe location labels</span>
+            <span class="bSettingsRowState" id="bLabelsToggleState">ON</span>
+          </button>
+        </div>
+      </div>
       <!-- Briefing volume — click icon to open vertical glow-gold slider.
            See index.html for rationale. -->
       <div class="bVolWrap">
@@ -49595,18 +49726,6 @@ body.ticker-active .gTickerLabel {
           <input type="range" class="bVolSlider" id="bVolSlider" min="0" max="100" value="100" step="1" orient="vertical" aria-label="Briefing volume" />
         </div>
       </div>
-      <!-- AI content report — required by Apple's 2024-2025 review for
-           AI-generated content. Opens the shared #aiReportModal scoped
-           to this briefing episode + the current segment title for
-           reviewer context. The bControlBtn.report variant in the CSS
-           de-emphasizes it relative to playback controls. -->
-      <button class="bControlBtn report" id="bReport" type="button"
-              title="Report content" aria-label="Report content"
-              onclick="window.__openAiReport?.({
-                source: 'briefing',
-                contextId: window.__currentBriefingEpisodeId || '',
-                content: (document.getElementById('bSegmentTitle')?.textContent || '').trim()
-              })">&#9888;</button>
       <button class="bControlBtn close" id="bClose" title="Close briefing">✕</button>
     </div>
     <div class="bSeekWrap">
@@ -51702,13 +51821,13 @@ body.ticker-active .gTickerLabel {
           window.focusCity(seg.primary_city);
           // Show hover label once globe finishes panning (~1s)
           addBTimer(setTimeout(() => {
-            if (segIdx !== idx || !window.briefingShowLabel) return;
+            if (segIdx !== idx || !window.briefingShowLabel || !labelsOn) return;
             window.briefingShowLabel(seg.primary_city, true);
           }, 1000));
         } else if (seg.primary_country && window.focusCountry) {
           window.focusCountry(seg.primary_country);
           addBTimer(setTimeout(() => {
-            if (segIdx !== idx || !window.briefingShowLabel) return;
+            if (segIdx !== idx || !window.briefingShowLabel || !labelsOn) return;
             window.briefingShowLabel(seg.primary_country, false);
           }, 1000));
         } else if (seg.globe_focus && window.startFocus) {
@@ -51766,7 +51885,7 @@ body.ticker-active .gTickerLabel {
             if (segIdx !== idx || !window.briefingPulseAt) return;
             window.briefingPulseAt(loc.lat, loc.lon);
             // Show hover card for this pulsed node
-            if (window.briefingShowLabelAt) window.briefingShowLabelAt(loc.lat, loc.lon, loc.name);
+            if (labelsOn && window.briefingShowLabelAt) window.briefingShowLabelAt(loc.lat, loc.lon, loc.name);
           }, i * 350));
         });
       }, arcDrawOffsetMs));
@@ -51782,7 +51901,7 @@ body.ticker-active .gTickerLabel {
             if (segIdx !== idx || !window.startFocus) return;
             window.startFocus(node.lat, node.lon);
             if (window.briefingPulseAt) window.briefingPulseAt(node.lat, node.lon);
-            if (window.briefingShowLabelAt) window.briefingShowLabelAt(node.lat, node.lon, node.name);
+            if (labelsOn && window.briefingShowLabelAt) window.briefingShowLabelAt(node.lat, node.lon, node.name);
           }, ms(frac)));
         }
       } else if (tourNodes.length === 1) {
@@ -51792,7 +51911,7 @@ body.ticker-active .gTickerLabel {
           addBTimer(setTimeout(() => {
             if (segIdx !== idx || !window.briefingPulseAt) return;
             window.briefingPulseAt(tourNodes[0].lat, tourNodes[0].lon);
-            if (window.briefingShowLabelAt) window.briefingShowLabelAt(tourNodes[0].lat, tourNodes[0].lon, tourNodes[0].name);
+            if (labelsOn && window.briefingShowLabelAt) window.briefingShowLabelAt(tourNodes[0].lat, tourNodes[0].lon, tourNodes[0].name);
           }, ms(frac)));
         }
       }
@@ -53860,6 +53979,9 @@ body.ticker-active .gTickerLabel {
     const wrap = document.getElementById('bFocalMap');
     if (wrap) {
       wrap.classList.remove('visible');
+      // Drop fullscreen so the next non-takeover use (if we ever add
+      // one) lands back at the default 72vw × 64vh card.
+      wrap.classList.remove('fullscreen');
       wrap.setAttribute('aria-hidden', 'true');
     }
   }
@@ -53891,6 +54013,18 @@ body.ticker-active .gTickerLabel {
     const label = document.getElementById('bFocalMapLabel');
     if (!wrap || !inner) return;
 
+    // Google-Earth-style transition: zoom the 3D globe in on the focal
+    // location synchronously, then fade the 2D map over the top so the
+    // two motions feel continuous. window.startFocus's tilt animation
+    // takes ~1.2-1.5s, and .bFocalMap.fullscreen has its opacity
+    // transition tuned to 1200ms to overlap that motion. By the time
+    // the camera settles on the location, the 2D map has faded fully
+    // in — viewer perceives one continuous zoom from globe → satellite.
+    try {
+      const briefingZoomClose = (typeof _isMobileView !== 'undefined' && _isMobileView) ? 1.85 : 1.65;
+      window.startFocus?.(Number(config.center.lat), Number(config.center.lng), { zoom: briefingZoomClose });
+    } catch (_) {}
+
     // Show the container IMMEDIATELY with status text so failures
     // are visible on-screen (we have no Safari Web Inspector path on
     // iOS Capacitor for the typical user). If MapLibre fails to load,
@@ -53900,6 +54034,7 @@ body.ticker-active .gTickerLabel {
       label.textContent = (config.label || (config.preset || '').replace(/_/g, ' ') || 'Loading map…');
       label.style.display = 'block';
     }
+    wrap.classList.add('fullscreen');
     wrap.classList.add('visible');
     wrap.setAttribute('aria-hidden', 'false');
     const _setStatus = (msg, isError) => {
@@ -53922,7 +54057,8 @@ body.ticker-active .gTickerLabel {
     }
 
     _focalMapCleanup();
-    // Re-apply visible because _focalMapCleanup removes it.
+    // Re-apply visible + fullscreen because _focalMapCleanup removes both.
+    wrap.classList.add('fullscreen');
     wrap.classList.add('visible');
     wrap.setAttribute('aria-hidden', 'false');
 
@@ -55053,6 +55189,23 @@ body.ticker-active .gTickerLabel {
     updateCaptions(seg);
   }
 
+  // Labels toggle (lives inside the settings popover). When OFF, the
+  // per-segment country/city name chips no longer paint on the globe
+  // during briefing playback. Persisted under earth00:briefingLabels
+  // so it sticks across sessions. Call sites at the briefingShowLabel*
+  // invocation points below check `labelsOn` to no-op when off.
+  function setLabels(on) {
+    labelsOn = !!on;
+    try { localStorage.setItem('earth00:briefingLabels', labelsOn ? 'on' : 'off'); } catch (_) {}
+    const row = document.getElementById('bLabelsToggle');
+    const state = document.getElementById('bLabelsToggleState');
+    if (row) row.setAttribute('aria-pressed', labelsOn ? 'true' : 'false');
+    if (state) state.textContent = labelsOn ? 'ON' : 'OFF';
+    if (!labelsOn) {
+      try { window.briefingHideLabel?.(); } catch (_) {}
+    }
+  }
+
   // ── Briefing Launcher ─────────────────────────────────────────────────────
   async function openBriefingLauncher() {
     // FIRST: silence the procedural engine IMMEDIATELY on click —
@@ -55343,6 +55496,53 @@ body.ticker-active .gTickerLabel {
   document.getElementById('bPrev')?.addEventListener('click', () => { _resumeSingle = false; goToSegment(Math.max(0, segIdx - 1), true); });
   document.getElementById('bCCToggle')?.addEventListener('click', () => setCaptions(!captionsOn));
   document.getElementById('bSpeed')?.addEventListener('click', cycleSpeed);
+
+  // ── Settings popover wiring ─────────────────────────────────────────
+  // Gear button opens the popover; clicking the labels row toggles it.
+  // Click-outside dismisses the popover. Initial state is synced from
+  // the persisted labelsOn value so the row reflects what's loaded.
+  (function _wireSettingsPopover() {
+    const btn = document.getElementById('bSettingsBtn');
+    const pop = document.getElementById('bSettingsPopover');
+    const lblRow = document.getElementById('bLabelsToggle');
+    if (!btn || !pop || !lblRow) return;
+    // Reparent the popover to <body>. bControlsWrap is transform-shifted
+    // (matrix(1,0,0,1,-181,0)) which creates a containing block for
+    // descendant position:fixed — `right: 16px` then anchors to the
+    // shifted wrap, not the viewport, and the popover overflows. Body-
+    // level escape lets position:fixed land where we asked.
+    if (pop.parentElement !== document.body) {
+      document.body.appendChild(pop);
+    }
+    // Sync labels row state to persisted value (call setLabels with current
+    // labelsOn so the row + aria-pressed reflect localStorage state).
+    setLabels(labelsOn);
+    const isOpen = () => !pop.hasAttribute('hidden');
+    const open = () => {
+      pop.removeAttribute('hidden');
+      btn.classList.add('active');
+    };
+    const close = () => {
+      pop.setAttribute('hidden', '');
+      btn.classList.remove('active');
+    };
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (isOpen()) close(); else open();
+    });
+    lblRow.addEventListener('click', (e) => {
+      e.stopPropagation();
+      setLabels(!labelsOn);
+    });
+    // Outside-click dismiss. Capture phase so we beat any per-element
+    // stopPropagation handlers — pop element itself doesn't bubble.
+    document.addEventListener('click', (e) => {
+      if (!isOpen()) return;
+      if (e.target === btn || btn.contains(e.target)) return;
+      if (e.target === pop || pop.contains(e.target)) return;
+      close();
+    }, { capture: true });
+  })();
   // Briefing volume slider + popover toggle — see index.html for rationale.
   const _bVolSlider = document.getElementById('bVolSlider');
   const _bVolBtn    = document.getElementById('bVolBtn');
