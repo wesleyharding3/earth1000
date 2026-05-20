@@ -790,7 +790,11 @@ async function renderBriefingSegment(job) {
     // the server's worker-token bypass. Without this the audio fetches
     // 401, the page falls into silent-fallback mode, and the screencast
     // stops at the silent-fallback's estDur instead of the full segment.
-    const url = `${APP_HOST}/?episode=${job.episode_id}&captureSeg=${job.segment_idx}&captureToken=${encodeURIComponent(TOKEN)}`;
+    //
+    // _bust busts CDN cache so a stale earth00.com HTML doesn't ship
+    // an older version of the page without window.__captureBriefingClip.
+    const bust = Date.now().toString(36);
+    const url = `${APP_HOST}/?episode=${job.episode_id}&captureSeg=${job.segment_idx}&captureToken=${encodeURIComponent(TOKEN)}&_bust=${bust}`;
     log(`  ↦ ${url}`);
     await page.goto(url, { waitUntil: 'load', timeout: 90_000 });
 
@@ -835,6 +839,21 @@ async function renderBriefingSegment(job) {
       downloadPath: framesDir,
       eventsEnabled: true,
     });
+
+    // Defensive: poll up to 30s for window.__captureBriefingClip to
+    // actually be a function. _maybeRunCaptureMode flips Ready=true
+    // synchronously inside the same IIFE that exposes the function,
+    // so they should land together — but if the page is served from
+    // a stale CDN cache without the function, surface a clear error
+    // instead of "is not a function".
+    const fnDeadline = Date.now() + 30_000;
+    let fnReady = false;
+    while (Date.now() < fnDeadline) {
+      fnReady = await page.evaluate(() => typeof window.__captureBriefingClip === 'function').catch(() => false);
+      if (fnReady) break;
+      await new Promise(r => setTimeout(r, 250));
+    }
+    if (!fnReady) throw new Error('window.__captureBriefingClip never became a function (stale cache or page error)');
 
     // Fire the in-page capture function. It returns once the segment-
     // done flag flips (set by _onSegmentEnded when narration ends).
