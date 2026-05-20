@@ -49210,6 +49210,23 @@ body.ticker-active .gTickerLabel {
 
     _focalMapCleanup();
 
+    // CRITICAL: switch the container to fullscreen size BEFORE creating
+    // (or reusing) the MapLibre instance. MapLibre measures its
+    // container exactly once at construction time and caches the
+    // canvas + GL viewport at those dimensions; without an explicit
+    // .resize() the canvas stays at the initial size even after the
+    // container CSS changes. _focalMapCleanup() strips the
+    // .fullscreen class at the END of each focal_map session, so when
+    // the next session fires here the container is back to the windowed
+    // 72vw × 64vh — and the new map was being created against THAT
+    // size, then visually clipped inside the fullscreen container
+    // afterwards. That's the "map only takes up a portion of the
+    // screen" bug. Adding the class up-front means MapLibre sees the
+    // true 100vw × 100vh container at construction time.
+    wrap.classList.add('fullscreen');
+    wrap.classList.add('visible');
+    wrap.setAttribute('aria-hidden', 'false');
+
     const styleKey   = config.style || 'dark';
     const style      = _FOCAL_MAP_STYLES[styleKey] || _FOCAL_MAP_STYLES.dark;
     const center     = [Number(config.center.lng), Number(config.center.lat)];
@@ -49226,7 +49243,11 @@ body.ticker-active .gTickerLabel {
     const pitchStart  = Number.isFinite(config.pitch_start) ? Number(config.pitch_start) : (terrainOn ? 35 : 0);
     const pitchEnd    = Number.isFinite(config.pitch_end)   ? Number(config.pitch_end)   : (terrainOn ? 55 : 0);
 
-    // Build or reset the MapLibre instance.
+    // Build or reset the MapLibre instance. Container is now fullscreen
+    // (per the classList.add above), so MapLibre's initial size lock is
+    // already correct. For the reused-instance path we still call
+    // resize() since the container could have changed size between
+    // sessions (e.g., the user rotated their device).
     if (!_focalMapInst) {
       _focalMapInst = new window.maplibregl.Map({
         container: inner,
@@ -49242,6 +49263,7 @@ body.ticker-active .gTickerLabel {
       _focalMapInst.setCenter(center);
       _focalMapInst.setZoom(zoomStart);
       try { _focalMapInst.setPitch(pitchStart); } catch (_) {}
+      try { _focalMapInst.resize(); } catch (_) {}
     }
 
     if (label) {
@@ -49249,14 +49271,6 @@ body.ticker-active .gTickerLabel {
       label.textContent = txt;
       label.style.display = txt ? 'block' : 'none';
     }
-
-    // Reveal the container in fullscreen mode — opacity transition
-    // (1200ms via .fullscreen) overlaps with the globe-zoom kicked off
-    // at the top of this function, producing a Google-Earth-style
-    // continuous zoom from 3D to 2D.
-    wrap.classList.add('fullscreen');
-    wrap.classList.add('visible');
-    wrap.setAttribute('aria-hidden', 'false');
 
     // Wait for the style to load before drawing highlights (sources
     // can't be added before then).
