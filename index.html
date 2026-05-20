@@ -51007,22 +51007,27 @@ body.ticker-active .gTickerLabel {
     // Drain everything up to target time. Sort first so we fire in
     // chronological order (events can schedule more events).
     _scrubQueue.sort((a, b) => a.fireAt - b.fireAt);
+    let drained = 0;
     while (_scrubQueue.length && _scrubQueue[0].fireAt <= target) {
       const ev = _scrubQueue.shift();
       try { ev.fn(); } catch (_) {}
+      drained++;
       _scrubQueue.sort((a, b) => a.fireAt - b.fireAt);
     }
     _scrubClock = target;
     // Surface our clock to any code that reads audio.currentTime.
     if (audio) { try { audio.currentTime = target / 1000; } catch (_) {} }
-    // Synchronous render — same pattern as __renderClipFrame. We do
-    // toDataURL right after so the framebuffer hasn't been overwritten
-    // by the live animate() RAF.
+    // Synchronous globe render — sets the WebGL framebuffer to the
+    // exact state we want. The worker then calls Page.captureScreenshot
+    // to grab the WHOLE page (canvas + DOM) at this frozen moment, so
+    // the title chip, country flag chips, captions, and any other
+    // briefing-active DOM chrome land in the output too. Returning
+    // {drained, queueLen} lets the worker log progress without us
+    // serializing a megabyte of JPEG bytes through CDP every frame.
     if (window.__renderer && window.scene && window.__camera) {
       window.__renderer.render(window.scene, window.__camera);
     }
-    const c = window.__renderer?.domElement;
-    return c?.toDataURL ? c.toDataURL('image/jpeg', 0.92) : null;
+    return { ok: true, drained, queueLen: _scrubQueue.length, clock: _scrubClock };
   };
 
   window.__endBriefingScrub = function () {

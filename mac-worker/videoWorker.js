@@ -866,20 +866,30 @@ async function renderBriefingSegment(job) {
     for (let i = 0; i < totalFrames; i++) {
       if (!_running) break;
       const tMs = (i / BRIEFING_FPS) * 1000;
-      const dataUrl = await page.evaluate(
+      // Step 1: page sets up its state for this frame's time. The
+      // returned object is small (drained-events count + queue length)
+      // so we don't serialize a megabyte of JPEG over CDP.
+      await page.evaluate(
         (t) => window.__renderBriefingFrameAt(t),
         tMs
       ).catch(err => {
         throw new Error(`renderBriefingFrameAt(${tMs}ms) failed: ${err.message}`);
       });
-      if (!dataUrl) {
-        // Skip null frames — log but keep going so a brief glitch
-        // doesn't tank the whole segment.
-        continue;
-      }
-      const b64 = dataUrl.startsWith('data:') ? dataUrl.split(',', 2)[1] : dataUrl;
+      // Step 2: capture the WHOLE viewport (canvas + DOM) so the
+      // briefing's title chip, flag chips, captions, and any other
+      // briefing-active chrome land in the output alongside the globe.
+      // Without this, the canvas-only toDataURL() only captured the
+      // WebGL pixels — the DOM scaffolding (which is most of the
+      // visual identity of a briefing segment) was invisible.
+      const { data } = await client.send('Page.captureScreenshot', {
+        format: 'jpeg',
+        quality: 92,
+        captureBeyondViewport: false,
+      }).catch(err => {
+        throw new Error(`captureScreenshot at ${tMs}ms failed: ${err.message}`);
+      });
       const fpath = path.join(framesDir, `f${String(i).padStart(7, '0')}.jpg`);
-      await fs.promises.writeFile(fpath, Buffer.from(b64, 'base64'));
+      await fs.promises.writeFile(fpath, Buffer.from(data, 'base64'));
       written++;
       const pct = Math.floor((i / totalFrames) * 100);
       if (pct >= lastLogPct + 25) {
