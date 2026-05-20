@@ -51854,32 +51854,54 @@ body.ticker-active .gTickerLabel {
         const fireFocalMap     = isFocalMap && hasMedia;
 
         // ── iOS diagnostic — TEMPORARY ──────────────────────────────────
-        // The user reports focal_map silently fails to fire on iOS
-        // Capacitor with no on-screen feedback. Even my earlier diagnostic
-        // (a8aaacfc) lives INSIDE startFocalMap — if the fire branch
-        // never reaches startFocalMap, that UI never appears. So surface
-        // the fire-check decision per segment via a fixed banner at the
-        // top of the briefing surface. Will be removed once iOS issue
-        // is identified.
+        // The previous absolutely-positioned banner inside briefingOverlay
+        // didn't appear on the user's iOS device for the Bolivia focal_map
+        // segment — could be clipped by a parent overflow, hidden by z,
+        // or the code simply isn't reaching this block. To narrow it down:
+        //
+        //   1. A FIXED-position banner that bypasses every overflow/parent
+        //      issue — written straight to document.body.
+        //   2. A build-stamp showing the commit short-hash this code came
+        //      from. If the stamp doesn't appear, the bundle on device is
+        //      stale (cap sync didn't propagate, Xcode incremental build
+        //      missed the change). If the stamp appears but the per-segment
+        //      banner doesn't, the fire-check block isn't executing.
+        //   3. Fire UNCONDITIONALLY on every segment so we see whether the
+        //      block runs at all, not just for focal_map segs.
         try {
-          if (isFocalMap || isHeatmap || (fm && fm.enabled)) {
-            const dbg = document.getElementById('bFocalDebugBanner') || (() => {
-              const el = document.createElement('div');
-              el.id = 'bFocalDebugBanner';
-              el.style.cssText = 'position:absolute;top:80px;left:50%;transform:translateX(-50%);background:rgba(251,191,36,0.95);color:#0a0e17;padding:6px 12px;border-radius:6px;font-family:monospace;font-size:11px;font-weight:700;z-index:99999;pointer-events:none;max-width:90vw;text-align:center;line-height:1.4;';
-              document.getElementById('briefingOverlay')?.appendChild(el);
-              return el;
-            })();
-            const fmKeys = fm ? Object.keys(fm).join(',') : '(no-fm)';
-            dbg.textContent =
-              `seg=${idx} type=${seg.type || seg.segment_type} ` +
-              `media_type=${mediaType || '(none)'} ` +
-              `fireFM=${fireFocalMap} ` +
-              `hasMedia=${hasMedia} ` +
-              `mapCfg=${!!mapCfg} ` +
-              `center=${mapCfg?.center ? `${mapCfg.center.lat},${mapCfg.center.lng}` : '(none)'}`;
+          // Build stamp — appended once to body so it's always visible
+          // while the page is open. Hard-coded short hash; bump on each
+          // diagnostic deploy.
+          if (!document.getElementById('bBuildStamp')) {
+            const stamp = document.createElement('div');
+            stamp.id = 'bBuildStamp';
+            stamp.style.cssText = 'position:fixed;bottom:6px;right:8px;background:rgba(34,211,238,0.95);color:#0a0e17;padding:3px 8px;border-radius:4px;font-family:monospace;font-size:10px;font-weight:700;z-index:2147483647;pointer-events:none;';
+            stamp.textContent = 'build: 9e3d9c05+';
+            document.body.appendChild(stamp);
           }
-        } catch (_) {}
+          // Per-segment fire-check banner — fires for EVERY segment so we
+          // can confirm this code path runs at all. Position: fixed at
+          // viewport top, body-level, max z so nothing can hide it.
+          const dbg = document.getElementById('bFocalDebugBanner') || (() => {
+            const el = document.createElement('div');
+            el.id = 'bFocalDebugBanner';
+            el.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#ef4444;color:#fff;padding:6px 12px;font-family:monospace;font-size:12px;font-weight:700;z-index:2147483647;pointer-events:none;text-align:center;line-height:1.4;box-shadow:0 2px 8px rgba(0,0,0,0.5);';
+            document.body.appendChild(el);
+            return el;
+          })();
+          dbg.textContent =
+            `[DBG] seg=${idx} ` +
+            `type=${seg.type || seg.segment_type || '?'} ` +
+            `media=${mediaType || 'none'} ` +
+            `fireFM=${fireFocalMap} ` +
+            `hasMedia=${hasMedia} ` +
+            `mapCfg=${!!mapCfg} ` +
+            `center=${mapCfg?.center ? `${mapCfg.center.lat},${mapCfg.center.lng}` : 'none'}`;
+        } catch (e) {
+          // If we can't even write the banner, surface via an alert so
+          // the user has SOMETHING on-screen.
+          try { window.alert?.('focal-dbg banner error: ' + e.message); } catch (_) {}
+        }
 
         // Diagnostic — surface the reason a heatmap-flavoured segment
         // silently skipped its trigger. Three failure modes the user
