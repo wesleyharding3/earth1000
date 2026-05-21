@@ -47729,10 +47729,18 @@ const settingsToggle     = document.getElementById("settingsToggle");
    surfaces — their data now lives in the between-segment transition
    panel, which is more legible (full-screen) and less visually noisy
    during segment playback. `pointer: coarse` covers all mobile/tablet
-   devices regardless of viewport width. */
+   devices regardless of viewport width.
+   IMPORTANT: the .compact rule below (~line 47547) is more specific
+   (`body.briefing-active .bSegmentSourcePie.compact`) and applies
+   `display: block !important`, which wins over a less-specific
+   `.bSegmentSourcePie { display: none !important }`. We match its
+   specificity by prefixing with `body.briefing-active` and explicitly
+   listing the .compact variant so both modes are covered. */
 @media (max-width: 700px), (pointer: coarse) {
-  .bSegmentSourcePie,
-  .bSegmentArticleRoll {
+  body.briefing-active .bSegmentSourcePie,
+  body.briefing-active .bSegmentSourcePie.compact,
+  body.briefing-active .bSegmentArticleRoll,
+  body.briefing-active .bSegmentArticleRoll.compact {
     display: none !important;
   }
 }
