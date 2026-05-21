@@ -857,11 +857,43 @@ async function renderBriefingSegment(job) {
     const nEvents = scrubInit?.events;
     log(`  scrub init: ${nEvents ?? '?'} event(s) parsed for segment ${job.segment_idx}`);
 
-    // Frame loop. Duration comes from job.audio_ms (the narration
-    // length, populated by /api/video-jobs/briefings/pending from
-    // seg.script.audio_ms). Fall back to a 30s default for legacy
-    // segments without timing metadata.
-    const durationMs = Number(job.audio_ms) || 30_000;
+    // Frame loop duration. Order of precedence:
+    //   1. ffprobe the narration audio — authoritative ground truth.
+    //      audio_ms in the job payload was unreliable (seg.script.audio_ms
+    //      is rarely populated upstream so the worker always fell back
+    //      to a 30s default, which truncated longer segments).
+    //   2. job.audio_ms if it's populated (legacy).
+    //   3. 30s fallback only if both probe + payload come up empty.
+    let durationMs = Number(job.audio_ms) || 0;
+    try {
+      const audioUrl0 = `${RENDER_HOST}/api/briefing/audio/${job.episode_id}/${job.segment_idx}?token=${encodeURIComponent(TOKEN)}`;
+      const audioRes0 = await fetch(audioUrl0);
+      if (audioRes0.ok) {
+        const audioBuf0 = Buffer.from(await audioRes0.arrayBuffer());
+        await fs.promises.writeFile(tmpAudio, audioBuf0);
+        // ffprobe the local file. -of csv=p=0 strips header so the
+        // output is just a duration in seconds.
+        const probedSec = await new Promise((resolve) => {
+          const p = spawn('ffprobe', [
+            '-v', 'error',
+            '-show_entries', 'format=duration',
+            '-of', 'csv=p=0',
+            tmpAudio,
+          ]);
+          let out = '';
+          p.stdout.on('data', d => { out += d.toString(); });
+          p.on('close', () => resolve(parseFloat(out.trim()) || 0));
+          p.on('error', () => resolve(0));
+        });
+        if (probedSec > 0) {
+          durationMs = Math.round(probedSec * 1000);
+          log(`  audio duration probed: ${(durationMs / 1000).toFixed(1)}s (${audioBuf0.length} bytes)`);
+        }
+      }
+    } catch (e) {
+      log(`  audio probe failed: ${e.message} — using fallback`);
+    }
+    if (!durationMs) durationMs = 30_000;
     const totalFrames = Math.ceil((durationMs / 1000) * BRIEFING_FPS);
     log(`  rendering ${totalFrames} frame(s) at ${BRIEFING_FPS}fps (${(durationMs/1000).toFixed(1)}s)`);
 
@@ -936,20 +968,14 @@ async function renderBriefingSegment(job) {
     }
     log(`  video: ${videoStat.size} bytes`);
 
-    // ── Audio fetch + final mux ──────────────────────────────────────
-    // The briefing-audio endpoint requires either a user session or
-    // the worker token (server.js has a bypass branch keyed on the
-    // same VIDEO_WORKER_TOKEN). Pass the token as ?token=… so the
-    // server's worker-token check matches.
-    const audioUrl = `${RENDER_HOST}/api/briefing/audio/${job.episode_id}/${job.segment_idx}?token=${encodeURIComponent(TOKEN)}`;
-    const audioRes = await fetch(audioUrl);
-    if (!audioRes.ok) {
-      const body = await audioRes.text().catch(() => '');
-      throw new Error(`audio fetch HTTP ${audioRes.status}: ${body.slice(0, 200)}`);
+    // ── Audio final mux ──────────────────────────────────────────────
+    // The audio file was already fetched + written to `tmpAudio` during
+    // the pre-render duration probe above. Just verify it's still there.
+    const audioStat = await fs.promises.stat(tmpAudio).catch(() => null);
+    if (!audioStat || audioStat.size < 1000) {
+      throw new Error(`pre-fetched audio missing or too small (${audioStat?.size || 0} bytes)`);
     }
-    const audioBuf = Buffer.from(await audioRes.arrayBuffer());
-    await fs.promises.writeFile(tmpAudio, audioBuf);
-    log(`  audio: ${audioBuf.length} bytes`);
+    log(`  audio: ${audioStat.size} bytes (pre-fetched)`);
 
     // Probe the briefing music file — if it's installed alongside the
     // worker we add it as a soft bed under the narration; if missing,

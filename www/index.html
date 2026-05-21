@@ -47327,7 +47327,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
   z-index: 100018;
   max-width: 80vw;
   font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
-  font-size: 16px;
+  font-size: 22px;
   font-weight: 600;
   letter-spacing: 0.10em;
   text-transform: uppercase;
@@ -47456,7 +47456,7 @@ const settingsToggle     = document.getElementById("settingsToggle");
    visible on story segments, hidden on intro/outro/keywords. */
 .bSegmentCountries {
   position: fixed;
-  top: calc(env(safe-area-inset-top, 0px) + 56px);
+  top: calc(env(safe-area-inset-top, 0px) + 80px);
   left: 50%;
   z-index: 100018;
   display: flex;
@@ -47487,21 +47487,21 @@ const settingsToggle     = document.getElementById("settingsToggle");
 }
 .bCountryChip img {
   display: block;
-  width: 26px;
+  width: 38px;
   height: auto;
-  border-radius: 2px;
+  border-radius: 3px;
 }
 @media (max-width: 700px) {
   .bSegmentCountries {
-    top: calc(env(safe-area-inset-top, 0px) + 44px);
+    top: calc(env(safe-area-inset-top, 0px) + 68px);
     max-width: calc(100vw - 16px);
-    gap: 8px 10px;
+    gap: 10px 12px;
   }
   .bCountryChip {
-    padding: 2px 4px;
+    padding: 3px 5px;
   }
   .bCountryChip img {
-    width: 22px;
+    width: 32px;
   }
 }
 
@@ -48956,9 +48956,17 @@ const settingsToggle     = document.getElementById("settingsToggle");
   display: flex; align-items: center;
   opacity: 0; transition: opacity 0.5s ease;
   overflow: hidden; pointer-events: none;
+  /* Sit at the very bottom of the briefing layer, BELOW segment chrome
+     (segment title z 100018, captions z 3, focal map, article panel, etc.)
+     and BELOW the mobile transition panel (z 100070). The briefing
+     control pill has z 2, so the ticker uses z 1 to stay underneath it. */
+  z-index: 1;
 }
-/* bTicker disabled — briefing now feeds into globalTicker */
-#briefingOverlay.open .bTicker { display: none; }
+/* Show the briefing-local news ticker whenever a briefing is open. The
+   page-level #globalTicker is dormant during briefings (see
+   _canMeasureTicker), so this rail carries the live headline crawl
+   through the briefing on mobile. */
+#briefingOverlay.open .bTicker { opacity: 1; }
 .bTickerLabel {
   flex-shrink: 0;
   background: #ff9940; color: #000;
@@ -49011,8 +49019,13 @@ const settingsToggle     = document.getElementById("settingsToggle");
   transition: opacity 0.3s ease, transform 0.3s ease;
 }
 #globalTicker.hidden { opacity: 0; pointer-events: none; transform: translateY(4px); }
-/* briefing-active: keep global ticker visible, just restyle it */
-.briefing-active #globalTicker { display: flex; }
+/* briefing-active: hide the page-level globalTicker. The bTicker (inside
+   #briefingOverlay, bottom of screen) now carries the live headline crawl
+   during briefings, so the global ticker would just stack a redundant
+   second rail at the bottom of the viewport. (On mobile widths there is
+   already an explicit @media rule that hides #globalTicker during
+   briefings — this catches the wider iPad / split-view layouts too.) */
+.briefing-active #globalTicker { display: none; }
 
 /* ── Ticker-active: oval buttons above ticker bar ── */
 body.ticker-active #globalTicker {
@@ -56802,6 +56815,28 @@ body.ticker-active .gTickerLabel {
     }).join('<span class="gTickerDiv">◆</span>');
   }
 
+  // Briefing-local ticker variant — same articles as the global ticker
+  // but tagged with bTicker class names so it picks up the briefing's
+  // smaller compact styling. Click handler stays on gTickerClick because
+  // _articles[] is the source of truth for both rails.
+  function _buildBTickerHTML(articles) {
+    return articles.map(a => {
+      const date     = a.published_at
+        ? fmtDate(a.published_at)
+        : '';
+      const title    = (a.translated_title || a.title || '').replace(/</g, '&lt;');
+      const summary  = (a.summary || '').replace(/</g, '&lt;');
+      const location = (a.city_name || a.country_name || '').replace(/</g, '&lt;');
+      return `<span class="bTickerEntry" data-gid="${a.id}" onclick="window._gTickerClick(this)" style="cursor:pointer;pointer-events:auto;">` +
+        `<span class="bTickerSource">${a.source_name || ''}</span>` +
+        (location ? ` <span class="bTickerSep">·</span> <span class="bTickerLocation">${location}</span>` : '') +
+        (date ? ` <span class="bTickerDate">${date}</span>` : '') +
+        ` <span class="bTickerSep">—</span> <span class="bTickerTitle">${title}</span>` +
+        (summary ? ` <span class="bTickerSep">—</span> <span class="bTickerSummary">${summary}</span>` : '') +
+        `</span>`;
+    }).join('<span class="bTickerDiv">◆</span>');
+  }
+
   function _fallbackArticles() {
     return [{
       id: -1,
@@ -56827,6 +56862,20 @@ body.ticker-active .gTickerLabel {
 
   let _tickerFirstRender = true;
   let _entryActive = false;
+  // Mirror the current article list into the briefing's local ticker rail
+  // (#bTickerItem inside #briefingOverlay). The bTicker is gated visible
+  // via CSS only when the briefing overlay is open, but we keep its DOM
+  // populated so it's already scrolling when playback begins.
+  function _mirrorBTicker(articles) {
+    const bEl = document.getElementById('bTickerItem');
+    if (!bEl) return;
+    bEl.classList.add('reset');
+    bEl.innerHTML = '';
+    const bHalf = _buildBTickerHTML(articles);
+    bEl.innerHTML = bHalf + '<span class="bTickerDiv">◆</span>' + bHalf;
+    void bEl.offsetWidth;
+    bEl.classList.remove('reset');
+  }
   function _renderTicker(articles) {
     const el = document.getElementById('gTickerTrack');
     if (!el) return null;
@@ -56835,6 +56884,10 @@ body.ticker-active .gTickerLabel {
     const half = _buildHTML(articles);
     el.innerHTML = half + '<span class="gTickerDiv">◆</span>' + half;
     void el.offsetWidth;
+
+    // Mirror into the briefing-local ticker (no entry animation — it's
+    // visible only when the briefing overlay opens).
+    _mirrorBTicker(articles);
 
     if (_tickerFirstRender) {
       _tickerFirstRender = false;
@@ -56870,6 +56923,23 @@ body.ticker-active .gTickerLabel {
     return el;
   }
 
+  // Sync the briefing-local ticker's scroll duration. Works even while
+  // briefing-active (unlike _canMeasureTicker which short-circuits then)
+  // because the bTicker mounts INSIDE #briefingOverlay and is the rail
+  // the user actually sees during playback.
+  function _syncBTickerDuration(retries = 0) {
+    const bEl = document.getElementById('bTickerItem');
+    if (!bEl) return;
+    const halfW = bEl.scrollWidth / 2;
+    if (halfW <= 1) {
+      if (retries < 12) {
+        requestAnimationFrame(() => _syncBTickerDuration(retries + 1));
+      }
+      return;
+    }
+    bEl.style.animationDuration = `${Math.max(MIN_TICKER_DURATION, halfW / SPEED).toFixed(1)}s`;
+  }
+
   function _syncTickerDuration(retries = 0) {
     const el = document.getElementById('gTickerTrack');
     if (!el) return;
@@ -56877,6 +56947,9 @@ body.ticker-active .gTickerLabel {
       if (retries < 12) {
         requestAnimationFrame(() => _syncTickerDuration(retries + 1));
       }
+      // Still sync the briefing-local ticker — its visibility is gated
+      // by #briefingOverlay.open, not by _canMeasureTicker's guards.
+      _syncBTickerDuration();
       return;
     }
     const halfW = el.scrollWidth / 2;
@@ -56887,6 +56960,7 @@ body.ticker-active .gTickerLabel {
       return;
     }
     el.style.animationDuration = `${Math.max(MIN_TICKER_DURATION, halfW / SPEED).toFixed(1)}s`;
+    _syncBTickerDuration();
   }
 
   // ── Start / restart animation ─────────────────────────────────────────────
@@ -57028,6 +57102,14 @@ body.ticker-active .gTickerLabel {
   _applyVisibility();
   _fetchAndStart();
   setInterval(_fetchAndStart, REFRESH_MS);
+  // When the briefing opens, the bTicker rail fades in (opacity 0→1).
+  // Re-sync its animation duration so the crawl scrolls at the same
+  // px/sec as the global ticker. The bTicker mirror was already
+  // populated by _renderTicker on the most recent _fetchAndStart, so
+  // we don't need to rebuild — just remeasure.
+  document.addEventListener('briefingOpen', () => {
+    requestAnimationFrame(() => requestAnimationFrame(_syncBTickerDuration));
+  });
   document.addEventListener('briefingClose', () => {
     const queued = _pendingArticles && _pendingArticles.length ? _pendingArticles : _articles;
     if (queued && queued.length) {

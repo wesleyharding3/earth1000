@@ -43971,7 +43971,7 @@ body.briefing-capture-mode #bLauncher { display: none !important; }
   z-index: 100018;
   max-width: 80vw;
   font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
-  font-size: 16px;
+  font-size: 22px;
   font-weight: 600;
   letter-spacing: 0.10em;
   text-transform: uppercase;
@@ -44083,12 +44083,15 @@ body.briefing-capture-mode #bLauncher { display: none !important; }
    visible on story segments, hidden on intro/outro/keywords. */
 .bSegmentCountries {
   position: fixed;
-  top: calc(env(safe-area-inset-top, 0px) + 56px);
+  /* Pushed down to clear the larger title (22px + 1.25 line-height +
+     2-line clamp can extend ~76px). The previous +56px collided with
+     descenders on multi-line titles. */
+  top: calc(env(safe-area-inset-top, 0px) + 80px);
   left: 50%;
   z-index: 100018;
   display: flex;
   flex-wrap: wrap;
-  gap: 12px 14px;
+  gap: 14px 16px;
   justify-content: center;
   max-width: min(82vw, 760px);
   pointer-events: none;
@@ -44114,21 +44117,95 @@ body.briefing-capture-mode #bLauncher { display: none !important; }
 }
 .bCountryChip img {
   display: block;
-  width: 26px;
+  width: 38px;
   height: auto;
-  border-radius: 2px;
+  border-radius: 3px;
 }
 @media (max-width: 700px) {
   .bSegmentCountries {
-    top: calc(env(safe-area-inset-top, 0px) + 44px);
+    top: calc(env(safe-area-inset-top, 0px) + 58px);
     max-width: calc(100vw - 16px);
-    gap: 8px 10px;
+    gap: 10px 12px;
   }
   .bCountryChip {
-    padding: 2px 4px;
+    padding: 3px 5px;
   }
   .bCountryChip img {
-    width: 22px;
+    width: 32px;
+  }
+}
+
+/* ── Floating country label cards — appear on the globe at t≈3s of each
+   briefing segment to identify which country is which. Container is a
+   fixed-position overlay matching the globe canvas; each card is an
+   absolute-positioned floating chip that follows its country's projected
+   2D position. Camera-view-aware: cards on the back hemisphere fade out
+   and reappear when the globe rotates them into view. See
+   _updateCountryLabelPositions in the briefing IIFE for the per-frame
+   projection + hemisphere test logic. */
+.bCountryLabels {
+  position: fixed;
+  inset: 0;
+  z-index: 100015;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.bCountryLabels.visible {
+  opacity: 1;
+}
+.bCountryLabelCard {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px 4px 5px;
+  border-radius: 6px;
+  background: rgba(20, 12, 6, 0.20);
+  border: 1px solid rgba(255, 184, 92, 0.30);
+  backdrop-filter: blur(12px) saturate(1.2);
+  -webkit-backdrop-filter: blur(12px) saturate(1.2);
+  color: rgba(255, 224, 178, 0.95);
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Inter', system-ui, sans-serif;
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  text-shadow:
+    0 0 6px rgba(255, 184, 92, 0.45),
+    0 1px 2px rgba(0, 0, 0, 0.55);
+  box-shadow:
+    0 2px 8px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 0 rgba(255, 220, 160, 0.10);
+  /* Per-card fade — outer container handles the global show/hide, and
+     each card independently fades in/out as it crosses the hemisphere
+     boundary while the globe rotates. */
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.92);
+  transition: opacity 0.6s cubic-bezier(0.22, 1, 0.36, 1),
+              transform 0.6s cubic-bezier(0.22, 1, 0.36, 1);
+  will-change: opacity, transform;
+}
+.bCountryLabelCard.bCountryLabelCardShown {
+  opacity: 1;
+  transform: translate(-50%, -50%) scale(1);
+}
+.bCountryLabelCard img {
+  display: block;
+  width: 18px;
+  height: auto;
+  border-radius: 2px;
+  flex-shrink: 0;
+}
+@media (max-width: 700px) {
+  .bCountryLabelCard {
+    font-size: 11px;
+    padding: 3px 6px 3px 4px;
+  }
+  .bCountryLabelCard img {
+    width: 14px;
   }
 }
 
@@ -44775,9 +44852,17 @@ body.briefing-capture-mode #bLauncher { display: none !important; }
   display: flex; align-items: center;
   opacity: 0; transition: opacity 0.5s ease;
   overflow: hidden; pointer-events: none;
+  /* Sit at the very bottom of the briefing layer, BELOW segment chrome
+     (segment title z 100018, captions z 3, focal map, article panel, etc.)
+     and BELOW the mobile transition panel (z 100070). The briefing
+     control pill has z 2, so the ticker uses z 1 to stay underneath it. */
+  z-index: 1;
 }
-/* bTicker disabled — briefing now feeds into globalTicker */
-#briefingOverlay.open .bTicker { display: none; }
+/* Show the briefing-local news ticker whenever a briefing is open. The
+   page-level #globalTicker is restyled/effectively dormant during
+   briefings (see _canMeasureTicker), so this rail carries the live
+   headline crawl through the briefing and into the rendered MP4. */
+#briefingOverlay.open .bTicker { opacity: 1; }
 .bTickerLabel {
   flex-shrink: 0;
   background: #ff9940; color: #000;
@@ -44825,8 +44910,12 @@ body.briefing-capture-mode #bLauncher { display: none !important; }
   transition: opacity 0.3s ease, transform 0.3s ease;
 }
 #globalTicker.hidden { opacity: 0; pointer-events: none; transform: translateY(4px); }
-/* briefing-active: keep global ticker visible, just restyle it */
-.briefing-active #globalTicker { display: flex; }
+/* briefing-active: hide the page-level globalTicker. The bTicker (inside
+   #briefingOverlay, bottom of screen) now carries the live headline crawl
+   during briefings, so the global ticker would just stack a redundant
+   second rail at the bottom of the viewport. The capture-mode rules
+   above also hide globalTicker, so this matches the rendered MP4 frame. */
+.briefing-active #globalTicker { display: none; }
 
 /* ── Ticker-active: oval buttons above ticker bar ── */
 body.ticker-active #globalTicker {
@@ -45854,6 +45943,11 @@ body.ticker-active .gTickerLabel {
        [date]". Outro/keywords/summary hide it. -->
   <div class="bSegmentTitle" id="bSegmentTitle"></div>
   <div class="bSegmentCountries" id="bSegmentCountries"></div>
+  <!-- Floating country label cards overlay — populated at t≈3s of each
+       story segment by the briefing IIFE. Container stays in DOM; cards
+       are appended/removed per segment. See _showCountryLabels /
+       _hideCountryLabels / _updateCountryLabelPositions in the IIFE. -->
+  <div class="bCountryLabels" id="bCountryLabels" aria-hidden="true"></div>
   <div class="bSegmentSourcePie" id="bSegmentSourcePie" aria-hidden="true"></div>
   <div class="bFocalScrim" id="bFocalScrim"></div>
   <div class="bDotsMeta" id="bDotsMeta"></div>
@@ -46939,6 +47033,283 @@ body.ticker-active .gTickerLabel {
     el.classList.add('visible');
   }
 
+  // ── Floating country label cards on the globe ───────────────────────
+  // Show flag+name chips at the projected 2D screen positions of every
+  // country involved in a segment. Camera-view-aware: as the globe
+  // rotates during slerp moves, cards on the back hemisphere fade out
+  // and reappear when they swing into view.
+  //
+  // State is module-local to the briefing IIFE. _countryLabelEntries is
+  // the per-card array { iso, name, lat, lon, el }. _countryLabelRaf is
+  // the live-mode position-tracking RAF id. _countryLabelToken increments
+  // each show() so stale RAFs / hide-timers bail out cleanly.
+  let _countryLabelEntries = [];
+  let _countryLabelRaf     = 0;
+  let _countryLabelToken   = 0;
+  let _countryLabelVisible = false;
+
+  // Resolve seg → array of { iso, name, lat, lon } using the same logic
+  // setSegmentCountries uses for the chip row, then enrich with lat/lon
+  // from window.__globeCountries (centroid). Capped at 8 to avoid
+  // overlap soup on dense stories.
+  function _collectSegmentCountryGeo(seg) {
+    if (!seg || seg.type !== 'story') return [];
+    const seen = new Set();
+    const isos = [];
+    const _countries = window.__globeCountries || [];
+    const _isoFromName = (name) => {
+      if (!name) return '';
+      const nl = String(name).trim().toLowerCase();
+      const c = _countries.find(c => c.name && c.name.toLowerCase() === nl);
+      return c?.iso_code || '';
+    };
+    const push = (rawIso, fallbackName) => {
+      let iso = (rawIso || '').trim().toUpperCase();
+      if ((!iso || iso.length !== 2) && fallbackName) {
+        iso = (_isoFromName(fallbackName) || '').toUpperCase();
+      }
+      if (!iso || iso.length !== 2) return;
+      if (seen.has(iso)) return;
+      seen.add(iso);
+      isos.push({ iso, name: fallbackName || iso });
+    };
+    push(seg.primary_country_iso || seg.primary_country?.iso, seg.primary_country?.name);
+    push(seg.primary_city_country_iso, seg.primary_city?.country_name);
+    const isoToName = window._isoToName || ((iso) => iso);
+    for (const iso of (seg.flow_arc_isos || [])) push(iso, isoToName(iso));
+    for (const iso of (seg.secondary_country_isos || [])) push(iso, isoToName(iso));
+    for (const iso of (seg.primary_nations || [])) push(iso, isoToName(iso));
+    for (const iso of (seg.secondary_nations || [])) push(iso, isoToName(iso));
+    for (const loc of (seg.secondary_locations || [])) {
+      if (loc?.iso || loc?.iso_code) push(loc.iso || loc.iso_code, loc?.name);
+      else if (loc?.name) push('', loc.name);
+    }
+    if (isos.length < 2) {
+      const arcs = [
+        ...(Array.isArray(seg.flow_arcs) ? seg.flow_arcs : []),
+        ...(Array.isArray(seg.secondary_flow_arcs) ? seg.secondary_flow_arcs : []),
+      ];
+      for (const a of arcs) {
+        push('', a?.from_name);
+        push('', a?.to_name);
+      }
+    }
+    const capped = isos.slice(0, 8);
+    // Attach centroid lat/lon from __globeCountries (the briefing's
+    // canonical centroid source — same array used by setSegmentCountries
+    // and arc endpoint resolution).
+    const out = [];
+    for (const entry of capped) {
+      const c = _countries.find(c => (c.iso_code || c.iso || c.code || '').toUpperCase() === entry.iso);
+      if (!c || c.lat == null) continue;
+      const lon = c.lon ?? c.lng ?? 0;
+      // The polygon-layer name is often more canonical than the
+      // editorially-shipped name — fall back to it when the segment's
+      // primary/secondary name is missing or just the ISO code.
+      const niceName = c.name || entry.name || entry.iso;
+      out.push({ iso: entry.iso, name: niceName, lat: Number(c.lat), lon: Number(lon) });
+    }
+    return out;
+  }
+
+  // Project a (lat,lon) on the globe to screen space and return both the
+  // 2D screen position and a visibility flag (true if the point is on the
+  // hemisphere facing the camera). Mirrors the existing hover-anchor
+  // tracker at ~line 20800 in this file but uses the canonical phi/theta
+  // convention used by briefingPulseAt, buildBriefingArc, etc.
+  function _projectLatLonToScreen(lat, lon) {
+    const cam  = window.__camera;
+    const rend = window.__renderer;
+    if (!cam || !rend || !window.scene) return null;
+    const R = 1.0;
+    const phi   = (90 - lat) * Math.PI / 180;
+    const theta = (lon + 180) * Math.PI / 180;
+    const v = new THREE.Vector3(
+      -R * Math.sin(phi) * Math.cos(theta),
+       R * Math.cos(phi),
+       R * Math.sin(phi) * Math.sin(theta)
+    );
+    // Apply the globe's quaternion so the rotated sphere's surface point
+    // ends up at its actual world-space location.
+    if (window.scene.quaternion) v.applyQuaternion(window.scene.quaternion);
+    // Hemisphere test: vector from camera to point, dotted with the
+    // camera forward vector. If positive (point is in front of the sphere
+    // center along the camera axis), the point is on the FAR hemisphere.
+    // We want the NEAR hemisphere — points whose surface normal faces the
+    // camera. The camera looks down -Z toward the origin, so a surface
+    // point on the near side has positive z component AFTER subtracting
+    // the camera position. Equivalently: dot(point_normal, camera_dir)
+    // where camera_dir = camera.position - origin = camera.position.
+    // We compare normalized point vs normalized camera position; positive
+    // dot means the surface point's normal points generally toward the
+    // camera.
+    const camPos = cam.position;
+    const dot = (v.x * camPos.x + v.y * camPos.y + v.z * camPos.z)
+              / (Math.sqrt(v.x*v.x + v.y*v.y + v.z*v.z) * (camPos.length() || 1));
+    // dot > ~0.05 → comfortably visible; ~0 → on the limb. We use 0.05 as
+    // the threshold so labels disappear before they overlap the silhouette.
+    const visible = dot > 0.05;
+    // Project to NDC then to pixel coordinates relative to the canvas
+    // (which is absolute-positioned inside #pageGlobe and covers the full
+    // viewport in briefing mode).
+    const proj = v.clone().project(cam);
+    const rect = rend.domElement.getBoundingClientRect();
+    const sx = (proj.x + 1) / 2 * rect.width  + rect.left;
+    const sy = (-proj.y + 1) / 2 * rect.height + rect.top;
+    return { sx, sy, visible };
+  }
+
+  // Build / append a card element for one (iso, name) entry. Card starts
+  // hidden (opacity:0, scale 0.92) — the next _updateCountryLabelPositions
+  // tick decides whether to flip it to .bCountryLabelCardShown based on
+  // hemisphere visibility.
+  function _makeCountryLabelCard(iso, name) {
+    const card = document.createElement('div');
+    card.className = 'bCountryLabelCard';
+    card.dataset.iso = iso;
+    const img = document.createElement('img');
+    img.src = `https://flagcdn.com/w40/${iso.toLowerCase()}.png`;
+    img.alt = iso;
+    img.loading = 'lazy';
+    img.onerror = () => { img.style.display = 'none'; };
+    const span = document.createElement('span');
+    span.textContent = name;
+    card.appendChild(img);
+    card.appendChild(span);
+    return card;
+  }
+
+  // Update each card's screen position + per-card visibility. Called
+  // every RAF in live mode while labels are showing; called per scrub
+  // frame from _scrubAdvanceLabels in capture mode.
+  function _updateCountryLabelPositions() {
+    if (!_countryLabelEntries.length) return;
+    for (const entry of _countryLabelEntries) {
+      if (!entry.el) continue;
+      const p = _projectLatLonToScreen(entry.lat, entry.lon);
+      if (!p) continue;
+      entry.el.style.left = `${p.sx}px`;
+      entry.el.style.top  = `${p.sy}px`;
+      // Flip the per-card "shown" class on hemisphere change. The CSS
+      // transition handles the cross-fade.
+      if (p.visible) {
+        if (!entry.el.classList.contains('bCountryLabelCardShown')) {
+          entry.el.classList.add('bCountryLabelCardShown');
+        }
+      } else {
+        if (entry.el.classList.contains('bCountryLabelCardShown')) {
+          entry.el.classList.remove('bCountryLabelCardShown');
+        }
+      }
+    }
+  }
+
+  function _startCountryLabelRaf() {
+    if (_countryLabelRaf) return;
+    const tick = () => {
+      if (!_countryLabelVisible || !_countryLabelEntries.length) {
+        _countryLabelRaf = 0;
+        return;
+      }
+      _updateCountryLabelPositions();
+      _countryLabelRaf = requestAnimationFrame(tick);
+    };
+    _countryLabelRaf = requestAnimationFrame(tick);
+  }
+
+  function _stopCountryLabelRaf() {
+    if (_countryLabelRaf) {
+      cancelAnimationFrame(_countryLabelRaf);
+      _countryLabelRaf = 0;
+    }
+  }
+
+  // Populate the overlay with cards for `seg`'s countries and trigger
+  // fade-in. If the segment has no resolvable country geo, this is a
+  // no-op (overlay stays hidden).
+  function _showCountryLabels(seg) {
+    const container = document.getElementById('bCountryLabels');
+    if (!container) return;
+    const entries = _collectSegmentCountryGeo(seg);
+    // Clear any stale cards from a prior segment.
+    container.innerHTML = '';
+    _countryLabelEntries = [];
+    if (!entries.length) {
+      container.classList.remove('visible');
+      _countryLabelVisible = false;
+      _stopCountryLabelRaf();
+      return;
+    }
+    _countryLabelToken++;
+    for (const e of entries) {
+      const el = _makeCountryLabelCard(e.iso, e.name);
+      container.appendChild(el);
+      _countryLabelEntries.push({ ...e, el });
+    }
+    // Position once before fade so we don't see cards animate in from
+    // (0,0). Then on next frame, flip the container to .visible so the
+    // CSS opacity transition runs.
+    _updateCountryLabelPositions();
+    _countryLabelVisible = true;
+    container.setAttribute('aria-hidden', 'false');
+    // Two RAFs: first to commit initial position, second to add the
+    // visible class so the fade-in transition actually fires.
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        if (!_countryLabelVisible) return;
+        container.classList.add('visible');
+      });
+    });
+    // In scrub mode we don't drive a RAF — the worker calls
+    // _scrubAdvanceLabels each frame instead.
+    if (!_scrubMode) {
+      _startCountryLabelRaf();
+    }
+  }
+
+  function _hideCountryLabels() {
+    const container = document.getElementById('bCountryLabels');
+    if (!container) return;
+    _countryLabelVisible = false;
+    container.classList.remove('visible');
+    container.setAttribute('aria-hidden', 'true');
+    _stopCountryLabelRaf();
+    // Don't immediately empty the DOM — let the CSS fade-out finish first
+    // (matches transition duration). If a new segment starts before the
+    // fade completes, _showCountryLabels' container.innerHTML='' below
+    // takes care of cleanup.
+    const myToken = _countryLabelToken;
+    setTimeout(() => {
+      if (myToken !== _countryLabelToken) return; // superseded
+      if (_countryLabelVisible) return;            // re-shown
+      container.innerHTML = '';
+      _countryLabelEntries = [];
+    }, 700);
+  }
+
+  // Hard reset — used on segment boundaries / scrub end. Skips the
+  // fade-out and drops cards immediately.
+  function _clearCountryLabels() {
+    const container = document.getElementById('bCountryLabels');
+    if (container) {
+      container.classList.remove('visible');
+      container.innerHTML = '';
+      container.setAttribute('aria-hidden', 'true');
+    }
+    _countryLabelEntries = [];
+    _countryLabelVisible = false;
+    _countryLabelToken++;
+    _stopCountryLabelRaf();
+  }
+
+  // Scrub-mode position recompute. Called from __renderBriefingFrameAt
+  // every captured frame so the camera-view-aware visibility stays in
+  // sync with the slerp pose at scrub time tMs.
+  function _scrubAdvanceLabels(_tMs) {
+    if (!_countryLabelVisible || !_countryLabelEntries.length) return;
+    _updateCountryLabelPositions();
+  }
+
   // ── Source-country pie cache (keyed by thread_id) ─────────────────────
   // The panels endpoint computes the pie live but caches for 3h45m
   // server-side. We add a per-page cache so segment-to-segment hops within
@@ -47112,6 +47483,10 @@ body.ticker-active .gTickerLabel {
       _scountries.classList.remove('visible');
       setTimeout(() => { _scountries.innerHTML = ''; }, 480);
     }
+    // Floating country label cards — hard reset on segment boundary so
+    // they don't bleed into the next segment if a transition happens
+    // before the 8s hide setTimeout fires.
+    try { _clearCountryLabels(); } catch (_) {}
     const _ssourcePie = document.getElementById('bSegmentSourcePie');
     if (_ssourcePie) {
       _ssourcePie.classList.remove('visible');
@@ -47597,6 +47972,21 @@ body.ticker-active .gTickerLabel {
           window.startFocus(seg.globe_focus.lat, seg.globe_focus.lng || 0);
         }
       }, camFocusOffsetMs));
+
+      // Floating country label cards on the globe — fade IN at t=3s of
+      // the segment (after the camera focus has mostly settled and the
+      // arcs are drawing), fade OUT after 5s visible (t=8s). The cards
+      // follow each country's projected screen position every RAF via
+      // _startCountryLabelRaf, with per-card visibility tied to whether
+      // the country sits on the camera-facing hemisphere.
+      addBTimer(setTimeout(() => {
+        if (segIdx !== idx) return;
+        try { _showCountryLabels(seg); } catch (e) { console.warn('[briefing/labels] show failed:', e.message); }
+      }, 3000));
+      addBTimer(setTimeout(() => {
+        if (segIdx !== idx) return;
+        try { _hideCountryLabels(); } catch (e) { console.warn('[briefing/labels] hide failed:', e.message); }
+      }, 8000));
 
       // Draw flow arcs + pulse secondary nodes; hide hover label so arcs
       // have full visual attention. Offset from seg.script when available,
@@ -49872,6 +50262,10 @@ body.ticker-active .gTickerLabel {
       _scountries.classList.remove('visible');
       setTimeout(() => { _scountries.innerHTML = ''; }, 480);
     }
+    // Floating country label cards — hard reset on segment boundary so
+    // they don't bleed into the next segment if a transition happens
+    // before the 8s hide setTimeout fires.
+    try { _clearCountryLabels(); } catch (_) {}
     const _ssourcePie = document.getElementById('bSegmentSourcePie');
     if (_ssourcePie) {
       _ssourcePie.classList.remove('visible');
@@ -51132,6 +51526,59 @@ body.ticker-active .gTickerLabel {
       events.push({ msAbs: followupMs, kind: 'camera_followup', applied: false });
     }
 
+    // Camera TOUR: after the centroid settle, pan through each secondary
+    // nation involved in the segment so each gets its moment on-screen.
+    // Stops are unique by ISO; the primary country isn't re-visited
+    // (the initial camera_focus already covered it). Each stop is a
+    // 3.5s slerp + 1s dwell window — total tour fits comfortably in
+    // ~30-60s segments. If the segment is short we still schedule them
+    // (caller's totalFrames cap stops applying them past the end).
+    const _gc = (typeof window !== 'undefined' && Array.isArray(window.__globeCountries))
+      ? window.__globeCountries : [];
+    const _resolveCountry = (iso) => {
+      const ISO = (iso || '').toString().toUpperCase();
+      if (!ISO || ISO.length !== 2) return null;
+      const c = _gc.find(x => (x.iso_code || '').toUpperCase() === ISO);
+      if (!c || c.lat == null) return null;
+      return { iso: ISO, name: c.name || ISO, lat: Number(c.lat), lon: Number(c.lon ?? c.lng ?? 0) };
+    };
+    const tourStops = [];
+    const tourSeen = new Set();
+    const primaryIso = ((seg?.primary_country_iso || seg?.primary_country?.iso) || '').toString().toUpperCase();
+    if (primaryIso) tourSeen.add(primaryIso);
+    const _addTour = (iso) => {
+      const ISO = (iso || '').toString().toUpperCase();
+      if (!ISO || tourSeen.has(ISO)) return;
+      const r = _resolveCountry(ISO);
+      if (!r) return;
+      tourSeen.add(ISO);
+      tourStops.push(r);
+    };
+    for (const iso of (seg?.secondary_country_isos || [])) _addTour(iso);
+    for (const iso of (seg?.flow_arc_isos        || [])) _addTour(iso);
+    for (const iso of (seg?.primary_nations       || [])) _addTour(iso);
+    for (const iso of (seg?.secondary_nations     || [])) _addTour(iso);
+    // Schedule one camera_tour event per stop, spaced TOUR_STEP_MS apart.
+    // First stop starts after the followup transition completes so we
+    // don't stack moves on top of each other. Cap tour to first 6 stops
+    // — beyond that the audience loses track and segments don't have
+    // enough wall-clock left to land each pan.
+    const TOUR_STEP_MS = SCRUB_CAM_FOLLOWUP_MS + 1000;
+    let tourCursor = followupMs + SCRUB_CAM_FOLLOWUP_MS + 500;
+    for (const stop of tourStops.slice(0, 6)) {
+      events.push({ msAbs: tourCursor, kind: 'camera_tour', payload: stop, applied: false });
+      tourCursor += TOUR_STEP_MS;
+    }
+
+    // Country label cards — fade in at t=3000ms (live setTimeout fires
+    // at the same offset in real-time playback). In scrub mode we
+    // schedule the show/hide as explicit events so they fire at scrub
+    // time, not wall-clock time (otherwise the worker's per-frame
+    // capture latency would push the labels to the wrong place in the
+    // captured video). Hide 5s later (t=8000ms).
+    events.push({ msAbs: 3000, kind: 'country_labels_show', applied: false });
+    events.push({ msAbs: 8000, kind: 'country_labels_hide', applied: false });
+
     // Focal-map featured-media moment. Mirror the live trigger calc:
     // focal_trigger_ms - start_ms when both are present, else
     // voiceover_ms (end-of-narration), else 35% of segment duration.
@@ -51237,6 +51684,23 @@ body.ticker-active .gTickerLabel {
     _scrubCamTargetZ = (typeof window.__getBriefingWideZ === 'function') ? window.__getBriefingWideZ() : _scrubCamInitialZ;
     // Long decelerating tail — feels like the camera is settling rather
     // than snapping to a new target.
+    _scrubCamTransitionDurMs = SCRUB_CAM_FOLLOWUP_MS;
+    _scrubCamEaseFn          = _easeOutQuart;
+  }
+
+  // Camera TOUR: pan to a specific country payload {lat, lon, iso, name}.
+  // Same easing/duration as the followup so each leg of the tour feels
+  // consistent — a sequence of decelerating settles, not a sequence of
+  // snaps.
+  function _scrubApplyCameraTour(stop) {
+    if (typeof window.__computeFocusQuat !== 'function') return;
+    if (!stop || stop.lat == null) return;
+    if (typeof window.__getGlobeQuat === 'function') {
+      _scrubCamInitialQuat = window.__getGlobeQuat();
+    }
+    _scrubCamInitialZ = (typeof window.__getCameraZ === 'function') ? window.__getCameraZ() : _scrubCamInitialZ;
+    _scrubCamTargetQuat = window.__computeFocusQuat(stop.lat, stop.lon);
+    _scrubCamTargetZ = (typeof window.__getBriefingWideZ === 'function') ? window.__getBriefingWideZ() : _scrubCamInitialZ;
     _scrubCamTransitionDurMs = SCRUB_CAM_FOLLOWUP_MS;
     _scrubCamEaseFn          = _easeOutQuart;
   }
@@ -51409,6 +51873,15 @@ body.ticker-active .gTickerLabel {
         // pose so this picks up wherever the initial focus left us.
         _scrubApplyCameraFollowup();
         _scrubCamTransitionAtMs = ev.msAbs;
+      } else if (ev.kind === 'camera_tour') {
+        // Pan to a specific country stop in the tour sequence. Payload
+        // is { iso, name, lat, lon } baked at build-time.
+        _scrubApplyCameraTour(ev.payload);
+        _scrubCamTransitionAtMs = ev.msAbs;
+      } else if (ev.kind === 'country_labels_show') {
+        try { _showCountryLabels(_scrubSeg); } catch (e) { console.warn('[scrub/labels] show:', e.message); }
+      } else if (ev.kind === 'country_labels_hide') {
+        try { _hideCountryLabels(); } catch (e) { console.warn('[scrub/labels] hide:', e.message); }
       } else if (ev.kind === 'focal_map') {
         // Fire the 2D map takeover. MapLibre animates camera fly-in
         // on its own RAF (real wall-clock time) — we accept that the
@@ -51445,6 +51918,7 @@ body.ticker-active .gTickerLabel {
     _scrubAdvanceCamera(target);
     _scrubAdvanceArcs(target);
     _scrubAdvanceFocalMap(target);
+    _scrubAdvanceLabels(target);
 
     // Synchronous globe render — worker calls Page.captureScreenshot
     // next, which reads the framebuffer + the surrounding DOM.
@@ -51566,6 +52040,28 @@ body.ticker-active .gTickerLabel {
     }).join('<span class="gTickerDiv">◆</span>');
   }
 
+  // Briefing-local ticker variant — same articles as the global ticker
+  // but tagged with bTicker class names so it picks up the briefing's
+  // smaller compact styling. Click handler stays on gTickerClick because
+  // _articles[] is the source of truth for both rails.
+  function _buildBTickerHTML(articles) {
+    return articles.map(a => {
+      const date     = a.published_at
+        ? fmtDate(a.published_at)
+        : '';
+      const title    = (a.translated_title || a.title || '').replace(/</g, '&lt;');
+      const summary  = (a.summary || '').replace(/</g, '&lt;');
+      const location = (a.city_name || a.country_name || '').replace(/</g, '&lt;');
+      return `<span class="bTickerEntry" data-gid="${a.id}" onclick="window._gTickerClick(this)" style="cursor:pointer;pointer-events:auto;">` +
+        `<span class="bTickerSource">${a.source_name || ''}</span>` +
+        (location ? ` <span class="bTickerSep">·</span> <span class="bTickerLocation">${location}</span>` : '') +
+        (date ? ` <span class="bTickerDate">${date}</span>` : '') +
+        ` <span class="bTickerSep">—</span> <span class="bTickerTitle">${title}</span>` +
+        (summary ? ` <span class="bTickerSep">—</span> <span class="bTickerSummary">${summary}</span>` : '') +
+        `</span>`;
+    }).join('<span class="bTickerDiv">◆</span>');
+  }
+
   function _fallbackArticles() {
     return [{
       id: -1,
@@ -51598,7 +52094,38 @@ body.ticker-active .gTickerLabel {
     el.innerHTML = half + '<span class="gTickerDiv">◆</span>' + half;
     void el.offsetWidth;
     el.classList.remove('reset');
+    // Mirror into the briefing's local ticker (#bTickerItem). The bTicker
+    // only paints during briefings (visibility gated by
+    // #briefingOverlay.open .bTicker { opacity: 1 }), but we populate it
+    // here so the scroll is already running by the time the briefing
+    // opens — no flash of empty rail.
+    const bEl = document.getElementById('bTickerItem');
+    if (bEl) {
+      bEl.classList.add('reset');
+      bEl.innerHTML = '';
+      const bHalf = _buildBTickerHTML(articles);
+      bEl.innerHTML = bHalf + '<span class="bTickerDiv">◆</span>' + bHalf;
+      void bEl.offsetWidth;
+      bEl.classList.remove('reset');
+    }
     return el;
+  }
+
+  // Sync the briefing-local ticker's scroll duration. Works even while
+  // briefing-active (unlike _canMeasureTicker which short-circuits then)
+  // because the bTicker mounts INSIDE #briefingOverlay and is the rail
+  // the user actually sees during playback.
+  function _syncBTickerDuration(retries = 0) {
+    const bEl = document.getElementById('bTickerItem');
+    if (!bEl) return;
+    const halfW = bEl.scrollWidth / 2;
+    if (halfW <= 1) {
+      if (retries < 12) {
+        requestAnimationFrame(() => _syncBTickerDuration(retries + 1));
+      }
+      return;
+    }
+    bEl.style.animationDuration = `${Math.max(MIN_TICKER_DURATION, halfW / SPEED).toFixed(1)}s`;
   }
 
   function _syncTickerDuration(retries = 0) {
@@ -51608,6 +52135,9 @@ body.ticker-active .gTickerLabel {
       if (retries < 12) {
         requestAnimationFrame(() => _syncTickerDuration(retries + 1));
       }
+      // Still sync the briefing-local ticker — its visibility is gated
+      // by #briefingOverlay.open, not by _canMeasureTicker's guards.
+      _syncBTickerDuration();
       return;
     }
     const halfW = el.scrollWidth / 2;
@@ -51618,6 +52148,7 @@ body.ticker-active .gTickerLabel {
       return;
     }
     el.style.animationDuration = `${Math.max(MIN_TICKER_DURATION, halfW / SPEED).toFixed(1)}s`;
+    _syncBTickerDuration();
   }
 
   // ── Start / restart animation ─────────────────────────────────────────────
@@ -51772,6 +52303,16 @@ body.ticker-active .gTickerLabel {
   _applyVisibility();
   _fetchAndStart();
   setInterval(_fetchAndStart, REFRESH_MS);
+  // When the briefing opens, the bTicker rail fades in (opacity 0→1).
+  // Re-sync its animation duration so the crawl scrolls at the same
+  // px/sec as the global ticker. The bTicker mirror was already
+  // populated by _renderTicker on the most recent _fetchAndStart, so
+  // we don't need to rebuild — just remeasure.
+  document.addEventListener('briefingOpen', () => {
+    // Two RAFs: one for the opacity transition to begin, one for layout
+    // to settle. Then sync. Cheap; runs once per briefing.
+    requestAnimationFrame(() => requestAnimationFrame(_syncBTickerDuration));
+  });
   document.addEventListener('briefingClose', () => {
     const queued = _pendingArticles && _pendingArticles.length ? _pendingArticles : _articles;
     if (queued && queued.length) {
