@@ -22889,6 +22889,32 @@ const settingsToggle     = document.getElementById("settingsToggle");
       window.briefingPulseAt      = briefingPulseAt;
       window.clearBriefingPulses  = clearBriefingPulses;
       window.briefingArcPulseList = briefingArcPulseList;
+      // Exposed for the scrub renderer — animate() is paused in scrub
+      // mode so the rings created by briefingPulseAt would otherwise
+      // sit frozen. _scrubAdvanceRings calls this per captured frame
+      // so the rings expand + decay at the same per-frame rate as
+      // live playback.
+      window.__advanceBriefingRings = function () {
+        for (let _bi = briefingExtraRings.length - 1; _bi >= 0; _bi--) {
+          const { group: _bg, rings: _brs, states: _bst } = briefingExtraRings[_bi];
+          let _anyActive = false;
+          _bst.forEach((st, i) => {
+            if (!st.active) return;
+            if (st.delay > 0) { st.delay -= ringSpeed; _anyActive = true; return; }
+            st.progress += ringSpeed;
+            const _sc = 1 + st.progress * (ringMultiplierMax - 1);
+            _brs[i].scale.set(_sc, _sc, _sc);
+            _brs[i].material.opacity = Math.pow(1 - st.progress, 1.8);
+            if (st.progress >= 1) { _brs[i].material.opacity = 0; st.active = false; }
+            else _anyActive = true;
+          });
+          if (!_anyActive) {
+            _brs.forEach(r => { r.geometry.dispose(); r.material.dispose(); _bg.remove(r); });
+            scene.remove(_bg);
+            briefingExtraRings.splice(_bi, 1);
+          }
+        }
+      };
 
       // ── Traveling briefing arc ──────────────────────────────────────────
       // Builds a single arc that reveals itself from origin → destination,
@@ -51680,50 +51706,40 @@ body.ticker-active .gTickerLabel {
     // — beyond that the audience loses track and segments don't have
     // enough wall-clock left to land each pan.
     //
-    // The tour runs in TWO windows when the segment has a focal_map:
-    //   1. Pre-map: between followup and the focal_map trigger.
-    //   2. Post-map: between focal_map end and the segment end.
-    // For segments without focal_map, just one continuous window from
-    // followup → segment end.
+    // Tour scheduling — loops through tour stops infinitely (mod by
+    // stop count) so the globe NEVER sits still through the segment.
+    // For focal_map segments, the tour cursor jumps over the map
+    // window (no point panning when the map covers the viewport).
     //
-    // Each stop = SCRUB_CAM_FOLLOWUP_MS slerp + 1500ms dwell. Stops
-    // wrap around the focal_map window so the globe keeps moving
-    // through different primary countries even after the map fires.
+    // Each stop = SCRUB_CAM_FOLLOWUP_MS slerp + 1500ms dwell.
+    // Includes the PRIMARY country in the rotation so the audience
+    // sees it again every loop (was previously skipped, which made
+    // the tour feel like it was avoiding the actual subject).
     const TOUR_STEP_MS = SCRUB_CAM_FOLLOWUP_MS + 1500;
     const focalTriggerOffsetMs = (Number.isFinite(seg?.focal_trigger_ms) && Number.isFinite(seg?.start_ms))
       ? Math.max(0, seg.focal_trigger_ms - seg.start_ms)
       : null;
-    // Approximate focal_map duration in scrub time. mapCfg.duration_sec
-    // takes precedence; fall back to 10s (the renderer's default).
     const fmTmp = seg?.featured_video || seg?.video?.focal || seg?.video_focal || null;
     const mapCfgTmp = (seg?.media_type === 'focal_map') ? (fmTmp?.map_config || seg?.map_config) : null;
     const focalDurMs = mapCfgTmp ? (Number(mapCfgTmp.duration_sec) || 10) * 1000 : 0;
-    const focalEndsAtMs = (focalTriggerOffsetMs != null) ? (focalTriggerOffsetMs + focalDurMs) : null;
-    const preTourCeiling  = (focalTriggerOffsetMs != null)
-      ? Math.max(0, focalTriggerOffsetMs - SCRUB_CAM_FOLLOWUP_MS)
-      : segDurMs;
-    const postTourFloor   = (focalEndsAtMs != null) ? (focalEndsAtMs + 1500) : null;
-    const segEndMs        = segDurMs;
-    let tourCursor = followupMs + SCRUB_CAM_FOLLOWUP_MS + 500;
+    const focalStart = focalTriggerOffsetMs;
+    const focalEnd   = (focalTriggerOffsetMs != null) ? (focalTriggerOffsetMs + focalDurMs + 1500) : null;
+    // Include primary as a tour target so the loop revisits it.
+    const primaryStop = _resolveCountry(primaryIso);
+    const allStops = (primaryStop ? [primaryStop, ...tourStops] : tourStops);
     let stopIdx = 0;
-    const allStops = tourStops.slice(0, 8);
-    // Phase 1: pre-map stops
-    while (stopIdx < allStops.length && tourCursor < preTourCeiling) {
-      events.push({ msAbs: tourCursor, kind: 'camera_tour', payload: allStops[stopIdx], applied: false });
+    let tourCursor = followupMs + SCRUB_CAM_FOLLOWUP_MS + 500;
+    const tourEndMs = segDurMs - SCRUB_CAM_FOLLOWUP_MS;
+    while (allStops.length && tourCursor < tourEndMs) {
+      // Skip into the post-map window if cursor lands during the map.
+      if (focalStart != null && tourCursor >= focalStart - SCRUB_CAM_FOLLOWUP_MS && tourCursor < focalEnd) {
+        tourCursor = focalEnd;
+        continue;
+      }
+      const stop = allStops[stopIdx % allStops.length];
+      events.push({ msAbs: tourCursor, kind: 'camera_tour', payload: stop, applied: false });
       tourCursor += TOUR_STEP_MS;
       stopIdx++;
-    }
-    // Phase 2: post-map stops — pick up where Phase 1 left off, cycling
-    // through remaining stops + LOOPING back to the start if we run
-    // out, so the globe never sits still during the post-piece narration.
-    if (postTourFloor != null && allStops.length) {
-      tourCursor = postTourFloor;
-      while (tourCursor < segEndMs - SCRUB_CAM_FOLLOWUP_MS) {
-        const stop = allStops[stopIdx % allStops.length];
-        events.push({ msAbs: tourCursor, kind: 'camera_tour', payload: stop, applied: false });
-        tourCursor += TOUR_STEP_MS;
-        stopIdx++;
-      }
     }
 
     // Country label cards — fade in at t=3000ms (live setTimeout fires
@@ -51734,6 +51750,48 @@ body.ticker-active .gTickerLabel {
     // captured video). Hide 5s later (t=8000ms).
     events.push({ msAbs: 3000, kind: 'country_labels_show', applied: false });
     events.push({ msAbs: 8000, kind: 'country_labels_hide', applied: false });
+
+    // Periodic ring pulses at each arc endpoint — fires throughout the
+    // segment for a "flashy" rhythmic effect. The initial pulses at
+    // arc_draw still fire via drawSegmentArcs; these are RE-pulses on
+    // a 2.5s cadence. Pulses are suppressed during the focal_map
+    // takeover (globe hidden) and the first ARC_PULSE_START_MS so
+    // the segment's intro isn't visually overloaded.
+    const arcEndpoints = [];
+    const _epSeen = new Set();
+    const _addEp = (lat, lon) => {
+      if (lat == null || lon == null) return;
+      const k = `${Number(lat).toFixed(2)},${Number(lon).toFixed(2)}`;
+      if (_epSeen.has(k)) return;
+      _epSeen.add(k);
+      arcEndpoints.push({ lat: Number(lat), lon: Number(lon) });
+    };
+    for (const a of (seg?.flow_arcs || [])) {
+      _addEp(a.from_lat, a.from_lng ?? a.from_lon);
+      _addEp(a.to_lat,   a.to_lng   ?? a.to_lon);
+    }
+    if (arcEndpoints.length) {
+      const ARC_PULSE_START_MS    = finalArcMs + 2000;   // start re-pulsing 2s after arcs settle
+      const ARC_PULSE_INTERVAL_MS = 2500;                // every 2.5s
+      let pulseT = ARC_PULSE_START_MS;
+      let pulseI = 0;
+      while (pulseT < segDurMs - 1000) {
+        // Skip the focal_map window — globe is hidden there.
+        if (focalStart != null && pulseT >= focalStart - 500 && pulseT < focalEnd) {
+          pulseT = focalEnd;
+          continue;
+        }
+        const ep = arcEndpoints[pulseI % arcEndpoints.length];
+        events.push({
+          msAbs: pulseT,
+          kind: 'arc_pulse',
+          payload: { lat: ep.lat, lon: ep.lon },
+          applied: false,
+        });
+        pulseT += ARC_PULSE_INTERVAL_MS;
+        pulseI++;
+      }
+    }
 
     // Focal-map featured-media moment. PRIMARY trigger source is
     // focal_trigger_ms - start_ms — that's what the live briefing
@@ -52063,6 +52121,15 @@ body.ticker-active .gTickerLabel {
         try { _showCountryLabels(_scrubSeg); } catch (e) { console.warn('[scrub/labels] show:', e.message); }
       } else if (ev.kind === 'country_labels_hide') {
         try { _hideCountryLabels(); } catch (e) { console.warn('[scrub/labels] hide:', e.message); }
+      } else if (ev.kind === 'arc_pulse') {
+        // Re-pulse a single arc endpoint. briefingPulseAt creates a
+        // 3-ring burst at the lat/lon; _scrubAdvanceRings (called
+        // per frame below) expands + decays them in scrub time.
+        try {
+          if (typeof window.briefingPulseAt === 'function' && ev.payload) {
+            window.briefingPulseAt(ev.payload.lat, ev.payload.lon);
+          }
+        } catch (e) { console.warn('[scrub] arc_pulse:', e.message); }
       } else if (ev.kind === 'focal_map') {
         // Fire the 2D map takeover. Await so MapLibre's initial tile
         // load completes before the next captured frame — startFocalMap
@@ -52089,6 +52156,9 @@ body.ticker-active .gTickerLabel {
     _scrubAdvanceArcs(target);
     _scrubAdvanceFocalMap(target);
     _scrubAdvanceLabels(target);
+    // Advance ring pulses — animate() is paused in scrub mode, so the
+    // briefingExtraRings would otherwise sit frozen at progress=0.
+    try { if (typeof window.__advanceBriefingRings === 'function') window.__advanceBriefingRings(); } catch (_) {}
 
     // Synchronous globe render — worker calls Page.captureScreenshot
     // next, which reads the framebuffer + the surrounding DOM.
