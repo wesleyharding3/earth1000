@@ -44640,6 +44640,35 @@ body.briefing-capture-mode #bLauncher { display: none !important; }
   80%  { opacity: 0;            }
   100% { transform: scale(4.2); opacity: 0; }
 }
+
+/* Drop-in burst — three rings expanding in quick staggered succession
+   right after a marker appears. Distinct from the steady pulse: bigger
+   final radius, brighter opening flash, fires ONCE. Implemented via
+   ::before / ::after / inner span pseudo-rings that animate when the
+   .dropped-in class lands. Each ring has a different delay so they
+   read as concentric radar pings rather than a single ring. */
+.bFocalMap-highlight-marker.scheduled.dropped-in::before,
+.bFocalMap-highlight-marker.scheduled.dropped-in::after {
+  content: '';
+  position: absolute;
+  top: 50%; left: 50%;
+  width: 14px; height: 14px;
+  margin: -7px 0 0 -7px;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+  pointer-events: none;
+  opacity: 0;
+  animation: bFocalMap-burst 1.4s cubic-bezier(0.16, 1, 0.3, 1) 1 forwards;
+}
+.bFocalMap-highlight-marker.scheduled.dropped-in::after {
+  animation-delay: 0.18s;
+  border-width: 1.5px;
+}
+@keyframes bFocalMap-burst {
+  0%   { transform: scale(0.4); opacity: 1; }
+  40%  { opacity: 0.7; }
+  100% { transform: scale(7);   opacity: 0; }
+}
 .bFocalMap-highlight-label {
   position: absolute;
   transform: translate(10px, -50%);
