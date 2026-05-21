@@ -60,7 +60,10 @@ cat > package.json <<'JSON'
   "version": "1.0.0",
   "private": true,
   "main": "videoWorker.js",
-  "dependencies": { "puppeteer": "^24.0.0" }
+  "dependencies": {
+    "@ffmpeg-installer/ffmpeg": "^1.1.0",
+    "puppeteer": "^24.0.0"
+  }
 }
 JSON
 npm install --omit=dev --silent
