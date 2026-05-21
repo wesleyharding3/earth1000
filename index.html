@@ -49748,6 +49748,51 @@ body.ticker-active .gTickerLabel {
     const pitchStart  = Number.isFinite(config.pitch_start) ? Number(config.pitch_start) : (terrainOn ? 35 : 0);
     const pitchEnd    = Number.isFinite(config.pitch_end)   ? Number(config.pitch_end)   : (terrainOn ? 55 : 0);
 
+    // PHASES — optional multi-stage camera choreography. When present,
+    // the map cinematically transitions through each phase in order:
+    //   [{ center, zoom, pitch, transition_ms, hold_ms, label, highlights }]
+    // Use case: country-wide overview → city dive → back to country.
+    // Backward compat: if no phases array, synthesize a single phase
+    // from the legacy zoom_start/zoom_end + duration_sec so existing
+    // map_configs keep working unchanged.
+    function _normalizePhase(p, fallback) {
+      const c = p.center || fallback.center;
+      return {
+        label:         p.label || '',
+        center:        { lat: Number(c.lat ?? c[1]), lng: Number(c.lng ?? c[0]) },
+        zoom:          Number.isFinite(p.zoom)  ? Number(p.zoom)  : fallback.zoom,
+        pitch:         Number.isFinite(p.pitch) ? Number(p.pitch) : fallback.pitch,
+        transition_ms: Number.isFinite(p.transition_ms) ? Number(p.transition_ms) : 2500,
+        hold_ms:       Number.isFinite(p.hold_ms)       ? Number(p.hold_ms)       : 3000,
+        highlights:    Array.isArray(p.highlights) ? p.highlights : null, // null = inherit base
+      };
+    }
+    const _phaseFallback = {
+      center: { lat: Number(config.center.lat), lng: Number(config.center.lng) },
+      zoom: zoomEnd,
+      pitch: pitchEnd,
+    };
+    let phases;
+    if (Array.isArray(config.phases) && config.phases.length) {
+      phases = config.phases.map(p => _normalizePhase(p, _phaseFallback));
+    } else {
+      // Legacy single-phase: synthesize one phase whose transition is
+      // ~80% of durMs and hold is the rest. Matches old smoothstep behavior.
+      const animMs = Math.max(2000, durMs - 800);
+      phases = [{
+        label:         config.label || '',
+        center:        _phaseFallback.center,
+        zoom:          zoomEnd,
+        pitch:         pitchEnd,
+        transition_ms: animMs,
+        hold_ms:       Math.max(0, durMs - animMs),
+        highlights:    null,
+      }];
+    }
+    // Total focal_map duration is the sum of all phases.
+    const phasesTotalMs = phases.reduce((s, p) => s + p.transition_ms + p.hold_ms, 0);
+    const finalDurMs = phases.length > 1 ? phasesTotalMs : durMs;
+
     // Build or reset the MapLibre instance. Container is now fullscreen
     // (per the classList.add above), so MapLibre's initial size lock is
     // already correct. For the reused-instance path we still call
@@ -49958,19 +50003,54 @@ body.ticker-active .gTickerLabel {
       // frames. Instead, stash the state on window.__scrubFocalMapAnim
       // so _scrubAdvanceFocalMap can step the markers + zoom forward
       // every captured frame using scrub-elapsed ms.
-      const animMs = Math.max(2000, durMs - 800);
+      // Bake the phase TIMELINE — each phase has a startMs (when its
+      // transition begins, measured from focal_map start) and a doneMs
+      // (when its hold ends). Used by both live (setTimeout-based) and
+      // scrub (per-frame _scrubAdvanceFocalMap) drivers.
+      const phaseTimeline = [];
+      {
+        let cursor = 0;
+        // Initial phase 0 is the "starting pose" — the map was already
+        // constructed at zoomStart/pitchStart and config.center. We
+        // treat that as t=0, then transition INTO phases[0] over
+        // phases[0].transition_ms.
+        const startPose = {
+          center: { lat: Number(config.center.lat), lng: Number(config.center.lng) },
+          zoom:   zoomStart,
+          pitch:  pitchStart,
+        };
+        let prevPose = startPose;
+        for (const phase of phases) {
+          const startMs = cursor;
+          const transitionEndMs = startMs + phase.transition_ms;
+          const doneMs = transitionEndMs + phase.hold_ms;
+          phaseTimeline.push({
+            startMs, transitionEndMs, doneMs,
+            from: prevPose,
+            to: { center: phase.center, zoom: phase.zoom, pitch: phase.pitch },
+            label: phase.label,
+          });
+          prevPose = phaseTimeline[phaseTimeline.length - 1].to;
+          cursor = doneMs;
+        }
+      }
+
       if (window.__inScrubMode) {
         window.__scrubFocalMapAnim = {
           mapInst: _focalMapInst,
           markersToSchedule,
           arrowState,
           updateArrowSource,
+          phaseTimeline,
+          // Legacy fields kept so existing _scrubAdvanceFocalMap fallback
+          // path still compiles; not used when phaseTimeline is present.
           zoomStart, zoomEnd,
           pitchStart, pitchEnd,
-          animMs,
-          durMs,
+          animMs: finalDurMs,
+          durMs: finalDurMs,
         };
       } else {
+        // Live mode: marker + arrow scheduler (drives appear-at timing).
         const t0Schedule = performance.now();
         const timelineTick = () => {
           if (!_focalMapInst) return;
@@ -49993,30 +50073,31 @@ body.ticker-active .gTickerLabel {
             updateArrowSource();
             arrowState.forEach(s => { if (s.started) s._sourcePainted = true; });
           }
-          if (elapsed < durMs) {
+          if (elapsed < finalDurMs) {
             _focalMapScheduled.push(requestAnimationFrame(timelineTick));
           }
         };
         _focalMapScheduled.push(requestAnimationFrame(timelineTick));
 
-        // Camera animation — zoom + pitch (pitch only matters when
-        // terrain is on, but cheap to interpolate either way).
-        const t0 = performance.now();
-        const tick = (now) => {
-          if (!_focalMapInst) return;
-          const t = Math.min(1, (now - t0) / animMs);
-          const eased = t * t * (3 - 2 * t); // smoothstep
-          const z = zoomStart + (zoomEnd - zoomStart) * eased;
-          const p = pitchStart + (pitchEnd - pitchStart) * eased;
-          try { _focalMapInst.setZoom(z); } catch (_) {}
-          if (pitchStart !== pitchEnd) { try { _focalMapInst.setPitch(p); } catch (_) {} }
-          if (t < 1) {
-            _focalMapAnimRaf = requestAnimationFrame(tick);
-          } else {
-            _focalMapAnimRaf = null;
-          }
-        };
-        _focalMapAnimRaf = requestAnimationFrame(tick);
+        // Live mode camera: use maplibre's native easeTo for each phase
+        // (it handles all three of center+zoom+pitch in one call) and
+        // schedule the next phase via setTimeout at phase.transitionEndMs.
+        // The hold time is "free" — easeTo completes after transition_ms
+        // and maplibre just holds that pose until the next easeTo fires.
+        for (const seg of phaseTimeline) {
+          setTimeout(() => {
+            if (!_focalMapInst) return;
+            try {
+              _focalMapInst.easeTo({
+                center: [seg.to.center.lng, seg.to.center.lat],
+                zoom:   seg.to.zoom,
+                pitch:  seg.to.pitch,
+                duration: seg.transitionEndMs - seg.startMs,
+                essential: true,
+              });
+            } catch (e) { console.warn('[focal_map/phase] easeTo failed:', e.message); }
+          }, seg.startMs);
+        }
       }
     };
 
@@ -51582,14 +51663,50 @@ body.ticker-active .gTickerLabel {
     if (anim && !_scrubFocalMapEnded && _scrubFocalMapStartedAtMs >= 0) {
       const elapsed = Math.max(0, tMs - _scrubFocalMapStartedAtMs);
 
-      // Camera zoom + pitch — smoothstep eased over animMs.
-      const tCam = Math.min(1, elapsed / anim.animMs);
-      const easedCam = tCam * tCam * (3 - 2 * tCam); // smoothstep
-      const z = anim.zoomStart + (anim.zoomEnd - anim.zoomStart) * easedCam;
-      try { anim.mapInst?.setZoom(z); } catch (_) {}
-      if (anim.pitchStart !== anim.pitchEnd) {
-        const p = anim.pitchStart + (anim.pitchEnd - anim.pitchStart) * easedCam;
-        try { anim.mapInst?.setPitch(p); } catch (_) {}
+      // PHASES — drive camera through the multi-stage timeline. Each
+      // phase has a transition window (we lerp center+zoom+pitch from
+      // .from to .to with smoothstep easing) and a hold window (camera
+      // stays at .to). Used for two-layer zooms like country → city →
+      // country and any future multi-stop choreography.
+      if (Array.isArray(anim.phaseTimeline) && anim.phaseTimeline.length) {
+        // Find the active phase = the one whose [startMs, doneMs] window
+        // contains `elapsed`. Phases are sequential + contiguous, so a
+        // linear search through ~3 phases is faster than a binary search.
+        let active = null;
+        for (const seg of anim.phaseTimeline) {
+          if (elapsed >= seg.startMs && elapsed < seg.doneMs) { active = seg; break; }
+        }
+        // Past the last phase's doneMs: pin to its final pose.
+        if (!active) active = anim.phaseTimeline[anim.phaseTimeline.length - 1];
+        let pose;
+        if (elapsed < active.transitionEndMs) {
+          const localElapsed = elapsed - active.startMs;
+          const transitionMs = active.transitionEndMs - active.startMs;
+          const t = Math.min(1, Math.max(0, localElapsed / transitionMs));
+          const eased = t * t * (3 - 2 * t); // smoothstep
+          pose = {
+            lat:   active.from.center.lat + (active.to.center.lat - active.from.center.lat) * eased,
+            lng:   active.from.center.lng + (active.to.center.lng - active.from.center.lng) * eased,
+            zoom:  active.from.zoom        + (active.to.zoom        - active.from.zoom)        * eased,
+            pitch: active.from.pitch       + (active.to.pitch       - active.from.pitch)       * eased,
+          };
+        } else {
+          // Hold window — pin at .to.
+          pose = { lat: active.to.center.lat, lng: active.to.center.lng, zoom: active.to.zoom, pitch: active.to.pitch };
+        }
+        try { anim.mapInst?.setCenter([pose.lng, pose.lat]); } catch (_) {}
+        try { anim.mapInst?.setZoom(pose.zoom); } catch (_) {}
+        try { anim.mapInst?.setPitch(pose.pitch); } catch (_) {}
+      } else {
+        // Legacy single-phase fallback (no phaseTimeline stashed).
+        const tCam = Math.min(1, elapsed / anim.animMs);
+        const easedCam = tCam * tCam * (3 - 2 * tCam);
+        const z = anim.zoomStart + (anim.zoomEnd - anim.zoomStart) * easedCam;
+        try { anim.mapInst?.setZoom(z); } catch (_) {}
+        if (anim.pitchStart !== anim.pitchEnd) {
+          const p = anim.pitchStart + (anim.pitchEnd - anim.pitchStart) * easedCam;
+          try { anim.mapInst?.setPitch(p); } catch (_) {}
+        }
       }
 
       // Markers — fire each one's `dropped-in` class at scrub elapsed
@@ -51802,7 +51919,14 @@ body.ticker-active .gTickerLabel {
       : null;
     const fmTmp = seg?.featured_video || seg?.video?.focal || seg?.video_focal || null;
     const mapCfgTmp = (seg?.media_type === 'focal_map') ? (fmTmp?.map_config || seg?.map_config) : null;
-    const focalDurMs = mapCfgTmp ? (Number(mapCfgTmp.duration_sec) || 10) * 1000 : 0;
+    // Compute focal_map duration: prefer the sum of all phases'
+    // (transition_ms + hold_ms), fall back to duration_sec.
+    const focalDurMs = mapCfgTmp
+      ? (Array.isArray(mapCfgTmp.phases) && mapCfgTmp.phases.length
+          ? mapCfgTmp.phases.reduce((s, p) =>
+              s + (Number(p.transition_ms) || 2500) + (Number(p.hold_ms) || 3000), 0)
+          : (Number(mapCfgTmp.duration_sec) || 10) * 1000)
+      : 0;
     const focalStart = focalTriggerOffsetMs;
     const focalEnd   = (focalTriggerOffsetMs != null) ? (focalTriggerOffsetMs + focalDurMs + 1500) : null;
     // Include primary as a tour target so the loop revisits it.
@@ -51919,9 +52043,19 @@ body.ticker-active .gTickerLabel {
         const triggerPct = (fm?.trigger_pct ?? 35) / 100;
         triggerMs = Math.round(segDurMs * triggerPct);
       }
-      const durSec = Number.isFinite(mapCfg.duration_sec)
-        ? mapCfg.duration_sec
-        : Math.max(6, (fm?.end_sec || 10) - (fm?.start_sec || 0));
+      // durSec — prefer the sum of all phases (when authored), else
+      // duration_sec, else derive from start/end. Used by
+      // _scrubFocalMapEndsAtMs to schedule the scrub-time cleanup.
+      let durSec;
+      if (Array.isArray(mapCfg.phases) && mapCfg.phases.length) {
+        const totalMs = mapCfg.phases.reduce((s, p) =>
+          s + (Number(p.transition_ms) || 2500) + (Number(p.hold_ms) || 3000), 0);
+        durSec = totalMs / 1000;
+      } else if (Number.isFinite(mapCfg.duration_sec)) {
+        durSec = mapCfg.duration_sec;
+      } else {
+        durSec = Math.max(6, (fm?.end_sec || 10) - (fm?.start_sec || 0));
+      }
       events.push({ msAbs: triggerMs, kind: 'focal_map', mapCfg, durSec, applied: false });
     }
 
