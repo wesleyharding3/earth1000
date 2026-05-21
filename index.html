@@ -22982,13 +22982,31 @@ const settingsToggle     = document.getElementById("settingsToggle");
               float core    = 1.0 - smoothstep(0.0,  0.55, r);
               float headDist = max(0.0, uRevealEnd - vT);
               float settled  = clamp((uRevealEnd - 0.85) / 0.15, 0.0, 1.0);
-              float leadGlow = exp(-headDist * 14.0) * (1.0 - settled * 0.35);
-              float ph = mod(uTime * 0.42, 1.0);
-              float d  = abs(vT - ph); d = min(d, 1.0 - d);
-              float pulse = smoothstep(0.12, 0.0, d) * settled;
+              // Extended dust-wake — the leadGlow trail is now longer
+              // (decay 14.0 → 8.0) and modulated with a high-frequency
+              // sin so it reads as a particle wake rather than a smooth
+              // taper. Only applies while the arc is mid-reveal
+              // (settled < 1), so the steady-state arc isn't shimmery.
+              float leadGlow = exp(-headDist * 8.0) * (1.0 - settled * 0.35);
+              float wakeDust = leadGlow * (0.7 + 0.3 * sin(vT * 60.0 + uTime * 5.0));
+              // Bidirectional pulses — two comets travel along the arc
+              // in opposite directions and cross at the midpoint. The
+              // forward pulse uses amber-orange (uColor-aligned), the
+              // reverse uses cooler gold so the eye can distinguish
+              // them as they pass.
+              float ph1 = mod(uTime * 0.42, 1.0);
+              float ph2 = mod(1.0 - uTime * 0.42, 1.0);
+              float d1  = abs(vT - ph1); d1 = min(d1, 1.0 - d1);
+              float d2  = abs(vT - ph2); d2 = min(d2, 1.0 - d2);
+              float pulse1 = smoothstep(0.12, 0.0, d1) * settled;
+              float pulse2 = smoothstep(0.12, 0.0, d2) * settled;
+              // Merge bonus — when the two pulses meet near midpoint
+              // the alpha briefly spikes for a "collision flash".
+              float merge  = pulse1 * pulse2 * 2.0;
               vec3 col = uColor * (1.05 + core * 0.85) * uIntensity
-                       + vec3(1.0, 0.65, 0.20) * (leadGlow * 1.6 + pulse * 1.0) * uIntensity;
-              float alpha = clamp(0.96 * radial + leadGlow * 0.55, 0.0, 1.0);
+                       + vec3(1.00, 0.65, 0.20) * (wakeDust * 1.6 + pulse1 * 1.0) * uIntensity
+                       + vec3(1.00, 0.88, 0.45) * (pulse2 * 0.9 + merge * 1.3)        * uIntensity;
+              float alpha = clamp(0.96 * radial + leadGlow * 0.55 + merge * 0.4, 0.0, 1.0);
               gl_FragColor = vec4(col, alpha);
             }`
         });
@@ -51961,10 +51979,31 @@ body.ticker-active .gTickerLabel {
       q.slerp(_scrubCamTargetQuat, eased);
       window.__setGlobeQuat(q);
     }
-    // Lerp camera Z
+    // Lerp camera Z + apply a small push-in during the title-type
+    // window (segment start). The eye naturally "leans in" when
+    // reading a headline; mimicking that with a 0-1500ms push-in
+    // (Z slightly closer) followed by a 700ms release back to the
+    // base slerp Z produces the same subtle dramatic effect without
+    // disrupting the slerp's overall arc.
     if (typeof window.__setCameraZ === 'function') {
-      const z = _scrubCamInitialZ + (_scrubCamTargetZ - _scrubCamInitialZ) * eased;
-      window.__setCameraZ(z);
+      const baseZ = _scrubCamInitialZ + (_scrubCamTargetZ - _scrubCamInitialZ) * eased;
+      const PUSH_IN_DEPTH    = -0.08;     // Z delta (negative = closer)
+      const PUSH_IN_RAMP_MS  = 1500;
+      const PUSH_IN_HOLD_MS  = 200;
+      const PUSH_IN_REL_MS   = 700;
+      const totalWindow = PUSH_IN_RAMP_MS + PUSH_IN_HOLD_MS + PUSH_IN_REL_MS;
+      let pushDelta = 0;
+      if (tMs < PUSH_IN_RAMP_MS) {
+        const pt = tMs / PUSH_IN_RAMP_MS;
+        const e  = pt < 0.5 ? 2 * pt * pt : 1 - Math.pow(-2 * pt + 2, 2) / 2; // easeInOutQuad
+        pushDelta = PUSH_IN_DEPTH * e;
+      } else if (tMs < PUSH_IN_RAMP_MS + PUSH_IN_HOLD_MS) {
+        pushDelta = PUSH_IN_DEPTH;
+      } else if (tMs < totalWindow) {
+        const rt = (tMs - PUSH_IN_RAMP_MS - PUSH_IN_HOLD_MS) / PUSH_IN_REL_MS;
+        pushDelta = PUSH_IN_DEPTH * (1 - (rt * rt));
+      }
+      window.__setCameraZ(baseZ + pushDelta);
     }
   }
 
