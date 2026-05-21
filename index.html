@@ -44621,24 +44621,41 @@ body.briefing-capture-mode #bLauncher { display: none !important; }
   opacity: 1;
   transform: scale(1);
 }
-/* Pulse ring — radar-style expanding circle. Color inherits via
-   currentColor so each kind's color carries through automatically. */
+/* Pulse ring — matches the 3D globe's briefingPulseAt radar style:
+   three staggered thin rings, sharp opacity decay (pow curve), wider
+   final expansion. Color is the marker's currentColor (defaults to
+   the globe city-node blue-cyan #60c8ff). Border-width 1.2px (~thin
+   globe ring) instead of 2px; the wider final scale (8x vs prior 4.2x)
+   gives the same expanding-ripple-from-a-point read.
+   Three rings staggered by 0.7s each at a 2.1s cycle → matches the
+   globe's ringBurstDelay (0.18 stagger / ringSpeed 0.008 = 22.5 frames
+   stagger over a 125-frame cycle = ~0.375s stagger at 60fps, 2.08s
+   cycle). We're slightly slower than the globe to read on a 2D map
+   without the perspective foreshortening, but the visual rhythm
+   matches. */
 .bFocalMap-pulse-ring {
   position: absolute;
   top: 50%; left: 50%;
   width: 14px; height: 14px;
   margin: -7px 0 0 -7px;
   border-radius: 50%;
-  border: 2px solid currentColor;
+  border: 1.2px solid currentColor;
   opacity: 0;
   pointer-events: none;
-  animation: bFocalMap-pulse 2.4s cubic-bezier(0, 0.55, 0.45, 1) infinite;
+  animation: bFocalMap-pulse 2.1s cubic-bezier(0.12, 0.55, 0.40, 1) infinite;
 }
-.bFocalMap-pulse-ring.delay { animation-delay: 1.2s; }
+.bFocalMap-pulse-ring.delay  { animation-delay: 0.7s; }
+.bFocalMap-pulse-ring.delay2 { animation-delay: 1.4s; }
 @keyframes bFocalMap-pulse {
-  0%   { transform: scale(0.6); opacity: 0.85; }
-  80%  { opacity: 0;            }
-  100% { transform: scale(4.2); opacity: 0; }
+  /* Sharp opacity decay — alpha follows roughly pow(1 - t, 1.8) so the
+     leading-edge ring is brightest and trailing falloff is dramatic
+     (matches the globe ring's `pow(1 - progress, 1.8)` formula). */
+  0%   { transform: scale(0.6); opacity: 0.95; }
+  10%  { opacity: 0.78; }
+  25%  { opacity: 0.55; }
+  50%  { opacity: 0.20; }
+  80%  { opacity: 0.03; }
+  100% { transform: scale(8.0); opacity: 0; }
 }
 
 /* Drop-in burst — three rings expanding in quick staggered succession
@@ -49871,17 +49888,21 @@ body.ticker-active .gTickerLabel {
 
         const el = document.createElement('div');
         el.className = 'bFocalMap-highlight-marker scheduled' + (h.kind ? ` ${h.kind}` : '');
-        // Radar pulse — opt-in via h.pulse:true OR auto-on for
-        // flashpoint / live kinds (they're meant to feel "hot").
-        const hasPulse = h.pulse === true || h.kind === 'flashpoint' || h.kind === 'live';
-        if (hasPulse) {
-          const ring1 = document.createElement('div');
-          ring1.className = 'bFocalMap-pulse-ring';
-          el.appendChild(ring1);
-          const ring2 = document.createElement('div');
-          ring2.className = 'bFocalMap-pulse-ring delay';
-          el.appendChild(ring2);
-        }
+        // Radar pulse — three staggered rings on EVERY marker now
+        // (was opt-in via h.pulse / flashpoint / live). User wants
+        // the 2D map markers to read like the globe's city-node
+        // selection pulses (briefingPulseAt's 3-ring radar burst),
+        // not as "blinking circles". flashpoint/live still get the
+        // intensified hot-color via the marker's currentColor.
+        const ring1 = document.createElement('div');
+        ring1.className = 'bFocalMap-pulse-ring';
+        el.appendChild(ring1);
+        const ring2 = document.createElement('div');
+        ring2.className = 'bFocalMap-pulse-ring delay';
+        el.appendChild(ring2);
+        const ring3 = document.createElement('div');
+        ring3.className = 'bFocalMap-pulse-ring delay2';
+        el.appendChild(ring3);
         if (h.label) {
           const lbl = document.createElement('div');
           lbl.className = 'bFocalMap-highlight-label';
@@ -51641,6 +51662,11 @@ body.ticker-active .gTickerLabel {
   // pan so the camera arrives at the centroid like a settling boat.
   const _easeInOutQuart = (t) => t < 0.5 ? 8 * t * t * t * t : 1 - Math.pow(-2 * t + 2, 4) / 2;
   const _easeOutQuart   = (t) => 1 - Math.pow(1 - t, 4);
+  // easeInQuart: slow start, accelerating. Used for the pre-focal_map
+  // zoom-in so the camera builds momentum toward the 2D map handoff —
+  // the eye reads it as "we're heading there fast" right before the
+  // map fades in.
+  const _easeInQuart    = (t) => t * t * t * t;
   const SCRUB_ARC_REVEAL_MS      = 1000;   // matches BRIEFING_ARC_REVEAL_SECS
   // Focal-map scrub-time tracking. The map fires at _scrubFocalMapStartedAtMs
   // and should cleanup at _scrubFocalMapEndsAtMs (durSec later, in scrub
@@ -52057,6 +52083,22 @@ body.ticker-active .gTickerLabel {
         durSec = Math.max(6, (fm?.end_sec || 10) - (fm?.start_sec || 0));
       }
       events.push({ msAbs: triggerMs, kind: 'focal_map', mapCfg, durSec, applied: false });
+
+      // Pre-focal_map zoom-in on the globe. Fires SCRUB_CAM_PRE_FOCAL_MS
+      // before the focal_map trigger, slerping the globe camera toward
+      // the map's center while pulling Z closer. By the time the 2D
+      // map fades in, the globe already shows roughly the same region
+      // at roughly the same scale, so the handoff feels continuous.
+      const preZoomStart = Math.max(0, triggerMs - SCRUB_CAM_PRE_FOCAL_MS);
+      const preZoomTarget = (Array.isArray(mapCfg.phases) && mapCfg.phases.length && mapCfg.phases[0]?.center)
+        ? mapCfg.phases[0].center
+        : mapCfg.center;
+      events.push({
+        msAbs: preZoomStart,
+        kind: 'camera_focal_prezoom',
+        payload: { lat: Number(preZoomTarget.lat), lng: Number(preZoomTarget.lng) },
+        applied: false,
+      });
     }
 
     events.sort((a, b) => a.msAbs - b.msAbs);
@@ -52161,6 +52203,27 @@ body.ticker-active .gTickerLabel {
     _scrubCamTargetZ = (typeof window.__getBriefingWideZ === 'function') ? window.__getBriefingWideZ() : _scrubCamInitialZ;
     _scrubCamTransitionDurMs = SCRUB_CAM_FOLLOWUP_MS;
     _scrubCamEaseFn          = _easeOutQuart;
+  }
+
+  // Pre-focal_map zoom-in — slow dramatic globe zoom that converges on
+  // the 2D map's center coords, so when the map fades in the visual
+  // scale + position lines up. Camera Z pulls in to ~1.5 (well past
+  // briefingWideZ's typical 3.4) so the globe shows the focal region
+  // at city-region scale before the handoff. easeInQuart ramps the
+  // motion (slow → fast) so the eye reads it as "we're diving in".
+  const SCRUB_CAM_PRE_FOCAL_MS = 4000;
+  const SCRUB_CAM_PRE_FOCAL_Z  = 1.5;
+  function _scrubApplyCameraFocalPrezoom(target) {
+    if (typeof window.__computeFocusQuat !== 'function') return;
+    if (!target || target.lat == null) return;
+    if (typeof window.__getGlobeQuat === 'function') {
+      _scrubCamInitialQuat = window.__getGlobeQuat();
+    }
+    _scrubCamInitialZ = (typeof window.__getCameraZ === 'function') ? window.__getCameraZ() : _scrubCamInitialZ;
+    _scrubCamTargetQuat = window.__computeFocusQuat(target.lat, target.lng ?? target.lon);
+    _scrubCamTargetZ = SCRUB_CAM_PRE_FOCAL_Z;
+    _scrubCamTransitionDurMs = SCRUB_CAM_PRE_FOCAL_MS;
+    _scrubCamEaseFn          = _easeInQuart;
   }
 
   function _scrubApplyArcDraw() {
@@ -52365,6 +52428,12 @@ body.ticker-active .gTickerLabel {
         // Pan to a specific country stop in the tour sequence. Payload
         // is { iso, name, lat, lon } baked at build-time.
         _scrubApplyCameraTour(ev.payload);
+        _scrubCamTransitionAtMs = ev.msAbs;
+      } else if (ev.kind === 'camera_focal_prezoom') {
+        // Pre-focal_map zoom — converge globe onto the upcoming map
+        // center + pull camera Z closer so the 2D map fade-in feels
+        // continuous instead of a hard cut.
+        _scrubApplyCameraFocalPrezoom(ev.payload);
         _scrubCamTransitionAtMs = ev.msAbs;
       } else if (ev.kind === 'country_labels_show') {
         try { _showCountryLabels(_scrubSeg); } catch (e) { console.warn('[scrub/labels] show:', e.message); }
