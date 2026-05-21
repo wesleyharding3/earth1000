@@ -49959,6 +49959,16 @@ body.ticker-active .gTickerLabel {
     const _zoomBackLat = Number(config.center.lat);
     const _zoomBackLon = Number(config.center.lng);
     const zoomOutLeadMs = 400;
+    // In scrub mode the worker drives cleanup at scrub time via
+    // _scrubAdvanceFocalMap. Installing the wall-clock setTimeout here
+    // would race the worker — startFocalMap is async, so the cancel
+    // call in the scrub dispatcher runs BEFORE this setTimeout is
+    // installed, the cancel is a no-op, and the cleanup fires ~10
+    // wall-clock seconds later (which equals ~0.5-1s of captured video
+    // at the worker's ~4fps capture rate). Skipping the install
+    // entirely is the only reliable fix — _scrubAdvanceFocalMap is the
+    // authoritative cleanup path in scrub mode.
+    if (window.__inScrubMode) return;
     setTimeout(() => {
       try { window.startFocus?.(_zoomBackLat, _zoomBackLon); } catch (_) {}
     }, Math.max(0, durMs - zoomOutLeadMs));
@@ -51828,6 +51838,11 @@ body.ticker-active .gTickerLabel {
       throw new Error(`no segment ${segmentIdx}`);
     }
     _scrubMode = true;
+    // Window-level mirror so functions defined EARLIER in this file
+    // (e.g. startFocalMap at ~49620) can branch on scrub state. The
+    // local _scrubMode flag is declared at line ~51416, after those
+    // functions, so it can't be referenced via lexical scope.
+    window.__inScrubMode = true;
     _scrubSeg = episode.segments[segmentIdx];
     segIdx = segmentIdx;
     playing = true;
@@ -51975,6 +51990,7 @@ body.ticker-active .gTickerLabel {
       _scrubSavedGlobeActive = null;
     }
     _scrubMode = false;
+    window.__inScrubMode = false;
     _scrubSeg = null;
     _scrubEvents = [];
     _scrubArcSpawnAt = null;
