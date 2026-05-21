@@ -51481,18 +51481,34 @@ body.ticker-active .gTickerLabel {
     const segDurMs = Math.max(1, Math.round((getSegmentDuration(segIdx) || 30) * 1000));
     const events = [];
 
-    // First pass: walk script to find raw camera_focus + arc_draw ms.
-    let cameraMs = null;
-    let arcMs    = null;
+    // First pass: walk the seg.script ONCE and collect the cumulative ms
+    // of every event kind we care about. The script is the authoritative
+    // timeline — briefingGenerator stamped each text line with its actual
+    // ElevenLabs ms duration, so the cumulative cursor lands every event
+    // at the exact moment in the narration it was scripted for. This is
+    // the same timeline the live briefing's startGlobeTimers reads.
+    //
+    // We collect FIRST occurrence per kind for camera_focus / arc_draw /
+    // featured_map / data_panels. Subsequent arc_draws aren't honored
+    // separately — drawSegmentArcs draws all arcs at once, so only the
+    // first arc_draw matters as a trigger.
+    let cameraMs       = null;
+    let arcMs          = null;
+    let scriptFeaturedMapMs = null;
+    let dataPanelsMs   = null;
+    let scriptTotalMs  = 0;
     if (Array.isArray(seg?.script) && seg.script.length) {
       let t = 0;
       for (const line of seg.script) {
         if (line && line.type === 'event') {
-          if (line.kind === 'camera_focus' && cameraMs == null) cameraMs = t;
-          if (line.kind === 'arc_draw'     && arcMs    == null) arcMs    = t;
+          if (line.kind === 'camera_focus'  && cameraMs            == null) cameraMs            = t;
+          if (line.kind === 'arc_draw'      && arcMs               == null) arcMs               = t;
+          if (line.kind === 'featured_map'  && scriptFeaturedMapMs == null) scriptFeaturedMapMs = t;
+          if (line.kind === 'data_panels'   && dataPanelsMs        == null) dataPanelsMs        = t;
         }
         t += (Number(line?.ms) || Number(line?.est_ms) || 0);
       }
+      scriptTotalMs = t;
     }
 
     // Apply startGlobeTimers's exact caps so scrub timing matches the
@@ -51563,9 +51579,18 @@ body.ticker-active .gTickerLabel {
     // don't stack moves on top of each other. Cap tour to first 6 stops
     // — beyond that the audience loses track and segments don't have
     // enough wall-clock left to land each pan.
+    //
+    // tourCeilingMs: don't schedule tour stops past the focal_map handoff
+    // (the map takes over the viewport, globe is hidden — any tour pan
+    // landing during the map is invisible work). Use the script's
+    // featured_map ms when available, otherwise the end of the segment.
     const TOUR_STEP_MS = SCRUB_CAM_FOLLOWUP_MS + 1000;
+    const tourCeilingMs = (scriptFeaturedMapMs != null)
+      ? Math.max(0, scriptFeaturedMapMs - SCRUB_CAM_FOLLOWUP_MS)
+      : segDurMs;
     let tourCursor = followupMs + SCRUB_CAM_FOLLOWUP_MS + 500;
     for (const stop of tourStops.slice(0, 6)) {
+      if (tourCursor >= tourCeilingMs) break;
       events.push({ msAbs: tourCursor, kind: 'camera_tour', payload: stop, applied: false });
       tourCursor += TOUR_STEP_MS;
     }
@@ -51579,15 +51604,29 @@ body.ticker-active .gTickerLabel {
     events.push({ msAbs: 3000, kind: 'country_labels_show', applied: false });
     events.push({ msAbs: 8000, kind: 'country_labels_hide', applied: false });
 
-    // Focal-map featured-media moment. Mirror the live trigger calc:
-    // focal_trigger_ms - start_ms when both are present, else
-    // voiceover_ms (end-of-narration), else 35% of segment duration.
+    // Focal-map featured-media moment. PRIMARY trigger source is the
+    // script's `featured_map` event ms — that's where briefingGenerator
+    // stamped the takeover into the narration timeline, and it aligns
+    // exactly with where the voiceover hands off to the map sequence.
+    //
+    // Fallbacks for legacy episodes lacking script-level featured_map:
+    //   1. focal_trigger_ms - start_ms (episode-relative timestamp pair
+    //      stamped at split time; ~accurate but can drift if start_ms
+    //      was rounded).
+    //   2. voiceover_ms (end of narration; map plays in the post-piece).
+    //   3. 35% of segment duration (last-ditch heuristic).
+    //
+    // Order matters — the prior implementation defaulted to focal_trigger_ms
+    // even when the script had a featured_map event, which caused the
+    // map to fire ~5s into Bolivia's segment when the script said 27.5s.
     const fm = seg?.featured_video || seg?.video?.focal || seg?.video_focal || null;
     const mediaType = seg?.media_type || 'youtube';
     const mapCfg = mediaType === 'focal_map' ? (fm?.map_config || seg?.map_config) : null;
     if (mapCfg && mapCfg.center && mapCfg.center.lat != null && mapCfg.center.lng != null) {
       let triggerMs = null;
-      if (Number.isFinite(seg.focal_trigger_ms) && Number.isFinite(seg.start_ms)) {
+      if (scriptFeaturedMapMs != null) {
+        triggerMs = scriptFeaturedMapMs;
+      } else if (Number.isFinite(seg.focal_trigger_ms) && Number.isFinite(seg.start_ms)) {
         triggerMs = Math.max(0, seg.focal_trigger_ms - seg.start_ms);
       } else if (Number.isFinite(seg.voiceover_ms) && seg.voiceover_ms > 0) {
         triggerMs = seg.voiceover_ms;
