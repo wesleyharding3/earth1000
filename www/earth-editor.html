@@ -1907,6 +1907,83 @@
                     <label style="font-size:10px;color:rgba(255,255,255,0.4);">Display label (used by narrator hint)</label>
                     <input type="text" id="fv-fm-label-${id}" value="${escHtml(mc.label || '')}" placeholder="e.g. Donetsk frontline" onchange="enrichData[${id}].featured_video.map_config.label = this.value" style="width:100%;padding:6px;background:#0a0e17;border:1px solid #1e293b;border-radius:4px;color:#e2e8f0;font-size:12px;" />
                   </div>
+                  ${(() => {
+                    // ── City dive (two-layer zoom) ──
+                    // When enabled, map_config.phases is written as a
+                    // 3-phase array: country wide → city dive → country
+                    // wide. Phase 1 inherits center/zoom_end. Phase 2 is
+                    // what these inputs control. Phase 3 mirrors phase 1
+                    // when "return to country" is checked.
+                    const phases = Array.isArray(mc.phases) ? mc.phases : null;
+                    const cityDiveOn = !!(phases && phases.length >= 2);
+                    const ph2 = cityDiveOn ? phases[1] : {};
+                    const cityLabel = ph2.label || '';
+                    const cityLat   = ph2.center?.lat ?? '';
+                    const cityLng   = ph2.center?.lng ?? '';
+                    const cityZoom  = ph2.zoom ?? 12.5;
+                    const cityPitch = ph2.pitch ?? 40;
+                    const holdCountrySec = phases ? Math.round((phases[0].hold_ms ?? 3000) / 1000) : 3;
+                    const transitionSec  = ph2.transition_ms ? Math.round(ph2.transition_ms / 1000) : 3;
+                    const holdCitySec    = ph2.hold_ms ? Math.round(ph2.hold_ms / 1000) : 4;
+                    const returnOn = !!(phases && phases.length >= 3);
+                    return `
+                  <div style="margin-bottom:8px;padding:8px;background:rgba(96,200,255,0.04);border:1px solid rgba(96,200,255,0.18);border-radius:6px;">
+                    <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:#60c8ff;font-weight:600;cursor:pointer;">
+                      <input type="checkbox" id="fv-fm-citydive-${id}" ${cityDiveOn ? 'checked' : ''} onchange="fvFocalMapToggleCityDive(${id}, this.checked)" />
+                      Enable city dive (two-layer zoom)
+                    </label>
+                    <div id="fv-fm-citydive-fields-${id}" style="display:${cityDiveOn ? 'block' : 'none'};margin-top:8px;">
+                      <div style="font-size:10px;color:rgba(255,255,255,0.50);margin-bottom:6px;line-height:1.4;">
+                        Camera zooms wide to country, then dives into the city
+                        below, then pulls back. Set the city target and timing.
+                      </div>
+                      <div style="margin-bottom:6px;">
+                        <label style="font-size:10px;color:rgba(255,255,255,0.4);">City name (or click Find)</label>
+                        <div style="display:flex;gap:4px;">
+                          <input type="text" id="fv-fm-city-name-${id}" placeholder='e.g. "La Paz", "Tallinn", "Moscow"' value="${escHtml(cityLabel)}" style="flex:1;padding:6px;background:#0a0e17;border:1px solid #1e293b;border-radius:4px;color:#e2e8f0;font-size:12px;" onkeydown="if(event.key==='Enter'){event.preventDefault();fvFocalMapResolveCity(${id});}" onchange="fvFocalMapSetCityField(${id}, 'label', this.value)" />
+                          <button type="button" onclick="fvFocalMapResolveCity(${id})" style="white-space:nowrap;padding:6px 10px;background:rgba(96,200,255,0.10);border:1px solid rgba(96,200,255,0.30);border-radius:4px;color:#60c8ff;font-size:11px;font-weight:600;cursor:pointer;">↻ Find city</button>
+                        </div>
+                      </div>
+                      <div style="display:flex;gap:8px;margin-bottom:6px;">
+                        <div style="flex:1;">
+                          <label style="font-size:10px;color:rgba(255,255,255,0.4);">City lat</label>
+                          <input type="number" step="0.001" id="fv-fm-city-lat-${id}" value="${cityLat}" placeholder="-16.5" onchange="fvFocalMapSetCityField(${id}, 'lat', this.value)" style="width:100%;padding:6px;background:#0a0e17;border:1px solid #1e293b;border-radius:4px;color:#e2e8f0;font-size:12px;" />
+                        </div>
+                        <div style="flex:1;">
+                          <label style="font-size:10px;color:rgba(255,255,255,0.4);">City lng</label>
+                          <input type="number" step="0.001" id="fv-fm-city-lng-${id}" value="${cityLng}" placeholder="-68.15" onchange="fvFocalMapSetCityField(${id}, 'lng', this.value)" style="width:100%;padding:6px;background:#0a0e17;border:1px solid #1e293b;border-radius:4px;color:#e2e8f0;font-size:12px;" />
+                        </div>
+                        <div style="flex:1;">
+                          <label style="font-size:10px;color:rgba(255,255,255,0.4);">City zoom</label>
+                          <input type="number" step="0.1" min="8" max="18" id="fv-fm-city-zoom-${id}" value="${cityZoom}" onchange="fvFocalMapSetCityField(${id}, 'zoom', this.value)" style="width:100%;padding:6px;background:#0a0e17;border:1px solid #1e293b;border-radius:4px;color:#e2e8f0;font-size:12px;" />
+                        </div>
+                        <div style="flex:1;">
+                          <label style="font-size:10px;color:rgba(255,255,255,0.4);">Pitch (°)</label>
+                          <input type="number" step="5" min="0" max="60" id="fv-fm-city-pitch-${id}" value="${cityPitch}" onchange="fvFocalMapSetCityField(${id}, 'pitch', this.value)" style="width:100%;padding:6px;background:#0a0e17;border:1px solid #1e293b;border-radius:4px;color:#e2e8f0;font-size:12px;" />
+                        </div>
+                      </div>
+                      <div style="display:flex;gap:8px;margin-bottom:6px;">
+                        <div style="flex:1;">
+                          <label style="font-size:10px;color:rgba(255,255,255,0.4);">Hold country (s)</label>
+                          <input type="number" step="0.5" min="1" max="10" id="fv-fm-city-hold-country-${id}" value="${holdCountrySec}" onchange="fvFocalMapSetCityField(${id}, 'hold_country_sec', this.value)" style="width:100%;padding:6px;background:#0a0e17;border:1px solid #1e293b;border-radius:4px;color:#e2e8f0;font-size:12px;" />
+                        </div>
+                        <div style="flex:1;">
+                          <label style="font-size:10px;color:rgba(255,255,255,0.4);">Dive time (s)</label>
+                          <input type="number" step="0.5" min="1" max="10" id="fv-fm-city-transition-${id}" value="${transitionSec}" onchange="fvFocalMapSetCityField(${id}, 'transition_sec', this.value)" style="width:100%;padding:6px;background:#0a0e17;border:1px solid #1e293b;border-radius:4px;color:#e2e8f0;font-size:12px;" />
+                        </div>
+                        <div style="flex:1;">
+                          <label style="font-size:10px;color:rgba(255,255,255,0.4);">Hold city (s)</label>
+                          <input type="number" step="0.5" min="1" max="15" id="fv-fm-city-hold-${id}" value="${holdCitySec}" onchange="fvFocalMapSetCityField(${id}, 'hold_sec', this.value)" style="width:100%;padding:6px;background:#0a0e17;border:1px solid #1e293b;border-radius:4px;color:#e2e8f0;font-size:12px;" />
+                        </div>
+                      </div>
+                      <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:rgba(255,255,255,0.75);cursor:pointer;">
+                        <input type="checkbox" id="fv-fm-city-return-${id}" ${returnOn ? 'checked' : ''} onchange="fvFocalMapSetCityField(${id}, 'return_to_country', this.checked)" />
+                        Return to country wide before fading out
+                      </label>
+                    </div>
+                  </div>
+                  `;
+                  })()}
                   <div>
                     <label style="font-size:10px;color:rgba(255,255,255,0.4);">Highlights</label>
                     <div id="fv-fm-hl-list-${id}" style="margin-top:4px;">${_fvFocalMapListHtml(id)}</div>
@@ -2435,6 +2512,129 @@
       if (!fv.map_config) fv.map_config = {};
       if (!fv.map_config.center) fv.map_config.center = { lat: null, lng: null };
       fv.map_config.center[axis] = parseFloat(value);
+    };
+
+    // ── City dive (two-layer zoom) helpers ──────────────────────────
+    // map_config.phases stores the 3-phase camera choreography:
+    //   [0] country wide (mirrors center + zoom_end)
+    //   [1] city dive    (these inputs control everything here)
+    //   [2] country wide again (only present when "return" is checked)
+    // The render-time phase walker reads .phases directly; when phases
+    // is absent, it falls back to single-zoom (zoom_start → zoom_end).
+    function _fmCityDefaultPhase1(cfg) {
+      return {
+        label:        cfg.label || '',
+        center:       { lat: Number(cfg.center?.lat ?? 0), lng: Number(cfg.center?.lng ?? 0) },
+        zoom:         Number(cfg.zoom_end ?? 5.8),
+        pitch:        0,
+        transition_ms: 2500,
+        hold_ms:       3000,
+      };
+    }
+    function _fmCityDefaultPhase2() {
+      return {
+        label: '',
+        center: { lat: null, lng: null },
+        zoom: 12.5,
+        pitch: 40,
+        transition_ms: 3000,
+        hold_ms: 4000,
+      };
+    }
+    function _fmCityDefaultPhase3(cfg) {
+      const p = _fmCityDefaultPhase1(cfg);
+      p.transition_ms = 2500;
+      p.hold_ms = 1500;
+      return p;
+    }
+    window.fvFocalMapToggleCityDive = function(id, enabled) {
+      const fv = enrichData[id]?.featured_video;
+      if (!fv) return;
+      if (!fv.map_config) fv.map_config = {};
+      const cfg = fv.map_config;
+      const fields = document.getElementById(`fv-fm-citydive-fields-${id}`);
+      if (enabled) {
+        // Initialize phases array preserving any prior city values.
+        const prev = Array.isArray(cfg.phases) ? cfg.phases : null;
+        cfg.phases = [
+          _fmCityDefaultPhase1(cfg),
+          (prev && prev[1]) ? prev[1] : _fmCityDefaultPhase2(),
+          _fmCityDefaultPhase3(cfg),
+        ];
+        if (fields) fields.style.display = 'block';
+      } else {
+        delete cfg.phases;
+        if (fields) fields.style.display = 'none';
+      }
+    };
+    window.fvFocalMapSetCityField = function(id, field, value) {
+      const fv = enrichData[id]?.featured_video;
+      if (!fv || !fv.map_config) return;
+      if (!Array.isArray(fv.map_config.phases) || fv.map_config.phases.length < 2) {
+        // Lazy-init if user typed before toggling — treat as "enable".
+        window.fvFocalMapToggleCityDive(id, true);
+      }
+      const phases = fv.map_config.phases;
+      const phase2 = phases[1];
+      switch (field) {
+        case 'label':   phase2.label = String(value || ''); break;
+        case 'lat':     phase2.center.lat = parseFloat(value); break;
+        case 'lng':     phase2.center.lng = parseFloat(value); break;
+        case 'zoom':    phase2.zoom  = parseFloat(value) || 12.5; break;
+        case 'pitch':   phase2.pitch = parseFloat(value); break;
+        case 'transition_sec': phase2.transition_ms = (parseFloat(value) || 3) * 1000; break;
+        case 'hold_sec':       phase2.hold_ms       = (parseFloat(value) || 4) * 1000; break;
+        case 'hold_country_sec': phases[0].hold_ms = (parseFloat(value) || 3) * 1000; break;
+        case 'return_to_country':
+          if (value) {
+            // Add phase 3 if missing.
+            if (phases.length < 3) phases.push(_fmCityDefaultPhase3(fv.map_config));
+          } else {
+            // Drop phase 3 if present.
+            if (phases.length >= 3) phases.length = 2;
+          }
+          break;
+      }
+      // Keep phase 1 + phase 3 in sync with the parent center/zoom_end
+      // so users editing the country-wide center don't see stale data.
+      if (phases[0]) {
+        phases[0].center = { lat: Number(fv.map_config.center?.lat ?? 0), lng: Number(fv.map_config.center?.lng ?? 0) };
+        phases[0].zoom   = Number(fv.map_config.zoom_end ?? 5.8);
+        phases[0].label  = fv.map_config.label || '';
+      }
+      if (phases[2]) {
+        phases[2].center = phases[0].center;
+        phases[2].zoom   = phases[0].zoom;
+        phases[2].label  = phases[0].label;
+      }
+    };
+    window.fvFocalMapResolveCity = async function(id) {
+      const fv = enrichData[id]?.featured_video;
+      if (!fv) return;
+      const inp = document.getElementById(`fv-fm-city-name-${id}`);
+      const name = (inp?.value || '').trim();
+      if (!name) { alert('Type a city name first.'); return; }
+      let coord = _coordCache[name];
+      if (!coord) {
+        try {
+          const res = await fetch(`${API_BASE}/api/admin/briefing-editor/resolve-coords`, {
+            method: 'POST', headers: authHeaders(), body: JSON.stringify({ names: [name] }),
+          });
+          if (res.ok) {
+            const coords = await res.json();
+            if (coords[name]) { _coordCache[name] = coords[name]; coord = coords[name]; }
+          }
+        } catch (e) { console.warn(`[city] resolve "${name}":`, e.message); }
+      }
+      if (!coord) { alert(`Could not resolve "${name}". Try a major city name.`); return; }
+      // Ensure phases exists, set city coords.
+      window.fvFocalMapSetCityField(id, 'lat', coord.lat);
+      window.fvFocalMapSetCityField(id, 'lng', coord.lon);
+      window.fvFocalMapSetCityField(id, 'label', name);
+      const latInp = document.getElementById(`fv-fm-city-lat-${id}`);
+      const lngInp = document.getElementById(`fv-fm-city-lng-${id}`);
+      if (latInp) latInp.value = coord.lat;
+      if (lngInp) lngInp.value = coord.lon;
     };
 
     // Legacy JSON setter — kept for backwards compatibility but the
