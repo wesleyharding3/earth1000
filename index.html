@@ -43971,7 +43971,7 @@ body.briefing-capture-mode #bLauncher { display: none !important; }
   z-index: 100018;
   max-width: 80vw;
   font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
-  font-size: 22px;
+  font-size: 28px;
   font-weight: 600;
   letter-spacing: 0.10em;
   text-transform: uppercase;
@@ -44083,10 +44083,9 @@ body.briefing-capture-mode #bLauncher { display: none !important; }
    visible on story segments, hidden on intro/outro/keywords. */
 .bSegmentCountries {
   position: fixed;
-  /* Pushed down to clear the larger title (22px + 1.25 line-height +
-     2-line clamp can extend ~76px). The previous +56px collided with
-     descenders on multi-line titles. */
-  top: calc(env(safe-area-inset-top, 0px) + 80px);
+  /* Pushed down to clear the larger title (28px + 1.25 line-height +
+     2-line clamp can extend ~96px). */
+  top: calc(env(safe-area-inset-top, 0px) + 104px);
   left: 50%;
   z-index: 100018;
   display: flex;
@@ -44117,21 +44116,21 @@ body.briefing-capture-mode #bLauncher { display: none !important; }
 }
 .bCountryChip img {
   display: block;
-  width: 38px;
+  width: 52px;
   height: auto;
-  border-radius: 3px;
+  border-radius: 4px;
 }
 @media (max-width: 700px) {
   .bSegmentCountries {
-    top: calc(env(safe-area-inset-top, 0px) + 58px);
+    top: calc(env(safe-area-inset-top, 0px) + 84px);
     max-width: calc(100vw - 16px);
-    gap: 10px 12px;
+    gap: 12px 14px;
   }
   .bCountryChip {
-    padding: 3px 5px;
+    padding: 4px 6px;
   }
   .bCountryChip img {
-    width: 32px;
+    width: 44px;
   }
 }
 
@@ -49882,53 +49881,74 @@ body.ticker-active .gTickerLabel {
       // For each marker: at appearAtMs, add the 'dropped-in' class so
       // CSS transitions the element in. For each arrow: at appearAtMs,
       // mark started=true and start the per-arrow draw RAF.
-      const t0Schedule = performance.now();
-      const timelineTick = () => {
-        if (!_focalMapInst) return;
-        const elapsed = performance.now() - t0Schedule;
-        for (const m of markersToSchedule) {
-          if (!m._fired && elapsed >= m.appearAtMs) {
-            m._fired = true;
-            try { m.el.classList.add('dropped-in'); } catch (_) {}
-          }
-        }
-        let anyArrowAnimating = false;
-        for (const s of arrowState) {
-          if (!s.started && elapsed >= s.appearAtMs) {
-            s.started = true;
-            s.t0 = performance.now();
-          }
-          if (s.started && !s.done && s.animate) anyArrowAnimating = true;
-        }
-        if (arrowState.length && (anyArrowAnimating || arrowState.some(s => s.started && !s._sourcePainted))) {
-          updateArrowSource();
-          arrowState.forEach(s => { if (s.started) s._sourcePainted = true; });
-        }
-        if (elapsed < durMs) {
-          _focalMapScheduled.push(requestAnimationFrame(timelineTick));
-        }
-      };
-      _focalMapScheduled.push(requestAnimationFrame(timelineTick));
-
-      // Camera animation — zoom + pitch (pitch only matters when terrain
-      // is on, but cheap to interpolate either way).
+      //
+      // In SCRUB mode the wall-clock rAF is meaningless — the worker
+      // captures frames at scrub time, and the rAF ticks at real time
+      // would fire during the (~3-4s wall-clock) await-idle block and
+      // collapse the entire animation into the first few captured
+      // frames. Instead, stash the state on window.__scrubFocalMapAnim
+      // so _scrubAdvanceFocalMap can step the markers + zoom forward
+      // every captured frame using scrub-elapsed ms.
       const animMs = Math.max(2000, durMs - 800);
-      const t0 = performance.now();
-      const tick = (now) => {
-        if (!_focalMapInst) return;
-        const t = Math.min(1, (now - t0) / animMs);
-        const eased = t * t * (3 - 2 * t); // smoothstep
-        const z = zoomStart + (zoomEnd - zoomStart) * eased;
-        const p = pitchStart + (pitchEnd - pitchStart) * eased;
-        try { _focalMapInst.setZoom(z); } catch (_) {}
-        if (pitchStart !== pitchEnd) { try { _focalMapInst.setPitch(p); } catch (_) {} }
-        if (t < 1) {
-          _focalMapAnimRaf = requestAnimationFrame(tick);
-        } else {
-          _focalMapAnimRaf = null;
-        }
-      };
-      _focalMapAnimRaf = requestAnimationFrame(tick);
+      if (window.__inScrubMode) {
+        window.__scrubFocalMapAnim = {
+          mapInst: _focalMapInst,
+          markersToSchedule,
+          arrowState,
+          updateArrowSource,
+          zoomStart, zoomEnd,
+          pitchStart, pitchEnd,
+          animMs,
+          durMs,
+        };
+      } else {
+        const t0Schedule = performance.now();
+        const timelineTick = () => {
+          if (!_focalMapInst) return;
+          const elapsed = performance.now() - t0Schedule;
+          for (const m of markersToSchedule) {
+            if (!m._fired && elapsed >= m.appearAtMs) {
+              m._fired = true;
+              try { m.el.classList.add('dropped-in'); } catch (_) {}
+            }
+          }
+          let anyArrowAnimating = false;
+          for (const s of arrowState) {
+            if (!s.started && elapsed >= s.appearAtMs) {
+              s.started = true;
+              s.t0 = performance.now();
+            }
+            if (s.started && !s.done && s.animate) anyArrowAnimating = true;
+          }
+          if (arrowState.length && (anyArrowAnimating || arrowState.some(s => s.started && !s._sourcePainted))) {
+            updateArrowSource();
+            arrowState.forEach(s => { if (s.started) s._sourcePainted = true; });
+          }
+          if (elapsed < durMs) {
+            _focalMapScheduled.push(requestAnimationFrame(timelineTick));
+          }
+        };
+        _focalMapScheduled.push(requestAnimationFrame(timelineTick));
+
+        // Camera animation — zoom + pitch (pitch only matters when
+        // terrain is on, but cheap to interpolate either way).
+        const t0 = performance.now();
+        const tick = (now) => {
+          if (!_focalMapInst) return;
+          const t = Math.min(1, (now - t0) / animMs);
+          const eased = t * t * (3 - 2 * t); // smoothstep
+          const z = zoomStart + (zoomEnd - zoomStart) * eased;
+          const p = pitchStart + (pitchEnd - pitchStart) * eased;
+          try { _focalMapInst.setZoom(z); } catch (_) {}
+          if (pitchStart !== pitchEnd) { try { _focalMapInst.setPitch(p); } catch (_) {} }
+          if (t < 1) {
+            _focalMapAnimRaf = requestAnimationFrame(tick);
+          } else {
+            _focalMapAnimRaf = null;
+          }
+        };
+        _focalMapAnimRaf = requestAnimationFrame(tick);
+      }
     };
 
     if (_focalMapInst.isStyleLoaded()) {
@@ -51460,9 +51480,9 @@ body.ticker-active .gTickerLabel {
   let _scrubCamTransitionDurMs = 0;
   let _scrubCamEaseFn = null;
   let _scrubCamTargetZ       = 0;
-  const SCRUB_CAM_TRANSITION_MS         = 2400;   // initial primary-country focus — slower, more "fade in" feel
-  const SCRUB_CAM_FOLLOWUP_MS           = 3500;   // post-arcs settle to centroid — long deceleration tail
-  const SCRUB_CAM_FOLLOWUP_DELAY_AFTER_ARCS_MS = 1200; // breath between arc draw and re-focus
+  const SCRUB_CAM_TRANSITION_MS         = 4000;   // initial primary-country focus — slow + dramatic fade-in
+  const SCRUB_CAM_FOLLOWUP_MS           = 5500;   // post-arcs settle to centroid — long deceleration tail
+  const SCRUB_CAM_FOLLOWUP_DELAY_AFTER_ARCS_MS = 1500; // breath between arc draw and re-focus
   // Easing curves.
   // easeInOutQuart: symmetric S-curve, sharper than cubic at endpoints —
   // gives the initial focus a more deliberate "settle into place" feel
@@ -51480,13 +51500,64 @@ body.ticker-active .gTickerLabel {
   let _scrubFocalMapEnded       = false;
 
   function _scrubAdvanceFocalMap(tMs) {
-    if (_scrubFocalMapEndsAtMs < 0 || _scrubFocalMapEnded) return;
-    if (tMs >= _scrubFocalMapEndsAtMs) {
+    if (_scrubFocalMapEndsAtMs < 0) return;
+
+    // Drive the focal-map zoom + markers from scrub time (replaces the
+    // wall-clock rAF tick that startFocalMap would normally use). The
+    // map's animMs = max(2000, durMs-800) — typically 9200ms over the
+    // 10s focal window. Using scrub elapsed makes the zoom take that
+    // full duration in CAPTURED video, instead of collapsing into the
+    // ~0.4s of captured frames the wall-clock rAF would produce while
+    // the worker is blocked on the await-idle pause.
+    const anim = window.__scrubFocalMapAnim;
+    if (anim && !_scrubFocalMapEnded && _scrubFocalMapStartedAtMs >= 0) {
+      const elapsed = Math.max(0, tMs - _scrubFocalMapStartedAtMs);
+
+      // Camera zoom + pitch — smoothstep eased over animMs.
+      const tCam = Math.min(1, elapsed / anim.animMs);
+      const easedCam = tCam * tCam * (3 - 2 * tCam); // smoothstep
+      const z = anim.zoomStart + (anim.zoomEnd - anim.zoomStart) * easedCam;
+      try { anim.mapInst?.setZoom(z); } catch (_) {}
+      if (anim.pitchStart !== anim.pitchEnd) {
+        const p = anim.pitchStart + (anim.pitchEnd - anim.pitchStart) * easedCam;
+        try { anim.mapInst?.setPitch(p); } catch (_) {}
+      }
+
+      // Markers — fire each one's `dropped-in` class at scrub elapsed
+      // >= its appearAtMs. Idempotent via the m._fired flag.
+      for (const m of (anim.markersToSchedule || [])) {
+        if (!m._fired && elapsed >= m.appearAtMs) {
+          m._fired = true;
+          try { m.el.classList.add('dropped-in'); } catch (_) {}
+        }
+      }
+
+      // Arrows — start each one's per-arrow animation at scrub elapsed
+      // >= its appearAtMs. Once started, the arrow's own per-frame
+      // updateArrowSource paints it; we re-paint every scrub frame
+      // while any arrow is mid-draw so the captured frames advance.
+      let anyArrowAnimating = false;
+      for (const s of (anim.arrowState || [])) {
+        if (!s.started && elapsed >= s.appearAtMs) {
+          s.started = true;
+          s.t0 = performance.now();
+        }
+        if (s.started && !s.done && s.animate) anyArrowAnimating = true;
+      }
+      if (anim.arrowState && anim.arrowState.length &&
+          (anyArrowAnimating || anim.arrowState.some(s => s.started && !s._sourcePainted))) {
+        try { anim.updateArrowSource?.(); } catch (_) {}
+        anim.arrowState.forEach(s => { if (s.started) s._sourcePainted = true; });
+      }
+    }
+
+    if (tMs >= _scrubFocalMapEndsAtMs && !_scrubFocalMapEnded) {
       _scrubFocalMapEnded = true;
       try {
         if (typeof window.__focalMapCleanup === 'function') {
           window.__focalMapCleanup();
         }
+        window.__scrubFocalMapAnim = null;
       } catch (e) { console.warn('[scrub] focal_map cleanup failed:', e.message); }
     }
   }
@@ -51609,22 +51680,50 @@ body.ticker-active .gTickerLabel {
     // — beyond that the audience loses track and segments don't have
     // enough wall-clock left to land each pan.
     //
-    // tourCeilingMs: don't schedule tour stops past the focal_map handoff
-    // (the map takes over the viewport, globe is hidden — any tour pan
-    // landing during the map is invisible work). Use focal_trigger_ms -
-    // start_ms when available, otherwise the end of the segment.
-    const TOUR_STEP_MS = SCRUB_CAM_FOLLOWUP_MS + 1000;
+    // The tour runs in TWO windows when the segment has a focal_map:
+    //   1. Pre-map: between followup and the focal_map trigger.
+    //   2. Post-map: between focal_map end and the segment end.
+    // For segments without focal_map, just one continuous window from
+    // followup → segment end.
+    //
+    // Each stop = SCRUB_CAM_FOLLOWUP_MS slerp + 1500ms dwell. Stops
+    // wrap around the focal_map window so the globe keeps moving
+    // through different primary countries even after the map fires.
+    const TOUR_STEP_MS = SCRUB_CAM_FOLLOWUP_MS + 1500;
     const focalTriggerOffsetMs = (Number.isFinite(seg?.focal_trigger_ms) && Number.isFinite(seg?.start_ms))
       ? Math.max(0, seg.focal_trigger_ms - seg.start_ms)
       : null;
-    const tourCeilingMs = (focalTriggerOffsetMs != null)
+    // Approximate focal_map duration in scrub time. mapCfg.duration_sec
+    // takes precedence; fall back to 10s (the renderer's default).
+    const fmTmp = seg?.featured_video || seg?.video?.focal || seg?.video_focal || null;
+    const mapCfgTmp = (seg?.media_type === 'focal_map') ? (fmTmp?.map_config || seg?.map_config) : null;
+    const focalDurMs = mapCfgTmp ? (Number(mapCfgTmp.duration_sec) || 10) * 1000 : 0;
+    const focalEndsAtMs = (focalTriggerOffsetMs != null) ? (focalTriggerOffsetMs + focalDurMs) : null;
+    const preTourCeiling  = (focalTriggerOffsetMs != null)
       ? Math.max(0, focalTriggerOffsetMs - SCRUB_CAM_FOLLOWUP_MS)
       : segDurMs;
+    const postTourFloor   = (focalEndsAtMs != null) ? (focalEndsAtMs + 1500) : null;
+    const segEndMs        = segDurMs;
     let tourCursor = followupMs + SCRUB_CAM_FOLLOWUP_MS + 500;
-    for (const stop of tourStops.slice(0, 6)) {
-      if (tourCursor >= tourCeilingMs) break;
-      events.push({ msAbs: tourCursor, kind: 'camera_tour', payload: stop, applied: false });
+    let stopIdx = 0;
+    const allStops = tourStops.slice(0, 8);
+    // Phase 1: pre-map stops
+    while (stopIdx < allStops.length && tourCursor < preTourCeiling) {
+      events.push({ msAbs: tourCursor, kind: 'camera_tour', payload: allStops[stopIdx], applied: false });
       tourCursor += TOUR_STEP_MS;
+      stopIdx++;
+    }
+    // Phase 2: post-map stops — pick up where Phase 1 left off, cycling
+    // through remaining stops + LOOPING back to the start if we run
+    // out, so the globe never sits still during the post-piece narration.
+    if (postTourFloor != null && allStops.length) {
+      tourCursor = postTourFloor;
+      while (tourCursor < segEndMs - SCRUB_CAM_FOLLOWUP_MS) {
+        const stop = allStops[stopIdx % allStops.length];
+        events.push({ msAbs: tourCursor, kind: 'camera_tour', payload: stop, applied: false });
+        tourCursor += TOUR_STEP_MS;
+        stopIdx++;
+      }
     }
 
     // Country label cards — fade in at t=3000ms (live setTimeout fires
