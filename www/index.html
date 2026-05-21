@@ -47762,8 +47762,8 @@ const settingsToggle     = document.getElementById("settingsToggle");
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
-  padding: 22px 24px 14px;
+  gap: 10px;
+  padding: 22px 18px 14px;
   border-bottom: 1px solid rgba(255,184,92,0.18);
 }
 .bMTHeaderEyebrow {
@@ -47773,15 +47773,38 @@ const settingsToggle     = document.getElementById("settingsToggle");
   color: rgba(255,200,140,0.85);
   font-weight: 700;
 }
+/* Mirrors .bSegmentTitle's typography so the "UP NEXT" reveal feels
+   like an extension of the in-segment title chrome rather than a
+   parallel design system. Same Plus Jakarta Sans, uppercase + amber +
+   sheen-friendly base color, same line-height + two-line clamp. */
 .bMTHeaderTitle {
-  font-size: 17px;
-  font-weight: 700;
-  text-align: center;
-  letter-spacing: 0.01em;
-  color: rgba(255,250,235,0.96);
+  font-family: 'Plus Jakarta Sans', system-ui, sans-serif;
+  font-size: 16px;
+  font-weight: 600;
+  letter-spacing: 0.10em;
+  text-transform: uppercase;
+  color: rgba(255, 224, 180, 0.94);
+  text-shadow: 0 0 14px rgba(255, 184, 92, 0.32);
   line-height: 1.25;
+  text-align: center;
+  max-width: 100%;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+/* Chip row in the header — visually identical to .bSegmentCountries
+   but laid out in-flow under the title rather than absolutely
+   positioned. Uses the same .bCountryChip styling defined alongside
+   the in-segment chips. */
+.bMTHeaderCountries {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px 10px;
   max-width: 100%;
 }
+.bMTHeaderCountries:empty { display: none; }
 .bMTBody {
   flex: 1 1 auto;
   display: flex;
@@ -50137,6 +50160,7 @@ body.ticker-active .gTickerLabel {
     <div class="bMTHeader">
       <span class="bMTHeaderEyebrow" id="bMTHeaderEyebrow">UP NEXT</span>
       <span class="bMTHeaderTitle" id="bMTHeaderTitle">— / —</span>
+      <div class="bMTHeaderCountries" id="bMTHeaderCountries"></div>
     </div>
     <div class="bMTBody">
       <div class="bMTLeft" id="bMTLeft">
@@ -51434,6 +51458,7 @@ body.ticker-active .gTickerLabel {
     };
     return {
       seg: slot.seg || null,
+      nextSeg,
       nextSegTitle: nextSeg?.thread_title || nextSeg?.thread_name || '',
       articles,
       sourcePie,
@@ -51442,13 +51467,29 @@ body.ticker-active .gTickerLabel {
     };
   }
 
-  function _renderMobileTransition({ seg, nextSegTitle, articles, sourcePie, timeline, stats }) {
+  function _renderMobileTransition({ seg, nextSeg, nextSegTitle, articles, sourcePie, timeline, stats }) {
     const panel = document.getElementById('bMobileTransition');
     if (!panel) return;
     const titleEl = document.getElementById('bMTHeaderTitle');
     const eyebrowEl = document.getElementById('bMTHeaderEyebrow');
     if (titleEl) titleEl.textContent = nextSegTitle || seg?.thread_title || '—';
     if (eyebrowEl) eyebrowEl.textContent = 'UP NEXT';
+
+    // Country chips — preview the next segment's flag row using the
+    // same logic the in-segment chip row uses. Empty next-seg or
+    // non-story falls through to the :empty CSS hide.
+    const chipsEl = document.getElementById('bMTHeaderCountries');
+    if (chipsEl) {
+      const isos = (nextSeg && typeof _collectSegmentCountryIsos === 'function')
+        ? _collectSegmentCountryIsos(nextSeg)
+        : [];
+      const esc = (s) => String(s ?? '').replace(/[&<>"']/g, ch => ({
+        '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+      }[ch]));
+      chipsEl.innerHTML = isos.map(({ iso, name }) =>
+        `<span class="bCountryChip" title="${esc(name)}"><img src="https://flagcdn.com/w40/${iso.toLowerCase()}.png" alt="${esc(iso)}" /></span>`
+      ).join('');
+    }
 
     // ── Top articles (left column) ──
     // Each card gets a CSS --i index so the .animating slide-in keyframe
@@ -51590,6 +51631,13 @@ body.ticker-active .gTickerLabel {
     if (!panel) return;
     _renderMobileTransition({
       nextSegTitle: 'Russia Threatens Baltic NATO Members Over Ukraine Drones',
+      nextSeg: {
+        type: 'story',
+        thread_title: 'Russia Threatens Baltic NATO Members Over Ukraine Drones',
+        primary_country: { iso: 'RU', name: 'Russia' },
+        primary_country_iso: 'RU',
+        secondary_country_isos: ['EE', 'LT', 'DE', 'US'],
+      },
       articles: [
         { source_name: 'Reuters',  title: 'Moscow signals readiness to strike NATO infrastructure if Baltic drone deliveries continue', country_name: 'Russia', published_at: '2026-05-20T08:14:00Z' },
         { source_name: 'BBC News', title: 'Baltic states call emergency NATO consultations after Russian threats',                  country_name: 'Lithuania', published_at: '2026-05-20T07:02:00Z' },
@@ -51697,6 +51745,55 @@ body.ticker-active .gTickerLabel {
   // endpoints, then any other secondary mentions, deduped and capped.
   // Hidden on non-story segments (intro/outro/keywords) since the
   // title hides too.
+  // Extract just the (iso, name) list a segment should display as chips.
+  // Returns an array of { iso, name } capped at 8. Empty for non-story.
+  // Used by both setSegmentCountries (in-segment chip row) and the
+  // mobile transition panel header (next-segment preview).
+  function _collectSegmentCountryIsos(seg) {
+    if (seg?.type !== 'story') return [];
+    const seen = new Set();
+    const isos = [];
+    const _countries = window.__globeCountries || [];
+    const _isoFromName = (name) => {
+      if (!name) return '';
+      const nl = String(name).trim().toLowerCase();
+      const c = _countries.find(c => c.name && c.name.toLowerCase() === nl);
+      return c?.iso_code || '';
+    };
+    const push = (rawIso, fallbackName) => {
+      let iso = (rawIso || '').trim().toUpperCase();
+      if ((!iso || iso.length !== 2) && fallbackName) {
+        iso = (_isoFromName(fallbackName) || '').toUpperCase();
+      }
+      if (!iso || iso.length !== 2) return;
+      if (seen.has(iso)) return;
+      seen.add(iso);
+      isos.push({ iso, name: fallbackName || iso });
+    };
+    push(seg.primary_country_iso || seg.primary_country?.iso, seg.primary_country?.name);
+    push(seg.primary_city_country_iso, seg.primary_city?.country_name);
+    const isoToName = window._isoToName || ((iso) => iso);
+    for (const iso of (seg.flow_arc_isos || [])) push(iso, isoToName(iso));
+    for (const iso of (seg.secondary_country_isos || [])) push(iso, isoToName(iso));
+    for (const iso of (seg.primary_nations || [])) push(iso, isoToName(iso));
+    for (const iso of (seg.secondary_nations || [])) push(iso, isoToName(iso));
+    for (const loc of (seg.secondary_locations || [])) {
+      if (loc?.iso || loc?.iso_code) push(loc.iso || loc.iso_code, loc?.name);
+      else if (loc?.name) push('', loc.name);
+    }
+    if (isos.length < 2) {
+      const arcs = [
+        ...(Array.isArray(seg.flow_arcs) ? seg.flow_arcs : []),
+        ...(Array.isArray(seg.secondary_flow_arcs) ? seg.secondary_flow_arcs : []),
+      ];
+      for (const a of arcs) {
+        push('', a?.from_name);
+        push('', a?.to_name);
+      }
+    }
+    return isos.slice(0, 8);
+  }
+
   function setSegmentCountries(seg) {
     const el = document.getElementById('bSegmentCountries');
     if (!el) return;
