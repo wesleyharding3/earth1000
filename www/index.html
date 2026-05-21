@@ -47717,6 +47717,358 @@ const settingsToggle     = document.getElementById("settingsToggle");
   flex-shrink: 0;
 }
 
+/* ── Between-segment transition panel (5s dashboard) ───────────────
+   Mobile: replaces the always-on compact pie/article-roll icons with
+   a full-screen 5-second dashboard between segments. Shows:
+     - Left column: top articles for the segment just played
+     - Right column (stacked): source-country pie + coverage timeline + stats
+     - Footer: countdown bar (5 → 0) so viewer knows when next segment fires
+   Desktop: same layout, just wider — same component works for both. */
+
+/* Hide the in-segment pie + article-roll buttons on mobile/touch
+   surfaces — their data now lives in the between-segment transition
+   panel, which is more legible (full-screen) and less visually noisy
+   during segment playback. `pointer: coarse` covers all mobile/tablet
+   devices regardless of viewport width. */
+@media (max-width: 700px), (pointer: coarse) {
+  .bSegmentSourcePie,
+  .bSegmentArticleRoll {
+    display: none !important;
+  }
+}
+.bMobileTransition {
+  position: fixed;
+  inset: 0;
+  z-index: 100070;
+  display: none;
+  flex-direction: column;
+  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px)
+           env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+  background:
+    radial-gradient(140% 100% at 50% -10%, rgba(255,184,92,0.10), transparent 50%),
+    radial-gradient(120% 90% at 100% 100%, rgba(96,200,255,0.12), transparent 45%),
+    linear-gradient(180deg, rgba(10,14,23,0.96), rgba(6,10,18,0.99));
+  color: rgba(255,255,255,0.92);
+  font-family: var(--briefing-font, 'Inter', -apple-system, sans-serif);
+  opacity: 0;
+  transition: opacity 0.5s ease;
+}
+.bMobileTransition.visible {
+  display: flex;
+  opacity: 1;
+}
+.bMTHeader {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 22px 24px 14px;
+  border-bottom: 1px solid rgba(255,184,92,0.18);
+}
+.bMTHeaderEyebrow {
+  font-size: 11px;
+  letter-spacing: 0.30em;
+  text-transform: uppercase;
+  color: rgba(255,200,140,0.85);
+  font-weight: 700;
+}
+.bMTHeaderTitle {
+  font-size: 17px;
+  font-weight: 700;
+  text-align: center;
+  letter-spacing: 0.01em;
+  color: rgba(255,250,235,0.96);
+  line-height: 1.25;
+  max-width: 100%;
+}
+.bMTBody {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: row;
+  gap: 12px;
+  padding: 16px;
+  min-height: 0;
+  overflow: hidden;
+}
+.bMTLeft {
+  flex: 1 1 42%;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+.bMTRight {
+  flex: 1 1 58%;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+}
+.bMTRightPanel {
+  flex: 1 1 auto;
+  background: rgba(14,22,38,0.55);
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: 12px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+.bMTRightPanel--small { flex: 0 0 auto; }
+.bMTSectionLabel {
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: rgba(255,200,140,0.78);
+  font-weight: 700;
+}
+.bMTArticles {
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  overflow: hidden;
+}
+.bMTArticleCard {
+  background: rgba(14,22,38,0.55);
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 10px;
+  padding: 10px 11px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+  opacity: 0;
+  transform: translateX(-18px);
+}
+.bMobileTransition.animating .bMTArticleCard {
+  animation: bMTArticleIn 520ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  animation-delay: calc(150ms + var(--i, 0) * 130ms);
+}
+@keyframes bMTArticleIn {
+  to { opacity: 1; transform: translateX(0); }
+}
+.bMTArticleSrc {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(255,184,92,0.90);
+}
+.bMTArticleTitle {
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.32;
+  color: rgba(255,250,240,0.95);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.bMTArticleMeta {
+  display: flex;
+  gap: 6px;
+  font-size: 9px;
+  color: rgba(255,255,255,0.55);
+}
+.bMTPie {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.bMTPie svg { width: 100%; height: 100%; max-height: 180px; }
+/* Donut sweep — mirrors carousel slide-3 ("thread-coverage") clockwise
+   build. We mask the entire pie SVG with a conic-gradient that pivots
+   from 12 o'clock and reveals slices clockwise. CSS variable --pie-sweep
+   is the animatable angle (0deg → 360deg). The pie also gets a subtle
+   counter-rotation after the sweep completes for the "settling" beat. */
+.bMTPieSvgWrap {
+  position: relative;
+  width: 55%;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  --pie-sweep: 0deg;
+  -webkit-mask: conic-gradient(from -90deg, black 0deg, black var(--pie-sweep), transparent var(--pie-sweep), transparent 360deg);
+          mask: conic-gradient(from -90deg, black 0deg, black var(--pie-sweep), transparent var(--pie-sweep), transparent 360deg);
+}
+.bMTPieCenterCount {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  font-variant-numeric: tabular-nums;
+}
+.bMTPieCenterNum {
+  /* Center number must fit inside the donut inner hole (r=22 in a
+     viewBox of 100; pixel size depends on .bMTPieSvgWrap's width).
+     Capped via clamp so 4+ digit totals don't spill into the ring. */
+  font-size: clamp(13px, 4.2vw, 18px);
+  font-weight: 800;
+  color: rgba(255,200,140,0.95);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  max-width: 70%;
+  text-align: center;
+  overflow: hidden;
+}
+.bMTPieCenterLabel {
+  font-size: clamp(6px, 1.4vw, 8px);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.55);
+  margin-top: 2px;
+}
+.bMTPieLegendRow {
+  opacity: 0;
+  transform: translateX(-6px);
+}
+.bMobileTransition.animating .bMTPieSvgWrap {
+  animation: bMTPieSweep 1200ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+}
+.bMobileTransition.animating .bMTPieCenterNum {
+  animation: bMTNumberPulse 800ms ease-out 700ms both;
+}
+.bMobileTransition.animating .bMTPieLegendRow {
+  animation: bMTLegendIn 380ms ease-out forwards;
+  animation-delay: calc(900ms + var(--i, 0) * 90ms);
+}
+@keyframes bMTPieSweep {
+  from { --pie-sweep: 0deg; }
+  to   { --pie-sweep: 360deg; }
+}
+/* Houdini-property registration — without this, the conic-gradient
+   angle can't be animated. iOS Safari 15+ supports @property. Graceful
+   degradation: panel still appears, sweep snaps instead of animating. */
+@property --pie-sweep {
+  syntax: '<angle>';
+  inherits: true;
+  initial-value: 0deg;
+}
+@keyframes bMTNumberPulse {
+  0%   { transform: scale(0.85); opacity: 0; }
+  60%  { transform: scale(1.08); opacity: 1; }
+  100% { transform: scale(1);    opacity: 1; }
+}
+@keyframes bMTLegendIn {
+  to { opacity: 1; transform: translateX(0); }
+}
+.bMTTimeline {
+  flex: 1 1 auto;
+  min-height: 80px;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  gap: 4px;
+}
+.bMTTimelineBars {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 90px;
+}
+.bMTTimelineBar {
+  flex: 1;
+  background: linear-gradient(180deg, rgba(255,184,92,0.90), rgba(255,140,60,0.55));
+  border-radius: 2px 2px 0 0;
+  min-height: 2px;
+  transform-origin: bottom center;
+  transform: scaleY(0.02);
+  opacity: 0;
+}
+.bMobileTransition.animating .bMTTimelineBar {
+  animation: bMTBarRise 620ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  animation-delay: calc(300ms + var(--i, 0) * 45ms);
+}
+@keyframes bMTBarRise {
+  from { transform: scaleY(0.02); opacity: 0; }
+  to   { transform: scaleY(1);    opacity: 1; }
+}
+.bMTTimelineAxis {
+  display: flex;
+  justify-content: space-between;
+  font-size: 8px;
+  letter-spacing: 0.08em;
+  color: rgba(255,255,255,0.50);
+  text-transform: uppercase;
+}
+.bMTStats {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255,255,255,0.05);
+  margin-top: 4px;
+}
+.bMTStatBox {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 4px 2px;
+  opacity: 0;
+  transform: translateY(6px);
+}
+.bMobileTransition.animating .bMTStatBox {
+  animation: bMTStatIn 380ms ease-out forwards;
+  animation-delay: calc(1100ms + var(--i, 0) * 100ms);
+}
+@keyframes bMTStatIn {
+  to { opacity: 1; transform: translateY(0); }
+}
+.bMTStatNum {
+  font-size: 17px;
+  font-weight: 700;
+  color: rgba(255,200,140,0.95);
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.bMTStatLabel {
+  font-size: 8px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: rgba(255,255,255,0.55);
+  margin-top: 3px;
+}
+.bMTFooter {
+  flex: 0 0 auto;
+  padding: 12px 24px env(safe-area-inset-bottom, 12px);
+  display: flex;
+  justify-content: center;
+}
+.bMTCountdown {
+  font-size: 24px;
+  font-weight: 700;
+  color: rgba(255,200,140,0.85);
+  letter-spacing: 0.05em;
+  font-variant-numeric: tabular-nums;
+}
+.bMTPieLegend {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 10px;
+}
+.bMTPieLegendRow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: rgba(255,255,255,0.82);
+}
+.bMTPieLegendDot {
+  width: 8px; height: 8px; border-radius: 50%;
+  flex-shrink: 0;
+}
+
 /* ── Per-segment mini article roll — mobile only.
    The mobile briefing drops the desktop's left-side article roll
    entirely (see loadArticlePanel comment for rationale). This is a
@@ -49776,6 +50128,37 @@ body.ticker-active .gTickerLabel {
   <div class="bSegmentCountries" id="bSegmentCountries"></div>
   <div class="bSegmentSourcePie" id="bSegmentSourcePie" aria-hidden="true"></div>
   <div class="bSegmentArticleRoll" id="bSegmentArticleRoll" aria-hidden="true"></div>
+  <!-- Between-segment 5s transition panel. Replaces the always-on
+       compact pie/article-roll icons on mobile. Renders a dashboard
+       of the previous segment's data (pie + coverage timeline +
+       top articles) over a dimmed scrim. Captured by the video
+       worker in scrub mode at fixed scrub-time positions. -->
+  <div class="bMobileTransition" id="bMobileTransition" aria-hidden="true">
+    <div class="bMTHeader">
+      <span class="bMTHeaderEyebrow" id="bMTHeaderEyebrow">UP NEXT</span>
+      <span class="bMTHeaderTitle" id="bMTHeaderTitle">— / —</span>
+    </div>
+    <div class="bMTBody">
+      <div class="bMTLeft" id="bMTLeft">
+        <div class="bMTSectionLabel">TOP ARTICLES</div>
+        <div class="bMTArticles" id="bMTArticles"></div>
+      </div>
+      <div class="bMTRight">
+        <div class="bMTRightPanel">
+          <div class="bMTSectionLabel">SOURCE COUNTRIES</div>
+          <div class="bMTPie" id="bMTPie"></div>
+          <div class="bMTStats" id="bMTStats"></div>
+        </div>
+        <div class="bMTRightPanel">
+          <div class="bMTSectionLabel">COVERAGE OVER TIME</div>
+          <div class="bMTTimeline" id="bMTTimeline"></div>
+        </div>
+      </div>
+    </div>
+    <div class="bMTFooter">
+      <div class="bMTCountdown" id="bMTCountdown">5</div>
+    </div>
+  </div>
   <div class="bFocalScrim" id="bFocalScrim"></div>
   <div class="bDotsMeta" id="bDotsMeta"></div>
   <div class="bDots" id="bDots"></div>
@@ -50983,6 +51366,268 @@ body.ticker-active .gTickerLabel {
   // visible during the intro animation — the intro overlay shows its
   // own date label. The title takes over starting with segment 1.
   // Typewriter title — types each character with a blinking caret.
+  // ── Between-segment transition panel renderer ─────────────────────
+  // Renders the dashboard panel (pie + timeline + top articles + stats)
+  // for a 5-second window between segments. Idempotent — calling it
+  // again replaces content. Pure DOM updates so the video worker's
+  // captureScreenshot can grab the rendered state.
+  //
+  // Inputs:
+  //   seg: the segment OBJECT that just played (data is summarized)
+  //   nextSegTitle: title of the segment about to play (for header)
+  //   articles: array of {title, source_name, country_name, published_at}
+  //             (top N by importance / recency; caller supplies)
+  //   sourcePie: array of {iso, name, n} aggregated by source country
+  //   timeline:  array of {label, count} bins (hourly or daily)
+  //   stats:     { articles, countries, sources } counts
+  //
+  // Pass null/undefined for any slot to use a placeholder. The dry-run
+  // preview at window.__showMobileTransitionPreview() passes a fully-
+  // synthetic payload.
+
+  // Per-segment cache populated as loadArticlePanel / setSegmentSourcePie
+  // resolve their fetches. Keyed by segment index in the current episode.
+  // _onSegmentEnded reads these to build the transition-panel payload
+  // without re-fetching mid-gap (the 5s window is too short for a
+  // round-trip on cold connections).
+  const _bMTSegmentCache = new Map();
+  function _bMTCacheArticles(idx, articles) {
+    if (idx < 0 || !Array.isArray(articles)) return;
+    const slot = _bMTSegmentCache.get(idx) || {};
+    slot.articles = articles;
+    _bMTSegmentCache.set(idx, slot);
+  }
+  function _bMTCacheSourcePie(idx, panelData) {
+    if (idx < 0 || !panelData) return;
+    const slot = _bMTSegmentCache.get(idx) || {};
+    slot.sourcePiePanel = panelData;
+    _bMTSegmentCache.set(idx, slot);
+  }
+  // Build the renderer payload from cached data for the segment that
+  // just played. Returns null if no data is cached (skip the transition
+  // panel entirely — better than flashing an empty dashboard).
+  function _bMTBuildPayloadForSegment(idx, nextSeg) {
+    const slot = _bMTSegmentCache.get(idx);
+    if (!slot) return null;
+    const articles = Array.isArray(slot.articles) ? slot.articles.slice(0, 5) : [];
+    const pieData  = slot.sourcePiePanel || null;
+    let sourcePie = [];
+    if (pieData) {
+      const data = (typeof pieData.data === 'string') ? JSON.parse(pieData.data) : (pieData.data || {});
+      const labels = Array.isArray(data.labels) ? data.labels : [];
+      const values = Array.isArray(data.series?.[0]?.values) ? data.series[0].values : [];
+      sourcePie = labels
+        .map((lab, i) => ({ name: lab, n: Number(values[i]) || 0 }))
+        .filter(x => x.n > 0 && !/^\+\d+\s+more$/i.test(String(x.name || '').trim()))
+        .sort((a, b) => b.n - a.n);
+    }
+    // Derive stats from what we have. Sources isn't directly cached, so
+    // we approximate from the article set's distinct source_name count.
+    const uniqSources = new Set();
+    for (const a of articles) {
+      if (a?.source_name) uniqSources.add(a.source_name);
+    }
+    const stats = {
+      articles: articles.length || (slot.totalArticles ?? '—'),
+      countries: sourcePie.length || '—',
+      sources: uniqSources.size || '—',
+    };
+    return {
+      seg: slot.seg || null,
+      nextSegTitle: nextSeg?.thread_title || nextSeg?.thread_name || '',
+      articles,
+      sourcePie,
+      timeline: [],   // Not yet sourced; renderer will skip if empty.
+      stats,
+    };
+  }
+
+  function _renderMobileTransition({ seg, nextSegTitle, articles, sourcePie, timeline, stats }) {
+    const panel = document.getElementById('bMobileTransition');
+    if (!panel) return;
+    const titleEl = document.getElementById('bMTHeaderTitle');
+    const eyebrowEl = document.getElementById('bMTHeaderEyebrow');
+    if (titleEl) titleEl.textContent = nextSegTitle || seg?.thread_title || '—';
+    if (eyebrowEl) eyebrowEl.textContent = 'UP NEXT';
+
+    // ── Top articles (left column) ──
+    // Each card gets a CSS --i index so the .animating slide-in keyframe
+    // can stagger entries (delay = base + i * step). See .bMTArticleCard
+    // animation rule.
+    const articlesEl = document.getElementById('bMTArticles');
+    if (articlesEl) {
+      const esc = (s) => String(s ?? '').replace(/[&<>"']/g, ch => ({
+        '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'
+      }[ch]));
+      const list = Array.isArray(articles) ? articles.slice(0, 5) : [];
+      articlesEl.innerHTML = list.map((a, i) => {
+        const src = esc(a.source_name || a.source || '').slice(0, 24);
+        const title = esc(a.title || a.translated_title || '');
+        const loc = esc(a.country_name || a.city_name || '');
+        const date = a.published_at ? new Date(a.published_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '';
+        return `<div class="bMTArticleCard" style="--i:${i}">
+          ${src ? `<div class="bMTArticleSrc">${src}</div>` : ''}
+          <div class="bMTArticleTitle">${title}</div>
+          ${(loc || date) ? `<div class="bMTArticleMeta">${loc ? `<span>${loc}</span>` : ''}${date ? `<span>·</span><span>${date}</span>` : ''}</div>` : ''}
+        </div>`;
+      }).join('');
+    }
+
+    // ── Pie chart (right column top) ──
+    // The donut is wrapped in .bMTPieSvgWrap which applies a conic-gradient
+    // mask animated from 0deg → 360deg ("clockwise sweep"). The mask hides
+    // unrevealed slices; the SVG itself is static.
+    // A center counter tweens 0 → total article count via the
+    // .bMTPieCenterNum keyframe (pulses in after the sweep is well under way).
+    const pieEl = document.getElementById('bMTPie');
+    if (pieEl) {
+      const slices = Array.isArray(sourcePie) ? sourcePie.slice(0, 6) : [];
+      const total = slices.reduce((s, x) => s + (x.n || 0), 0) || 1;
+      const palette = ['#ffb85c','#60c8ff','#9be564','#e07be0','#ffd266','#ff7b7b'];
+      let cum = 0;
+      const segments = slices.map((s, i) => {
+        const start = cum / total;
+        cum += (s.n || 0);
+        const end = cum / total;
+        const startAngle = start * Math.PI * 2 - Math.PI/2;
+        const endAngle   = end * Math.PI * 2 - Math.PI/2;
+        const x1 = 50 + Math.cos(startAngle) * 40;
+        const y1 = 50 + Math.sin(startAngle) * 40;
+        const x2 = 50 + Math.cos(endAngle) * 40;
+        const y2 = 50 + Math.sin(endAngle) * 40;
+        const largeArc = (end - start) > 0.5 ? 1 : 0;
+        return `<path d="M50,50 L${x1.toFixed(2)},${y1.toFixed(2)} A40,40 0 ${largeArc} 1 ${x2.toFixed(2)},${y2.toFixed(2)} Z" fill="${palette[i % palette.length]}" opacity="0.94"/>`;
+      }).join('');
+      const legend = slices.slice(0, 4).map((s, i) =>
+        `<div class="bMTPieLegendRow" style="--i:${i}"><span class="bMTPieLegendDot" style="background:${palette[i % palette.length]}"></span>${s.name || s.iso?.toUpperCase() || '?'} <span style="opacity:0.65">${Math.round(100 * (s.n || 0) / total)}%</span></div>`
+      ).join('');
+      pieEl.innerHTML = `
+        <div class="bMTPieSvgWrap">
+          <svg viewBox="0 0 100 100" style="width:100%;height:auto;display:block">
+            ${segments}
+            <circle cx="50" cy="50" r="24" fill="rgba(10,14,23,0.92)"/>
+          </svg>
+          <div class="bMTPieCenterCount">
+            <div class="bMTPieCenterNum">${total}</div>
+            <div class="bMTPieCenterLabel">Total</div>
+          </div>
+        </div>
+        <div class="bMTPieLegend" style="flex:1;padding-left:10px">${legend}</div>`;
+      pieEl.style.flexDirection = 'row';
+    }
+
+    // ── Timeline (right column middle) ──
+    // Each bar carries --i for the staggered scaleY rise animation. The
+    // height attribute is the final visual height; the keyframe scales
+    // from 0.02 → 1 around the bar's transform-origin: bottom.
+    // If we don't have timeline data, hide the entire panel — half-empty
+    // dashboard reads as a bug, not a deliberate layout.
+    const timeEl = document.getElementById('bMTTimeline');
+    if (timeEl) {
+      const bins = Array.isArray(timeline) ? timeline : [];
+      const parentPanel = timeEl.closest('.bMTRightPanel');
+      if (!bins.length) {
+        if (parentPanel) parentPanel.style.display = 'none';
+        timeEl.innerHTML = '';
+      } else {
+        if (parentPanel) parentPanel.style.display = '';
+        const maxN = Math.max(1, ...bins.map(b => b.count || 0));
+        const barHtml = bins.map((b, i) => {
+          const pct = ((b.count || 0) / maxN) * 100;
+          return `<div class="bMTTimelineBar" style="height:${pct.toFixed(1)}%;--i:${i}"></div>`;
+        }).join('');
+        const first = bins[0]?.label || '';
+        const last  = bins[bins.length - 1]?.label || '';
+        timeEl.innerHTML = `<div class="bMTTimelineBars">${barHtml}</div><div class="bMTTimelineAxis"><span>${first}</span><span>${last}</span></div>`;
+      }
+    }
+
+    // ── Stats (now docked at bottom of the SOURCE COUNTRIES panel) ──
+    const statsEl = document.getElementById('bMTStats');
+    if (statsEl && stats) {
+      statsEl.innerHTML = `
+        <div class="bMTStatBox" style="--i:0"><div class="bMTStatNum">${stats.articles ?? '—'}</div><div class="bMTStatLabel">Articles</div></div>
+        <div class="bMTStatBox" style="--i:1"><div class="bMTStatNum">${stats.countries ?? '—'}</div><div class="bMTStatLabel">Countries</div></div>
+        <div class="bMTStatBox" style="--i:2"><div class="bMTStatNum">${stats.sources ?? '—'}</div><div class="bMTStatLabel">Sources</div></div>`;
+    }
+  }
+
+  // Restart all entrance animations by toggling the .animating class with
+  // a forced reflow in between. Without the reflow, removing+adding the
+  // class in the same tick is a no-op — the browser coalesces it.
+  function _replayMobileTransitionAnimations() {
+    const panel = document.getElementById('bMobileTransition');
+    if (!panel) return;
+    panel.classList.remove('animating');
+    // eslint-disable-next-line no-unused-expressions — reflow trick
+    void panel.offsetWidth;
+    panel.classList.add('animating');
+  }
+
+  // Drives the footer countdown from 5 → 1 over `seconds` real seconds.
+  // Returns a cancel function so the caller can abort if the transition
+  // ends early.
+  let _bMTCountdownTimer = null;
+  function _runMobileTransitionCountdown(seconds = 5) {
+    if (_bMTCountdownTimer) { clearInterval(_bMTCountdownTimer); _bMTCountdownTimer = null; }
+    const el = document.getElementById('bMTCountdown');
+    if (!el) return () => {};
+    let n = Math.max(1, Math.round(seconds));
+    el.textContent = String(n);
+    _bMTCountdownTimer = setInterval(() => {
+      n--;
+      if (n <= 0) { clearInterval(_bMTCountdownTimer); _bMTCountdownTimer = null; el.textContent = '1'; return; }
+      el.textContent = String(n);
+    }, 1000);
+    return () => { if (_bMTCountdownTimer) { clearInterval(_bMTCountdownTimer); _bMTCountdownTimer = null; } };
+  }
+
+  // Dev / preview entry — invokes the renderer with synthetic data so we
+  // can verify the layout + animation choreography in the iOS preview
+  // without a real briefing. Replays the animation on each call.
+  window.__showMobileTransitionPreview = function () {
+    const panel = document.getElementById('bMobileTransition');
+    if (!panel) return;
+    _renderMobileTransition({
+      nextSegTitle: 'Russia Threatens Baltic NATO Members Over Ukraine Drones',
+      articles: [
+        { source_name: 'Reuters',  title: 'Moscow signals readiness to strike NATO infrastructure if Baltic drone deliveries continue', country_name: 'Russia', published_at: '2026-05-20T08:14:00Z' },
+        { source_name: 'BBC News', title: 'Baltic states call emergency NATO consultations after Russian threats',                  country_name: 'Lithuania', published_at: '2026-05-20T07:02:00Z' },
+        { source_name: 'Politico Europe', title: 'Estonia warns drone deliveries to Ukraine will continue despite Russian pressure', country_name: 'Estonia', published_at: '2026-05-20T06:30:00Z' },
+        { source_name: 'Der Spiegel', title: 'Berlin reasserts NATO Article 5 commitments after Kremlin escalation rhetoric',  country_name: 'Germany',  published_at: '2026-05-20T05:48:00Z' },
+        { source_name: 'AFP', title: 'Kremlin spokesperson refuses to rule out kinetic response in Baltic theater', country_name: 'Russia', published_at: '2026-05-20T05:11:00Z' },
+      ],
+      sourcePie: [
+        { iso: 'ru', name: 'Russia',   n: 42 },
+        { iso: 'us', name: 'US',       n: 28 },
+        { iso: 'de', name: 'Germany',  n: 16 },
+        { iso: 'fr', name: 'France',   n: 12 },
+        { iso: 'ee', name: 'Estonia',  n: 9  },
+        { iso: 'lt', name: 'Lithuania',n: 7  },
+      ],
+      timeline: [
+        { label: '12h', count: 3 }, { label: '', count: 5 }, { label: '', count: 8 },
+        { label: '', count: 14 }, { label: '', count: 22 }, { label: '', count: 28 },
+        { label: '', count: 31 }, { label: '', count: 27 }, { label: '', count: 19 },
+        { label: '', count: 15 }, { label: '', count: 11 }, { label: 'now', count: 9 },
+      ],
+      stats: { articles: 114, countries: 23, sources: 67 },
+    });
+    panel.classList.add('visible');
+    panel.setAttribute('aria-hidden', 'false');
+    _replayMobileTransitionAnimations();
+    _runMobileTransitionCountdown(5);
+  };
+  window.__hideMobileTransitionPreview = function () {
+    const panel = document.getElementById('bMobileTransition');
+    if (panel) {
+      panel.classList.remove('visible');
+      panel.classList.remove('animating');
+      panel.setAttribute('aria-hidden', 'true');
+    }
+    if (_bMTCountdownTimer) { clearInterval(_bMTCountdownTimer); _bMTCountdownTimer = null; }
+  };
+
   // A token is bumped per call so an in-flight typewriter cancels itself
   // if the segment changes mid-type (the chars-after token mismatch are
   // simply dropped).
@@ -51349,7 +51994,9 @@ body.ticker-active .gTickerLabel {
     };
 
     if (_sourcePieCache.has(threadId)) {
-      render(_sourcePieCache.get(threadId));
+      const cached = _sourcePieCache.get(threadId);
+      if (typeof segIdx === 'number') _bMTCacheSourcePie(segIdx, cached);
+      render(cached);
       return;
     }
     fetch(`${API}/api/threads/${threadId}/panels`)
@@ -51359,6 +52006,8 @@ body.ticker-active .gTickerLabel {
         const pie = panels.find(p => p?.chart_type === 'pie' &&
           (p?.title || '').toLowerCase().includes('source country')) || null;
         _sourcePieCache.set(threadId, pie);
+        // Mirror into the transition-panel cache for the current segment.
+        if (typeof segIdx === 'number') _bMTCacheSourcePie(segIdx, pie);
         render(pie);
       })
       .catch(() => render(null));
@@ -52535,6 +53184,17 @@ body.ticker-active .gTickerLabel {
     clearTimeout(segTimer);
     clearBTimers();
 
+    // Tear down the between-segment transition panel on every advance.
+    // _onSegmentEnded showed it during the gap; by the time goToSegment
+    // fires the next segment is taking over the screen.
+    const _bMTPanel = document.getElementById('bMobileTransition');
+    if (_bMTPanel && _bMTPanel.classList.contains('visible')) {
+      _bMTPanel.classList.remove('visible');
+      _bMTPanel.classList.remove('animating');
+      _bMTPanel.setAttribute('aria-hidden', 'true');
+    }
+    if (_bMTCountdownTimer) { clearInterval(_bMTCountdownTimer); _bMTCountdownTimer = null; }
+
     // End of briefing → show recap
     if (!episode || idx >= episode.segments.length) {
       _resumeSingle = false;
@@ -52684,8 +53344,42 @@ body.ticker-active .gTickerLabel {
             pauseMs = Math.max(pauseMs, focalRemaining + (SEGMENT_BUFFER_MS / playbackRate));
           }
         }
+
+        // ── Between-segment transition panel (mobile) ─────────────────
+        // Show the 5s dashboard summary IFF:
+        //   • we have data cached for the segment that just played
+        //   • the NEXT segment exists (no panel before outro recap)
+        //   • this isn't a video segment with an already-extended pause
+        //     (18s for video segments is intentional viewer breathing
+        //     room — don't slap a dashboard on top of it)
+        // The panel is purely visual; goToSegment(curIdx+1) still fires
+        // at pauseMs the same way it did before. We just extend pauseMs
+        // to a flat 5s when the panel is shown so the user has time to
+        // read it.
+        const nextSeg = (Array.isArray(episode?.segments) && episode.segments[curIdx + 1]) || null;
+        const PANEL_MS = 5000;
+        const transitionPayload = nextSeg && !seg.video_id ? _bMTBuildPayloadForSegment(curIdx, nextSeg) : null;
+        if (transitionPayload && transitionPayload.articles.length > 0) {
+          pauseMs = Math.max(pauseMs, PANEL_MS / playbackRate);
+          _renderMobileTransition(transitionPayload);
+          const panel = document.getElementById('bMobileTransition');
+          if (panel) {
+            panel.classList.add('visible');
+            panel.setAttribute('aria-hidden', 'false');
+            _replayMobileTransitionAnimations();
+            _runMobileTransitionCountdown(Math.round(pauseMs / 1000));
+          }
+        }
         segTimer = setTimeout(() => {
           if (segIdx !== curIdx) return;
+          // Tear down the transition panel before advancing — the new
+          // segment's globe / arcs need the screen back.
+          const panel = document.getElementById('bMobileTransition');
+          if (panel && panel.classList.contains('visible')) {
+            panel.classList.remove('visible');
+            panel.classList.remove('animating');
+            panel.setAttribute('aria-hidden', 'true');
+          }
           goToSegment(curIdx + 1);
         }, pauseMs);
       };
@@ -54576,6 +55270,9 @@ body.ticker-active .gTickerLabel {
         articles = await res.json();
       }
       if (segIdx !== snapIdx) return;
+      // Mirror into the transition-panel cache so the between-segment
+      // dashboard can hydrate without re-fetching.
+      _bMTCacheArticles(snapIdx, articles);
 
       // ── Decide what occupies the side-video slot ────────────────────
       //

@@ -51030,8 +51030,24 @@ body.ticker-active .gTickerLabel {
   let _scrubCamInitialZ      = 0;
   let _scrubCamTransitionAtMs = -1; // ms when the current transition began
   let _scrubCamTargetQuat    = null;
+  // Per-transition duration + easing. Both reset by each camera event
+  // (camera_focus + camera_followup) so the initial focus and the
+  // post-arcs orbit can feel different — initial is symmetric and
+  // deliberate, followup decelerates into the centroid like settling.
+  let _scrubCamTransitionDurMs = 0;
+  let _scrubCamEaseFn = null;
   let _scrubCamTargetZ       = 0;
-  const SCRUB_CAM_TRANSITION_MS  = 1500;   // matches the live briefing's camera ease
+  const SCRUB_CAM_TRANSITION_MS         = 2400;   // initial primary-country focus — slower, more "fade in" feel
+  const SCRUB_CAM_FOLLOWUP_MS           = 3500;   // post-arcs settle to centroid — long deceleration tail
+  const SCRUB_CAM_FOLLOWUP_DELAY_AFTER_ARCS_MS = 1200; // breath between arc draw and re-focus
+  // Easing curves.
+  // easeInOutQuart: symmetric S-curve, sharper than cubic at endpoints —
+  // gives the initial focus a more deliberate "settle into place" feel
+  // than the previous easeInOutCubic.
+  // easeOutQuart: fast start, decelerating tail — used for the followup
+  // pan so the camera arrives at the centroid like a settling boat.
+  const _easeInOutQuart = (t) => t < 0.5 ? 8 * t * t * t * t : 1 - Math.pow(-2 * t + 2, 4) / 2;
+  const _easeOutQuart   = (t) => 1 - Math.pow(1 - t, 4);
   const SCRUB_ARC_REVEAL_MS      = 1000;   // matches BRIEFING_ARC_REVEAL_SECS
   // Focal-map scrub-time tracking. The map fires at _scrubFocalMapStartedAtMs
   // and should cleanup at _scrubFocalMapEndsAtMs (durSec later, in scrub
@@ -51101,6 +51117,21 @@ body.ticker-active .gTickerLabel {
     events.push({ msAbs: finalCameraMs, kind: 'camera_focus', applied: false });
     events.push({ msAbs: finalArcMs,    kind: 'arc_draw',     applied: false });
 
+    // Camera FOLLOWUP: after arcs settle, gently pan to the centroid of
+    // all flow_arc endpoints so the globe re-orients toward the full
+    // story (not just the primary country). Without this the camera
+    // hard-locks on the primary country and the arcs feel like they're
+    // happening off-screen on either side.
+    // The followup target is computed at apply-time (drawSegmentArcs may
+    // not have run yet at build-time — we want the live endpoint set).
+    const followupMs = finalArcMs + SCRUB_CAM_FOLLOWUP_DELAY_AFTER_ARCS_MS;
+    // Only schedule if we have arcs to compute a centroid from; segments
+    // with no flow_arcs would just snap back to the same primary focus.
+    const _hasArcs = Array.isArray(seg?.flow_arcs) && seg.flow_arcs.length > 0;
+    if (_hasArcs) {
+      events.push({ msAbs: followupMs, kind: 'camera_followup', applied: false });
+    }
+
     // Focal-map featured-media moment. Mirror the live trigger calc:
     // focal_trigger_ms - start_ms when both are present, else
     // voiceover_ms (end-of-narration), else 35% of segment duration.
@@ -51156,8 +51187,58 @@ body.ticker-active .gTickerLabel {
     _scrubCamInitialZ = (typeof window.__getCameraZ === 'function') ? window.__getCameraZ() : 0;
     _scrubCamTargetQuat = window.__computeFocusQuat(ll.lat, ll.lon);
     _scrubCamTargetZ = (typeof window.__getBriefingWideZ === 'function') ? window.__getBriefingWideZ() : 3.4;
+    // Initial focus: symmetric S-curve, 2.4s — feels deliberate rather
+    // than snapped.
+    _scrubCamTransitionDurMs = SCRUB_CAM_TRANSITION_MS;
+    _scrubCamEaseFn          = _easeInOutQuart;
     // The transition starts at the event's ms (we re-fill this from
     // the caller); recorded below.
+  }
+
+  // Centroid of all flow_arc endpoints (both ends of each arc count).
+  // Returns null if the segment has no arcs with lat/lng. Lat is a
+  // simple arithmetic mean; lon uses circular-mean (atan2 of summed
+  // unit vectors) so a story spanning the antimeridian (e.g., Bering
+  // Strait, Pacific Rim) doesn't average to "somewhere in the middle
+  // of Africa".
+  function _scrubComputeArcCentroid(seg) {
+    const arcs = Array.isArray(seg?.flow_arcs) ? seg.flow_arcs : [];
+    if (!arcs.length) return null;
+    const pts = [];
+    for (const a of arcs) {
+      if (a.from_lat != null) pts.push({ lat: Number(a.from_lat), lon: Number(a.from_lng ?? a.from_lon ?? 0) });
+      if (a.to_lat   != null) pts.push({ lat: Number(a.to_lat),   lon: Number(a.to_lng   ?? a.to_lon   ?? 0) });
+    }
+    if (!pts.length) return null;
+    let latSum = 0, sinSum = 0, cosSum = 0;
+    for (const p of pts) {
+      latSum += p.lat;
+      const r = p.lon * Math.PI / 180;
+      sinSum += Math.sin(r);
+      cosSum += Math.cos(r);
+    }
+    return {
+      lat: latSum / pts.length,
+      lon: Math.atan2(sinSum / pts.length, cosSum / pts.length) * 180 / Math.PI,
+    };
+  }
+
+  function _scrubApplyCameraFollowup() {
+    if (typeof window.__computeFocusQuat !== 'function') return;
+    const c = _scrubComputeArcCentroid(_scrubSeg);
+    if (!c) return;
+    // Snapshot wherever the camera ended up after the initial focus.
+    if (typeof window.__getGlobeQuat === 'function') {
+      _scrubCamInitialQuat = window.__getGlobeQuat();
+    }
+    _scrubCamInitialZ = (typeof window.__getCameraZ === 'function') ? window.__getCameraZ() : _scrubCamInitialZ;
+    _scrubCamTargetQuat = window.__computeFocusQuat(c.lat, c.lon);
+    // Keep the same wide briefing Z — this is a pan, not a zoom.
+    _scrubCamTargetZ = (typeof window.__getBriefingWideZ === 'function') ? window.__getBriefingWideZ() : _scrubCamInitialZ;
+    // Long decelerating tail — feels like the camera is settling rather
+    // than snapping to a new target.
+    _scrubCamTransitionDurMs = SCRUB_CAM_FOLLOWUP_MS;
+    _scrubCamEaseFn          = _easeOutQuart;
   }
 
   function _scrubApplyArcDraw() {
@@ -51175,10 +51256,15 @@ body.ticker-active .gTickerLabel {
 
   function _scrubAdvanceCamera(tMs) {
     if (_scrubCamTransitionAtMs < 0 || !_scrubCamTargetQuat) return;
+    const dur = _scrubCamTransitionDurMs > 0 ? _scrubCamTransitionDurMs : SCRUB_CAM_TRANSITION_MS;
     const elapsed = tMs - _scrubCamTransitionAtMs;
-    const t01 = Math.max(0, Math.min(1, elapsed / SCRUB_CAM_TRANSITION_MS));
-    // easeInOutCubic — matches the arc-clip renderer's easing curve
-    const eased = t01 < 0.5 ? 4 * t01 * t01 * t01 : 1 - Math.pow(-2 * t01 + 2, 3) / 2;
+    const t01 = Math.max(0, Math.min(1, elapsed / dur));
+    // Per-transition easing fn. Initial focus uses easeInOutQuart for
+    // a slow-start / slow-end S-curve; followup uses easeOutQuart for a
+    // decelerating settle. Falls back to easeInOutQuart if unset so
+    // legacy callers keep the new (softer) behavior.
+    const easeFn = _scrubCamEaseFn || _easeInOutQuart;
+    const eased = easeFn(t01);
     // Slerp globe rotation
     if (typeof window.__setGlobeQuat === 'function' && _scrubCamInitialQuat) {
       const q = _scrubCamInitialQuat.clone();
@@ -51265,6 +51351,8 @@ body.ticker-active .gTickerLabel {
     _scrubArcSpawnAt = null;
     _scrubCamTransitionAtMs = -1;
     _scrubCamTargetQuat = null;
+    _scrubCamTransitionDurMs = 0;
+    _scrubCamEaseFn = null;
     _scrubFocalMapStartedAtMs = -1;
     _scrubFocalMapEndsAtMs = -1;
     _scrubFocalMapEnded = false;
@@ -51315,6 +51403,12 @@ body.ticker-active .gTickerLabel {
       } else if (ev.kind === 'arc_draw') {
         _scrubApplyArcDraw();
         _scrubArcSpawnAt = ev.msAbs;
+      } else if (ev.kind === 'camera_followup') {
+        // Post-arcs settle pan toward the centroid of all flow_arc
+        // endpoints. _scrubApplyCameraFollowup snapshots the current
+        // pose so this picks up wherever the initial focus left us.
+        _scrubApplyCameraFollowup();
+        _scrubCamTransitionAtMs = ev.msAbs;
       } else if (ev.kind === 'focal_map') {
         // Fire the 2D map takeover. MapLibre animates camera fly-in
         // on its own RAF (real wall-clock time) — we accept that the
@@ -51374,6 +51468,8 @@ body.ticker-active .gTickerLabel {
     _scrubCamInitialQuat = null;
     _scrubCamTargetQuat = null;
     _scrubCamTransitionAtMs = -1;
+    _scrubCamTransitionDurMs = 0;
+    _scrubCamEaseFn = null;
     return { ok: true };
   };
 
