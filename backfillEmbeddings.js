@@ -13,9 +13,12 @@
  * Strategy (revised after Fix A — 2026-05-20):
  *
  *   1. Snapshot all pending IDs ONCE at startup (capped at WORK_LIMIT)
- *      via the partial index `idx_news_articles_unembedded`. After this,
- *      we never touch the partial index again — every subsequent fetch
- *      is by primary key.
+ *      via the partial index `idx_news_articles_unembedded` ON
+ *      (published_at DESC, id) WHERE embedding IS NULL — see
+ *      migrations/20260520_unembedded_partial_index.sql. The query is an
+ *      index-only range scan, no heap fetches, no sort. After this we
+ *      never touch the partial index again — every subsequent fetch is
+ *      by primary key.
  *
  *   2. Iterate the snapshot in chunks of BATCH_SIZE. Each chunk:
  *      - SELECT title/summary by `id = ANY($1)` (PK lookup, constant
@@ -91,7 +94,7 @@ async function run() {
           FROM news_articles
          WHERE embedding IS NULL
            AND published_at > NOW() - ($1::int * INTERVAL '1 day')
-         ORDER BY id DESC
+         ORDER BY published_at DESC, id DESC
          LIMIT $2
       `, [LOOKBACK_DAYS, WORK_LIMIT]);
       pendingIds = rows.map(r => r.id);
