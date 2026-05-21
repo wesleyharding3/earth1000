@@ -51743,6 +51743,44 @@ body.ticker-active .gTickerLabel {
     for (const iso of (seg?.flow_arc_isos        || [])) _addTour(iso);
     for (const iso of (seg?.primary_nations       || [])) _addTour(iso);
     for (const iso of (seg?.secondary_nations     || [])) _addTour(iso);
+
+    // Fallback path — most segments in production don't carry ISO
+    // arrays at all (primary_country_iso / secondary_country_isos are
+    // undefined). The flow_arcs array DOES carry from_name + from_lat
+    // + from_lng + to_name + to_lat + to_lng directly, so use those
+    // as authoritative tour stop coordinates. Resolve ISO from
+    // window.__globeCountries by name match where possible, otherwise
+    // synthesize a stop record with just the lat/lon (camera doesn't
+    // need an ISO, _scrubApplyCameraTour only reads .lat/.lon).
+    const _arcs = Array.isArray(seg?.flow_arcs) ? seg.flow_arcs : [];
+    const _coordSeen = new Set();
+    const _addArcStop = (lat, lon, name) => {
+      if (lat == null || lon == null) return;
+      // Dedupe by rounded lat/lon so identical endpoints across arcs
+      // (e.g. Iran appears as origin in 6 arcs) only schedule once.
+      const k = `${Number(lat).toFixed(1)},${Number(lon).toFixed(1)}`;
+      if (_coordSeen.has(k)) return;
+      _coordSeen.add(k);
+      // Try to map the name to an ISO so subsequent label / chip code
+      // can pick it up; not strictly required for the camera pan.
+      const country = _gc.find(c =>
+        c.name && name && c.name.toLowerCase() === String(name).toLowerCase()
+      );
+      const iso = country?.iso_code?.toUpperCase() || '';
+      // Skip primary if we know it (deduped above for ISO path, but
+      // the lat/lon could also match the primary's centroid via the
+      // _arcs data — coordinate dedupe handles that).
+      tourStops.push({
+        iso,
+        name: country?.name || name || (iso || 'Location'),
+        lat: Number(lat),
+        lon: Number(lon),
+      });
+    };
+    for (const a of _arcs) {
+      _addArcStop(a.from_lat, a.from_lng ?? a.from_lon, a.from_name);
+      _addArcStop(a.to_lat,   a.to_lng   ?? a.to_lon,   a.to_name);
+    }
     // Schedule one camera_tour event per stop, spaced TOUR_STEP_MS apart.
     // First stop starts after the followup transition completes so we
     // don't stack moves on top of each other. Cap tour to first 6 stops
@@ -51768,7 +51806,20 @@ body.ticker-active .gTickerLabel {
     const focalStart = focalTriggerOffsetMs;
     const focalEnd   = (focalTriggerOffsetMs != null) ? (focalTriggerOffsetMs + focalDurMs + 1500) : null;
     // Include primary as a tour target so the loop revisits it.
-    const primaryStop = _resolveCountry(primaryIso);
+    // Same fallback chain as the arc stops: ISO if we have one, else
+    // primary_country object's lat/lon, else primary_city's coords.
+    let primaryStop = _resolveCountry(primaryIso);
+    if (!primaryStop) {
+      const p = seg?.primary_country || seg?.primary_city || null;
+      if (p && p.lat != null) {
+        primaryStop = {
+          iso: (p.iso || '').toUpperCase(),
+          name: p.name || 'Primary',
+          lat: Number(p.lat),
+          lon: Number(p.lon ?? p.lng ?? 0),
+        };
+      }
+    }
     const allStops = (primaryStop ? [primaryStop, ...tourStops] : tourStops);
     let stopIdx = 0;
     let tourCursor = followupMs + SCRUB_CAM_FOLLOWUP_MS + 500;
