@@ -49940,6 +49940,25 @@ body.ticker-active .gTickerLabel {
       });
     }
 
+    // Scrub mode: block this entire function call until MapLibre has
+    // finished its initial tile load. Without this, the worker captures
+    // ~3-4 seconds of black-background frames while tiles fetch over
+    // the network in wall-clock time (each scrub frame's captureScreenshot
+    // only gives MapLibre ~200ms of real time to download tiles, far
+    // less than what's needed). Blocking on .once('idle') lets the
+    // worker's page.evaluate(__renderBriefingFrameAt) wait synchronously
+    // — subsequent captured frames then render with the fully-loaded
+    // map. The wait is capped at 6s as a safety net so a network outage
+    // can't hang the worker forever.
+    if (window.__inScrubMode) {
+      await new Promise((resolve) => {
+        let resolved = false;
+        const done = () => { if (!resolved) { resolved = true; resolve(); } };
+        try { _focalMapInst.once('idle', done); } catch (_) {}
+        setTimeout(done, 6000);
+      });
+    }
+
     // Auto fade-out at end of duration. The cleanup itself only runs
     // after the opacity transition, so the map "lingers" visually a
     // beat past durationSec — matches how heatmap fades.
@@ -51592,11 +51611,14 @@ body.ticker-active .gTickerLabel {
     //
     // tourCeilingMs: don't schedule tour stops past the focal_map handoff
     // (the map takes over the viewport, globe is hidden — any tour pan
-    // landing during the map is invisible work). Use the script's
-    // featured_map ms when available, otherwise the end of the segment.
+    // landing during the map is invisible work). Use focal_trigger_ms -
+    // start_ms when available, otherwise the end of the segment.
     const TOUR_STEP_MS = SCRUB_CAM_FOLLOWUP_MS + 1000;
-    const tourCeilingMs = (scriptFeaturedMapMs != null)
-      ? Math.max(0, scriptFeaturedMapMs - SCRUB_CAM_FOLLOWUP_MS)
+    const focalTriggerOffsetMs = (Number.isFinite(seg?.focal_trigger_ms) && Number.isFinite(seg?.start_ms))
+      ? Math.max(0, seg.focal_trigger_ms - seg.start_ms)
+      : null;
+    const tourCeilingMs = (focalTriggerOffsetMs != null)
+      ? Math.max(0, focalTriggerOffsetMs - SCRUB_CAM_FOLLOWUP_MS)
       : segDurMs;
     let tourCursor = followupMs + SCRUB_CAM_FOLLOWUP_MS + 500;
     for (const stop of tourStops.slice(0, 6)) {
@@ -51614,29 +51636,31 @@ body.ticker-active .gTickerLabel {
     events.push({ msAbs: 3000, kind: 'country_labels_show', applied: false });
     events.push({ msAbs: 8000, kind: 'country_labels_hide', applied: false });
 
-    // Focal-map featured-media moment. PRIMARY trigger source is the
-    // script's `featured_map` event ms — that's where briefingGenerator
-    // stamped the takeover into the narration timeline, and it aligns
-    // exactly with where the voiceover hands off to the map sequence.
+    // Focal-map featured-media moment. PRIMARY trigger source is
+    // focal_trigger_ms - start_ms — that's what the live briefing
+    // uses (see startGlobeTimers' focalOffsetMs), and the MOV reference
+    // confirms it produces the right timing (Bolivia map fades in at
+    // ~3-4s of segment, which equals 4458ms = 107897 - 103439).
     //
-    // Fallbacks for legacy episodes lacking script-level featured_map:
-    //   1. focal_trigger_ms - start_ms (episode-relative timestamp pair
-    //      stamped at split time; ~accurate but can drift if start_ms
-    //      was rounded).
-    //   2. voiceover_ms (end of narration; map plays in the post-piece).
+    // The script's `featured_map` event ms is NOT the right trigger
+    // time — it appears to be a script-author marker tied to the
+    // *narrated text* timeline, not the *audio* timeline. The script's
+    // text est_ms values overshoot real TTS duration by ~50%, so the
+    // script's featured_map at cumulative 27459ms maps to roughly the
+    // actual audio's 4458ms after the est→real scale factor. The live
+    // briefing already does this via focal_trigger_ms, which
+    // briefingGenerator stamps from the real ms at split time.
+    //
+    // Fallbacks for legacy episodes:
+    //   1. focal_trigger_ms - start_ms (primary — matches live).
+    //   2. voiceover_ms (end of narration; map plays in post-piece).
     //   3. 35% of segment duration (last-ditch heuristic).
-    //
-    // Order matters — the prior implementation defaulted to focal_trigger_ms
-    // even when the script had a featured_map event, which caused the
-    // map to fire ~5s into Bolivia's segment when the script said 27.5s.
     const fm = seg?.featured_video || seg?.video?.focal || seg?.video_focal || null;
     const mediaType = seg?.media_type || 'youtube';
     const mapCfg = mediaType === 'focal_map' ? (fm?.map_config || seg?.map_config) : null;
     if (mapCfg && mapCfg.center && mapCfg.center.lat != null && mapCfg.center.lng != null) {
       let triggerMs = null;
-      if (scriptFeaturedMapMs != null) {
-        triggerMs = scriptFeaturedMapMs;
-      } else if (Number.isFinite(seg.focal_trigger_ms) && Number.isFinite(seg.start_ms)) {
+      if (Number.isFinite(seg.focal_trigger_ms) && Number.isFinite(seg.start_ms)) {
         triggerMs = Math.max(0, seg.focal_trigger_ms - seg.start_ms);
       } else if (Number.isFinite(seg.voiceover_ms) && seg.voiceover_ms > 0) {
         triggerMs = seg.voiceover_ms;
@@ -51906,11 +51930,15 @@ body.ticker-active .gTickerLabel {
     return { ok: true, events: _scrubEvents.length };
   };
 
-  window.__renderBriefingFrameAt = function (tMs) {
+  window.__renderBriefingFrameAt = async function (tMs) {
     if (!_scrubMode) throw new Error('not in scrub mode');
     const target = Math.max(0, Number(tMs) || 0);
 
-    // Apply pending events in order.
+    // Apply pending events in order. Awaiting on focal_map is what
+    // lets MapLibre finish its initial tile load before we capture
+    // the next frame — without await, the captured frames between
+    // the trigger and tile-load (~3s wall-clock = many scrub frames)
+    // would all show a black map background.
     let applied = 0;
     for (const ev of _scrubEvents) {
       if (ev.applied) continue;
@@ -51937,29 +51965,18 @@ body.ticker-active .gTickerLabel {
       } else if (ev.kind === 'country_labels_hide') {
         try { _hideCountryLabels(); } catch (e) { console.warn('[scrub/labels] hide:', e.message); }
       } else if (ev.kind === 'focal_map') {
-        // Fire the 2D map takeover. MapLibre animates camera fly-in
-        // on its own RAF (real wall-clock time) — we accept that the
-        // zoom-in completes near-instantly in captured time.
-        //
-        // CRITICAL: startFocalMap also schedules _focalMapCleanup via
-        // setTimeout(..., durMs). In scrub mode those setTimeouts run
-        // in real wall-clock time, so at ~3fps capture rate the map
-        // gets cleaned up after only ~0.5s of CAPTURED video (durMs/
-        // captureFps ≈ 10000/3000 ≈ 0.5s) — the user reported "map
-        // flashed by". We immediately cancel that real-time cleanup
-        // here and rely on scrub-time advancement to fire the cleanup
-        // at the right captured-frame position (see _scrubAdvanceFocalMap).
+        // Fire the 2D map takeover. Await so MapLibre's initial tile
+        // load completes before the next captured frame — startFocalMap
+        // (when window.__inScrubMode is true) blocks on the map's
+        // `idle` event up to 6s as a safety cap.
         try {
           if (typeof startFocalMap === 'function') {
-            startFocalMap(ev.mapCfg, ev.durSec);
+            await startFocalMap(ev.mapCfg, ev.durSec);
           }
-          // Cancel the real-time cleanup setTimeout that startFocalMap
-          // installed; the closure-local var _focalMapEndTimer holds
-          // the id. Use the window-level wrapper if available; else
-          // best-effort clearTimeout in case the id leaked.
-          if (typeof window.__cancelFocalMapEnd === 'function') {
-            window.__cancelFocalMapEnd();
-          }
+          // No wall-clock cleanup setTimeout in scrub mode (skipped by
+          // window.__inScrubMode guard inside startFocalMap), so no
+          // cancel needed. Scrub-time cleanup runs via
+          // _scrubAdvanceFocalMap (checks tMs >= _scrubFocalMapEndsAtMs).
           _scrubFocalMapStartedAtMs = ev.msAbs;
           _scrubFocalMapEndsAtMs    = ev.msAbs + (ev.durSec * 1000);
         } catch (e) { console.warn('[scrub] focal_map failed:', e.message); }
